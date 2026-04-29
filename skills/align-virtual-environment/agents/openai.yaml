@@ -1,0 +1,4 @@
+interface:
+  display_name: "Align Virtual Environment"
+  short_description: "Keep Python environments aligned"
+  default_prompt: "Use $align-virtual-environment to sync this repo's Python tooling and verify the CLI works."

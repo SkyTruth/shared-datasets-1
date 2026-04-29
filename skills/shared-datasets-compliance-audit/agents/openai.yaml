@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shared Datasets Compliance Audit"
+  short_description: "Audit bucket layout and metadata"
+  default_prompt: "Use $shared-datasets-compliance-audit to walk the shared datasets bucket and report compliance issues without fixing them."

@@ -8,6 +8,8 @@ For the full operational procedure, read `skills/gcp-shared-datasets/SKILL.md`.
 
 Use a small repo-owned Python CLI/library built on `google-cloud-storage` for data object operations.
 
+Use `uv` for local Python dependency management and command execution.
+
 Use Terraform for GCP infrastructure.
 
 Use `gcloud storage` only for manual diagnostics or emergency one-off operations.
@@ -23,11 +25,11 @@ Remote dataset files need safe, repeatable object mutations. GCS generation prec
 ## Standard commands
 
 ```bash
-python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/
-python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/object
-python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/path/to/object /tmp/object
-python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/new-object
-python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/existing-object --replace-generation <generation>
+uv run python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/
+uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/object
+uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/path/to/object /tmp/object
+uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/new-object
+uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/existing-object --replace-generation <generation>
 ```
 
 ## Safe update pattern
@@ -42,6 +44,8 @@ python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/pat
 ## New object pattern
 
 By default, `upload` uses no-clobber behavior and fails if a live object already exists.
+
+For dataset roots, create or update the adjacent `README.md` with enough schema detail for a consumer to inspect the asset without opening the full data file. Where possible, include a properties/columns table with field names, types, and short explanations. If field meanings are not available, list names/types and mark definitions as needing source confirmation.
 
 ## Unsafe overwrites
 

@@ -24,6 +24,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Repo purpose and quick start | `README.md` |
 | Agent/maintainer operating rules | `AGENTS.md` |
 | Remote GCS access/upload/edit procedure | `skills/gcp-shared-datasets/SKILL.md` |
+| Python environment/tooling alignment | `skills/align-virtual-environment/SKILL.md` |
 | Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
 | Dataset README format | `templates/dataset_README.template.md` |
 | Infrastructure | `terraform/` |
@@ -61,6 +62,8 @@ When instructions conflict, follow this order:
 │   ├── gcp-asset-operations.md
 │   └── tooling-decision-record.md
 ├── skills/
+│   ├── align-virtual-environment/
+│   │   └── SKILL.md
 │   └── gcp-shared-datasets/
 │       └── SKILL.md
 ├── scripts/
@@ -147,9 +150,7 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 ## Standard local setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 
 export GOOGLE_CLOUD_PROJECT=shared-datasets-1
 export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
@@ -169,10 +170,10 @@ For CI, use Workload Identity Federation or a CI-provided service account. Do no
 This repo includes a small Python CLI intended for AI agents and maintainers:
 
 ```bash
-python scripts/gcs_asset.py list gs://skytruth-shared-datasets-1/100-geographic-reference/
-python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/README.md
-python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/README.md /tmp/README.md
-python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/README.md --replace-generation 123456789
+uv run python scripts/gcs_asset.py list gs://skytruth-shared-datasets-1/100-geographic-reference/
+uv run python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/README.md
+uv run python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/README.md /tmp/README.md
+uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/README.md --replace-generation 123456789
 ```
 
 Read `skills/gcp-shared-datasets/SKILL.md` before using it for write operations.

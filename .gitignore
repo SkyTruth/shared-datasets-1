@@ -1,0 +1,28 @@
+# Python environments and local tool caches
+.venv/
+.python-version
+.uv-cache/
+
+# Python bytecode and test/build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Local credentials and machine-specific files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Local scratch folders for GCS upload prep
+.tmp-gcs-readmes/

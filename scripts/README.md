@@ -13,11 +13,11 @@ It is the default interface for safe Cloud Storage object operations.
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 Show help:
 
 ```bash
-python scripts/gcs_asset.py --help
+uv run python scripts/gcs_asset.py --help
 ```

@@ -33,7 +33,7 @@ When instructions conflict, follow this order:
 
 1. Explicit user / issue / PR instruction.
 2. This `AGENTS.md`.
-3. `skills/gcp-shared-datasets/SKILL.md` for GCS remote file operations.
+3. Relevant repo-local skills, including `skills/gcp-shared-datasets/SKILL.md` for GCS remote file operations and `skills/align-virtual-environment/SKILL.md` for Python environment/tooling alignment.
 4. Repo templates and docs.
 5. Existing local style.
 6. Your own judgment.
@@ -60,6 +60,8 @@ Use environment variables in scripts where possible:
 export GOOGLE_CLOUD_PROJECT=shared-datasets-1
 export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
 ```
+
+Use `uv` for local Python dependency management and repo-owned Python tools. Follow `skills/align-virtual-environment/SKILL.md` before creating, repairing, or changing Python environments. Do not create ad hoc pip virtualenvs or mamba environments for routine repo tooling.
 
 If the actual bucket name differs, update `README.md`, this file, the skill, and any scripts/templates that mention the bucket.
 
@@ -354,6 +356,7 @@ Required fields:
 - Short explanation of what the asset is.
 - File table.
 - Schema notes or field notes.
+- Property/column table with names, types, and short explanations where this can be derived from the source data or source documentation. If explanations are unknown, still list names/types and say definitions need source confirmation.
 - Update notes.
 
 Use `templates/dataset_README.template.md` for important assets and `templates/dataset_README.minimal.template.md` for small/simple assets.
@@ -546,11 +549,11 @@ Before writing to GCS:
 Recommended commands:
 
 ```bash
-python scripts/gcs_asset.py list gs://skytruth-shared-datasets-1/100-geographic-reference/
-python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/path/to/object
-python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/path/to/object /tmp/object
-python scripts/gcs_asset.py upload ./new-file.fgb gs://skytruth-shared-datasets-1/path/to/new-file.fgb
-python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/path/README.md --replace-generation 123456789
+uv run python scripts/gcs_asset.py list gs://skytruth-shared-datasets-1/100-geographic-reference/
+uv run python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/path/to/object
+uv run python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/path/to/object /tmp/object
+uv run python scripts/gcs_asset.py upload ./new-file.fgb gs://skytruth-shared-datasets-1/path/to/new-file.fgb
+uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/path/README.md --replace-generation 123456789
 ```
 
 ## 19. Anti-patterns

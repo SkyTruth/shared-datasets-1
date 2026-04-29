@@ -6,6 +6,7 @@ For the shared datasets project:
 
 - **Terraform** manages infrastructure.
 - **A repo-owned Python CLI/library using `google-cloud-storage`** manages dataset objects.
+- **`uv`** manages local Python dependencies and runs the repo CLI.
 - **`gcloud storage`** is allowed for human diagnostics and emergency one-off operations.
 - **Cloud Storage FUSE** is allowed only for read-heavy exploration, not canonical writes.
 - **Terraform/Pulumi should not manage frequently changing dataset objects.**
@@ -23,6 +24,7 @@ The repo controls both cloud automation and the organization of a shared data bu
 | `gcloud storage` | Official CLI, good for humans, supports preconditions | Easy to use inconsistently; shell scripts can become fragile | Allow for diagnostics and emergency use |
 | Cloud Storage FUSE | Convenient filesystem interface | Not POSIX; metadata/concurrency limitations; unsafe mental model for canonical writes | Read-heavy exploration only |
 | Python `google-cloud-storage` CLI | Testable, scriptable, supports preconditions, works locally/CI/Cloud Run, can enforce SkyTruth conventions | Requires small amount of maintained code | Preferred for data objects |
+| `uv` for local Python tooling | Fast, reproducible project dependency management; avoids ad hoc pip/venv/mamba setup | Requires `uv` to be installed locally | Preferred runner for repo Python commands |
 
 ## Consequences
 
@@ -35,6 +37,12 @@ The repo controls both cloud automation and the organization of a shared data bu
 ## Implementation
 
 The initial implementation is `scripts/gcs_asset.py`.
+
+Run it through `uv`:
+
+```bash
+uv run python scripts/gcs_asset.py --help
+```
 
 Future improvements may include:
 

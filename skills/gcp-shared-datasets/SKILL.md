@@ -63,10 +63,10 @@ CI/runtime authentication:
 ## Install local dependencies
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
+
+Use `uv run` for repo-owned Python commands. Do not create ad hoc pip virtualenvs or mamba environments for routine GCS object operations.
 
 ## Safe object operation model
 
@@ -86,44 +86,44 @@ Never perform a blind overwrite unless the user explicitly asks for an unsafe ov
 List remote prefix:
 
 ```bash
-python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/
+uv run python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/
 ```
 
 Inspect object metadata:
 
 ```bash
-python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/README.md
+uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/README.md
 ```
 
 Download object:
 
 ```bash
-python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/README.md /tmp/shared-datasets-README.md
+uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/README.md /tmp/shared-datasets-README.md
 ```
 
 Upload new object without clobbering:
 
 ```bash
-python scripts/gcs_asset.py upload ./wdpa.fgb gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
+uv run python scripts/gcs_asset.py upload ./wdpa.fgb gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
 ```
 
 Replace existing object safely:
 
 ```bash
-python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/README.md
-python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --replace-generation 123456789
+uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/README.md
+uv run python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --replace-generation 123456789
 ```
 
 Unsafe overwrite, only when explicitly approved:
 
 ```bash
-python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --unsafe-overwrite
+uv run python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --unsafe-overwrite
 ```
 
 Copy remote object without clobbering destination:
 
 ```bash
-python scripts/gcs_asset.py copy gs://$SHARED_DATASETS_BUCKET/src/file.fgb gs://$SHARED_DATASETS_BUCKET/dst/file.fgb
+uv run python scripts/gcs_asset.py copy gs://$SHARED_DATASETS_BUCKET/src/file.fgb gs://$SHARED_DATASETS_BUCKET/dst/file.fgb
 ```
 
 ## Editing a remote README
@@ -132,11 +132,11 @@ Use this workflow:
 
 ```bash
 URI=gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/130-protected-areas/wdpa/README.md
-python scripts/gcs_asset.py stat "$URI"
-python scripts/gcs_asset.py download "$URI" /tmp/wdpa.README.md
+uv run python scripts/gcs_asset.py stat "$URI"
+uv run python scripts/gcs_asset.py download "$URI" /tmp/wdpa.README.md
 # edit /tmp/wdpa.README.md
-python scripts/gcs_asset.py upload /tmp/wdpa.README.md "$URI" --replace-generation <generation-from-stat>
-python scripts/gcs_asset.py stat "$URI"
+uv run python scripts/gcs_asset.py upload /tmp/wdpa.README.md "$URI" --replace-generation <generation-from-stat>
+uv run python scripts/gcs_asset.py stat "$URI"
 ```
 
 After editing, ensure the repo-side catalog is updated if owner/source/license/cadence/canonical path changed.
@@ -146,7 +146,7 @@ After editing, ensure the repo-side catalog is updated if owner/source/license/c
 1. Pick category/subcategory using `AGENTS.md`.
 2. Pick an asset slug in lowercase kebab-case.
 3. Create local asset files using approved formats.
-4. Create `README.md` from `templates/dataset_README.template.md` or the minimal template.
+4. Create `README.md` from `templates/dataset_README.template.md` or the minimal template, including a properties/columns table where field names and meanings can be derived.
 5. Upload to `latest/` with no-clobber behavior.
 6. If versioned, upload to `releases/YYYY-MM-DD/` with no-clobber behavior.
 7. Update `catalog/shared-datasets-catalog.csv`.
@@ -157,9 +157,9 @@ Example:
 
 ```bash
 ASSET_ROOT=gs://$SHARED_DATASETS_BUCKET/300-infrastructure-industrial/330-offshore-platforms/offshore-platforms
-python scripts/gcs_asset.py upload ./offshore-platforms.fgb     $ASSET_ROOT/latest/offshore-platforms.fgb
-python scripts/gcs_asset.py upload ./offshore-platforms.pmtiles $ASSET_ROOT/latest/offshore-platforms.pmtiles
-python scripts/gcs_asset.py upload ./README.md                 $ASSET_ROOT/README.md
+uv run python scripts/gcs_asset.py upload ./offshore-platforms.fgb     $ASSET_ROOT/latest/offshore-platforms.fgb
+uv run python scripts/gcs_asset.py upload ./offshore-platforms.pmtiles $ASSET_ROOT/latest/offshore-platforms.pmtiles
+uv run python scripts/gcs_asset.py upload ./README.md                 $ASSET_ROOT/README.md
 ```
 
 ## Updating a versioned dataset
@@ -170,12 +170,12 @@ Preferred order:
 ASSET_ROOT=gs://$SHARED_DATASETS_BUCKET/400-events-observations/420-flaring-thermal-events/viirs-flares
 RELEASE=2026-04-29
 
-python scripts/gcs_asset.py upload ./viirs-flares.csv     $ASSET_ROOT/releases/$RELEASE/viirs-flares.csv
-python scripts/gcs_asset.py upload ./viirs-flares.geojson $ASSET_ROOT/releases/$RELEASE/viirs-flares.geojson
+uv run python scripts/gcs_asset.py upload ./viirs-flares.csv     $ASSET_ROOT/releases/$RELEASE/viirs-flares.csv
+uv run python scripts/gcs_asset.py upload ./viirs-flares.geojson $ASSET_ROOT/releases/$RELEASE/viirs-flares.geojson
 
 # After validation, replace latest safely.
-python scripts/gcs_asset.py stat $ASSET_ROOT/latest/viirs-flares.csv
-python scripts/gcs_asset.py upload ./viirs-flares.csv $ASSET_ROOT/latest/viirs-flares.csv --replace-generation <generation>
+uv run python scripts/gcs_asset.py stat $ASSET_ROOT/latest/viirs-flares.csv
+uv run python scripts/gcs_asset.py upload ./viirs-flares.csv $ASSET_ROOT/latest/viirs-flares.csv --replace-generation <generation>
 ```
 
 If `latest/` does not exist yet, upload without `--replace-generation`; the CLI will use no-clobber behavior by default.
@@ -239,6 +239,7 @@ Before uploading, check:
 - Format is approved.
 - CSV has no geometry.
 - README exists for dataset roots.
+- README includes property/column names, types, and explanations where available; if meanings are unknown, it still lists names/types and flags definitions for source confirmation.
 - File is not accidentally huge for `.geojson` previews.
 - Release path is dated if cron/versioned.
 - Existing destination object is not overwritten blindly.

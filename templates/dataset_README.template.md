@@ -44,6 +44,14 @@ Briefly describe the dataset in one or two paragraphs.
 
 Describe important fields, join keys, units, coordinate assumptions, and any known quirks.
 
+## Properties / columns
+
+| Name | Type | Description |
+|---|---|---|
+| `{field_name}` | `{type}` | `{short meaning, units, or source-definition note}` |
+
+If descriptions are not available from the source data or source documentation, list the names/types anyway and mark descriptions as needing source confirmation.
+
 ## Update notes
 
 Describe how this dataset is updated. If cron-managed, link to the repo job, scheduler, or script.

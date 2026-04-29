@@ -21,3 +21,9 @@ One paragraph.
 ## Schema notes
 
 Short notes on fields or usage.
+
+## Properties / columns
+
+| Name | Type | Description |
+|---|---|---|
+| `{field_name}` | `{type}` | `{short meaning or "Needs source confirmation."}` |
