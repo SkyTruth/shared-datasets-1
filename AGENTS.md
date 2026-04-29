@@ -578,6 +578,8 @@ README with no owner/source/license
 
 ## 20. Review expectations
 
+For full bucket/repo compliance walkthroughs, use `skills/shared-datasets-compliance-audit/SKILL.md`. Compliance audits are read-only: flag issues, identify uploader/owner hints where available, and offer fixes only after human approval.
+
 Review for:
 
 - Correct category.

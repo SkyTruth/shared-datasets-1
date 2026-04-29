@@ -39,7 +39,7 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 
 ## Script Notes
 
-The bundled script walks remote GCS objects with `google-cloud-storage`, reads only small text metadata/README/catalog files, and compares them against local catalog/category rules. It does not download large data files.
+The bundled script walks remote GCS objects with `google-cloud-storage`, reads only small text metadata/README/catalog files, compares asset roots against local catalog/category rules, and checks during full-bucket audits whether the bucket-side `_catalog/shared-datasets-catalog.csv` matches the repo catalog. It does not download large data files.
 
 Useful options:
 

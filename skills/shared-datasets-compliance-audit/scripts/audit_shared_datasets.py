@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--categories", default="catalog/categories.yaml", help="Local categories YAML path.")
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown", help="Output format.")
     parser.add_argument("--skip-readme-content", action="store_true", help="Do not download README.md text for checks.")
+    parser.add_argument("--skip-remote-catalog-check", action="store_true", help="Do not compare bucket _catalog CSV with local catalog.")
     parser.add_argument("--fail-on-findings", action="store_true", help="Exit 1 if WARN or ERROR findings exist.")
     return parser.parse_args()
 
@@ -116,6 +117,45 @@ def download_readme_text(bucket_name: str, blob_name: str, generation: str) -> s
     return blob.download_as_text()
 
 
+def validate_remote_catalog(bucket_name: str, local_catalog_path: Path) -> List[Finding]:
+    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+    blob = client.bucket(bucket_name).blob("_catalog/shared-datasets-catalog.csv")
+    if not blob.exists():
+        return [
+            Finding(
+                "ERROR",
+                f"gs://{bucket_name}/_catalog/shared-datasets-catalog.csv",
+                "remote-catalog-exists",
+                "Bucket-side catalog object is missing.",
+                "unknown",
+                "Offer to upload the repo catalog with no-clobber behavior after approval.",
+            )
+        ]
+    remote_text = blob.download_as_text()
+    local_text = local_catalog_path.read_text()
+    if remote_text != local_text:
+        return [
+            Finding(
+                "ERROR",
+                f"gs://{bucket_name}/_catalog/shared-datasets-catalog.csv",
+                "remote-catalog-current",
+                "Bucket-side catalog differs from the repo catalog.",
+                uploader_hint(
+                    BlobInfo(
+                        name=blob.name,
+                        size=int(blob.size or 0),
+                        generation=str(blob.generation or ""),
+                        updated=blob.updated.isoformat() if blob.updated else "",
+                        content_type=blob.content_type,
+                        metadata={str(k): str(v) for k, v in (blob.metadata or {}).items()},
+                    )
+                ),
+                "Offer to replace the remote catalog using the current generation precondition after approval.",
+            )
+        ]
+    return []
+
+
 def uploader_hint(blob: Optional[BlobInfo]) -> str:
     if not blob:
         return "unknown"
@@ -141,6 +181,20 @@ def asset_root_for(name: str, categories: Dict[str, set[str]]) -> Tuple[Optional
     if subcategory not in categories[top]:
         return "/".join(parts[:3]), f"unknown subcategory {top}/{subcategory}"
     return "/".join(parts[:3]), None
+
+
+def is_taxonomy_placeholder_or_doc(name: str, categories: Dict[str, set[str]]) -> bool:
+    parts = [part for part in name.split("/") if part]
+    if not parts:
+        return True
+    if name.endswith("/") or parts[-1] == ".keep":
+        return True
+    top = parts[0]
+    if top in categories and len(parts) < 3 and parts[-1] == "README.md":
+        return True
+    if top in RESERVED_TOP_LEVEL or top in SYSTEM_TOP_LEVEL:
+        return True
+    return False
 
 
 def validate_object_layout(root: str, blob: BlobInfo) -> List[Finding]:
@@ -381,10 +435,11 @@ def validate_asset_roots(
     prefix: str,
 ) -> List[Finding]:
     findings: List[Finding] = []
+    audit_blobs = [blob for blob in blobs if not is_taxonomy_placeholder_or_doc(blob.name, categories)]
     roots: Dict[str, List[BlobInfo]] = {}
-    object_names = {blob.name for blob in blobs}
+    object_names = {blob.name for blob in audit_blobs}
 
-    for blob in blobs:
+    for blob in audit_blobs:
         root, path_issue = asset_root_for(blob.name, categories)
         if path_issue:
             findings.append(
@@ -490,6 +545,8 @@ def main() -> int:
         skip_readme_content=args.skip_readme_content,
         prefix=args.prefix,
     )
+    if not args.skip_remote_catalog_check and not args.prefix:
+        findings.extend(validate_remote_catalog(args.bucket, Path(args.catalog)))
 
     if args.format == "json":
         print(

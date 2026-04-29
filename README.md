@@ -25,6 +25,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Agent/maintainer operating rules | `AGENTS.md` |
 | Remote GCS access/upload/edit procedure | `skills/gcp-shared-datasets/SKILL.md` |
 | Python environment/tooling alignment | `skills/align-virtual-environment/SKILL.md` |
+| Bucket/repo compliance walkthroughs | `skills/shared-datasets-compliance-audit/SKILL.md` |
 | Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
 | Dataset README format | `templates/dataset_README.template.md` |
 | Infrastructure | `terraform/` |
@@ -64,7 +65,9 @@ When instructions conflict, follow this order:
 ├── skills/
 │   ├── align-virtual-environment/
 │   │   └── SKILL.md
-│   └── gcp-shared-datasets/
+│   ├── gcp-shared-datasets/
+│   │   └── SKILL.md
+│   └── shared-datasets-compliance-audit/
 │       └── SKILL.md
 ├── scripts/
 │   ├── README.md
