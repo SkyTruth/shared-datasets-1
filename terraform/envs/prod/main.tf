@@ -60,9 +60,9 @@ module "wdpa_monthly_job" {
   name                  = "wdpa-monthly"
   image                 = var.wdpa_monthly_image
   service_account_email = module.wdpa_job_service_account.email
-  cpu                   = "4"
-  memory                = "16Gi"
-  timeout               = "14400s"
+  cpu                   = "8"
+  memory                = "32Gi"
+  timeout               = "86400s"
   max_retries           = 0
 
   env = {

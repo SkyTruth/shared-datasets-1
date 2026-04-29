@@ -1,9 +1,21 @@
-FROM golang:1.25-bookworm AS pmtiles-builder
+FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS pmtiles-builder
 
 ARG PMTILES_VERSION=v1.30.1
+ARG TARGETOS
+ARG TARGETARCH
 
-RUN go install github.com/protomaps/go-pmtiles@${PMTILES_VERSION} \
-    && if [ -x /go/bin/go-pmtiles ]; then cp /go/bin/go-pmtiles /pmtiles; else cp /go/bin/pmtiles /pmtiles; fi
+RUN set -eux; \
+    GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
+        go install github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+    for candidate in \
+        "/go/bin/${TARGETOS}_${TARGETARCH}/go-pmtiles" \
+        "/go/bin/${TARGETOS}_${TARGETARCH}/pmtiles" \
+        "/go/bin/go-pmtiles" \
+        "/go/bin/pmtiles"; do \
+        if [ -x "$candidate" ]; then cp "$candidate" /pmtiles; exit 0; fi; \
+    done; \
+    echo "pmtiles binary not found" >&2; \
+    exit 1
 
 FROM python:3.12-slim-bookworm
 

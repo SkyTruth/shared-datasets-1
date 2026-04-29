@@ -83,34 +83,94 @@ class WdpaMonthlyTests(unittest.TestCase):
             "https://example/Apr2026/2026-04-29",
         )
 
-    def test_discover_layers_requires_identical_schemas(self):
-        payload = {
-            "layers": [
-                {
-                    "name": "points",
-                    "geometryFields": [{"type": "Point"}],
-                    "fields": [
-                        {"name": "MARINE", "type": "String"},
-                        {"name": "NAME", "type": "String"},
-                    ],
-                },
-                {
-                    "name": "polygons",
-                    "geometryFields": [{"type": "Polygon"}],
-                    "fields": [
-                        {"name": "MARINE", "type": "String"},
-                        {"name": "NAME", "type": "String"},
-                    ],
-                },
-            ]
-        }
+    def test_prepare_source_datasets_extracts_nested_zips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            inner_zip = tmp_path / "inner.zip"
+            with zipfile.ZipFile(inner_zip, "w") as inner:
+                inner.writestr("source.geojson", "{}")
+
+            outer_zip = tmp_path / "outer.zip"
+            with zipfile.ZipFile(outer_zip, "w") as outer:
+                outer.write(inner_zip, "nested/inner.zip")
+            inner_zip.unlink()
+
+            sources = wdpa.prepare_source_datasets(outer_zip, tmp_path)
+
+            self.assertEqual(len(sources), 1)
+            self.assertTrue(sources[0].startswith("/vsizip/"))
+            self.assertTrue((tmp_path / "source-zips" / "inner.zip").exists())
+            self.assertFalse(outer_zip.exists())
+
+    def test_realm_split_and_union_schema(self):
         layers = [
-            layer
-            for layer in wdpa.parse_layers(payload)
-            if any(field.name == "MARINE" for field in layer.fields)
+            wdpa.SourceLayer(
+                name="points",
+                geometry_type="Point",
+                fields=(
+                    wdpa.FieldSpec("REALM", "String"),
+                    wdpa.FieldSpec("NAME", "String"),
+                ),
+            ),
+            wdpa.SourceLayer(
+                name="polygons",
+                geometry_type="Polygon",
+                fields=(
+                    wdpa.FieldSpec("REALM", "String"),
+                    wdpa.FieldSpec("NAME", "String"),
+                    wdpa.FieldSpec("GIS_AREA", "Real"),
+                ),
+            ),
         ]
-        self.assertEqual([layer.name for layer in layers], ["points", "polygons"])
-        self.assertEqual(layers[0].fields, layers[1].fields)
+
+        self.assertEqual(wdpa.choose_split_field(layers), "REALM")
+        self.assertEqual(
+            wdpa.source_field_union(layers),
+            (
+                wdpa.FieldSpec("REALM", "String"),
+                wdpa.FieldSpec("NAME", "String"),
+                wdpa.FieldSpec("GIS_AREA", "Real"),
+            ),
+        )
+        self.assertEqual(
+            wdpa.asset_where_clause(wdpa.ASSETS[0], "REALM"),
+            "REALM IN ('Marine', 'Coastal')",
+        )
+        self.assertEqual(
+            wdpa.asset_where_clause(wdpa.ASSETS[1], "REALM"),
+            "REALM = 'Terrestrial'",
+        )
+
+    def test_marine_split_uses_documented_numeric_values(self):
+        self.assertEqual(
+            wdpa.asset_where_clause(wdpa.ASSETS[0], "MARINE"),
+            "MARINE IN ('1', '2')",
+        )
+        self.assertEqual(
+            wdpa.asset_where_clause(wdpa.ASSETS[1], "MARINE"),
+            "MARINE = '0'",
+        )
+
+    def test_sampled_where_clause_is_deterministic(self):
+        sample = wdpa.SampleSpec(fraction=0.01, seed=123)
+        self.assertEqual(
+            wdpa.sampled_where_clause("REALM = 'Terrestrial'", sample),
+            (
+                "(REALM = 'Terrestrial') AND "
+                "(((SITE_ID * 1103515245 + 123) % 1000000) < 10000)"
+            ),
+        )
+
+    def test_sample_field_is_required_when_sampling(self):
+        layers = [
+            wdpa.SourceLayer(
+                name="missing-site-id",
+                geometry_type="Point",
+                fields=(wdpa.FieldSpec("REALM", "String"),),
+            )
+        ]
+        with self.assertRaisesRegex(RuntimeError, "sample field SITE_ID missing"):
+            wdpa.assert_sample_field_available(layers, wdpa.SampleSpec(fraction=0.01, seed=1))
 
     def test_release_upload_uses_no_clobber(self):
         bucket = FakeBucket()
@@ -215,12 +275,13 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
                 archive.write(geojson, geojson.name)
 
             source = wdpa.source_dataset_path(zip_path)
-            layers = wdpa.discover_source_layers(source)
+            layers, split_field, source_fields = wdpa.discover_source_layers(source)
             outputs = wdpa.build_asset_outputs(
                 source=source,
                 source_layers=layers,
-                source_fields=layers[0].fields,
+                source_fields=source_fields,
                 asset=wdpa.ASSETS[0],
+                where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
                 workdir=tmp_path,
             )
 

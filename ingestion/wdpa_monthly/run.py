@@ -1,8 +1,8 @@
 """Simplified monthly WDPA/WDOECM publisher.
 
-The job intentionally performs only format conversion and a MARINE split. It
-does not rename fields, derive metadata tables, buffer point records, or update
-external databases.
+The job intentionally performs only format conversion and a source-field split.
+It does not rename fields, derive metadata tables, buffer point records, or
+update external databases.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,7 @@ class AssetSpec:
     slug: str
     title: str
     tile_layer: str
-    where: str
+    split_group: str
 
     @property
     def root(self) -> str:
@@ -76,6 +77,7 @@ class SourceLayer:
     name: str
     fields: tuple[FieldSpec, ...]
     geometry_type: str
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,20 +88,34 @@ class AssetOutputs:
     sha256: dict[str, str]
 
 
+@dataclass(frozen=True)
+class SampleSpec:
+    fraction: float
+    seed: int
+    field: str = "SITE_ID"
+    modulus: int = 1_000_000
+
+    @property
+    def threshold(self) -> int:
+        return max(1, min(self.modulus, int(self.fraction * self.modulus)))
+
+
 ASSETS: tuple[AssetSpec, ...] = (
     AssetSpec(
         slug="wdpa-marine",
         title="WDPA Marine Protected and Conserved Areas",
         tile_layer="wdpa_marine",
-        where="MARINE IN ('1', '2')",
+        split_group="marine",
     ),
     AssetSpec(
         slug="wdpa-terrestrial",
         title="WDPA Terrestrial Protected and Conserved Areas",
         tile_layer="wdpa_terrestrial",
-        where="MARINE = '0'",
+        split_group="terrestrial",
     ),
 )
+
+SPLIT_FIELD_PRIORITY = ("MARINE", "REALM")
 
 
 def configure_logging() -> None:
@@ -113,6 +129,19 @@ def parse_run_date(value: str | None) -> dt.date:
     if not value:
         return dt.datetime.now(dt.UTC).date()
     return dt.date.fromisoformat(value)
+
+
+def parse_sample_spec() -> SampleSpec | None:
+    raw_fraction = os.environ.get("WDPA_SAMPLE_FRACTION")
+    if not raw_fraction:
+        return None
+    fraction = float(raw_fraction)
+    if not 0 < fraction <= 1:
+        raise RuntimeError("WDPA_SAMPLE_FRACTION must be greater than 0 and at most 1")
+    if fraction == 1:
+        return None
+    seed = int(os.environ.get("WDPA_SAMPLE_SEED", "7919"))
+    return SampleSpec(fraction=fraction, seed=seed)
 
 
 def build_source_url(template: str, run_date: dt.date) -> str:
@@ -188,6 +217,60 @@ def source_dataset_path(path: Path) -> str:
     if path.suffix.lower() == ".zip":
         return f"/vsizip/{path}"
     return str(path)
+
+
+def shapefile_members(archive: zipfile.ZipFile) -> list[str]:
+    return sorted(
+        name
+        for name in archive.namelist()
+        if name.lower().endswith(".shp") and not name.endswith("/")
+    )
+
+
+def prepare_source_datasets(path: Path, workdir: Path) -> list[str]:
+    if path.suffix.lower() != ".zip":
+        return [str(path)]
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            shapefiles = shapefile_members(archive)
+            if shapefiles:
+                zip_path = source_dataset_path(path)
+                return [f"{zip_path}/{member}" for member in shapefiles]
+
+            nested_zips = sorted(
+                name
+                for name in archive.namelist()
+                if name.lower().endswith(".zip") and not name.endswith("/")
+            )
+            if nested_zips:
+                nested_dir = workdir / "source-zips"
+                nested_dir.mkdir(exist_ok=True)
+                sources = []
+                for member in nested_zips:
+                    dest = nested_dir / Path(member).name
+                    if dest.exists():
+                        raise RuntimeError(f"Duplicate nested source ZIP name: {dest.name}")
+                    LOGGER.info("extracting nested source zip: %s", member)
+                    with archive.open(member) as source_obj, dest.open("wb") as dest_obj:
+                        shutil.copyfileobj(source_obj, dest_obj)
+                    inner_zip_path = source_dataset_path(dest)
+                    with zipfile.ZipFile(dest) as inner_archive:
+                        inner_shapefiles = shapefile_members(inner_archive)
+                    if inner_shapefiles:
+                        sources.extend(
+                            f"{inner_zip_path}/{shp_member}"
+                            for shp_member in inner_shapefiles
+                        )
+                    else:
+                        sources.append(inner_zip_path)
+                remove_if_exists(path)
+                LOGGER.info("prepared %s source dataset path(s)", len(sources))
+                return sources
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"Downloaded source is not a valid ZIP file: {path}") from exc
+
+    raise RuntimeError(f"No shapefiles or nested ZIP files found in source archive: {path}")
 
 
 def parse_field(raw: dict[str, Any]) -> FieldSpec:
@@ -286,36 +369,129 @@ def parse_text_feature_count(text: str, source: str, layer_name: str | None) -> 
     return int(match.group(1))
 
 
-def discover_source_layers(source: str) -> list[SourceLayer]:
-    try:
-        payload = run_command(["ogrinfo", "-json", source], capture_json=True)
-        layers = parse_layers(payload)
-    except RuntimeError:
-        layers = parse_ogrinfo_text_layers(ogrinfo_text(source, all_layers=True))
-
-    candidate_layers = [
-        layer
+def set_layer_source(layers: list[SourceLayer], source: str) -> list[SourceLayer]:
+    return [
+        SourceLayer(
+            name=layer.name,
+            fields=layer.fields,
+            geometry_type=layer.geometry_type,
+            source=source,
+        )
         for layer in layers
-        if any(field.name == "MARINE" for field in layer.fields)
     ]
-    if not candidate_layers:
-        raise RuntimeError("No geometry layers with a MARINE field found in WDPA source")
 
-    expected_fields = candidate_layers[0].fields
-    mismatched = [
-        layer.name for layer in candidate_layers[1:] if layer.fields != expected_fields
+
+def source_layer_summary(layers: list[SourceLayer]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source": layer.source,
+            "name": layer.name,
+            "geometry_type": layer.geometry_type,
+            "fields": [field.name for field in layer.fields[:25]],
+            "field_count": len(layer.fields),
+        }
+        for layer in layers
     ]
-    if mismatched:
+
+
+def layer_field_lookup(layer: SourceLayer) -> dict[str, FieldSpec]:
+    return {field.name.upper(): field for field in layer.fields}
+
+
+def choose_split_field(layers: list[SourceLayer]) -> str:
+    for field_name in SPLIT_FIELD_PRIORITY:
+        if all(field_name in layer_field_lookup(layer) for layer in layers):
+            return layer_field_lookup(layers[0])[field_name].name
+
+    LOGGER.error("discovered source layers without supported split field: %s", json.dumps(source_layer_summary(layers)))
+    raise RuntimeError("No geometry layers with MARINE or REALM field found in WDPA source")
+
+
+def source_field_union(layers: list[SourceLayer]) -> tuple[FieldSpec, ...]:
+    fields: dict[str, FieldSpec] = {}
+    ordered_names: list[str] = []
+    for layer in layers:
+        for field in layer.fields:
+            key = field.name.upper()
+            if key not in fields:
+                fields[key] = field
+                ordered_names.append(key)
+                continue
+            if fields[key].type != field.type or fields[key].subtype != field.subtype:
+                raise RuntimeError(
+                    "WDPA source field type mismatch for "
+                    f"{field.name}: {fields[key].type}/{fields[key].subtype} vs "
+                    f"{field.type}/{field.subtype}"
+                )
+    return tuple(fields[name] for name in ordered_names)
+
+
+def asset_where_clause(asset: AssetSpec, split_field: str) -> str:
+    split_field_upper = split_field.upper()
+    if split_field_upper == "MARINE":
+        if asset.split_group == "marine":
+            return f"{split_field} IN ('1', '2')"
+        if asset.split_group == "terrestrial":
+            return f"{split_field} = '0'"
+    if split_field_upper == "REALM":
+        if asset.split_group == "marine":
+            return f"{split_field} IN ('Marine', 'Coastal')"
+        if asset.split_group == "terrestrial":
+            return f"{split_field} = 'Terrestrial'"
+    raise RuntimeError(f"Unsupported WDPA split field/group: {split_field}/{asset.split_group}")
+
+
+def sampled_where_clause(base_where: str, sample: SampleSpec | None) -> str:
+    if sample is None:
+        return base_where
+    sample_predicate = (
+        f"((({sample.field} * 1103515245 + {sample.seed}) % {sample.modulus}) "
+        f"< {sample.threshold})"
+    )
+    return f"({base_where}) AND {sample_predicate}"
+
+
+def assert_sample_field_available(layers: list[SourceLayer], sample: SampleSpec | None) -> None:
+    if sample is None:
+        return
+    missing = [
+        f"{layer.name} from {layer.source}"
+        for layer in layers
+        if sample.field.upper() not in layer_field_lookup(layer)
+    ]
+    if missing:
         raise RuntimeError(
-            "WDPA source layers do not have identical fields: "
-            f"{', '.join(mismatched)}"
+            f"WDPA sample field {sample.field} missing from layer(s): "
+            + ", ".join(missing)
         )
 
+
+def discover_source_layers(sources: str | list[str]) -> tuple[list[SourceLayer], str, tuple[FieldSpec, ...]]:
+    source_list = [sources] if isinstance(sources, str) else sources
+    layers = []
+    for source in source_list:
+        try:
+            payload = run_command(["ogrinfo", "-json", source], capture_json=True)
+            source_layers = parse_layers(payload)
+        except RuntimeError:
+            source_layers = parse_ogrinfo_text_layers(ogrinfo_text(source, all_layers=True))
+        layers.extend(set_layer_source(source_layers, source))
+
+    if not layers:
+        raise RuntimeError("No geometry layers found in WDPA source")
+
+    split_field = choose_split_field(layers)
+    source_fields = source_field_union(layers)
+
     LOGGER.info(
-        "selected source layers: %s",
-        ", ".join(f"{layer.name} ({layer.geometry_type})" for layer in candidate_layers),
+        "selected source layers using %s split: %s",
+        split_field,
+        ", ".join(
+            f"{layer.name} ({layer.geometry_type}) from {layer.source}"
+            for layer in layers
+        ),
     )
-    return candidate_layers
+    return layers, split_field, source_fields
 
 
 def feature_count(
@@ -350,7 +526,7 @@ def feature_count(
 
 
 def expected_feature_count(source: str, layers: list[SourceLayer], where: str) -> int:
-    return sum(feature_count(source, layer.name, where) for layer in layers)
+    return sum(feature_count(layer.source or source, layer.name, where) for layer in layers)
 
 
 def remove_if_exists(path: Path) -> None:
@@ -365,24 +541,25 @@ def build_filtered_gpkg(
     source: str,
     source_layers: list[SourceLayer],
     asset: AssetSpec,
+    where: str,
     output: Path,
 ) -> None:
     remove_if_exists(output)
     for index, layer in enumerate(source_layers):
         args = ["ogr2ogr", "-f", "GPKG"]
         if index > 0:
-            args.extend(["-update", "-append"])
+            args.extend(["-update", "-append", "-addfields"])
         args.extend(
             [
                 str(output),
-                source,
+                layer.source or source,
                 layer.name,
                 "-nln",
                 asset.tile_layer,
                 "-nlt",
                 "GEOMETRY",
                 "-where",
-                asset.where,
+                where,
             ]
         )
         run_command(args)
@@ -446,6 +623,7 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
         ]
     )
     run_command(["pmtiles", "convert", str(mbtiles), str(output)])
+    remove_if_exists(mbtiles)
 
 
 def layer_fields(path: Path, layer_name: str | None = None) -> tuple[FieldSpec, ...]:
@@ -485,9 +663,11 @@ def build_asset_outputs(
     source_layers: list[SourceLayer],
     source_fields: tuple[FieldSpec, ...],
     asset: AssetSpec,
+    where: str,
     workdir: Path,
+    cleanup_after_gpkg: tuple[Path, ...] = (),
 ) -> AssetOutputs:
-    expected_rows = expected_feature_count(source, source_layers, asset.where)
+    expected_rows = expected_feature_count(source, source_layers, where)
     if expected_rows <= 0:
         raise RuntimeError(f"{asset.slug} filter produced no rows")
 
@@ -500,11 +680,18 @@ def build_asset_outputs(
         source=source,
         source_layers=source_layers,
         asset=asset,
+        where=where,
         output=gpkg,
     )
-    convert_gpkg_to_fgb(gpkg, asset, fgb)
+    for path in cleanup_after_gpkg:
+        LOGGER.info("removing source intermediate after filtered copy: %s", path)
+        remove_if_exists(path)
+
     convert_gpkg_to_geojsonseq(gpkg, asset, geojsonseq)
     build_pmtiles(geojsonseq, asset, pmtiles)
+    remove_if_exists(geojsonseq)
+
+    convert_gpkg_to_fgb(gpkg, asset, fgb)
 
     actual_rows = feature_count(str(fgb))
     if actual_rows != expected_rows:
@@ -515,6 +702,7 @@ def build_asset_outputs(
     if output_fields != source_fields:
         raise RuntimeError(f"{asset.slug} FGB schema does not match source schema")
     validate_pmtiles(pmtiles)
+    remove_if_exists(gpkg)
 
     return AssetOutputs(
         fgb=fgb,
@@ -751,6 +939,12 @@ def run() -> list[dict[str, Any]]:
     source_template = os.environ.get("WDPA_SOURCE_URL_TEMPLATE", DEFAULT_SOURCE_URL_TEMPLATE)
     source_url = build_source_url(source_template, run_date)
     source_version = source_version_for(run_date)
+    sample_spec = parse_sample_spec()
+    if sample_spec and os.environ.get("ALLOW_SAMPLED_PUBLISH") != "true":
+        raise RuntimeError(
+            "WDPA_SAMPLE_FRACTION is for local sandbox/testing only. "
+            "Set ALLOW_SAMPLED_PUBLISH=true only if you intentionally want sampled GCS outputs."
+        )
 
     publisher = GcsPublisher(storage.Client(project=project_id), bucket_name)
 
@@ -777,11 +971,13 @@ def run() -> list[dict[str, Any]]:
         workdir = Path(tmp)
         source_zip = workdir / "wdpa.zip"
         download_file(source_url, source_zip)
-        source = source_dataset_path(source_zip)
-        source_layers = discover_source_layers(source)
-        source_fields = source_layers[0].fields
+        source_datasets = prepare_source_datasets(source_zip, workdir)
+        source = source_datasets[0]
+        source_layers, split_field, source_fields = discover_source_layers(source_datasets)
+        assert_sample_field_available(source_layers, sample_spec)
 
         records = []
+        final_publish_asset = publish_specs[-1]
         for asset in ASSETS:
             if asset not in publish_specs:
                 records.append(
@@ -792,12 +988,17 @@ def run() -> list[dict[str, Any]]:
                     }
                 )
                 continue
+            where = sampled_where_clause(asset_where_clause(asset, split_field), sample_spec)
             outputs = build_asset_outputs(
                 source=source,
                 source_layers=source_layers,
                 source_fields=source_fields,
                 asset=asset,
+                where=where,
                 workdir=workdir,
+                cleanup_after_gpkg=(
+                    (workdir / "source-zips",) if asset == final_publish_asset else ()
+                ),
             )
             records.append(
                 publish_asset(
@@ -810,6 +1011,8 @@ def run() -> list[dict[str, Any]]:
                     source_fields=source_fields,
                 )
             )
+            remove_if_exists(outputs.fgb)
+            remove_if_exists(outputs.pmtiles)
         return records
 
 

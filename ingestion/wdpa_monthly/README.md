@@ -5,9 +5,15 @@ This job publishes two bare-bones WDPA/WDOECM assets:
 - `wdpa-marine`
 - `wdpa-terrestrial`
 
-It downloads the monthly Protected Planet shapefile zip, selects source geometry
-layers that contain `MARINE`, verifies the selected layer schemas match, and
-splits rows only by `MARINE`.
+It downloads the monthly Protected Planet shapefile zip, selects the source
+point and polygon layers, and splits rows by the source split field. `MARINE`
+is used when present; current WDPA/WDOECM shapefiles use `REALM`, with
+`Marine` and `Coastal` routed to `wdpa-marine` and `Terrestrial` routed to
+`wdpa-terrestrial`.
+
+The output schema is the union of source fields. The current source has
+polygon-only fields such as `GIS_M_AREA` and `GIS_AREA`; those fields are
+preserved and are null for point rows rather than being dropped or renamed.
 
 The job intentionally does not rename fields, buffer points, calculate areas,
 build statistics tables, update Strapi, or write database payloads.
@@ -63,3 +69,25 @@ Build from the repo root:
 ```bash
 docker build -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 ```
+
+## Local Fractional Sandbox
+
+For fast debugging against the real upstream source, download/extract the source
+ZIPs under a local scratch directory and run a deterministic FID sample through
+the same FGB and PMTiles conversion chain without publishing to GCS:
+
+```bash
+docker run --platform linux/amd64 --rm -i \
+  -e TMPDIR=/data/tmp \
+  -e WDPA_SAMPLE_FRACTION=0.001 \
+  -e WDPA_SAMPLE_SEED=7919 \
+  -e LOCAL_WDPA_WORKDIR=/data/wdpa-sample-output \
+  -v "$PWD":/work \
+  -v /private/tmp/wdpa-monthly-local:/data \
+  -w /work \
+  wdpa-monthly \
+  python scripts/local_wdpa_sample.py
+```
+
+The sample harness never instantiates a GCS client and leaves outputs in the
+local work directory.
