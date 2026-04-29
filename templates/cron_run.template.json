@@ -1,0 +1,10 @@
+{
+  "asset_slug": "example-asset",
+  "run_date": "YYYY-MM-DD",
+  "status": "success",
+  "source_version": "",
+  "release_path": "gs://skytruth-shared-datasets-1/category/subcategory/asset/releases/YYYY-MM-DD/",
+  "latest_paths": [],
+  "rows": null,
+  "notes": ""
+}

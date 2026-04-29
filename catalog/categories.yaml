@@ -1,0 +1,66 @@
+categories:
+  "000-system":
+    description: "System files, catalogs, templates, validation outputs."
+    subcategories:
+      "010-catalog": "Catalog and index files."
+      "020-templates": "Bucket-side templates."
+      "030-validation": "Validation reports and shared checks."
+  "100-geographic-reference":
+    description: "Reusable geographic reference datasets."
+    subcategories:
+      "110-boundaries": "Administrative and political boundaries."
+      "120-marine-boundaries": "EEZs, marine regions, ocean boundaries."
+      "130-protected-areas": "Protected and conservation areas."
+      "140-grids-indexes": "H3, S2, tiling grids, spatial indexes."
+      "150-places-gazetteers": "Place names, gazetteers, named geography."
+  "200-imagery-derived":
+    description: "Remote-sensing and imagery-derived products."
+    subcategories:
+      "210-satellite-indexes": "Scene indexes and imagery metadata."
+      "220-optical-derived": "Optical imagery derivatives."
+      "230-sar-derived": "SAR imagery derivatives."
+      "240-nightlights-thermal": "Nightlights, thermal detections, VIIRS-derived products."
+      "250-weather-climate": "Weather and climate grids/products."
+  "300-infrastructure-industrial":
+    description: "Physical infrastructure, industrial assets, permits, leases."
+    subcategories:
+      "310-energy": "Energy infrastructure."
+      "320-mining": "Mining infrastructure, footprints, permits."
+      "330-offshore-platforms": "Offshore platforms and fixed offshore infrastructure."
+      "340-transportation": "Roads, rail, ports, logistics."
+      "350-permits-leases": "Permits, leases, concessions."
+  "400-events-observations":
+    description: "Events, detections, incidents, observations, alerts."
+    subcategories:
+      "410-pollution-spills-slicks": "Pollution events, slicks, spills."
+      "420-flaring-thermal-events": "Flaring and thermal events."
+      "430-alerts-notices": "Alerts, notices, enforcement feeds."
+      "440-field-observations": "Field observations."
+      "450-scraped-feeds": "Scraped event feeds."
+  "500-conservation-ecosystems":
+    description: "Conservation, land cover, habitat, ecosystems, disturbance."
+    subcategories:
+      "510-protected-area-effectiveness": "Protected area effectiveness."
+      "520-land-cover": "Land cover and land use."
+      "530-habitat-condition": "Habitat condition."
+      "540-disturbance-recovery": "Disturbance and recovery products."
+  "600-maritime-ocean":
+    description: "Vessels, AIS-derived data, fishing and ocean activity."
+    subcategories:
+      "610-ais-derived": "AIS-derived data products."
+      "620-vessel-registries": "Vessel registry/reference data."
+      "630-fishing-activity": "Fishing activity products."
+      "640-ocean-activity": "Other ocean activity products."
+  "700-non-geographic-reference":
+    description: "Non-spatial lookup and crosswalk tables."
+    subcategories:
+      "710-country-admin-crosswalks": "Country/admin lookup and crosswalk tables."
+      "720-organizations-operators": "Organizations, operators, ownership tables."
+      "730-units-codes-lookups": "Units, codes, and other lookups."
+  "800-derived-ml-products":
+    description: "Reusable labels, features, predictions, benchmarks."
+    subcategories:
+      "810-labels": "Training labels and annotation exports."
+      "820-features": "Reusable ML/model features."
+      "830-predictions": "Model predictions."
+      "840-evaluation-benchmarks": "Evaluation and benchmark datasets."
