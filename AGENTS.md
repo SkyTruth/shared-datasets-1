@@ -49,12 +49,14 @@ Before substantial work, inspect `.claude/skills/*/SKILL.md` frontmatter and loa
 Current repo-local skills:
 
 - `.claude/skills/align-virtual-environment/SKILL.md`
+- `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
 
 High-priority triggers:
 
 - Use `.claude/skills/gcp-shared-datasets/SKILL.md` before inspecting, uploading, editing, replacing, publishing, or validating shared GCS objects.
+- Use `.claude/skills/deploy-scheduled-ingestion/SKILL.md` before deploying or updating Cloud Run + Cloud Scheduler ingestion jobs.
 - Use `.claude/skills/align-virtual-environment/SKILL.md` before creating, repairing, changing, or documenting Python environments.
 - Use `.claude/skills/shared-datasets-compliance-audit/SKILL.md` for read-only bucket/repo compliance walkthroughs.
 

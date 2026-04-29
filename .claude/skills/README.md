@@ -10,3 +10,10 @@ This directory is the canonical checked-in skill catalog for this repository.
 - Product-specific metadata in product-specific folders, such as `agents/openai.yaml`.
 
 Do not keep a second live copy under a bare repo-root `skills/` directory.
+
+Current skills:
+
+- `align-virtual-environment`
+- `deploy-scheduled-ingestion`
+- `gcp-shared-datasets`
+- `shared-datasets-compliance-audit`

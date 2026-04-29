@@ -26,3 +26,8 @@ dist/
 
 # Local scratch folders for GCS upload prep
 .tmp-gcs-readmes/
+
+# Terraform local state and provider cache
+.terraform/
+*.tfstate
+*.tfstate.*

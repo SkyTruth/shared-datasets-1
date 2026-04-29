@@ -26,6 +26,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Claude Code shim | `CLAUDE.md` |
 | Repo-local skill catalog | `.claude/skills/`, mirrored at `.agents/skills` |
 | Remote GCS access/upload/edit procedure | `.claude/skills/gcp-shared-datasets/SKILL.md` |
+| Scheduled ingestion deployment procedure | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
 | Python environment/tooling alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
 | Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
