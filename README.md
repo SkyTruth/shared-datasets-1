@@ -48,7 +48,7 @@ When instructions conflict, follow this order:
 1. **The bucket is a product.** Treat every shared dataset as something another SkyTruth project may depend on.
 2. **Low overhead wins.** Prefer predictable paths, simple READMEs, and generated catalogs over heavy metadata processes.
 3. **Stable paths beat clever names.** Someone should be able to guess where a dataset belongs before searching.
-4. **Canonical data is boring.** Approved formats are `.fgb`, `.pmtiles`, `.geojson`, and `.csv` with no geometry.
+4. **Canonical data is boring.** Approved formats are `.fgb`, `.pmtiles`, `.geojson`, `.ndgeojson`, and geometry-free `.csv`.
 5. **Cron jobs must be safe to retry.** Scheduled jobs should be idempotent and should not destroy previous releases.
 6. **Infrastructure and data are managed differently.** Terraform manages cloud resources. The Python GCS asset tooling manages data objects.
 7. **Agents must leave things clearer than they found them.** Any remote asset change should update the relevant README/catalog when appropriate.
@@ -129,6 +129,7 @@ Detailed subdirectories and classification rules are in `AGENTS.md`.
 | `.fgb` | Canonical geographic vector data |
 | `.pmtiles` | Map tiles / web visualization artifacts |
 | `.geojson` | Small previews, interchange, debugging |
+| `.ndgeojson` | Newline-delimited GeoJSON features for streamable vector interchange/debugging |
 | `.csv` | Non-geometry tables only |
 
 Do not add new canonical file formats without updating `AGENTS.md`, the templates, and the review checklist.

@@ -125,6 +125,7 @@ Only these formats are approved by default:
 | `.fgb` | Canonical geographic vector data |
 | `.pmtiles` | Web map tiles / visualization artifacts |
 | `.geojson` | Small previews, small interchange files, debugging |
+| `.ndgeojson` | Newline-delimited GeoJSON features for streamable vector interchange/debugging |
 | `.csv` | Non-geometry tables only |
 
 Rules:
@@ -133,6 +134,7 @@ Rules:
 - `.fgb` is the preferred canonical vector format.
 - `.pmtiles` is a serving/display artifact, not the canonical analytical source.
 - `.geojson` should be small enough to inspect or transfer easily.
+- `.ndgeojson` is appropriate for streamable vector interchange/debugging; prefer `.fgb` for canonical analytical vector data unless there is a documented reason.
 - If another format is required, update this file and explain why in the PR.
 
 ## 7. Bucket taxonomy
@@ -417,17 +419,33 @@ Update the catalog when:
 
 For small edits to an existing README, catalog updates are optional unless catalog fields changed.
 
+### Under-specified upload requests
+
+When a user requests a dataset upload with minimal information, it is the agent's duty to learn as much as practical before choosing a README, asset slug, classification, or target directory.
+
+Minimal user-provided context does not excuse weak metadata, vague naming, or arbitrary bucket placement. Before proposing or performing an upload, inspect and infer from all available clues, including:
+
+- File names and local or remote directory hints.
+- Source URLs, download locations, and local paths.
+- Object metadata, file metadata, layer names, and embedded dataset metadata.
+- Schemas, property names, property types, and example rows.
+- Existing nearby bucket assets, README files, and catalog rows.
+- Source documentation and internet searches when the source identity is discoverable.
+
+Use these clues to generate an informed proposed README, lowercase kebab-case asset slug, taxonomy classification, and target asset directory. If confidence is still low, stop before remote writes and ask for the missing confirmation. Continue to ask before high-risk actions listed in `## 21. When to ask for human input`, but only after doing the discovery that repo files, bucket state, source materials, and reasonable searches can support.
+
 ## 12. Manual dataset addition workflow
 
-1. Classify the asset using the taxonomy.
-2. Pick a lowercase kebab-case asset slug.
-3. Create the remote asset folder.
-4. Upload files to `latest/`.
-5. If needed, upload the same files to `releases/YYYY-MM-DD/`.
-6. Add `README.md` using the template.
-7. Add or update the catalog row.
-8. Verify remote file paths.
-9. Open a PR with repo docs/catalog/script changes and list remote paths changed.
+1. Perform the under-specified upload discovery above when the user has not already provided complete source, schema, naming, and classification context.
+2. Classify the asset using the taxonomy.
+3. Pick a lowercase kebab-case asset slug.
+4. Create the remote asset folder.
+5. Upload files to `latest/`.
+6. If needed, upload the same files to `releases/YYYY-MM-DD/`.
+7. Add `README.md` using the template.
+8. Add or update the catalog row.
+9. Verify remote file paths.
+10. Open a PR with repo docs/catalog/script changes and list remote paths changed.
 
 Minimal PR checklist:
 

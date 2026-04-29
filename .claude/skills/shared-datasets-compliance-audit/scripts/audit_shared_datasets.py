@@ -21,7 +21,7 @@ import yaml
 from google.cloud import storage
 
 
-APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".csv"}
+APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv"}
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated"}
 SYSTEM_TOP_LEVEL = {"000-system"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

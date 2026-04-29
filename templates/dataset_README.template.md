@@ -6,7 +6,7 @@ subcategory: "{subcategory}"
 status: "active" # active | deprecated | retired | scratch
 owner: "{person-or-team}"
 update_cadence: "static" # static | manual | daily | weekly | monthly | ad hoc
-canonical_format: "fgb" # fgb | pmtiles | geojson | csv
+canonical_format: "fgb" # fgb | pmtiles | geojson | ndgeojson | csv
 last_updated: "YYYY-MM-DD"
 source: "{source-name-or-url}"
 license: "{license-or-terms-summary}"
@@ -38,6 +38,7 @@ Briefly describe the dataset in one or two paragraphs.
 | `latest/{asset-slug}.fgb` | Canonical vector dataset, if geographic |
 | `latest/{asset-slug}.pmtiles` | Web map tiles, if applicable |
 | `latest/{asset-slug}.geojson` | Small preview/interchange file, if applicable |
+| `latest/{asset-slug}.ndgeojson` | Streamable newline-delimited GeoJSON, if applicable |
 | `latest/{asset-slug}.csv` | Non-geometry table, if applicable |
 
 ## Schema notes
