@@ -2,7 +2,7 @@
 
 This document summarizes how this repo expects maintainers and AI agents to inspect, upload, edit, and publish files in the shared datasets bucket.
 
-For the full operational procedure, read `skills/gcp-shared-datasets/SKILL.md`.
+For the full operational procedure, read `.claude/skills/gcp-shared-datasets/SKILL.md`.
 
 ## Chosen approach
 

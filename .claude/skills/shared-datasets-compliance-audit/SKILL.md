@@ -19,12 +19,12 @@ Use this skill to inspect the shared datasets control plane and data plane for c
 
 ## Audit Workflow
 
-1. Read `AGENTS.md`, `catalog/categories.yaml`, `catalog/shared-datasets-catalog.csv`, and `skills/gcp-shared-datasets/SKILL.md`.
+1. Read `AGENTS.md`, `catalog/categories.yaml`, `catalog/shared-datasets-catalog.csv`, and `.claude/skills/gcp-shared-datasets/SKILL.md`.
 2. Run the read-only audit script:
 
 ```bash
 UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1 \
-  uv run python skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py
+  uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py
 ```
 
 3. Review findings by severity:
@@ -44,10 +44,10 @@ The bundled script walks remote GCS objects with `google-cloud-storage`, reads o
 Useful options:
 
 ```bash
-uv run python skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --help
-uv run python skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --prefix 100-geographic-reference/
-uv run python skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --format json
-uv run python skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --fail-on-findings
+uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --help
+uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --prefix 100-geographic-reference/
+uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --format json
+uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --fail-on-findings
 ```
 
 ## Completion Criteria

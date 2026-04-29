@@ -23,9 +23,11 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 |---|---|
 | Repo purpose and quick start | `README.md` |
 | Agent/maintainer operating rules | `AGENTS.md` |
-| Remote GCS access/upload/edit procedure | `skills/gcp-shared-datasets/SKILL.md` |
-| Python environment/tooling alignment | `skills/align-virtual-environment/SKILL.md` |
-| Bucket/repo compliance walkthroughs | `skills/shared-datasets-compliance-audit/SKILL.md` |
+| Claude Code shim | `CLAUDE.md` |
+| Repo-local skill catalog | `.claude/skills/`, mirrored at `.agents/skills` |
+| Remote GCS access/upload/edit procedure | `.claude/skills/gcp-shared-datasets/SKILL.md` |
+| Python environment/tooling alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
+| Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
 | Dataset README format | `templates/dataset_README.template.md` |
 | Infrastructure | `terraform/` |
@@ -36,7 +38,7 @@ When instructions conflict, follow this order:
 
 1. User or issue/PR instructions.
 2. `AGENTS.md`.
-3. The relevant skill in `skills/`.
+3. The relevant skill in `.claude/skills/`.
 4. Other docs/templates.
 5. Existing code conventions.
 
@@ -56,19 +58,23 @@ When instructions conflict, follow this order:
 .
 ├── README.md
 ├── AGENTS.md
+├── CLAUDE.md
+├── .agents/
+│   └── skills -> ../.claude/skills
+├── .claude/
+│   └── skills/
+│       ├── align-virtual-environment/
+│       │   └── SKILL.md
+│       ├── gcp-shared-datasets/
+│       │   └── SKILL.md
+│       └── shared-datasets-compliance-audit/
+│           └── SKILL.md
 ├── catalog/
 │   ├── categories.yaml
 │   └── shared-datasets-catalog.csv
 ├── docs/
 │   ├── gcp-asset-operations.md
 │   └── tooling-decision-record.md
-├── skills/
-│   ├── align-virtual-environment/
-│   │   └── SKILL.md
-│   ├── gcp-shared-datasets/
-│   │   └── SKILL.md
-│   └── shared-datasets-compliance-audit/
-│       └── SKILL.md
 ├── scripts/
 │   ├── README.md
 │   └── gcs_asset.py
@@ -131,7 +137,7 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 1. Read `AGENTS.md`.
 2. Pick the correct bucket category/subcategory.
 3. Use `templates/dataset_README.template.md` or the minimal template.
-4. Use `skills/gcp-shared-datasets/SKILL.md` for remote GCS operations.
+4. Use `.claude/skills/gcp-shared-datasets/SKILL.md` for remote GCS operations.
 5. Update `catalog/shared-datasets-catalog.csv` if the asset is new or meaningfully changed.
 6. Open a PR describing the remote asset paths changed.
 
@@ -179,7 +185,7 @@ uv run python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/READ
 uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/README.md --replace-generation 123456789
 ```
 
-Read `skills/gcp-shared-datasets/SKILL.md` before using it for write operations.
+Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations.
 
 ## PR expectations
 

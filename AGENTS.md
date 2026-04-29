@@ -1,8 +1,8 @@
 # AGENTS.md — shared-datasets-1 operating guide
 
-This file is the operational source of truth for AI agents and maintainers working in the `shared-datasets-1` repository or the associated shared Cloud Storage bucket.
+This file is the canonical operational source of truth for AI agents and maintainers working in the `shared-datasets-1` repository or the associated shared Cloud Storage bucket. `CLAUDE.md` is a thin Claude Code shim that imports this file.
 
-Read this file before changing repo structure, infrastructure, ingestion jobs, access protocols, bucket organization, dataset documentation, or remote GCS objects.
+Read this file before changing repo structure, infrastructure, ingestion jobs, access protocols, bucket organization, dataset documentation, or remote GCS objects. Its scope is this repository tree and the associated shared bucket.
 
 ## 1. Mission
 
@@ -33,12 +33,32 @@ When instructions conflict, follow this order:
 
 1. Explicit user / issue / PR instruction.
 2. This `AGENTS.md`.
-3. Relevant repo-local skills, including `skills/gcp-shared-datasets/SKILL.md` for GCS remote file operations and `skills/align-virtual-environment/SKILL.md` for Python environment/tooling alignment.
+3. Relevant repo-local skills in `.claude/skills/`.
 4. Repo templates and docs.
 5. Existing local style.
 6. Your own judgment.
 
 If a requested change would violate a safety rule, explain the conflict and propose the smallest safe alternative.
+
+## Repo-local skills
+
+`.claude/skills/` is the canonical checked-in repo-local skill catalog. `.agents/skills` must be a symlink mirror to `../.claude/skills` for Codex-native discovery. Do not keep a second live copy under a bare repo-root `skills/` directory.
+
+Before substantial work, inspect `.claude/skills/*/SKILL.md` frontmatter and load any matching skill body. Repo-local skills override generic habits when they apply, after explicit user instructions and this file.
+
+Current repo-local skills:
+
+- `.claude/skills/align-virtual-environment/SKILL.md`
+- `.claude/skills/gcp-shared-datasets/SKILL.md`
+- `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
+
+High-priority triggers:
+
+- Use `.claude/skills/gcp-shared-datasets/SKILL.md` before inspecting, uploading, editing, replacing, publishing, or validating shared GCS objects.
+- Use `.claude/skills/align-virtual-environment/SKILL.md` before creating, repairing, changing, or documenting Python environments.
+- Use `.claude/skills/shared-datasets-compliance-audit/SKILL.md` for read-only bucket/repo compliance walkthroughs.
+
+Keep skill examples repo-relative and maintainer-neutral. Avoid usernames, home-directory paths, shell-profile assumptions, and machine-local environment names. Treat the Git index as user-owned state: do not stage, unstage, reset, or restore staged files unless the user explicitly asks for that exact index operation.
 
 ## 3. Default environment
 
@@ -61,7 +81,7 @@ export GOOGLE_CLOUD_PROJECT=shared-datasets-1
 export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
 ```
 
-Use `uv` for local Python dependency management and repo-owned Python tools. Follow `skills/align-virtual-environment/SKILL.md` before creating, repairing, or changing Python environments. Do not create ad hoc pip virtualenvs or mamba environments for routine repo tooling.
+Use `uv` for local Python dependency management and repo-owned Python tools. Follow `.claude/skills/align-virtual-environment/SKILL.md` before creating, repairing, or changing Python environments. Do not create ad hoc pip virtualenvs or mamba environments for routine repo tooling.
 
 If the actual bucket name differs, update `README.md`, this file, the skill, and any scripts/templates that mention the bucket.
 
@@ -537,7 +557,7 @@ Avoid:
 
 Before writing to GCS:
 
-1. Read `skills/gcp-shared-datasets/SKILL.md`.
+1. Read `.claude/skills/gcp-shared-datasets/SKILL.md`.
 2. Confirm target bucket and path.
 3. Confirm the asset folder follows this taxonomy.
 4. Confirm approved formats.
@@ -578,7 +598,7 @@ README with no owner/source/license
 
 ## 20. Review expectations
 
-For full bucket/repo compliance walkthroughs, use `skills/shared-datasets-compliance-audit/SKILL.md`. Compliance audits are read-only: flag issues, identify uploader/owner hints where available, and offer fixes only after human approval.
+For full bucket/repo compliance walkthroughs, use `.claude/skills/shared-datasets-compliance-audit/SKILL.md`. Compliance audits are read-only: flag issues, identify uploader/owner hints where available, and offer fixes only after human approval.
 
 Review for:
 
