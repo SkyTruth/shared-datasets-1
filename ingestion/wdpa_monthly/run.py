@@ -8,15 +8,12 @@ update external databases.
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import logging
-import mimetypes
 import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -25,8 +22,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
+
+from ingestion.common.gcs import GcsPublisher
+from ingestion.common.runtime import (
+    configure_logging,
+    content_type_for as content_type_for,
+    remove_if_exists,
+    require_binary,
+    run_command as common_run_command,
+    sha256_file,
+)
 
 
 LOGGER = logging.getLogger("wdpa_monthly")
@@ -118,13 +124,6 @@ ASSETS: tuple[AssetSpec, ...] = (
 SPLIT_FIELD_PRIORITY = ("MARINE", "REALM")
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-
-
 def parse_run_date(value: str | None) -> dt.date:
     if not value:
         return dt.datetime.now(dt.UTC).date()
@@ -158,43 +157,18 @@ def source_version_for(run_date: dt.date) -> str:
     return run_date.strftime("%b%Y")
 
 
-def require_binary(name: str) -> None:
-    if not shutil.which(name):
-        raise RuntimeError(f"Required executable not found on PATH: {name}")
-
-
 def run_command(
     args: list[str],
     *,
     capture_json: bool = False,
     capture_text: bool = False,
 ) -> Any:
-    LOGGER.info("running command: %s", " ".join(shlex.quote(a) for a in args))
-    completed = subprocess.run(
+    return common_run_command(
         args,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE if capture_json or capture_text else None,
-        stderr=subprocess.PIPE,
+        capture_json=capture_json,
+        capture_text=capture_text,
+        logger=LOGGER,
     )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Command failed with exit code "
-            f"{completed.returncode}: {' '.join(shlex.quote(a) for a in args)}\n"
-            f"{completed.stderr}"
-        )
-    if capture_json:
-        try:
-            return json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Command did not return JSON: {' '.join(args)}\n{completed.stdout}"
-            ) from exc
-    if capture_text:
-        return completed.stdout
-    if completed.stderr:
-        LOGGER.debug(completed.stderr)
-    return None
 
 
 def download_file(url: str, dest: Path) -> None:
@@ -529,13 +503,6 @@ def expected_feature_count(source: str, layers: list[SourceLayer], where: str) -
     return sum(feature_count(layer.source or source, layer.name, where) for layer in layers)
 
 
-def remove_if_exists(path: Path) -> None:
-    if path.is_dir():
-        shutil.rmtree(path)
-    elif path.exists():
-        path.unlink()
-
-
 def build_filtered_gpkg(
     *,
     source: str,
@@ -649,14 +616,6 @@ def validate_pmtiles(path: Path) -> None:
         run_command(["tippecanoe-decode", "-S", str(path)], capture_json=True)
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file_obj:
-        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def build_asset_outputs(
     *,
     source: str,
@@ -713,152 +672,6 @@ def build_asset_outputs(
             "pmtiles": sha256_file(pmtiles),
         },
     )
-
-
-def content_type_for(path: Path) -> str | None:
-    if path.suffix == ".fgb":
-        return "application/octet-stream"
-    if path.suffix == ".pmtiles":
-        return "application/vnd.pmtiles"
-    if path.suffix == ".json":
-        return "application/json"
-    guessed, _ = mimetypes.guess_type(path.name)
-    return guessed
-
-
-class GcsPublisher:
-    def __init__(self, client: storage.Client, bucket_name: str) -> None:
-        self.bucket = client.bucket(bucket_name)
-
-    def blob_exists(self, name: str) -> bool:
-        blob = self.bucket.blob(name)
-        try:
-            blob.reload()
-            return True
-        except NotFound:
-            return False
-
-    def load_json(self, name: str) -> dict[str, Any] | None:
-        blob = self.bucket.blob(name)
-        try:
-            blob.reload()
-        except NotFound:
-            return None
-        return json.loads(blob.download_as_text())
-
-    def successful_run_record(self, asset: AssetSpec, run_date: dt.date) -> bool:
-        record = self.load_json(asset.run_record_object(run_date))
-        return bool(record and record.get("status") == "success")
-
-    def assert_no_partial_release(self, asset: AssetSpec, run_date: dt.date) -> None:
-        existing = [
-            name
-            for name in (
-                asset.release_object(run_date, ".fgb"),
-                asset.release_object(run_date, ".pmtiles"),
-            )
-            if self.blob_exists(name)
-        ]
-        if existing:
-            raise RuntimeError(
-                "Release object(s) already exist without a successful run record: "
-                + ", ".join(f"gs://{self.bucket.name}/{name}" for name in existing)
-            )
-
-    def upload_new_object(
-        self,
-        *,
-        local_path: Path,
-        object_name: str,
-        metadata: dict[str, str],
-    ) -> dict[str, Any]:
-        blob = self.bucket.blob(object_name)
-        blob.metadata = metadata
-        try:
-            blob.upload_from_filename(
-                local_path,
-                content_type=content_type_for(local_path),
-                if_generation_match=0,
-            )
-        except PreconditionFailed as exc:
-            raise RuntimeError(
-                f"Refusing to overwrite existing release object: "
-                f"gs://{self.bucket.name}/{object_name}"
-            ) from exc
-        blob.reload()
-        return {
-            "path": f"gs://{self.bucket.name}/{object_name}",
-            "generation": int(blob.generation),
-            "size": int(blob.size or 0),
-        }
-
-    def replace_latest_object(
-        self,
-        *,
-        local_path: Path,
-        object_name: str,
-        metadata: dict[str, str],
-    ) -> dict[str, Any]:
-        blob = self.bucket.blob(object_name)
-        blob.metadata = metadata
-        try:
-            blob.reload()
-            generation_match = int(blob.generation)
-        except NotFound:
-            generation_match = 0
-        try:
-            blob.upload_from_filename(
-                local_path,
-                content_type=content_type_for(local_path),
-                if_generation_match=generation_match,
-            )
-        except PreconditionFailed as exc:
-            raise RuntimeError(
-                f"Latest object generation changed before upload: "
-                f"gs://{self.bucket.name}/{object_name}"
-            ) from exc
-        blob.reload()
-        return {
-            "path": f"gs://{self.bucket.name}/{object_name}",
-            "generation": int(blob.generation),
-            "size": int(blob.size or 0),
-        }
-
-    def write_run_record(
-        self,
-        *,
-        asset: AssetSpec,
-        run_date: dt.date,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        object_name = asset.run_record_object(run_date)
-        blob = self.bucket.blob(object_name)
-        blob.metadata = {
-            "asset_slug": asset.slug,
-            "run_date": run_date.isoformat(),
-        }
-        try:
-            blob.upload_from_string(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                content_type="application/json",
-                if_generation_match=0,
-            )
-        except PreconditionFailed as exc:
-            existing = self.load_json(object_name)
-            if existing and existing.get("status") == "success":
-                LOGGER.info("%s run record already exists", asset.slug)
-                blob.reload()
-            else:
-                raise RuntimeError(
-                    f"Run record already exists and is not successful: "
-                    f"gs://{self.bucket.name}/{object_name}"
-                ) from exc
-        blob.reload()
-        return {
-            "path": f"gs://{self.bucket.name}/{object_name}",
-            "generation": int(blob.generation),
-            "size": int(blob.size or 0),
-        }
 
 
 def publish_asset(
@@ -946,7 +759,7 @@ def run() -> list[dict[str, Any]]:
             "Set ALLOW_SAMPLED_PUBLISH=true only if you intentionally want sampled GCS outputs."
         )
 
-    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name)
+    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
 
     publish_specs = [
         asset

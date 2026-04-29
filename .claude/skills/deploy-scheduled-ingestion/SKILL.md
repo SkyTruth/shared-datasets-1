@@ -18,8 +18,18 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Keep runtime service accounts narrow: only the job account should write dataset objects; scheduler gets only `roles/run.invoker`.
 - Size Cloud Run Job CPU, memory, timeout, and local-temp cleanup for the full upstream source, not just test fixtures.
 - Before redeploying after source-schema or format bugs, run a production-source fractional sandbox test locally. The sample must use the same conversion chain as production and must not publish sampled data unless explicitly guarded.
-- Run one manual Cloud Run Job execution after deployment and verify bucket outputs.
+- Run one manual Cloud Run Job execution after deployment. Wait for short jobs; use async execution for known multi-hour jobs.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
+
+## Job boundaries
+
+- Keep each production cron job in its own package under `ingestion/<job_slug>/`, with a README, `run.py`, a Dockerfile when containerized, focused tests, and distinct Terraform blocks such as `terraform/envs/prod/<job_slug>.tf`.
+- Put shared runtime and publishing behavior in `ingestion/common/`: GCS generation-precondition helpers, run-record writes, logging setup, subprocess helpers, content type selection, hashes, and temp cleanup.
+- Keep source-specific parsing, filtering, schema choices, asset slugs, canonical paths, conversion rules, environment variables, and scheduler configuration inside the owning job package and its Terraform file.
+- Do not import from another job package, such as `ingestion.wdpa_monthly`, unless the task is explicitly maintaining that job.
+- Do not edit a functioning live job to support a new job unless the user explicitly requests a behavior-preserving refactor.
+- Preserve live surfaces unless explicitly approved: Cloud Run job names, scheduler names, service account identities, asset slugs, canonical GCS paths, output formats, schemas, entrypoints, and run-record shape.
+- Any change to `ingestion/common/` must run focused tests for every production job that imports it.
 
 ## Large-source sizing
 
@@ -27,6 +37,11 @@ For very large geospatial sources such as WDPA/WDOECM, do not assume Cloud Run
 will finish within a short default timeout. Measure at least one representative
 local fractional run, then treat full-source conversion as a multi-hour batch
 job unless there is direct evidence otherwise.
+
+Cloud Run writable filesystem usage counts against container memory. Prefer a
+conversion order that deletes large intermediates as soon as they are no longer
+needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
+alive at the same time.
 
 Use these defaults for the simplified WDPA monthly job unless the code has been
 made materially faster:
@@ -36,8 +51,8 @@ made materially faster:
 - Retries: `0` while first validating idempotency and partial-release behavior;
   add retries only after failures are known to be safe to replay.
 
-When a manual post-deploy execution is expected to take hours, it is acceptable
-to start it asynchronously instead of waiting in the agent session:
+When a manual post-deploy execution is expected to take hours, start it
+asynchronously instead of waiting in the agent session:
 
 ```bash
 gcloud run jobs execute wdpa-monthly \
@@ -54,10 +69,13 @@ gcloud run jobs executions describe <execution-name> \
   --region=us-central1 \
   --project=shared-datasets-1
 
-gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="wdpa-monthly"' \
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="wdpa-monthly" AND labels."run.googleapis.com/execution_name"="<execution-name>"' \
   --project=shared-datasets-1 \
   --limit=50
 ```
+
+If an execution is still running and a safer image or config must be deployed,
+cancel the obsolete execution explicitly before starting a replacement canary.
 
 If the current-day release already has partial objects without a success run
 record, do not overwrite or delete them from the deployment workflow. Use a
@@ -70,20 +88,27 @@ explicit approval to clean up the partial release.
 2. Validate locally:
 
 ```bash
+uv run python -m unittest discover -s tests
 terraform fmt -check -recursive
 terraform -chdir=terraform/envs/prod init
 terraform -chdir=terraform/envs/prod validate
 ```
 
+For a narrow job change, it is acceptable to run the focused job tests instead
+of full discovery. For `ingestion/common/` changes, run tests for every
+production job that imports the shared helpers.
+
 3. For large source files, run a fractional sandbox test before deploying. Mount the downloaded source and repo into the same Linux image that Cloud Run will use, set sample-only environment variables, and build FGB/PMTiles locally without GCS publishing:
 
 ```bash
+export WDPA_LOCAL_DATA_DIR=/tmp/wdpa-monthly-local
+
 docker run --platform linux/amd64 --rm -i \
   -e TMPDIR=/data/tmp \
   -e WDPA_SAMPLE_FRACTION=0.001 \
   -e WDPA_SAMPLE_SEED=7919 \
   -v "$PWD":/work \
-  -v /private/tmp/wdpa-monthly-local:/data \
+  -v "$WDPA_LOCAL_DATA_DIR":/data \
   -w /work \
   "$IMAGE" \
   python scripts/local_wdpa_sample.py
@@ -115,10 +140,16 @@ terraform -chdir=terraform/envs/prod plan  -var="wdpa_monthly_image=$IMAGE"
 terraform -chdir=terraform/envs/prod apply -var="wdpa_monthly_image=$IMAGE"
 ```
 
-7. Execute the job once and wait:
+7. Execute the job once. For short jobs, wait for completion:
 
 ```bash
 gcloud run jobs execute <job-name> --region=us-central1 --project=shared-datasets-1 --wait
+```
+
+For known multi-hour jobs, start asynchronously and record the execution name:
+
+```bash
+gcloud run jobs execute <job-name> --region=us-central1 --project=shared-datasets-1 --async
 ```
 
 8. Verify:
@@ -126,6 +157,7 @@ gcloud run jobs execute <job-name> --region=us-central1 --project=shared-dataset
 ```bash
 gcloud scheduler jobs describe <job-name> --location=us-central1 --project=shared-datasets-1
 gcloud run jobs executions list --job=<job-name> --region=us-central1 --project=shared-datasets-1
+gcloud run jobs executions describe <execution-name> --region=us-central1 --project=shared-datasets-1
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/latest/
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/runs/
 ```
@@ -136,7 +168,8 @@ In the final response or PR, include:
 
 - Container image URI deployed.
 - Terraform resources applied.
-- Manual execution result.
+- Manual execution result, or async execution name and current status.
 - Scheduler schedule and timezone.
 - Remote GCS paths verified.
-- Any known skipped or failed outputs.
+- Any known skipped, cancelled, failed, or still-running executions.
+- Any partial release paths intentionally left untouched.

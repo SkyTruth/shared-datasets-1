@@ -486,6 +486,40 @@ Required run record shape:
 }
 ```
 
+### Scheduled ingestion architecture and live dependency guardrails
+
+Each production cron job must have a distinct home:
+
+```text
+ingestion/<job_slug>/
+  README.md
+  Dockerfile
+  run.py
+tests/test_<job_slug>.py
+terraform/envs/prod/<job_slug>.tf
+```
+
+Use `ingestion/common/` only for high-utility behavior that multiple jobs can
+share safely, such as generation-preconditioned GCS publishing, run-record
+writes, logging setup, subprocess helpers, content type selection, hashes, and
+temporary-file cleanup. Keep source-specific parsing, filtering, schema choices,
+asset slugs, canonical paths, conversion rules, and scheduler configuration
+inside the owning job package and its Terraform file.
+
+Do not import from another job package, such as `ingestion.wdpa_monthly`, unless
+the task is explicitly maintaining that job. Future jobs must reuse
+`ingestion/common/`, Terraform modules, templates, and documented patterns
+instead of depending on or editing a live job's implementation.
+
+Do not edit a functioning live job to support a new job unless the user
+explicitly requests a behavior-preserving refactor. Preserve live surfaces unless
+explicitly approved: Cloud Run job names, scheduler names, service account
+identities, asset slugs, canonical GCS paths, output formats, schemas,
+entrypoints, and run-record shape.
+
+Any change to `ingestion/common/` must run the focused tests for every production
+job that imports it.
+
 ## 15. Infrastructure rules
 
 Use Terraform for:

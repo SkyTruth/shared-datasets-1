@@ -79,12 +79,14 @@ When instructions conflict, follow this order:
 ├── scripts/
 │   ├── README.md
 │   └── gcs_asset.py
+├── ingestion/
+│   ├── README.md
+│   └── common/
 ├── templates/
 │   ├── dataset_README.template.md
 │   ├── dataset_README.minimal.template.md
 │   └── cron_run.template.json
 ├── terraform/
-├── ingestion/
 ├── api/
 └── .github/
     └── PULL_REQUEST_TEMPLATE.md
@@ -144,11 +146,11 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 
 ### Add a cron or ingestion job
 
-1. Put reusable job code under `ingestion/` or `scripts/`.
-2. Use Terraform for Cloud Scheduler, Cloud Run, service accounts, IAM, secrets references, and monitoring.
-3. Make the job idempotent.
-4. Write to a dated release before updating `latest/`.
-5. Include a run record using `templates/cron_run.template.json` when applicable.
+1. Create a distinct package under `ingestion/<job_slug>/` with a README, `run.py`, and a Dockerfile when containerized.
+2. Put shared runtime or publishing helpers in `ingestion/common/`; do not import from another job package just to reuse behavior.
+3. Add focused tests under `tests/test_<job_slug>.py` and run tests for any job touched by shared helper changes.
+4. Use a distinct Terraform file such as `terraform/envs/prod/<job_slug>.tf` for Cloud Scheduler, Cloud Run, service accounts, IAM, secrets references, and monitoring.
+5. Make the job idempotent, write to a dated release before updating `latest/`, and include a run record using `templates/cron_run.template.json` when applicable.
 
 ### Change infrastructure
 
