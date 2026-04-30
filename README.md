@@ -164,6 +164,29 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 3. Keep service accounts narrowly scoped.
 4. Prefer folder/prefix-level roles only when broad bucket access is inappropriate.
 
+### Configure cron failure Slack alerts
+
+Production Terraform defines log-based Cloud Monitoring alerts for scheduled
+ingestion failures. The alerts cover two cases:
+
+- Cloud Scheduler cannot start a configured ingestion job.
+- A scheduler-created Cloud Run Job execution exits failed.
+
+Manual canary failures are not matched by the Cloud Run alert because the log
+filter requires the execution creator to be the job's Cloud Scheduler service
+account. Configure Slack delivery by passing an existing Cloud Monitoring Slack
+notification channel:
+
+```bash
+terraform -chdir=terraform/envs/prod apply \
+  -var='cron_alert_notification_channels=["projects/shared-datasets-1/notificationChannels/CHANNEL_ID"]'
+```
+
+Alternatively, Terraform can create a Slack channel when both
+`cron_alert_slack_channel_name` and sensitive `cron_alert_slack_auth_token` are
+provided, but using an existing Google Cloud Slack notification channel is
+preferred because it avoids putting Slack OAuth material in Terraform inputs.
+
 ## Standard local setup
 
 ```bash

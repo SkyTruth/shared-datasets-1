@@ -1,0 +1,24 @@
+variable "cron_alerts_enabled" {
+  description = "Whether scheduled ingestion cron failure alert policies should be enabled."
+  type        = bool
+  default     = true
+}
+
+variable "cron_alert_notification_channels" {
+  description = "Existing Cloud Monitoring notification channel resource names for cron alerts, for example projects/shared-datasets-1/notificationChannels/123456789. Prefer this for Slack channels created through the Google Cloud console OAuth flow."
+  type        = list(string)
+  default     = []
+}
+
+variable "cron_alert_slack_channel_name" {
+  description = "Optional Slack channel name for a Terraform-managed Cloud Monitoring Slack notification channel, for example #shared-datasets-alerts. Prefer cron_alert_notification_channels when a channel already exists."
+  type        = string
+  default     = null
+}
+
+variable "cron_alert_slack_auth_token" {
+  description = "Slack auth token for cron_alert_slack_channel_name. This is marked sensitive, but Terraform state can still contain provider-managed secret material; prefer an existing Cloud Monitoring Slack notification channel when possible."
+  type        = string
+  default     = null
+  sensitive   = true
+}
