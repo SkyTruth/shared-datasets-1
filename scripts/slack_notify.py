@@ -94,7 +94,11 @@ def load_webhook_url(
         "--project",
         project_id,
     ]
-    result = runner(command, check=True, capture_output=True, text=True)
+    try:
+        result = runner(command, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise SlackNotificationError(f"Unable to access Secret Manager secret {resolved_secret_id}: {detail}") from exc
     webhook_url = result.stdout.strip()
     if not webhook_url:
         raise SlackNotificationError(f"Secret {resolved_secret_id} returned an empty webhook URL")

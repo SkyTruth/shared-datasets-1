@@ -81,6 +81,15 @@ resource "google_secret_manager_secret" "slack_webhook_url" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_secret_manager_secret_iam_member" "slack_webhook_accessors" {
+  for_each = var.slack_webhook_secret_accessors
+
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.slack_webhook_url.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = each.value
+}
+
 resource "google_project_iam_audit_config" "storage_data_write" {
   project = var.project_id
   service = "storage.googleapis.com"

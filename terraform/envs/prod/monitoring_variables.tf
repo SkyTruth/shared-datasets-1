@@ -23,6 +23,14 @@ variable "cron_alert_slack_auth_token" {
   sensitive   = true
 }
 
+variable "slack_webhook_secret_accessors" {
+  description = "IAM members allowed to read the Slack webhook Secret Manager secret for local operational summaries."
+  type        = set(string)
+  default = [
+    "user:christian@skytruth.org",
+  ]
+}
+
 variable "dataset_delete_alert_excluded_prefixes" {
   description = "Bucket object prefixes excluded from dataset delete alerts."
   type        = list(string)

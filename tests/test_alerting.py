@@ -3,8 +3,11 @@ from __future__ import annotations
 import subprocess
 import unittest
 import urllib.error
+from pathlib import Path
 
 from scripts import slack_notify
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SlackNotifyTests(unittest.TestCase):
@@ -43,6 +46,24 @@ class SlackNotifyTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout="https://secret\n", stderr="")
 
         self.assertEqual(slack_notify.load_webhook_url(env={}, runner=runner), "https://secret")
+
+    def test_load_webhook_reports_gcloud_stderr(self):
+        def runner(command, **kwargs):
+            raise subprocess.CalledProcessError(1, command, stderr="PERMISSION_DENIED")
+
+        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "PERMISSION_DENIED"):
+            slack_notify.load_webhook_url(env={}, runner=runner)
+
+
+class SlackWebhookTerraformTests(unittest.TestCase):
+    def test_webhook_secret_has_local_summary_accessor_binding(self):
+        monitoring_tf = (REPO_ROOT / "terraform/envs/prod/monitoring.tf").read_text()
+        monitoring_variables_tf = (REPO_ROOT / "terraform/envs/prod/monitoring_variables.tf").read_text()
+
+        self.assertIn('resource "google_secret_manager_secret_iam_member" "slack_webhook_accessors"', monitoring_tf)
+        self.assertIn("roles/secretmanager.secretAccessor", monitoring_tf)
+        self.assertIn("slack_webhook_secret_accessors", monitoring_variables_tf)
+        self.assertIn("user:christian@skytruth.org", monitoring_variables_tf)
 
 
 if __name__ == "__main__":
