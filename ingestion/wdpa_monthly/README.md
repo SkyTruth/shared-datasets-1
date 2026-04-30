@@ -70,6 +70,51 @@ Build from the repo root:
 docker build -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 ```
 
+## Cost Controls and Teardown
+
+Immediate stop:
+
+```bash
+gcloud scheduler jobs pause wdpa-monthly \
+  --location=us-central1 \
+  --project=shared-datasets-1
+```
+
+Pausing the scheduler stops future automatic monthly runs without deleting the
+Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
+
+To remove the scheduled job infrastructure with Terraform, first provide the
+required image variables for the prod environment:
+
+```bash
+export TF_VAR_wdpa_monthly_image="$(gcloud run jobs describe wdpa-monthly \
+  --region=us-central1 \
+  --project=shared-datasets-1 \
+  --format='value(spec.template.spec.template.spec.containers[0].image)')"
+export TF_VAR_sea_ice_daily_image="$(gcloud run jobs describe sea-ice-daily \
+  --region=us-central1 \
+  --project=shared-datasets-1 \
+  --format='value(spec.template.spec.template.spec.containers[0].image)')"
+```
+
+Then destroy only the WDPA cron resources:
+
+```bash
+terraform -chdir=terraform/envs/prod destroy \
+  -target=module.wdpa_monthly_scheduler \
+  -target=google_cloud_run_v2_job_iam_member.scheduler_invoker \
+  -target=module.wdpa_monthly_job \
+  -target=google_storage_bucket_iam_member.wdpa_job_object_user \
+  -target=module.wdpa_scheduler_service_account \
+  -target=module.wdpa_job_service_account
+```
+
+If the teardown should be permanent, remove or comment the WDPA Terraform blocks
+before the next untargeted apply; otherwise Terraform will recreate them. Do not
+delete existing GCS releases, latest files, run records, README files, or catalog
+rows as part of cost teardown unless the team explicitly decides to remove the
+dataset assets.
+
 ## Local Fractional Sandbox
 
 For fast debugging against the real upstream source, download/extract the source
