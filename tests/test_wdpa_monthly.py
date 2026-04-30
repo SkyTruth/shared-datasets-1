@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
@@ -76,12 +77,59 @@ class FakeClient:
 
 
 class WdpaMonthlyTests(unittest.TestCase):
+    def test_default_run_date_uses_month_start(self):
+        self.assertEqual(
+            wdpa.default_run_date(dt.date(2026, 5, 7)),
+            dt.date(2026, 5, 1),
+        )
+
     def test_source_url_uses_month_token(self):
         run_date = dt.date(2026, 4, 29)
         self.assertEqual(
             wdpa.build_source_url("https://example/{month_token}/{run_date}", run_date),
             "https://example/Apr2026/2026-04-29",
         )
+
+    def test_download_missing_monthly_source_is_source_unavailable(self):
+        def unavailable(_request, *, timeout):
+            raise wdpa.urllib.error.HTTPError(
+                "https://example/missing.zip",
+                404,
+                "not found",
+                hdrs=None,
+                fp=None,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(wdpa.urllib.request, "urlopen", unavailable):
+                with self.assertRaisesRegex(
+                    wdpa.SourceNotAvailableError,
+                    "not available yet",
+                ):
+                    wdpa.download_file(
+                        "https://example/missing.zip",
+                        Path(tmp) / "wdpa.zip",
+                    )
+
+    def test_run_skips_when_monthly_source_is_not_available_yet(self):
+        bucket = FakeBucket()
+
+        with (
+            mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
+            mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
+            mock.patch.object(
+                wdpa,
+                "download_file",
+                side_effect=wdpa.SourceNotAvailableError("source not ready"),
+            ),
+        ):
+            records = wdpa.run()
+
+        self.assertEqual(len(records), len(wdpa.ASSETS))
+        self.assertEqual({record["status"] for record in records}, {"skipped"})
+        self.assertEqual({record["reason"] for record in records}, {"source not ready"})
+        self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
 
     def test_prepare_source_datasets_extracts_nested_zips(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -42,8 +42,11 @@ TIPPECANOE_EXTRA_ARGS="--drop-densest-as-needed --extend-zooms-if-still-dropping
 TIPPECANOE_ZOOM_ARGS="-Z0 -z8"
 ```
 
-`RUN_DATE` controls the release date and source month token. The default source
-template supports `{run_date}`, `{year}`, `{month}`, and `{month_token}`.
+`RUN_DATE` controls the release date and source month token. When `RUN_DATE` is
+unset, the job uses the first day of the current UTC month so repeated scheduled
+attempts in the source availability window target one stable release path. The
+default source template supports `{run_date}`, `{year}`, `{month}`, and
+`{month_token}`.
 
 ## Publishing behavior
 
@@ -61,6 +64,13 @@ Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the current observed generation. If a successful run record exists,
 that asset is skipped. If release objects exist without a successful run record,
 the job fails before touching `latest/`.
+
+The upstream Protected Planet ZIP for a new month is not guaranteed to exist on
+the first day of the month. HTTP 403/404 source responses are treated as "not
+available yet"; the job exits successfully with skipped records and writes no
+GCS objects. The production scheduler runs daily on days 1-10 of each month, so
+the first run after the source appears publishes the stable month-start release,
+and later attempts skip because the success run record exists.
 
 ## Container
 

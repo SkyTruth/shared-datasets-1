@@ -16,6 +16,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -43,8 +44,15 @@ DEFAULT_SOURCE_URL_TEMPLATE = (
     "https://d1gam3xoknrgr2.cloudfront.net/current/"
     "WDPA_WDOECM_{month_token}_Public_all_shp.zip"
 )
+REQUEST_TIMEOUT_SECONDS = 120
+SOURCE_NOT_READY_STATUS_CODES = {403, 404}
+USER_AGENT = "shared-datasets-1-wdpa-monthly/1.0"
 ASSET_PARENT = "100-geographic-reference/130-protected-areas"
 RUN_RECORD_VERSION = 1
+
+
+class SourceNotAvailableError(FileNotFoundError):
+    """Raised when the monthly upstream file has not appeared yet."""
 
 
 @dataclass(frozen=True)
@@ -124,9 +132,15 @@ ASSETS: tuple[AssetSpec, ...] = (
 SPLIT_FIELD_PRIORITY = ("MARINE", "REALM")
 
 
+def default_run_date(today: dt.date | None = None) -> dt.date:
+    """Use one stable release date for repeated early-month scheduler attempts."""
+    current_date = today or dt.datetime.now(dt.UTC).date()
+    return current_date.replace(day=1)
+
+
 def parse_run_date(value: str | None) -> dt.date:
     if not value:
-        return dt.datetime.now(dt.UTC).date()
+        return default_run_date()
     return dt.date.fromisoformat(value)
 
 
@@ -175,14 +189,27 @@ def download_file(url: str, dest: Path) -> None:
     LOGGER.info("downloading source: %s", url)
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "shared-datasets-1-wdpa-monthly/1.0"},
+        headers={"User-Agent": USER_AGENT},
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
-        status = getattr(response, "status", response.getcode())
-        if status >= 400:
-            raise RuntimeError(f"Download failed with HTTP {status}: {url}")
-        with dest.open("wb") as file_obj:
-            shutil.copyfileobj(response, file_obj)
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            if status in SOURCE_NOT_READY_STATUS_CODES:
+                raise SourceNotAvailableError(
+                    f"WDPA source not available yet (HTTP {status}): {url}"
+                )
+            if status >= 400:
+                raise RuntimeError(f"Download failed with HTTP {status}: {url}")
+            with dest.open("wb") as file_obj:
+                shutil.copyfileobj(response, file_obj)
+    except urllib.error.HTTPError as exc:
+        if exc.code in SOURCE_NOT_READY_STATUS_CODES:
+            raise SourceNotAvailableError(
+                f"WDPA source not available yet (HTTP {exc.code}): {url}"
+            ) from exc
+        raise RuntimeError(f"Download failed with HTTP {exc.code}: {url}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Download failed: {url}: {exc}") from exc
     if dest.stat().st_size == 0:
         raise RuntimeError(f"Downloaded zero-byte source file: {url}")
 
@@ -783,7 +810,19 @@ def run() -> list[dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="wdpa-monthly-") as tmp:
         workdir = Path(tmp)
         source_zip = workdir / "wdpa.zip"
-        download_file(source_url, source_zip)
+        try:
+            download_file(source_url, source_zip)
+        except SourceNotAvailableError as exc:
+            LOGGER.info("%s", exc)
+            return [
+                {
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "status": "skipped",
+                    "reason": str(exc),
+                }
+                for asset in publish_specs
+            ]
         source_datasets = prepare_source_datasets(source_zip, workdir)
         source = source_datasets[0]
         source_layers, split_field, source_fields = discover_source_layers(source_datasets)

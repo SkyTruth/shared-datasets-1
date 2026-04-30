@@ -64,8 +64,8 @@ module "wdpa_monthly_scheduler" {
   project_id            = var.project_id
   region                = var.region
   name                  = "wdpa-monthly"
-  description           = "Run the simplified monthly WDPA publisher on the first day of each month."
-  schedule              = "0 9 1 * *"
+  description           = "Run the simplified monthly WDPA publisher daily during the early-month source availability window."
+  schedule              = "0 9 1-10 * *"
   time_zone             = "UTC"
   target_job_location   = var.region
   target_job_name       = module.wdpa_monthly_job.name
