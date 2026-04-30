@@ -1,17 +1,4 @@
 locals {
-  scheduled_ingestion_jobs = {
-    sea_ice_daily = {
-      cloud_run_job_name              = module.sea_ice_daily_job.name
-      scheduler_job_name              = "sea-ice-daily"
-      scheduler_service_account_email = module.sea_ice_scheduler_service_account.email
-    }
-    wdpa_monthly = {
-      cloud_run_job_name              = module.wdpa_monthly_job.name
-      scheduler_job_name              = "wdpa-monthly"
-      scheduler_service_account_email = module.wdpa_scheduler_service_account.email
-    }
-  }
-
   cron_alert_created_slack_channel = (
     var.cron_alert_slack_channel_name == null
     ? []
@@ -22,16 +9,6 @@ locals {
     var.cron_alert_notification_channels,
     local.cron_alert_created_slack_channel,
   )
-
-  scheduled_ingestion_cloud_run_failure_filter = join(" OR ", [
-    for job in values(local.scheduled_ingestion_jobs) :
-    "(resource.labels.job_name=\"${job.cloud_run_job_name}\" AND protoPayload.response.metadata.annotations.\"run.googleapis.com/creator\"=\"${job.scheduler_service_account_email}\")"
-  ])
-
-  scheduled_ingestion_scheduler_failure_filter = join(" OR ", [
-    for job in values(local.scheduled_ingestion_jobs) :
-    "resource.labels.job_id=\"${job.scheduler_job_name}\""
-  ])
 
   dataset_delete_excluded_prefix_filter = join(" AND ", [
     for prefix in var.dataset_delete_alert_excluded_prefixes :
@@ -109,7 +86,7 @@ resource "google_monitoring_alert_policy" "scheduled_ingestion_cloud_run_failure
   notification_channels = local.cron_alert_notification_channels
 
   conditions {
-    display_name = "Scheduler-created Cloud Run Job execution failed"
+    display_name = "Cloud Run Job execution failed"
 
     condition_matched_log {
       filter = <<-EOT
@@ -120,7 +97,6 @@ severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
 protoPayload.status.code=10
-(${local.scheduled_ingestion_cloud_run_failure_filter})
 EOT
     }
   }
@@ -129,7 +105,7 @@ EOT
     mime_type = "text/markdown"
     subject   = "Shared datasets cron execution failed"
     content   = <<-EOT
-A scheduler-created shared-datasets Cloud Run Job execution failed.
+A shared-datasets scheduled-ingestion Cloud Run Job execution failed.
 
 Check the failed execution and logs:
 
@@ -138,7 +114,7 @@ gcloud run jobs executions list --job=<job-name> --region=${var.region} --projec
 gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="<job-name>" AND severity>=ERROR' --project=${var.project_id} --limit=20
 ```
 
-This policy filters to executions whose creator is the Cloud Scheduler service account, so manual canary failures are not treated as cron failures.
+This policy covers all Cloud Run Job execution failures in the shared-datasets project and region, including future scheduled-ingestion jobs and manual deploy canaries.
 EOT
   }
 
@@ -180,7 +156,6 @@ resource.type="cloud_scheduler_job"
 resource.labels.project_id="${var.project_id}"
 resource.labels.location="${var.region}"
 severity>=ERROR
-(${local.scheduled_ingestion_scheduler_failure_filter})
 EOT
     }
   }

@@ -298,6 +298,30 @@ class EamlisMonthlyTests(unittest.TestCase):
         release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
         self.assertFalse(release.uploads)
 
+    def test_parse_ogrinfo_summary_from_text_output(self):
+        summary = eamlis.parse_ogrinfo_summary(
+            """
+INFO: Open of `example.fgb'
+      using driver `FlatGeobuf' successful.
+
+Layer name: eamlis_abandoned_mine_land_inventory
+Geometry: Point
+Feature Count: 2
+Extent: (-150.000000, 40.000000) - (-149.000000, 41.000000)
+Layer SRS WKT:
+GEOGCRS["WGS 84"]
+FID Column = fid
+Geometry Column = geometry
+AMLIS_KEY: String (0.0)
+LAT_DEG: Integer (0.0)
+DATE_REVISED: Date (0.0)
+"""
+        )
+
+        self.assertEqual(summary["feature_count"], 2)
+        self.assertEqual(summary["geometry_type"], "Point")
+        self.assertEqual(summary["fields"], ["AMLIS_KEY", "LAT_DEG", "DATE_REVISED"])
+
     @staticmethod
     def _feature(objectid: int, date_revised: int | None) -> dict:
         return {

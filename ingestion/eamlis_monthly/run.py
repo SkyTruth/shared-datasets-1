@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import urllib.error
@@ -394,26 +395,45 @@ def convert_geojson_to_fgb(source: Path, output: Path) -> None:
     )
 
 
-def output_layer_summary(path: Path) -> dict[str, Any]:
-    payload = run_command(["ogrinfo", "-json", "-so", str(path)], capture_json=True)
-    layers = payload.get("layers") or []
-    if not layers:
-        raise RuntimeError(f"No layers found in output: {path}")
-    layer = layers[0]
-    geometry_fields = layer.get("geometryFields") or []
+FIELD_LINE_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"
+    r"(Integer|Integer64|Real|String|Date|DateTime|Time|Binary|JSON|"
+    r"IntegerList|Integer64List|RealList|StringList)\b"
+)
+
+
+def parse_ogrinfo_summary(text: str) -> dict[str, Any]:
+    feature_count: int | None = None
     geometry_type = ""
-    if geometry_fields:
-        geometry_type = str(
-            geometry_fields[0].get("type", geometry_fields[0].get("geometryType", ""))
-            or ""
-        )
-    else:
-        geometry_type = str(layer.get("geometryType") or "")
+    fields: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("Feature Count:"):
+            feature_count = int(line.split(":", 1)[1].strip())
+            continue
+        if line.startswith("Geometry:"):
+            geometry_type = line.split(":", 1)[1].strip()
+            continue
+        field_match = FIELD_LINE_RE.match(raw_line)
+        if field_match:
+            fields.append(field_match.group(1))
+
+    if feature_count is None:
+        raise RuntimeError("Could not parse ogrinfo feature count")
+    if not geometry_type:
+        raise RuntimeError("Could not parse ogrinfo geometry type")
+
     return {
-        "feature_count": int(layer.get("featureCount") or 0),
+        "feature_count": feature_count,
         "geometry_type": geometry_type,
-        "fields": [field.get("name") for field in layer.get("fields", [])],
+        "fields": fields,
     }
+
+
+def output_layer_summary(path: Path) -> dict[str, Any]:
+    text = run_command(["ogrinfo", "-so", "-al", str(path)], capture_text=True)
+    return parse_ogrinfo_summary(text)
 
 
 def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: Path) -> AssetOutput:
