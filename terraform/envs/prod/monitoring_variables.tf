@@ -27,7 +27,7 @@ variable "slack_webhook_secret_accessors" {
   description = "IAM members allowed to read the Slack webhook Secret Manager secret for local operational summaries."
   type        = set(string)
   default = [
-    "user:christian@skytruth.org",
+    "domain:skytruth.org",
   ]
 }
 
