@@ -1,6 +1,6 @@
 ---
 name: deploy-scheduled-ingestion
-description: "Use before deploying or updating shared-datasets Cloud Run and Cloud Scheduler ingestion jobs, including Artifact Registry images, Terraform applies, manual job executions, and post-deploy verification."
+description: "Use before deploying or updating shared-datasets Cloud Run and Cloud Scheduler ingestion jobs, including Artifact Registry images, Terraform applies, manual job executions, alert coverage, and post-deploy verification."
 ---
 
 # Deploy Scheduled Ingestion
@@ -19,6 +19,8 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Size Cloud Run Job CPU, memory, timeout, and local-temp cleanup for the full upstream source, not just test fixtures.
 - Before redeploying after source-schema or format bugs, run a production-source fractional sandbox test locally. The sample must use the same conversion chain as production and must not publish sampled data unless explicitly guarded.
 - Run one manual Cloud Run Job execution after deployment. Wait for short jobs; use async execution for known multi-hour jobs.
+- Verify alert coverage after adding or changing scheduled jobs. Cron failure alerts should cover future jobs by default through project/region-level filters, labels, or another durable grouping; avoid per-job allowlists unless there is a documented reason.
+- Distinguish Cloud Monitoring notification channels from the local Terraform apply-summary webhook. A working Monitoring Slack channel does not prove `shared-datasets-slack-webhook-url` has a Secret Manager version, and vice versa.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
 
 ## Job boundaries
@@ -82,6 +84,37 @@ record, do not overwrite or delete them from the deployment workflow. Use a
 deliberate backfill/canary `RUN_DATE` for the manual async execution, or ask for
 explicit approval to clean up the partial release.
 
+## Alerting
+
+Scheduled ingestion alert policies should be maintained as part of the deployment surface.
+
+Preferred behavior:
+
+- Cloud Run Job execution failure alerts cover all Cloud Run Jobs in the shared-datasets project and region, or all jobs with a stable scheduled-ingestion label.
+- Cloud Scheduler dispatch failure alerts cover all Scheduler jobs in the shared-datasets project and region, or all jobs with a stable scheduled-ingestion label.
+- New cron jobs should not require editing a monitoring allowlist just to receive basic failure alerts.
+- Manual deploy canary failures should alert unless a specific test is intentionally isolated and documented.
+- If alert policies intentionally exclude manual canaries, verify scheduled execution coverage another way before calling the deployment complete.
+
+After changing a job or alert policy, verify the live filters:
+
+```bash
+gcloud monitoring policies describe <cloud-run-failure-policy-name> \
+  --project=shared-datasets-1 \
+  --format='value(conditions[0].conditionMatchedLog.filter)'
+
+gcloud monitoring policies describe <scheduler-failure-policy-name> \
+  --project=shared-datasets-1 \
+  --format='value(conditions[0].conditionMatchedLog.filter)'
+```
+
+If the user expects Slack delivery, verify the relevant path:
+
+- Cloud Monitoring Slack alerts use Monitoring notification channels.
+- Terraform apply summaries use `scripts/slack_notify.py` and the `shared-datasets-slack-webhook-url` Secret Manager secret, unless `SHARED_DATASETS_SLACK_WEBHOOK_URL` is set locally.
+
+A safe controlled alert test is to execute a newly deployed job with an env override that fails before any GCS write, then confirm the matching log and Slack notification. Do not use a failure mode that can write partial releases, overwrite `latest/`, delete objects, or create confusing run records.
+
 ## Standard sequence
 
 1. Load `.claude/skills/gcp-shared-datasets/SKILL.md` if the job writes GCS objects.
@@ -140,6 +173,12 @@ terraform -chdir=terraform/envs/prod plan  -var="wdpa_monthly_image=$IMAGE"
 terraform -chdir=terraform/envs/prod apply -var="wdpa_monthly_image=$IMAGE"
 ```
 
+Prefer the repo wrapper for local production applies:
+
+```bash
+uv run python scripts/terraform_prod_apply.py --var <job_image_variable>="$IMAGE"
+```
+
 7. Execute the job once. For short jobs, wait for completion:
 
 ```bash
@@ -152,7 +191,7 @@ For known multi-hour jobs, start asynchronously and record the execution name:
 gcloud run jobs execute <job-name> --region=us-central1 --project=shared-datasets-1 --async
 ```
 
-8. Verify:
+8. Verify runtime and data-plane effects:
 
 ```bash
 gcloud scheduler jobs describe <job-name> --location=us-central1 --project=shared-datasets-1
@@ -161,6 +200,12 @@ gcloud run jobs executions describe <execution-name> --region=us-central1 --proj
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/latest/
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/runs/
 ```
+
+9. Verify alert coverage for the deployed job and future jobs:
+   - Read the live Cloud Run and Scheduler failure alert filters.
+   - Confirm the new job is covered without depending on a stale allowlist.
+   - If a controlled failure test is safe, run it and verify the matching log and Slack delivery.
+   - Confirm any bad one-off env overrides were not persisted to the job.
 
 ## Completion notes
 
@@ -171,5 +216,7 @@ In the final response or PR, include:
 - Manual execution result, or async execution name and current status.
 - Scheduler schedule and timezone.
 - Remote GCS paths verified.
+- Alert policy coverage verified, including whether filters are future-proof or job-specific.
+- Slack delivery status when relevant, distinguishing Monitoring notification channels from the Terraform apply-summary webhook.
 - Any known skipped, cancelled, failed, or still-running executions.
 - Any partial release paths intentionally left untouched.
