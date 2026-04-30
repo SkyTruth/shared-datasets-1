@@ -22,3 +22,24 @@ variable "cron_alert_slack_auth_token" {
   default     = null
   sensitive   = true
 }
+
+variable "dataset_delete_alert_excluded_prefixes" {
+  description = "Bucket object prefixes excluded from dataset delete alerts."
+  type        = list(string)
+  default = [
+    "_scratch/",
+    "000-system/terraform/state/",
+  ]
+}
+
+variable "dataset_delete_alerts_enabled" {
+  description = "Whether shared dataset object delete alerting should be enabled."
+  type        = bool
+  default     = true
+}
+
+variable "dataset_schema_alerts_enabled" {
+  description = "Whether shared dataset schema change alerting should be enabled."
+  type        = bool
+  default     = true
+}

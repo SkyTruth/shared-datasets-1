@@ -489,7 +489,9 @@ Use these clues to generate an informed proposed README, lowercase kebab-case as
 7. Add `README.md` using the template.
 8. Add or update the catalog row.
 9. Verify remote file paths.
-10. Open a PR with repo docs/catalog/script changes and list remote paths changed.
+10. Run `uv run python scripts/dataset_alerts.py upload-summary` with the asset slug and changed remote paths.
+11. For canonical vector/table assets, run `uv run python scripts/dataset_alerts.py check-schema` against the successfully published local canonical file.
+12. Open a PR with repo docs/catalog/script changes and list remote paths changed.
 
 Minimal PR checklist:
 
@@ -517,7 +519,9 @@ Minimal PR checklist:
 6. Replace `latest/` files using generation preconditions.
 7. Update `README.md` last-updated/update-notes fields.
 8. Update catalog if catalog fields changed.
-9. Document changed remote paths in the PR.
+9. Run `uv run python scripts/dataset_alerts.py upload-summary` for meaningful manual updates.
+10. For canonical vector/table assets, run `uv run python scripts/dataset_alerts.py check-schema` against the successfully published local canonical file.
+11. Document changed remote paths in the PR.
 
 ## 14. Cron-updated dataset workflow
 
@@ -598,6 +602,16 @@ Use Terraform for:
 - Secret Manager references.
 - Monitoring/alerting resources.
 - Enabling GCP APIs.
+
+For local production applies, prefer:
+
+```bash
+uv run python scripts/terraform_prod_apply.py
+```
+
+The wrapper creates a saved plan, applies that plan, preserves Terraform exit
+codes, and posts Slack success/failure summaries. Direct Terraform is still
+allowed for exceptional cases, but it will not send deployment summaries.
 
 Do not use Terraform for:
 

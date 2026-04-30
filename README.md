@@ -187,6 +187,53 @@ Alternatively, Terraform can create a Slack channel when both
 provided, but using an existing Google Cloud Slack notification channel is
 preferred because it avoids putting Slack OAuth material in Terraform inputs.
 
+### Send lightweight dataset notifications
+
+Use the dataset alert helper after a manual dataset upload or meaningful update:
+
+```bash
+uv run python scripts/dataset_alerts.py upload-summary \
+  --asset-slug gfw-fixed-infrastructure \
+  --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
+  --release-path gs://skytruth-shared-datasets-1/path/to/releases/YYYY-MM-DD/ \
+  --row-count 123
+```
+
+For canonical vector/table assets, compare fields against the last stored schema
+snapshot after a successful publish:
+
+```bash
+uv run python scripts/dataset_alerts.py check-schema \
+  --asset-slug gfw-fixed-infrastructure \
+  --dataset-path ./gfw-fixed-infrastructure.fgb
+```
+
+Schema snapshots are stored under
+`gs://skytruth-shared-datasets-1/_catalog/schema-snapshots/`. Any field delta is
+written as a structured Cloud Logging warning so the Cloud Monitoring schema
+alert can notify Slack, then the snapshot is updated.
+
+FYI Slack summaries use the Secret Manager secret
+`shared-datasets-slack-webhook-url` by default. To set or rotate the webhook:
+
+```bash
+gcloud secrets versions add shared-datasets-slack-webhook-url \
+  --project=shared-datasets-1 \
+  --data-file=/path/to/webhook-url.txt
+```
+
+### Apply production Terraform
+
+Prefer the wrapper so successful and failed local applies send Slack summaries:
+
+```bash
+uv run python scripts/terraform_prod_apply.py
+```
+
+The wrapper reads the current Cloud Run job images when image variables are not
+provided, creates a saved plan, applies that plan, and reports the result to
+Slack. Direct Terraform still works but will not send deployment summaries.
+
 ## Standard local setup
 
 ```bash

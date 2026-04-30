@@ -32,6 +32,11 @@ locals {
     for job in values(local.scheduled_ingestion_jobs) :
     "resource.labels.job_id=\"${job.scheduler_job_name}\""
   ])
+
+  dataset_delete_excluded_prefix_filter = join(" AND ", [
+    for prefix in var.dataset_delete_alert_excluded_prefixes :
+    "NOT protoPayload.resourceName=~\"/objects/${replace(prefix, "/", "\\/")}\""
+  ])
 }
 
 resource "google_monitoring_notification_channel" "cron_alert_slack" {
@@ -59,9 +64,29 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
   lifecycle {
     precondition {
-      condition     = !var.cron_alerts_enabled || length(local.cron_alert_notification_channels) > 0
-      error_message = "Cron alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
+      condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_schema_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
+      error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
     }
+  }
+}
+
+resource "google_secret_manager_secret" "slack_webhook_url" {
+  project   = var.project_id
+  secret_id = "shared-datasets-slack-webhook-url"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_project_iam_audit_config" "storage_data_write" {
+  project = var.project_id
+  service = "storage.googleapis.com"
+
+  audit_log_config {
+    log_type = "DATA_WRITE"
   }
 }
 
@@ -177,6 +202,146 @@ EOT
 
   user_labels = {
     component = "scheduled-ingestion"
+    service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "dataset_object_deleted" {
+  project      = var.project_id
+  display_name = "Shared dataset object deleted"
+  combiner     = "OR"
+  enabled      = var.dataset_delete_alerts_enabled
+  severity     = "ERROR"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "GCS object deleted outside excluded operational prefixes"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="gcs_bucket"
+resource.labels.bucket_name="${var.bucket_name}"
+protoPayload.serviceName="storage.googleapis.com"
+protoPayload.methodName="storage.objects.delete"
+${local.dataset_delete_excluded_prefix_filter}
+EOT
+
+      label_extractors = {
+        object_resource = "EXTRACT(protoPayload.resourceName)"
+        principal_email = "EXTRACT(protoPayload.authenticationInfo.principalEmail)"
+      }
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Shared dataset object deleted"
+    content   = <<-EOT
+A shared dataset object was deleted from `${var.bucket_name}` outside the excluded operational prefixes.
+
+Object resource: $${log.extracted_label.object_resource}
+Principal: $${log.extracted_label.principal_email}
+
+Review the matching audit log entry:
+
+```bash
+gcloud logging read 'resource.type="gcs_bucket" AND resource.labels.bucket_name="${var.bucket_name}" AND protoPayload.methodName="storage.objects.delete"' --project=${var.project_id} --limit=20
+```
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  user_labels = {
+    component = "dataset-objects"
+    service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_project_iam_audit_config.storage_data_write,
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "dataset_schema_changed" {
+  project      = var.project_id
+  display_name = "Shared dataset schema changed"
+  combiner     = "OR"
+  enabled      = var.dataset_schema_alerts_enabled
+  severity     = "WARNING"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "Manual publish detected a canonical field/schema delta"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="global"
+logName="projects/${var.project_id}/logs/shared-datasets-alerts"
+severity>=WARNING
+jsonPayload.alert_type="dataset_schema_changed"
+EOT
+
+      label_extractors = {
+        asset_slug = "EXTRACT(jsonPayload.asset_slug)"
+        changes    = "EXTRACT(jsonPayload.changes_text)"
+        new_fields = "EXTRACT(jsonPayload.new_fields_text)"
+        old_fields = "EXTRACT(jsonPayload.old_fields_text)"
+      }
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Shared dataset schema changed"
+    content   = <<-EOT
+A canonical shared dataset schema changed.
+
+Asset: $${log.extracted_label.asset_slug}
+
+Changes:
+$${log.extracted_label.changes}
+
+Old fields:
+$${log.extracted_label.old_fields}
+
+New fields:
+$${log.extracted_label.new_fields}
+
+Review the matching structured log entry:
+
+```bash
+gcloud logging read 'logName="projects/${var.project_id}/logs/shared-datasets-alerts" AND jsonPayload.alert_type="dataset_schema_changed"' --project=${var.project_id} --limit=20
+```
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  user_labels = {
+    component = "dataset-schema"
     service   = "shared-datasets"
   }
 
