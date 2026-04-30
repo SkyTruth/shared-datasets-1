@@ -104,6 +104,25 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(blob.content_type, "application/octet-stream")
         self.assertEqual(info["generation"], blob.generation)
 
+    def test_cog_release_upload_uses_cog_content_type(self):
+        bucket = FakeBucket()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        with tempfile.NamedTemporaryFile(suffix=".tif") as tmp:
+            tmp.write(b"data")
+            tmp.flush()
+            publisher.upload_new_object(
+                local_path=Path(tmp.name),
+                object_name="asset/releases/2026-04-29/asset.tif",
+                metadata={"asset_slug": "asset"},
+            )
+
+        blob = bucket.blob("asset/releases/2026-04-29/asset.tif")
+        self.assertEqual(blob.uploads[0][1], 0)
+        self.assertEqual(
+            blob.content_type,
+            "image/tiff; application=geotiff; profile=cloud-optimized",
+        )
+
     def test_latest_replace_uses_observed_generation(self):
         bucket = FakeBucket()
         blob = bucket.blob("asset/latest/asset.pmtiles")
@@ -122,6 +141,25 @@ class GcsPublisherTests(unittest.TestCase):
 
         self.assertEqual(blob.uploads[0][1], 7)
         self.assertEqual(blob.content_type, "application/vnd.pmtiles")
+
+    def test_latest_manifest_replace_uses_observed_generation(self):
+        bucket = FakeBucket()
+        blob = bucket.blob("asset/latest/manifest.json")
+        blob.exists = True
+        blob.generation = 9
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+
+        with tempfile.NamedTemporaryFile(suffix=".json") as tmp:
+            tmp.write(b'{"release_path":"gs://bucket/asset/releases/2026-04-29/asset.zarr/"}')
+            tmp.flush()
+            publisher.replace_latest_object(
+                local_path=Path(tmp.name),
+                object_name=blob.name,
+                metadata={"asset_slug": "asset"},
+            )
+
+        self.assertEqual(blob.uploads[0][1], 9)
+        self.assertEqual(blob.content_type, "application/json")
 
     def test_successful_existing_run_record_is_idempotent(self):
         bucket = FakeBucket()

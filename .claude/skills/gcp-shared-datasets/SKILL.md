@@ -146,12 +146,18 @@ After editing, ensure the repo-side catalog is updated if owner/source/license/c
 1. Pick category/subcategory using `AGENTS.md`.
 2. Pick an asset slug in lowercase kebab-case.
 3. Create local asset files using approved formats.
-4. Create `README.md` from `templates/dataset_README.template.md` or the minimal template, including a properties/columns table where field names and meanings can be derived.
+4. Create `README.md` from `templates/dataset_README.template.md` or the minimal template, including a properties/columns table where field names and meanings can be derived. For COG or Zarr assets, include the raster metadata table.
 5. Upload to `latest/` with no-clobber behavior.
 6. If versioned, upload to `releases/YYYY-MM-DD/` with no-clobber behavior.
 7. Update `catalog/shared-datasets-catalog.csv`.
 8. Verify remote paths.
 9. In the PR/final response, list all remote paths changed.
+
+Raster notes:
+
+- COG is the default canonical raster format. Upload as `.tif` with content type `image/tiff; application=geotiff; profile=cloud-optimized`.
+- Zarr is for multidimensional/chunked arrays. Upload immutable chunks under `releases/YYYY-MM-DD/{asset-slug}.zarr/`, then update only `latest/manifest.json`.
+- PNG, JPEG, and WebP are previews only under `previews/`; raw NetCDF, GRIB, HDF, or non-COG GeoTIFF files belong only under documented source/archive exceptions.
 
 Example:
 

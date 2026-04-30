@@ -1,0 +1,86 @@
+---
+asset_slug: "gfw-anchorages"
+title: "Global Fishing Watch Anchorages"
+category: "600-maritime-ocean"
+subcategory: "640-ocean-activity"
+status: "active"
+owner: "SkyTruth"
+update_cadence: "manual"
+canonical_format: "fgb"
+last_updated: "2026-02-02"
+source: "Global Fishing Watch Anchorages Version 2"
+license: "Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use"
+---
+
+# Global Fishing Watch Anchorages
+
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-02-02
+- **Update cadence:** manual
+- **Canonical file:** `latest/gfw-anchorages.fgb`
+- **Source:** [Global Fishing Watch Anchorages, Ports and Voyages Data](https://globalfishingwatch.org/datasets-and-code-anchorages/)
+- **License / terms:** Copyright Global Fishing Watch. Non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use.
+
+## What this is
+
+This asset contains the Global Fishing Watch Anchorages dataset, a global point database of anchorage locations where AIS-broadcasting vessels congregate. Global Fishing Watch identifies anchorages using S2 level 14 cells and stationary vessel behavior, then assigns labels and groups nearby anchorages into broader ports where applicable.
+
+The source CSV contains 166,497 rows. This shared asset publishes 166,496 valid point features after omitting one source row with an invalid longitude value.
+
+## When to use it
+
+- Use this as a reusable global reference layer for anchorage locations and broader port labels.
+- Use `label` for the broader port grouping and `sublabel` for more detailed anchorage labels where available.
+- Do not use this as a legal port boundary dataset, berth-level authority, port visit event table, or voyage table.
+- Do not use this for commercial purposes unless allowed by Global Fishing Watch terms.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `latest/gfw-anchorages.fgb` | Canonical point dataset in WGS84 |
+| `latest/gfw-anchorages.pmtiles` | Web map tiles generated from the same point dataset |
+| `releases/2026-02-02/gfw-anchorages.fgb` | Dated canonical release |
+| `releases/2026-02-02/gfw-anchorages.pmtiles` | Dated map-tile release |
+
+## Schema notes
+
+Geometry is generated from the source `lon` and `lat` fields as WGS84 point geometry. Source columns are preserved as attributes. `distance_from_shore_m` and `drift_radius` are numeric where provided; `dock` is preserved as the source `true`, `false`, or empty string value.
+
+One source row is omitted from the geospatial outputs because its longitude is outside valid EPSG:4326 bounds: `s2id=8efe7543`, `lat=11.84060637`, `lon=1001`, `label=POINTE NOIRE`.
+
+The PMTiles artifact is generated with Tippecanoe from the same filtered point features, with zooms 0 through 8. Lower zooms are generalized for display and should not be used as the analytical source.
+
+## Properties / columns
+
+| Name | Type | Description |
+|---|---|---|
+| `s2id` | string | Unique anchorage identifier from the source S2 cell. |
+| `lat` | real | Source latitude in decimal degrees. |
+| `lon` | real | Source longitude in decimal degrees. |
+| `label` | string | Broader port label. |
+| `sublabel` | string | Detailed anchorage label where available. |
+| `label_source` | string | Source of the anchorage label, such as AIS top destination, manual anchorage overrides, World Port Index, GeoNames, or regional datasets. |
+| `iso3` | string | ISO3 code of the EEZ containing the anchorage. |
+| `distance_from_shore_m` | real | Source-provided distance from shore in meters where available. |
+| `drift_radius` | real | Source-provided average drift radius where available. |
+| `dock` | string | Source-provided dock flag: `true`, `false`, or empty. |
+
+## Update notes
+
+Manually converted from `named_anchorages_v2_pipe_v3_202601.csv` on 2026-04-30 using GDAL, Tippecanoe, and PMTiles tooling. Source release date is tracked as 2026-02-02 based on the Global Fishing Watch Data Download Portal last update date.
+
+Output summary:
+
+- Source rows: 166,497
+- Published point features: 166,496
+- Omitted invalid coordinate rows: 1
+- FGB SHA-256: `9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351`
+- PMTiles SHA-256: `8e9eacf2e668faba941fda6fba50501538a6aee32842a6a2a58d793cc04b57cf`
+
+## Known caveats
+
+Global Fishing Watch updates the source dataset periodically with new anchorage locations, updated names, and AIS data pipeline changes. This asset is a manual shared-datasets snapshot, not a scheduled ingestion job.
+
+The dataset represents anchorage locations inferred or curated by Global Fishing Watch. It should not be treated as authoritative legal infrastructure boundaries or complete port operations metadata.

@@ -13,15 +13,29 @@ import csv
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 from google.cloud import storage
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv"}
+from scripts.raster_asset import (
+    COG_EXTENSIONS,
+    PREVIEW_EXTENSIONS,
+    RASTER_CANONICAL_FORMATS,
+    RASTER_SIDECAR_SUFFIXES,
+    RASTER_SOURCE_EXTENSIONS,
+    validate_zarr_manifest_payload,
+)
+
+APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
+APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated"}
 SYSTEM_TOP_LEVEL = {"000-system"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -42,6 +56,9 @@ README_REQUIRED_SNIPPETS = {
     "schema_notes": "## Schema notes",
     "properties_columns": "## Properties / columns",
     "update_notes": "## Update notes",
+}
+RASTER_README_REQUIRED_SNIPPETS = {
+    "raster_metadata": "## Raster metadata",
 }
 
 
@@ -73,12 +90,37 @@ def parse_args() -> argparse.Namespace:
         help="GCS bucket name, without gs://.",
     )
     parser.add_argument("--prefix", default="", help="Optional GCS object prefix to audit.")
-    parser.add_argument("--catalog", default="catalog/shared-datasets-catalog.csv", help="Local catalog CSV path.")
-    parser.add_argument("--categories", default="catalog/categories.yaml", help="Local categories YAML path.")
-    parser.add_argument("--format", choices=("markdown", "json"), default="markdown", help="Output format.")
-    parser.add_argument("--skip-readme-content", action="store_true", help="Do not download README.md text for checks.")
-    parser.add_argument("--skip-remote-catalog-check", action="store_true", help="Do not compare bucket _catalog CSV with local catalog.")
-    parser.add_argument("--fail-on-findings", action="store_true", help="Exit 1 if WARN or ERROR findings exist.")
+    parser.add_argument(
+        "--catalog",
+        default="catalog/shared-datasets-catalog.csv",
+        help="Local catalog CSV path.",
+    )
+    parser.add_argument(
+        "--categories",
+        default="catalog/categories.yaml",
+        help="Local categories YAML path.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("markdown", "json"),
+        default="markdown",
+        help="Output format.",
+    )
+    parser.add_argument(
+        "--skip-readme-content",
+        action="store_true",
+        help="Do not download README.md text for checks.",
+    )
+    parser.add_argument(
+        "--skip-remote-catalog-check",
+        action="store_true",
+        help="Do not compare bucket _catalog CSV with local catalog.",
+    )
+    parser.add_argument(
+        "--fail-on-findings",
+        action="store_true",
+        help="Exit 1 if WARN or ERROR findings exist.",
+    )
     return parser.parse_args()
 
 
@@ -112,6 +154,12 @@ def list_blobs(bucket_name: str, prefix: str) -> List[BlobInfo]:
 
 
 def download_readme_text(bucket_name: str, blob_name: str, generation: str) -> str:
+    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+    blob = client.bucket(bucket_name).blob(blob_name, generation=int(generation) if generation else None)
+    return blob.download_as_text()
+
+
+def download_object_text(bucket_name: str, blob_name: str, generation: str) -> str:
     client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
     blob = client.bucket(bucket_name).blob(blob_name, generation=int(generation) if generation else None)
     return blob.download_as_text()
@@ -197,19 +245,154 @@ def is_taxonomy_placeholder_or_doc(name: str, categories: Dict[str, set[str]]) -
     return False
 
 
-def validate_object_layout(root: str, blob: BlobInfo) -> List[Finding]:
+def is_zarr_internal_path(parts: Sequence[str]) -> bool:
+    return any(part.endswith(".zarr") for part in parts)
+
+
+def has_raster_sidecar_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(RASTER_SIDECAR_SUFFIXES)
+
+
+def row_format(row: Optional[Dict[str, str]]) -> str:
+    return (row or {}).get("canonical_format", "").strip().lower()
+
+
+def object_is_raster_like(blob_name: str, row: Optional[Dict[str, str]]) -> bool:
+    lowered = blob_name.lower()
+    return (
+        row_format(row) in RASTER_CANONICAL_FORMATS
+        or Path(blob_name).suffix.lower() in COG_EXTENSIONS
+        or ".zarr/" in lowered
+        or lowered.endswith(".zarr")
+    )
+
+
+def validate_data_extension(
+    *,
+    root: str,
+    blob: BlobInfo,
+    row: Optional[Dict[str, str]],
+    context: str,
+) -> List[Finding]:
+    findings: List[Finding] = []
+    hint = uploader_hint(blob)
+    ext = Path(blob.name).suffix.lower()
+    fmt = row_format(row)
+
+    if has_raster_sidecar_name(blob.name):
+        findings.append(
+            Finding(
+                "ERROR",
+                blob.name,
+                "raster-sidecar",
+                "Raster sidecar files are not allowed in canonical latest/release outputs; "
+                "raster assets must be self-contained.",
+                hint,
+                "Publish a self-contained COG or documented Zarr release instead of sidecar-dependent raster files.",
+            )
+        )
+        return findings
+
+    if ext in PREVIEW_EXTENSIONS:
+        findings.append(
+            Finding(
+                "ERROR",
+                blob.name,
+                "preview-location",
+                "PNG/JPEG/WebP files are only allowed under `previews/` or inside PMTiles.",
+                hint,
+                "Move or republish previews only after confirming owner intent.",
+            )
+        )
+        return findings
+
+    if ext not in APPROVED_DATA_EXTENSIONS:
+        findings.append(
+            Finding(
+                "ERROR",
+                blob.name,
+                "approved-format",
+                f"{context} data file extension {ext or '<none>'} is not approved by default.",
+                hint,
+                "Ask the uploader/owner whether the file should be converted or documented as an exception.",
+            )
+        )
+        return findings
+
+    if ext in COG_EXTENSIONS and fmt != "cog":
+        findings.append(
+            Finding(
+                "ERROR",
+                blob.name,
+                "raw-raster-canonical",
+                "GeoTIFF files under latest/releases must be cataloged as canonical_format "
+                "`cog` and validated as Cloud Optimized GeoTIFFs.",
+                hint,
+                "Convert raw GeoTIFFs to COG or document why this raster is only a source/archive exception.",
+            )
+        )
+
+    return findings
+
+
+def validate_object_layout(root: str, blob: BlobInfo, row: Optional[Dict[str, str]] = None) -> List[Finding]:
     findings: List[Finding] = []
     rel = blob.name[len(root) :].lstrip("/")
     parts = rel.split("/") if rel else []
     hint = uploader_hint(blob)
+    fmt = row_format(row)
 
     if rel == "README.md":
         return findings
-    if len(parts) >= 2 and parts[0] == "latest":
-        if len(parts) != 2:
+    if len(parts) >= 2 and parts[0] == "previews":
+        ext = Path(parts[-1]).suffix.lower()
+        if ext not in PREVIEW_EXTENSIONS:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    blob.name,
+                    "preview-format",
+                    f"`previews/` file extension {ext or '<none>'} is not an approved preview image format.",
+                    hint,
+                    "Use PNG, JPEG, or WebP for previews, or publish analytical data in latest/releases.",
+                )
+            )
+        return findings
+    if len(parts) >= 2 and parts[0] in {"source", "sources", "archive"}:
+        ext = Path(parts[-1]).suffix.lower()
+        if ext not in RASTER_SOURCE_EXTENSIONS and ext not in APPROVED_DATA_EXTENSIONS:
             findings.append(
                 Finding(
                     "WARN",
+                    blob.name,
+                    "source-archive-format",
+                    f"`{parts[0]}/` file extension {ext or '<none>'} is not a "
+                    "documented source/archive exception format.",
+                    hint,
+                    "Confirm this source/archive object is intentional and documented in the README.",
+                )
+            )
+        return findings
+    if len(parts) >= 2 and parts[0] == "latest":
+        if parts == ["latest", "manifest.json"]:
+            return findings
+        if is_zarr_internal_path(parts):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    blob.name,
+                    "zarr-latest-layout",
+                    "Zarr objects must not be mirrored under `latest/`; update only `latest/manifest.json`.",
+                    hint,
+                    "Republish Zarr data under immutable releases/YYYY-MM-DD/ and point latest/manifest.json at it.",
+                )
+            )
+            return findings
+        if len(parts) != 2:
+            findings.append(
+                Finding(
+                    "ERROR" if fmt == "zarr" else "WARN",
                     blob.name,
                     "latest-layout",
                     "`latest/` should usually contain files directly, not nested paths.",
@@ -217,18 +400,7 @@ def validate_object_layout(root: str, blob: BlobInfo) -> List[Finding]:
                     "Confirm this nesting is intentional before changing it.",
                 )
             )
-        ext = Path(parts[-1]).suffix.lower()
-        if ext not in APPROVED_DATA_EXTENSIONS:
-            findings.append(
-                Finding(
-                    "ERROR",
-                    blob.name,
-                    "approved-format",
-                    f"Data file extension {ext or '<none>'} is not approved by default.",
-                    hint,
-                    "Ask the uploader/owner whether the file should be converted or documented as an exception.",
-                )
-            )
+        findings.extend(validate_data_extension(root=root, blob=blob, row=row, context="Latest"))
         return findings
     if len(parts) >= 3 and parts[0] == "releases":
         if not DATE_RE.match(parts[1]):
@@ -242,18 +414,20 @@ def validate_object_layout(root: str, blob: BlobInfo) -> List[Finding]:
                     "Discuss with the uploader before moving release objects.",
                 )
             )
-        ext = Path(parts[-1]).suffix.lower()
-        if ext not in APPROVED_DATA_EXTENSIONS:
-            findings.append(
-                Finding(
-                    "ERROR",
-                    blob.name,
-                    "approved-format",
-                    f"Release data file extension {ext or '<none>'} is not approved by default.",
-                    hint,
-                    "Ask the uploader/owner whether the file should be converted or documented as an exception.",
+        if is_zarr_internal_path(parts):
+            if fmt != "zarr":
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        blob.name,
+                        "zarr-catalog-format",
+                        "Objects inside a `.zarr/` release require catalog canonical_format `zarr`.",
+                        hint,
+                        "Update the catalog only after confirming the asset is intended to be canonical Zarr.",
+                    )
                 )
-            )
+            return findings
+        findings.extend(validate_data_extension(root=root, blob=blob, row=row, context="Release"))
         return findings
     if len(parts) == 2 and parts[0] == "runs":
         if not RUN_RECORD_RE.match(parts[1]):
@@ -282,7 +456,13 @@ def validate_object_layout(root: str, blob: BlobInfo) -> List[Finding]:
     return findings
 
 
-def validate_readme(root: str, readme_blob: Optional[BlobInfo], text: Optional[str]) -> List[Finding]:
+def validate_readme(
+    root: str,
+    readme_blob: Optional[BlobInfo],
+    text: Optional[str],
+    *,
+    requires_raster_metadata: bool = False,
+) -> List[Finding]:
     if not readme_blob:
         return [
             Finding(
@@ -319,6 +499,20 @@ def validate_readme(root: str, readme_blob: Optional[BlobInfo], text: Optional[s
                     "Offer to update README content after confirming source details.",
                 )
             )
+    if requires_raster_metadata:
+        for key, snippet in RASTER_README_REQUIRED_SNIPPETS.items():
+            if snippet not in text:
+                findings.append(
+                    Finding(
+                        "WARN",
+                        readme_blob.name,
+                        f"readme-{key}",
+                        f"Raster asset README is missing required marker `{snippet}`.",
+                        uploader_hint(readme_blob),
+                        "Add a raster metadata table covering CRS, resolution, dimensions, "
+                        "bands, dtype, nodata, units, and sampling.",
+                    )
+                )
     if "## Properties / columns" in text and "| Name | Type | Description |" not in text:
         findings.append(
             Finding(
@@ -330,6 +524,135 @@ def validate_readme(root: str, readme_blob: Optional[BlobInfo], text: Optional[s
                 "Offer to normalize the properties table.",
             )
         )
+    if "## Raster metadata" in text and "| Field | Value |" not in text:
+        findings.append(
+            Finding(
+                "WARN",
+                readme_blob.name,
+                "readme-raster-metadata-table",
+                "README has a raster metadata section but not the standard table header.",
+                uploader_hint(readme_blob),
+                "Offer to normalize the raster metadata table.",
+            )
+        )
+    return findings
+
+
+def validate_zarr_latest_manifest(
+    *,
+    bucket: str,
+    root: str,
+    row: Optional[Dict[str, str]],
+    root_blobs: Sequence[BlobInfo],
+    object_names: set[str],
+    skip_text_content: bool,
+) -> List[Finding]:
+    if row_format(row) != "zarr":
+        return []
+
+    findings: List[Finding] = []
+    slug = root.split("/")[2]
+    manifest_name = f"{root}/latest/manifest.json"
+    manifest_blob = next((blob for blob in root_blobs if blob.name == manifest_name), None)
+    hint = uploader_hint(manifest_blob or (root_blobs[0] if root_blobs else None))
+    latest_blobs = [blob for blob in root_blobs if blob.name.startswith(f"{root}/latest/")]
+
+    if not manifest_blob:
+        findings.append(
+            Finding(
+                "ERROR",
+                root,
+                "zarr-latest-manifest",
+                "Zarr assets must expose `latest/manifest.json` as the only mutable latest pointer.",
+                hint,
+                "Add a manifest that points at an immutable releases/YYYY-MM-DD/{asset-slug}.zarr/ prefix.",
+            )
+        )
+        return findings
+
+    extra_latest = [blob.name for blob in latest_blobs if blob.name != manifest_name]
+    if extra_latest:
+        findings.append(
+            Finding(
+                "ERROR",
+                root,
+                "zarr-latest-only-manifest",
+                "`latest/` for Zarr assets must contain only manifest.json.",
+                hint,
+                "Move Zarr data objects to immutable releases/YYYY-MM-DD/ prefixes after owner confirmation.",
+            )
+        )
+
+    if skip_text_content:
+        findings.append(
+            Finding(
+                "INFO",
+                manifest_name,
+                "zarr-manifest-content-skipped",
+                "Zarr latest manifest content checks were skipped.",
+                hint,
+                "Run without --skip-readme-content for full Zarr manifest validation.",
+            )
+        )
+        return findings
+
+    try:
+        text = download_object_text(bucket, manifest_blob.name, manifest_blob.generation)
+        payload = json.loads(text)
+    except (json.JSONDecodeError, OSError) as exc:
+        findings.append(
+            Finding(
+                "ERROR",
+                manifest_name,
+                "zarr-manifest-json",
+                f"Zarr latest manifest is not valid JSON: {exc}.",
+                hint,
+                "Replace the manifest using the current generation precondition after "
+                "confirming the intended release path.",
+            )
+        )
+        return findings
+
+    if not isinstance(payload, dict):
+        findings.append(
+            Finding(
+                "ERROR",
+                manifest_name,
+                "zarr-manifest-json",
+                "Zarr latest manifest must be a JSON object.",
+                hint,
+                "Replace the manifest with the standard pointer object.",
+            )
+        )
+        return findings
+
+    for message in validate_zarr_manifest_payload(payload, bucket=bucket, asset_root=root, asset_slug=slug):
+        findings.append(
+            Finding(
+                "ERROR",
+                manifest_name,
+                "zarr-manifest-pointer",
+                message,
+                hint,
+                "Correct the manifest pointer after confirming the intended immutable release.",
+            )
+        )
+
+    release_path = str(payload.get("release_path") or payload.get("zarr_path") or "")
+    expected_prefix = f"gs://{bucket}/"
+    if release_path.startswith(expected_prefix):
+        release_name_prefix = release_path[len(expected_prefix) :].rstrip("/") + "/"
+        if not any(name.startswith(release_name_prefix) for name in object_names):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    manifest_name,
+                    "zarr-manifest-target-exists",
+                    f"Manifest release_path has no matching discovered objects: {release_path}.",
+                    hint,
+                    "Confirm whether the release prefix exists or the manifest points at the wrong path.",
+                )
+            )
     return findings
 
 
@@ -362,7 +685,13 @@ def validate_catalog(
             continue
         if row.get("category") != category:
             findings.append(
-                Finding("ERROR", root, "catalog-category", f"Catalog category is {row.get('category')!r}, expected {category!r}.", hint)
+                Finding(
+                    "ERROR",
+                    root,
+                    "catalog-category",
+                    f"Catalog category is {row.get('category')!r}, expected {category!r}.",
+                    hint,
+                )
             )
         if row.get("subcategory") != subcategory:
             findings.append(
@@ -401,15 +730,71 @@ def validate_catalog(
                     )
                 )
         fmt = row.get("canonical_format", "")
-        if fmt and f".{fmt.lower()}" not in APPROVED_DATA_EXTENSIONS:
+        if fmt and fmt.lower() not in APPROVED_CANONICAL_FORMATS:
             findings.append(
-                Finding("ERROR", root, "catalog-format", f"Catalog canonical_format {fmt!r} is not approved by default.", hint)
+                Finding(
+                    "ERROR",
+                    root,
+                    "catalog-format",
+                    f"Catalog canonical_format {fmt!r} is not approved by default.",
+                    hint,
+                )
+            )
+        if fmt.lower() == "cog" and not canonical_path.lower().endswith((".tif", ".tiff")):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    root,
+                    "catalog-cog-path",
+                    "Catalog canonical_format `cog` requires a .tif/.tiff canonical_path.",
+                    hint,
+                    "Point canonical_path at latest/{asset-slug}.tif after confirming the COG object exists.",
+                )
+            )
+        if fmt.lower() == "zarr" and not canonical_path.endswith("/latest/manifest.json"):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    root,
+                    "catalog-zarr-path",
+                    "Catalog canonical_format `zarr` requires canonical_path to point at latest/manifest.json.",
+                    hint,
+                    "Use latest/manifest.json as the mutable pointer to the immutable Zarr release.",
+                )
+            )
+        available_formats = row.get("available_formats")
+        if available_formats is None:
+            findings.append(
+                Finding(
+                    "WARN",
+                    root,
+                    "catalog-available-formats-column",
+                    "Catalog is missing the available_formats column.",
+                    hint,
+                    "Add available_formats to the catalog schema.",
+                )
+            )
+        metadata_paths = row.get("metadata_paths")
+        if metadata_paths is None:
+            findings.append(
+                Finding(
+                    "WARN",
+                    root,
+                    "catalog-metadata-paths-column",
+                    "Catalog is missing the metadata_paths column.",
+                    hint,
+                    "Add metadata_paths to the catalog schema.",
+                )
             )
 
     for row in catalog_rows:
         slug = row.get("asset_slug", "")
         canonical_path = row.get("canonical_path", "")
-        if prefix and canonical_path.startswith(f"gs://{bucket}/") and not canonical_path[len(f"gs://{bucket}/") :].startswith(prefix):
+        if (
+            prefix
+            and canonical_path.startswith(f"gs://{bucket}/")
+            and not canonical_path[len(f"gs://{bucket}/") :].startswith(prefix)
+        ):
             continue
         if slug and slug not in discovered_slugs:
             findings.append(
@@ -457,6 +842,7 @@ def validate_asset_roots(
 
     for root, root_blobs in sorted(roots.items()):
         category, subcategory, slug = root.split("/")
+        row = catalog_by_slug.get(slug)
         if not SLUG_RE.match(slug):
             findings.append(
                 Finding(
@@ -482,12 +868,33 @@ def validate_asset_roots(
                 )
             )
         for blob in root_blobs:
-            findings.extend(validate_object_layout(root, blob))
+            findings.extend(validate_object_layout(root, blob, row))
 
         readme_text = None
         if readme_blob and not skip_readme_content:
             readme_text = download_readme_text(bucket, readme_blob.name, readme_blob.generation)
-        findings.extend(validate_readme(root, readme_blob, readme_text))
+        requires_raster_metadata = object_is_raster_like(
+            row.get("canonical_path", "") if row else "",
+            row,
+        ) or any(object_is_raster_like(blob.name, row) for blob in root_blobs)
+        findings.extend(
+            validate_readme(
+                root,
+                readme_blob,
+                readme_text,
+                requires_raster_metadata=requires_raster_metadata,
+            )
+        )
+        findings.extend(
+            validate_zarr_latest_manifest(
+                bucket=bucket,
+                root=root,
+                row=row,
+                root_blobs=root_blobs,
+                object_names=object_names,
+                skip_text_content=skip_readme_content,
+            )
+        )
 
     findings.extend(validate_catalog(bucket, roots, catalog_rows, catalog_by_slug, object_names, prefix))
     return findings
@@ -503,7 +910,10 @@ def render_markdown(findings: Sequence[Finding], bucket: str, prefix: str, objec
         "",
         f"- Bucket: `gs://{bucket}/{prefix}`",
         f"- Objects inspected: {object_count}",
-        f"- Findings: {counts.get('ERROR', 0)} error(s), {counts.get('WARN', 0)} warning(s), {counts.get('INFO', 0)} info item(s)",
+        "- Findings: "
+        f"{counts.get('ERROR', 0)} error(s), "
+        f"{counts.get('WARN', 0)} warning(s), "
+        f"{counts.get('INFO', 0)} info item(s)",
         "",
     ]
     if not findings:

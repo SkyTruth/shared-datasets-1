@@ -120,19 +120,27 @@ Agents must follow these rules for GCS writes:
 
 Only these formats are approved by default:
 
-| Extension | Use |
-|---|---|
-| `.fgb` | Canonical geographic vector data |
-| `.pmtiles` | Web map tiles / visualization artifacts |
-| `.geojson` | Small previews, small interchange files, debugging |
-| `.ndgeojson` | Newline-delimited GeoJSON features for streamable vector interchange/debugging |
-| `.csv` | Non-geometry tables only |
+| Format identifier | Extension/path | Use |
+|---|---|---|
+| `fgb` | `.fgb` | Canonical geographic vector data |
+| `cog` | `.tif` | Canonical raster data as Cloud Optimized GeoTIFF |
+| `zarr` | `.zarr/` prefix | Canonical multidimensional/chunked array products |
+| `pmtiles` | `.pmtiles` | Web map tiles / visualization artifacts |
+| `geojson` | `.geojson` | Small previews, small interchange files, debugging |
+| `ndgeojson` | `.ndgeojson` | Newline-delimited GeoJSON features for streamable vector interchange/debugging |
+| `csv` | `.csv` | Non-geometry tables only |
 
 Rules:
 
 - CSV must not contain geometry columns such as WKT, WKB, GeoJSON geometry blobs, latitude/longitude pairs intended as geometry, or encoded geometries unless clearly documented as noncanonical source/debug content.
 - `.fgb` is the preferred canonical vector format.
+- Cloud Optimized GeoTIFF is the preferred canonical raster format. Publish COGs as `.tif`, not raw GeoTIFFs. COGs must be internally tiled, internally overviewed, georeferenced, and self-contained with no required `.aux.xml`, `.ovr`, `.tfw`, or similar sidecars.
+- COG object content type should be `image/tiff; application=geotiff; profile=cloud-optimized`.
+- COG defaults are `BIGTIFF=IF_SAFER`, 512 pixel blocks, internal overviews, and lossless compression. Use nearest-neighbor overviews for categorical/class/mask rasters and average or documented continuous resampling for measured continuous grids.
+- Zarr is approved only for true multidimensional, time-series, variable-rich, or chunked array products where COG would be a poor access pattern.
 - `.pmtiles` is a serving/display artifact, not the canonical analytical source.
+- `.png`, `.jpg`, `.jpeg`, and `.webp` are allowed only under `previews/` or as tile encodings inside `.pmtiles`; they are not analytical canonical data.
+- `.nc`, `.grib`, `.grib2`, `.hdf`, `.h5`, raw non-COG `.tif`, and similar source rasters are allowed only under `source/`, `sources/`, or `archive/` by documented README exception.
 - `.geojson` should be small enough to inspect or transfer easily.
 - `.ndgeojson` is appropriate for streamable vector interchange/debugging; prefer `.fgb` for canonical analytical vector data unless there is a documented reason.
 - If another format is required, update this file and explain why in the PR.
@@ -276,9 +284,13 @@ Default asset layout:
   README.md
   latest/
     {asset-slug}.{ext}
+    manifest.json        # only for multi-object assets such as Zarr
   releases/
     YYYY-MM-DD/
       {asset-slug}.{ext}
+      {asset-slug}.zarr/ # only for Zarr and other approved prefix formats
+  previews/
+    {asset-slug}-preview.png
   runs/
     YYYY-MM-DD.json
 ```
@@ -305,6 +317,27 @@ Use `runs/YYYY-MM-DD.json` when:
 - A scheduled job generated or refreshed the asset.
 - A failed run needs to be documented.
 - A backfill occurred.
+
+Single-object assets, including COGs, may use the standard `latest/` and
+`releases/YYYY-MM-DD/` file copies. Multi-object assets, including Zarr, must
+write immutable data under `releases/YYYY-MM-DD/{asset-slug}.zarr/` and update
+only `latest/manifest.json`. Do not mirror thousands of mutable Zarr chunk
+objects under `latest/`.
+
+The required Zarr latest manifest is a small JSON object with at least:
+
+```json
+{
+  "asset_slug": "example-asset",
+  "canonical_format": "zarr",
+  "updated": "YYYY-MM-DD",
+  "release_path": "gs://skytruth-shared-datasets-1/category/subcategory/example-asset/releases/YYYY-MM-DD/example-asset.zarr/"
+}
+```
+
+Use `previews/` only for lightweight PNG, JPEG, or WebP inspection images. Use
+`source/`, `sources/`, or `archive/` only for documented source-format
+exceptions, not as canonical analytical data.
 
 ## 9. Naming rules
 
@@ -347,6 +380,8 @@ offshore-platforms.pmtiles
 offshore-platforms-summary.csv
 iso-country-codes.csv
 cerulean-slick-labels.fgb
+landsat-burn-severity.tif
+weather-reanalysis.zarr/
 ```
 
 Avoid dates in filenames when the date is already encoded in `releases/YYYY-MM-DD/`.
@@ -381,6 +416,7 @@ Required fields:
 - File table.
 - Schema notes or field notes.
 - Property/column table with names, types, and short explanations where this can be derived from the source data or source documentation. If explanations are unknown, still list names/types and say definitions need source confirmation.
+- Raster metadata table for canonical COG or Zarr assets, including CRS, resolution, dimensions, band semantics, dtype, nodata, units, scale/offset, and sampling where applicable.
 - Update notes.
 
 Use `templates/dataset_README.template.md` for important assets and `templates/dataset_README.minimal.template.md` for small/simple assets.
@@ -404,8 +440,16 @@ gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv
 Catalog columns:
 
 ```text
-asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
+asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
 ```
+
+`canonical_format` must be one of `fgb`, `cog`, `zarr`, `pmtiles`,
+`geojson`, `ndgeojson`, or `csv`. `available_formats` is a semicolon-separated
+list of published format identifiers, such as `fgb;pmtiles` or `cog;pmtiles`.
+`metadata_paths` is a semicolon-separated list of asset-root-relative metadata
+paths such as `README.md`, `runs/YYYY-MM-DD.json`, or `latest/manifest.json`.
+Keep `has_pmtiles`, `has_geojson`, and `has_csv` during the transition for
+existing consumers.
 
 Update the catalog when:
 
@@ -454,8 +498,11 @@ Minimal PR checklist:
 [ ] Asset slug is lowercase-kebab-case.
 [ ] Only approved formats are used.
 [ ] CSV files have no geometry.
+[ ] Raster canonicals are valid COGs or documented Zarr manifests.
+[ ] Preview images are under previews/ and source rasters are documented exceptions.
 [ ] README.md exists and has owner/source/license/update cadence.
 [ ] latest/ contains the recommended file.
+[ ] Zarr latest/ contains only manifest.json.
 [ ] releases/YYYY-MM-DD/ exists if cron-updated or multi-project-critical.
 [ ] Catalog updated if needed.
 ```
@@ -466,7 +513,7 @@ Minimal PR checklist:
 2. Inspect remote files and current object generations.
 3. Prepare updated files locally.
 4. If versioned, upload to `releases/YYYY-MM-DD/` first using no-clobber behavior.
-5. Validate the release.
+5. Validate the release, including COG/Zarr raster checks when applicable.
 6. Replace `latest/` files using generation preconditions.
 7. Update `README.md` last-updated/update-notes fields.
 8. Update catalog if catalog fields changed.
@@ -640,6 +687,9 @@ latest.csv as undocumented canonical truth
 project-specific top-level folders
 manual uploads with no README
 CSV files containing geometry as canonical data
+raw GeoTIFF as undocumented canonical raster data
+Zarr chunk objects mirrored directly under latest/
+sidecar-dependent raster canonicals
 silent overwrites of latest/
 cron jobs that delete old releases
 Terraform-managed frequently changing dataset files
@@ -659,6 +709,7 @@ Review for:
 - Correct category.
 - Correct filename and folder names.
 - Approved file formats.
+- Valid raster layout and metadata for COG/Zarr assets.
 - Minimal but sufficient docs.
 - Safe remote mutation behavior.
 - Idempotent cron behavior.

@@ -52,6 +52,23 @@ def get_blob(uri: str) -> storage.Blob:
 def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
     if explicit:
         return explicit
+    suffix = path.suffix.lower()
+    if suffix in {".tif", ".tiff"}:
+        return "image/tiff; application=geotiff; profile=cloud-optimized"
+    if suffix == ".fgb":
+        return "application/octet-stream"
+    if suffix == ".pmtiles":
+        return "application/vnd.pmtiles"
+    if suffix in {".json", ".geojson"}:
+        return "application/json"
+    if suffix == ".ndgeojson":
+        return "application/x-ndjson"
+    if suffix == ".png":
+        return "image/png"
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".webp":
+        return "image/webp"
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed
 
