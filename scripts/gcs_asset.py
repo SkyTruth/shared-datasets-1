@@ -12,6 +12,7 @@ import json
 import mimetypes
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -383,6 +384,92 @@ def exists(uri: str = typer.Argument(..., help="Object URI.")) -> None:
         raise typer.Exit(0)
     print(f"missing: {uri}")
     raise typer.Exit(1)
+
+
+@app.command("publish-release")
+def publish_release(
+    asset_slug: str = typer.Option(..., help="Existing catalog asset slug."),
+    release_date: str = typer.Option(..., help="Release date in YYYY-MM-DD form."),
+    publish_dir: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        help="Directory containing {asset-slug}.{fgb,pmtiles,geojson,ndgeojson,csv,tif}.",
+    ),
+    artifact: list[str] = typer.Option(
+        [],
+        "--artifact",
+        help="Explicit artifact override in format=/path/file form. May be repeated.",
+    ),
+    allow_stale_format: list[str] = typer.Option(
+        [],
+        "--allow-stale-format",
+        help="Allow a catalog-listed companion format to remain unchanged.",
+    ),
+    source_version: str = typer.Option("", help="Source version string for the run record."),
+    row_count: Optional[int] = typer.Option(None, help="Published row count, if known."),
+    notes: str = typer.Option("", help="Notes for the run record."),
+    readme_path: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="Optional local README.md to replace at the remote asset root.",
+    ),
+    remote_catalog_path: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="Optional local catalog CSV to replace at _catalog/shared-datasets-catalog.csv.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate and print the publish plan without writing to GCS.",
+    ),
+    no_notify: bool = typer.Option(
+        False,
+        "--no-notify",
+        help="Do not send the upload summary notification.",
+    ),
+    skip_schema_snapshot: bool = typer.Option(
+        False,
+        "--skip-schema-snapshot",
+        help="Do not update the schema snapshot after publish.",
+    ),
+) -> None:
+    """Publish prepared local artifacts as an immutable release and latest update."""
+    from scripts import publish_release as publish_release_core
+
+    client = get_client()
+    try:
+        plan = publish_release_core.build_publish_plan(
+            asset_slug=asset_slug,
+            release_date=release_date,
+            publish_dir=publish_dir,
+            artifact_overrides=publish_release_core.parse_artifact_overrides(artifact),
+            allow_stale_formats=allow_stale_format,
+            client=client,
+            readme_path=readme_path,
+            remote_catalog_path=remote_catalog_path,
+        )
+        if dry_run:
+            sys.stdout.write(json.dumps(publish_release_core.plan_to_dict(plan), indent=2, sort_keys=True) + "\n")
+            return
+        result = publish_release_core.execute_publish_plan(
+            plan,
+            client=client,
+            source_version=source_version,
+            row_count=row_count,
+            notes=notes,
+            notify=not no_notify,
+            update_schema_snapshot=not skip_schema_snapshot,
+        )
+    except publish_release_core.PublishReleaseError as exc:
+        print(f"[red]publish-release failed:[/red] {exc}", file=sys.stderr)
+        raise typer.Exit(2) from exc
+
+    sys.stdout.write(json.dumps(publish_release_core.result_to_dict(result), indent=2, sort_keys=True) + "\n")
 
 
 @app.command("validate-path")

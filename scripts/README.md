@@ -10,6 +10,23 @@ scripts/gcs_asset.py
 
 It is the default interface for safe Cloud Storage object operations.
 
+Use `publish-release` when local artifacts are ready for an existing catalog
+asset. It builds a JSON plan, rejects existing release objects, uploads
+`releases/YYYY-MM-DD/` with no-clobber preconditions, replaces `latest/` with
+observed generations, writes a run record, and emits schema/upload alerts:
+
+```bash
+uv run python scripts/gcs_asset.py publish-release \
+  --asset-slug example-asset \
+  --release-date 2026-05-01 \
+  --publish-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
+  --source-version "source version or URL" \
+  --dry-run
+```
+
+If intentionally publishing only a subset of catalog-listed formats, name each
+unchanged companion explicitly with `--allow-stale-format`.
+
 Catalog and asset README generation lives in:
 
 ```text

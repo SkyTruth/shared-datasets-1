@@ -334,6 +334,21 @@ uv run python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/READ
 uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/README.md --replace-generation 123456789
 ```
 
+For prepared release artifacts belonging to an existing catalog asset, prefer
+`publish-release` over individual uploads. It validates local files, verifies
+that release objects do not already exist, captures current `latest/`
+generations, uploads `releases/YYYY-MM-DD/` first, then updates `latest/` and
+writes a run record:
+
+```bash
+uv run python scripts/gcs_asset.py publish-release \
+  --asset-slug gfw-fixed-infrastructure \
+  --release-date 2026-05-01 \
+  --publish-dir "$TMPDIR/shared-datasets-1/vector-assets/gfw-fixed-infrastructure/publish" \
+  --source-version "GFW public-fixed-infrastructure-filtered:latest" \
+  --dry-run
+```
+
 Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations.
 
 ## Vector artifact builds
