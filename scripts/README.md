@@ -10,6 +10,27 @@ scripts/gcs_asset.py
 
 It is the default interface for safe Cloud Storage object operations.
 
+Catalog and asset README generation lives in:
+
+```text
+scripts/catalog_docs.py
+```
+
+Edit `docs/assets/{asset_slug}.md`, then regenerate local derived files:
+
+```bash
+uv run python scripts/catalog_docs.py generate
+uv run python scripts/catalog_docs.py check
+```
+
+The generator refreshes managed asset-doc blocks,
+`catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`. To prepare
+bucket README files without uploading them:
+
+```bash
+uv run python scripts/catalog_docs.py export-readmes --output-dir /tmp/shared-dataset-readmes
+```
+
 Raster validation helpers live in:
 
 ```text

@@ -146,11 +146,32 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 
 1. Read `AGENTS.md`.
 2. Pick the correct bucket category/subcategory.
-3. Use `templates/dataset_README.template.md` or the minimal template.
+3. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
 4. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
-5. Use `.claude/skills/gcp-shared-datasets/SKILL.md` for remote GCS operations.
-6. Update `catalog/shared-datasets-catalog.csv` if the asset is new or meaningfully changed.
-7. Open a PR describing the remote asset paths changed.
+5. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
+6. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
+7. Use `.claude/skills/gcp-shared-datasets/SKILL.md` and `scripts/gcs_asset.py` for any approved remote GCS operations.
+8. Open a PR describing the remote asset paths changed.
+
+### Generated catalog and asset docs
+
+`docs/assets/{asset_slug}.md` files own machine-readable asset metadata in YAML
+frontmatter and human-readable prose in Markdown. Do not hand-edit
+`catalog/shared-datasets-catalog.csv` for normal asset changes; it is generated
+from those asset docs for downstream compatibility.
+
+Use:
+
+```bash
+uv run python scripts/catalog_docs.py generate
+uv run python scripts/catalog_docs.py check
+uv run python scripts/catalog_docs.py export-readmes --output-dir /tmp/shared-dataset-readmes
+```
+
+`generate` rewrites managed `asset-summary` and `files-table` blocks inside each
+asset doc, refreshes the CSV catalog, and refreshes `docs/assets/index.md`.
+`check` is the CI-safe drift detector. `export-readmes` writes upload-ready
+bucket README files under category/subcategory/asset paths without touching GCS.
 
 ### Add a cron or ingestion job
 

@@ -1,12 +1,34 @@
+---
+schema_version: 1
+asset_slug: "{asset-slug}"
+title: "{Dataset title}"
+category: "{top-level-category}"
+subcategory: "{subcategory}"
+status: "active"
+owner: "{person-or-team}"
+update_cadence: "manual"
+canonical_format: "{format}"
+canonical_file: "latest/{asset-slug}.{ext}"
+available_formats:
+  - "{format}"
+metadata_paths:
+  - "README.md"
+last_updated: "YYYY-MM-DD"
+source: "{source-name-or-url}"
+license: "{license-or-terms-summary}"
+notes: "{short catalog note}"
+files:
+  - path: "latest/{asset-slug}.{ext}"
+    format: "{format}"
+    role: "canonical"
+    purpose: "Canonical file"
+---
+
 # {Dataset title}
 
-**Status:** active  
-**Owner:** {person-or-team}  
-**Last updated:** YYYY-MM-DD  
-**Update cadence:** static | manual | daily | weekly | monthly | ad hoc  
-**Canonical file:** `latest/{asset-slug}.{ext}`  
-**Source:** {source name or URL}  
-**License / terms:** {short note}
+<!-- BEGIN GENERATED asset-summary -->
+Run `uv run python scripts/catalog_docs.py generate` after filling in the frontmatter.
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -14,9 +36,9 @@ One paragraph.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/{asset-slug}.{ext}` | Canonical file |
+<!-- BEGIN GENERATED files-table -->
+Run `uv run python scripts/catalog_docs.py generate` after filling in the frontmatter `files` list.
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 
@@ -42,3 +64,7 @@ Required for canonical COG or Zarr assets. Delete this section for non-raster as
 | Name | Type | Description |
 |---|---|---|
 | `{field_name}` | `{type}` | `{short meaning or "Needs source confirmation."}` |
+
+## Update notes
+
+Manual.

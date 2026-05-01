@@ -1,26 +1,59 @@
 ---
-asset_slug: "wdpa-marine"
-title: "WDPA Marine Protected and Conserved Areas"
-category: "100-geographic-reference"
-subcategory: "130-protected-areas"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "monthly"
-canonical_format: "fgb"
-last_updated: "2026-04-29"
-source: "UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM"
-license: "See Protected Planet WDPA terms"
+schema_version: 1
+asset_slug: wdpa-marine
+title: WDPA Marine Protected and Conserved Areas
+category: 100-geographic-reference
+subcategory: 130-protected-areas
+status: active
+owner: SkyTruth
+update_cadence: monthly
+canonical_format: fgb
+canonical_file: latest/wdpa-marine.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+- runs/YYYY-MM-DD.json
+last_updated: '2026-04-29'
+source: UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
+license: See Protected Planet WDPA terms
+notes: Simplified monthly job preserves source fields and publishes FGB plus PMTiles
+files:
+- path: latest/wdpa-marine.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical mixed-geometry vector dataset
+- path: latest/wdpa-marine.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same monthly extract
+- path: releases/YYYY-MM-DD/wdpa-marine.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/YYYY-MM-DD/wdpa-marine.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
+- path: runs/YYYY-MM-DD.json
+  format: json
+  role: run-record
+  purpose: Monthly run record
 ---
 
 # WDPA Marine Protected and Conserved Areas
 
-**Status:** active  
-**Owner:** SkyTruth  
-**Last updated:** 2026-04-29  
-**Update cadence:** monthly  
-**Canonical file:** `latest/wdpa-marine.fgb`  
-**Source:** UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM  
-**License / terms:** See Protected Planet WDPA terms.
+<!-- BEGIN GENERATED asset-summary -->
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-04-29
+- **Update cadence:** monthly
+- **Canonical file:** `latest/wdpa-marine.fgb`
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
+- **License / terms:** See Protected Planet WDPA terms
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -35,13 +68,15 @@ Fields are preserved from the source dataset.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/wdpa-marine.fgb` | Canonical mixed-geometry vector dataset |
-| `latest/wdpa-marine.pmtiles` | Web map tiles generated from the same monthly extract |
-| `releases/YYYY-MM-DD/wdpa-marine.fgb` | Dated canonical release |
-| `releases/YYYY-MM-DD/wdpa-marine.pmtiles` | Dated map-tile release |
-| `runs/YYYY-MM-DD.json` | Monthly run record |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/wdpa-marine.fgb` | `fgb` | `canonical` | Canonical mixed-geometry vector dataset |
+| `latest/wdpa-marine.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same monthly extract |
+| `releases/YYYY-MM-DD/wdpa-marine.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/YYYY-MM-DD/wdpa-marine.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Monthly run record |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

@@ -1,26 +1,59 @@
 ---
-asset_slug: "ims-sea-ice-extent"
-title: "IMS Sea-Ice Extent"
-category: "200-imagery-derived"
-subcategory: "250-weather-climate"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "daily"
-canonical_format: "fgb"
-last_updated: "2026-04-29"
-source: "NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156"
-license: "Public U.S. government work; cite NSIDC G02156"
+schema_version: 1
+asset_slug: ims-sea-ice-extent
+title: IMS Sea-Ice Extent
+category: 200-imagery-derived
+subcategory: 250-weather-climate
+status: active
+owner: SkyTruth
+update_cadence: daily
+canonical_format: fgb
+canonical_file: latest/ims-sea-ice-extent.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+- runs/YYYY-MM-DD.json
+last_updated: '2026-04-29'
+source: NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
+license: Public U.S. government work; cite NSIDC G02156
+notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles
+files:
+- path: latest/ims-sea-ice-extent.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical vectorized class-3 extent
+- path: latest/ims-sea-ice-extent.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same vector output
+- path: releases/YYYY-MM-DD/ims-sea-ice-extent.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/YYYY-MM-DD/ims-sea-ice-extent.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
+- path: runs/YYYY-MM-DD.json
+  format: json
+  role: run-record
+  purpose: Daily run record
 ---
 
 # IMS Sea-Ice Extent
 
-**Status:** active  
-**Owner:** SkyTruth  
-**Last updated:** 2026-04-29  
-**Update cadence:** daily  
-**Canonical file:** `latest/ims-sea-ice-extent.fgb`  
-**Source:** NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156  
-**License / terms:** Public U.S. government work; cite NSIDC G02156.
+<!-- BEGIN GENERATED asset-summary -->
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-04-29
+- **Update cadence:** daily
+- **Canonical file:** `latest/ims-sea-ice-extent.fgb`
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
+- **License / terms:** Public U.S. government work; cite NSIDC G02156
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -40,13 +73,15 @@ record preserves that documented valid date.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/ims-sea-ice-extent.fgb` | Canonical vectorized class-3 extent |
-| `latest/ims-sea-ice-extent.pmtiles` | Web map tiles generated from the same vector output |
-| `releases/YYYY-MM-DD/ims-sea-ice-extent.fgb` | Dated canonical release |
-| `releases/YYYY-MM-DD/ims-sea-ice-extent.pmtiles` | Dated map-tile release |
-| `runs/YYYY-MM-DD.json` | Daily run record |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/ims-sea-ice-extent.fgb` | `fgb` | `canonical` | Canonical vectorized class-3 extent |
+| `latest/ims-sea-ice-extent.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same vector output |
+| `releases/YYYY-MM-DD/ims-sea-ice-extent.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/YYYY-MM-DD/ims-sea-ice-extent.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Daily run record |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

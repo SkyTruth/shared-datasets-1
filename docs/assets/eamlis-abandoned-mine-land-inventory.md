@@ -1,27 +1,62 @@
 ---
-asset_slug: "eamlis-abandoned-mine-land-inventory"
-title: "OSMRE e-AMLIS Abandoned Mine Land Inventory"
-category: "300-infrastructure-industrial"
-subcategory: "320-mining"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "monthly, skipped when unchanged"
-canonical_format: "fgb"
-last_updated: "2026-04-30"
-source: "U.S. Department of the Interior OSMRE e-AMLIS"
-license: "Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS"
+schema_version: 1
+asset_slug: eamlis-abandoned-mine-land-inventory
+title: OSMRE e-AMLIS Abandoned Mine Land Inventory
+category: 300-infrastructure-industrial
+subcategory: 320-mining
+status: active
+owner: SkyTruth
+update_cadence: monthly, skipped when unchanged
+canonical_format: fgb
+canonical_file: latest/eamlis-abandoned-mine-land-inventory.fgb
+available_formats:
+- fgb
+- geojson
+metadata_paths:
+- README.md
+- runs/YYYY-MM-DD.json
+last_updated: '2026-04-30'
+source: U.S. Department of the Interior OSMRE e-AMLIS
+license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
+notes: Initial upload from supplied GeoJSON source accessed 2025-10-24; release 2026-04-30; source rows 62220; unique AMLIS_KEY
+  24062; fgb sha256 0da1ecfd89d5d981350dfb76416044659421e4af827dc9a980a2fc0c34696a01; source geojson sha256 0d039c14ac175926fc4000b9b3728c6bcf8e6021c6724119cba4e9d76b306643;
+  embedded collection name says 2024-10-24; monthly Cloud Run job skips when source fingerprint and generated FGB hash are
+  unchanged
+files:
+- path: latest/eamlis-abandoned-mine-land-inventory.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical WGS84 point dataset
+- path: latest/eamlis-abandoned-mine-land-inventory.geojson
+  format: geojson
+  role: companion
+  purpose: GeoJSON companion copy for small-tool interchange and provenance
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical releases
+- path: runs/YYYY-MM-DD.json
+  format: json
+  role: run-record
+  purpose: Scheduled ingestion run records
+- path: sources/eamlis-data-accessed-2025-10-24-4326.geojson
+  format: geojson
+  role: source
+  purpose: Initial source GeoJSON supplied for the first upload; noncanonical because it is large and less efficient for analysis
 ---
 
 # OSMRE e-AMLIS Abandoned Mine Land Inventory
 
+<!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
 - **Last updated:** 2026-04-30
 - **Update cadence:** monthly, skipped when unchanged
 - **Canonical file:** `latest/eamlis-abandoned-mine-land-inventory.fgb`
-- **Source:** [OSMRE Abandoned Mine Land Inventory System](https://www.osmre.gov/programs/e-amlis)
-- **Source field reference:** [OSMRE e-AMLIS Data Dictionary](https://www.osmre.gov/programs/e-amlis-data-dictionary)
-- **License / terms:** [EDX lists the e-AMLIS dataset](https://edx.netl.doe.gov/dataset/abandoned-mine-land-inventory-system-e-amlis) under Creative Commons Attribution. Cite the U.S. Department of the Interior Office of Surface Mining Reclamation and Enforcement e-AMLIS source.
+- **Available formats:** `fgb`, `geojson`
+- **Source:** U.S. Department of the Interior OSMRE e-AMLIS
+- **License / terms:** Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -39,12 +74,15 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/eamlis-abandoned-mine-land-inventory.fgb` | Canonical WGS84 point dataset |
-| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb` | Dated canonical releases |
-| `runs/YYYY-MM-DD.json` | Scheduled ingestion run records |
-| `sources/eamlis-data-accessed-2025-10-24-4326.geojson` | Initial source GeoJSON supplied for the first upload; noncanonical because it is large and less efficient for analysis |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `canonical` | Canonical WGS84 point dataset |
+| `latest/eamlis-abandoned-mine-land-inventory.geojson` | `geojson` | `companion` | GeoJSON companion copy for small-tool interchange and provenance |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `release` | Dated canonical releases |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Scheduled ingestion run records |
+| `sources/eamlis-data-accessed-2025-10-24-4326.geojson` | `geojson` | `source` | Initial source GeoJSON supplied for the first upload; noncanonical because it is large and less efficient for analysis |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

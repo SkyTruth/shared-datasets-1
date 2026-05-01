@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 asset_slug: "{asset-slug}"
 title: "{Dataset title}"
 category: "{top-level-category}"
@@ -7,20 +8,27 @@ status: "active" # active | deprecated | retired | scratch
 owner: "{person-or-team}"
 update_cadence: "static" # static | manual | daily | weekly | monthly | ad hoc
 canonical_format: "fgb" # fgb | cog | zarr | pmtiles | geojson | ndgeojson | csv
+canonical_file: "latest/{asset-slug}.{ext}"
+available_formats:
+  - "fgb"
+metadata_paths:
+  - "README.md"
 last_updated: "YYYY-MM-DD"
 source: "{source-name-or-url}"
 license: "{license-or-terms-summary}"
+notes: "{short catalog note}"
+files:
+  - path: "latest/{asset-slug}.{ext}"
+    format: "fgb"
+    role: "canonical"
+    purpose: "Canonical dataset"
 ---
 
 # {Dataset title}
 
-**Status:** active  
-**Owner:** {person-or-team}  
-**Last updated:** YYYY-MM-DD  
-**Update cadence:** static | manual | daily | weekly | monthly | ad hoc  
-**Canonical file:** `latest/{asset-slug}.{ext}`  
-**Source:** {source name or URL}  
-**License / terms:** {short note}
+<!-- BEGIN GENERATED asset-summary -->
+Run `uv run python scripts/catalog_docs.py generate` after filling in the frontmatter.
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -33,16 +41,9 @@ Briefly describe the dataset in one or two paragraphs.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/{asset-slug}.fgb` | Canonical vector dataset, if geographic |
-| `latest/{asset-slug}.tif` | Canonical Cloud Optimized GeoTIFF raster, if applicable |
-| `latest/manifest.json` | Zarr latest pointer, if canonical data is a multi-object Zarr release |
-| `latest/{asset-slug}.pmtiles` | Web map tiles, if applicable |
-| `latest/{asset-slug}.geojson` | Small preview/interchange file, if applicable |
-| `latest/{asset-slug}.ndgeojson` | Streamable newline-delimited GeoJSON, if applicable |
-| `latest/{asset-slug}.csv` | Non-geometry table, if applicable |
-| `previews/{asset-slug}-preview.png` | Lightweight preview image, if applicable |
+<!-- BEGIN GENERATED files-table -->
+Run `uv run python scripts/catalog_docs.py generate` after filling in the frontmatter `files` list.
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

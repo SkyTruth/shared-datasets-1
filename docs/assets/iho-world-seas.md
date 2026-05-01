@@ -1,0 +1,101 @@
+---
+schema_version: 1
+asset_slug: iho-world-seas
+title: IHO World Seas
+category: 100-geographic-reference
+subcategory: 120-marine-boundaries
+status: active
+owner: SkyTruth
+update_cadence: manual
+canonical_format: fgb
+canonical_file: latest/iho-world-seas.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+last_updated: '2026-04-29'
+source: Marine Regions World Seas IHO v3
+license: See source terms
+notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
+  PMTiles sha256 918f23c7e31977b411654fde409df0ab8adb76830d4abbc4c1d4083c328e90b0
+files:
+- path: latest/iho-world-seas.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical World Seas polygon dataset
+- path: latest/iho-world-seas.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same source layer
+- path: releases/2026-04-29/iho-world-seas.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/2026-04-29/iho-world-seas.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
+---
+
+# IHO World Seas
+
+<!-- BEGIN GENERATED asset-summary -->
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-04-29
+- **Update cadence:** manual
+- **Canonical file:** `latest/iho-world-seas.fgb`
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** Marine Regions World Seas IHO v3
+- **License / terms:** See source terms
+<!-- END GENERATED asset-summary -->
+
+## What this is
+
+This asset contains the Marine Regions World Seas IHO v3 polygon dataset. It is
+a reusable named-seas reference layer for contextual mapping, source filtering,
+and coarse marine-region grouping.
+
+The canonical FlatGeobuf preserves the source geometry and attributes. The
+PMTiles artifact is generated from the same source layer for web-map display.
+
+## When to use it
+
+- Use this for named sea and ocean areas in contextual maps or spatial joins.
+- Use the FlatGeobuf file for analysis and the PMTiles file for display.
+- Do not treat this as an authoritative legal maritime boundary dataset.
+- Do not use the PMTiles artifact as the analytical source.
+
+## Files
+
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/iho-world-seas.fgb` | `fgb` | `canonical` | Canonical World Seas polygon dataset |
+| `latest/iho-world-seas.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same source layer |
+| `releases/2026-04-29/iho-world-seas.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/2026-04-29/iho-world-seas.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+<!-- END GENERATED files-table -->
+
+## Schema notes
+
+This is a direct format conversion from the Marine Regions source layer. Source
+field names and values are preserved in the FlatGeobuf output.
+
+## Properties / columns
+
+Definitions are inherited from the Marine Regions World Seas IHO v3 source and
+need source confirmation. Use the source documentation for authoritative field
+definitions.
+
+## Update notes
+
+Manually converted from `iho-mr_World_Seas_IHO_v3.fgb` and published as a
+2026-04-29 release.
+
+## Known caveats
+
+Marine region names and extents are useful for contextual grouping, but they are
+not a substitute for jurisdictional boundaries, EEZs, or legally authoritative
+maritime limits.

@@ -1,26 +1,57 @@
 ---
-asset_slug: "gfw-anchorages"
-title: "Global Fishing Watch Anchorages"
-category: "600-maritime-ocean"
-subcategory: "640-ocean-activity"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "manual"
-canonical_format: "fgb"
-last_updated: "2026-02-02"
-source: "Global Fishing Watch Anchorages Version 2"
-license: "Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use"
+schema_version: 1
+asset_slug: gfw-anchorages
+title: Global Fishing Watch Anchorages
+category: 600-maritime-ocean
+subcategory: 640-ocean-activity
+status: active
+owner: SkyTruth
+update_cadence: manual
+canonical_format: fgb
+canonical_file: latest/gfw-anchorages.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+last_updated: '2026-02-02'
+source: Global Fishing Watch Anchorages Version 2
+license: Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms
+  of Use
+notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-02-02; source rows 166497; published rows
+  166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
+  pmtiles sha256 8e9eacf2e668faba941fda6fba50501538a6aee32842a6a2a58d793cc04b57cf
+files:
+- path: latest/gfw-anchorages.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical point dataset in WGS84
+- path: latest/gfw-anchorages.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same point dataset
+- path: releases/2026-02-02/gfw-anchorages.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/2026-02-02/gfw-anchorages.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
 ---
 
 # Global Fishing Watch Anchorages
 
+<!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
 - **Last updated:** 2026-02-02
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-anchorages.fgb`
-- **Source:** [Global Fishing Watch Anchorages, Ports and Voyages Data](https://globalfishingwatch.org/datasets-and-code-anchorages/)
-- **License / terms:** Copyright Global Fishing Watch. Non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use.
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** Global Fishing Watch Anchorages Version 2
+- **License / terms:** Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -37,12 +68,14 @@ The source CSV contains 166,497 rows. This shared asset publishes 166,496 valid 
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/gfw-anchorages.fgb` | Canonical point dataset in WGS84 |
-| `latest/gfw-anchorages.pmtiles` | Web map tiles generated from the same point dataset |
-| `releases/2026-02-02/gfw-anchorages.fgb` | Dated canonical release |
-| `releases/2026-02-02/gfw-anchorages.pmtiles` | Dated map-tile release |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/gfw-anchorages.fgb` | `fgb` | `canonical` | Canonical point dataset in WGS84 |
+| `latest/gfw-anchorages.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point dataset |
+| `releases/2026-02-02/gfw-anchorages.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/2026-02-02/gfw-anchorages.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

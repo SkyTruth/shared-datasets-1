@@ -1,26 +1,59 @@
 ---
-asset_slug: "gfw-fixed-infrastructure"
-title: "Global Fishing Watch SAR Fixed Infrastructure"
-category: "300-infrastructure-industrial"
-subcategory: "330-offshore-platforms"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "manual"
-canonical_format: "fgb"
-last_updated: "2026-04-30"
-source: "Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest"
-license: "Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use"
+schema_version: 1
+asset_slug: gfw-fixed-infrastructure
+title: Global Fishing Watch SAR Fixed Infrastructure
+category: 300-infrastructure-industrial
+subcategory: 330-offshore-platforms
+status: active
+owner: SkyTruth
+update_cadence: manual
+canonical_format: fgb
+canonical_file: latest/gfw-fixed-infrastructure.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+last_updated: '2026-04-30'
+source: Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
+license: Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
+notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
+  pmtiles sha256 85d5faf9d893b15dbc9abe30ecc548154da97a6f396dede2c6f1408137b0fbfd; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
+files:
+- path: latest/gfw-fixed-infrastructure.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical point dataset in WGS84
+- path: latest/gfw-fixed-infrastructure.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same point features
+- path: releases/2026-04-30/gfw-fixed-infrastructure.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/2026-04-30/gfw-fixed-infrastructure.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
+- path: sources/gfw_infra_2026-04-30.csv
+  format: csv
+  role: source
+  purpose: Original local CSV export; noncanonical because it stores point geometry as `lon` and `lat` columns
 ---
 
 # Global Fishing Watch SAR Fixed Infrastructure
 
+<!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
 - **Last updated:** 2026-04-30
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-fixed-infrastructure.fgb`
-- **Source:** [Global Fishing Watch Datasets API](https://globalfishingwatch.org/our-apis/documentation), dataset `public-fixed-infrastructure-filtered:latest`
-- **License / terms:** Global Fishing Watch APIs are available for non-commercial purposes and are subject to Global Fishing Watch Terms of Use. Attribute Global Fishing Watch in downstream uses.
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
+- **License / terms:** Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -38,13 +71,15 @@ The filtered API layer matches the Global Fishing Watch public map rather than t
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/gfw-fixed-infrastructure.fgb` | Canonical point dataset in WGS84 |
-| `latest/gfw-fixed-infrastructure.pmtiles` | Web map tiles generated from the same point features |
-| `releases/2026-04-30/gfw-fixed-infrastructure.fgb` | Dated canonical release |
-| `releases/2026-04-30/gfw-fixed-infrastructure.pmtiles` | Dated map-tile release |
-| `sources/gfw_infra_2026-04-30.csv` | Original local CSV export; noncanonical because it stores point geometry as `lon` and `lat` columns |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/gfw-fixed-infrastructure.fgb` | `fgb` | `canonical` | Canonical point dataset in WGS84 |
+| `latest/gfw-fixed-infrastructure.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point features |
+| `releases/2026-04-30/gfw-fixed-infrastructure.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/2026-04-30/gfw-fixed-infrastructure.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `sources/gfw_infra_2026-04-30.csv` | `csv` | `source` | Original local CSV export; noncanonical because it stores point geometry as `lon` and `lat` columns |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

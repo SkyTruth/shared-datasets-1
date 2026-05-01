@@ -1,26 +1,55 @@
 ---
-asset_slug: "petrodata"
-title: "PETRODATA Petroleum Fields"
-category: "300-infrastructure-industrial"
-subcategory: "310-energy"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "manual"
-canonical_format: "fgb"
-last_updated: "2026-04-29"
-source: "PRIO PETRODATA v1.2"
-license: "No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms"
+schema_version: 1
+asset_slug: petrodata
+title: PETRODATA Petroleum Fields
+category: 300-infrastructure-industrial
+subcategory: 310-energy
+status: active
+owner: SkyTruth
+update_cadence: manual
+canonical_format: fgb
+canonical_file: latest/petrodata.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+last_updated: '2026-04-29'
+source: PRIO PETRODATA v1.2
+license: No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
+notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles with source_layer; release 2026-04-29; fgb
+  sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 2d45f6cc17553e62c39c4b76bce76f1f7dda594a3f8f16fe7075c8bdbcbb0044
+files:
+- path: latest/petrodata.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical combined vector dataset
+- path: latest/petrodata.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same combined polygons
+- path: releases/YYYY-MM-DD/petrodata.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/YYYY-MM-DD/petrodata.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
 ---
 
 # PETRODATA Petroleum Fields
 
-**Status:** active  
-**Owner:** SkyTruth  
-**Last updated:** 2026-04-29  
-**Update cadence:** manual  
-**Canonical file:** `latest/petrodata.fgb`  
-**Source:** PRIO PETRODATA v1.2  
-**License / terms:** No explicit license was found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms.
+<!-- BEGIN GENERATED asset-summary -->
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-04-29
+- **Update cadence:** manual
+- **Canonical file:** `latest/petrodata.fgb`
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** PRIO PETRODATA v1.2
+- **License / terms:** No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -36,12 +65,14 @@ The source dataset represents generalized petroleum field locations as polygons,
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/petrodata.fgb` | Canonical combined vector dataset |
-| `latest/petrodata.pmtiles` | Web map tiles generated from the same combined polygons |
-| `releases/YYYY-MM-DD/petrodata.fgb` | Dated canonical release |
-| `releases/YYYY-MM-DD/petrodata.pmtiles` | Dated map-tile release |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/petrodata.fgb` | `fgb` | `canonical` | Canonical combined vector dataset |
+| `latest/petrodata.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same combined polygons |
+| `releases/YYYY-MM-DD/petrodata.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/YYYY-MM-DD/petrodata.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

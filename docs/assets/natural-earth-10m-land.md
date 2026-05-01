@@ -1,26 +1,57 @@
 ---
-asset_slug: "natural-earth-10m-land"
-title: "Natural Earth 10m Land"
-category: "100-geographic-reference"
-subcategory: "110-boundaries"
-status: "active"
-owner: "SkyTruth"
-update_cadence: "manual"
-canonical_format: "fgb"
-last_updated: "2026-04-30"
-source: "Natural Earth 1:10m physical land polygons v5.1.1"
-license: "Public domain per Natural Earth Terms of Use"
+schema_version: 1
+asset_slug: natural-earth-10m-land
+title: Natural Earth 10m Land
+category: 100-geographic-reference
+subcategory: 110-boundaries
+status: active
+owner: SkyTruth
+update_cadence: manual
+canonical_format: fgb
+canonical_file: latest/natural-earth-10m-land.fgb
+available_formats:
+- fgb
+- pmtiles
+metadata_paths:
+- README.md
+last_updated: '2026-04-30'
+source: Natural Earth 1:10m physical land polygons v5.1.1
+license: Public domain per Natural Earth Terms of Use
+notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
+  fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 e395193e936fca420fcdc4139dcfedf3a4945ed5f7128a5194b16fdc5b936fcf;
+  toolchain GDAL 3.6.2, Tippecanoe 2.79.0, PMTiles CLI 1.30.2 for validation; PMTiles generated with Tippecanoe zooms 0-6
+  and tile-simplify 0.01 for display; canonical FGB preserves source geometry and fields
+files:
+- path: latest/natural-earth-10m-land.fgb
+  format: fgb
+  role: canonical
+  purpose: Canonical WGS84 multipolygon dataset
+- path: latest/natural-earth-10m-land.pmtiles
+  format: pmtiles
+  role: companion
+  purpose: Web map tiles generated from the same source layer
+- path: releases/2026-04-30/natural-earth-10m-land.fgb
+  format: fgb
+  role: release
+  purpose: Dated canonical release
+- path: releases/2026-04-30/natural-earth-10m-land.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile release
 ---
 
 # Natural Earth 10m Land
 
-**Status:** active  
-**Owner:** SkyTruth  
-**Last updated:** 2026-04-30  
-**Update cadence:** manual  
-**Canonical file:** `latest/natural-earth-10m-land.fgb`  
-**Source:** Natural Earth 1:10m physical `ne_10m_land`, version 5.1.1  
-**License / terms:** Public domain per Natural Earth Terms of Use.
+<!-- BEGIN GENERATED asset-summary -->
+- **Status:** active
+- **Owner:** SkyTruth
+- **Last updated:** 2026-04-30
+- **Update cadence:** manual
+- **Canonical file:** `latest/natural-earth-10m-land.fgb`
+- **Available formats:** `fgb`, `pmtiles`
+- **Source:** Natural Earth 1:10m physical land polygons v5.1.1
+- **License / terms:** Public domain per Natural Earth Terms of Use
+<!-- END GENERATED asset-summary -->
 
 ## What this is
 
@@ -45,12 +76,14 @@ web-map display only.
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `latest/natural-earth-10m-land.fgb` | Canonical WGS84 multipolygon dataset |
-| `latest/natural-earth-10m-land.pmtiles` | Web map tiles generated from the same source layer |
-| `releases/2026-04-30/natural-earth-10m-land.fgb` | Dated canonical release |
-| `releases/2026-04-30/natural-earth-10m-land.pmtiles` | Dated map-tile release |
+<!-- BEGIN GENERATED files-table -->
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/natural-earth-10m-land.fgb` | `fgb` | `canonical` | Canonical WGS84 multipolygon dataset |
+| `latest/natural-earth-10m-land.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same source layer |
+| `releases/2026-04-30/natural-earth-10m-land.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/2026-04-30/natural-earth-10m-land.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+<!-- END GENERATED files-table -->
 
 ## Schema notes
 

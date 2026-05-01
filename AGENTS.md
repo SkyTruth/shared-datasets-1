@@ -496,6 +496,23 @@ Maintain the catalog at:
 catalog/shared-datasets-catalog.csv
 ```
 
+The catalog is generated from local asset docs in:
+
+```text
+docs/assets/{asset-slug}.md
+```
+
+For normal asset metadata changes, edit the asset doc frontmatter and prose,
+then run:
+
+```bash
+uv run python scripts/catalog_docs.py generate
+uv run python scripts/catalog_docs.py check
+```
+
+Do not hand-edit `catalog/shared-datasets-catalog.csv` unless you are repairing
+the generator itself or performing a tightly scoped emergency correction.
+
 The bucket may also contain:
 
 ```text
@@ -516,7 +533,7 @@ paths such as `README.md`, `runs/YYYY-MM-DD.json`, or `latest/manifest.json`.
 Keep `has_pmtiles`, `has_geojson`, and `has_csv` during the transition for
 existing consumers.
 
-Update the catalog when:
+Update the asset doc and regenerate the catalog when:
 
 - A new asset is added.
 - An asset moves.
@@ -526,7 +543,8 @@ Update the catalog when:
 - Asset is deprecated.
 - Source/license changes.
 
-For small edits to an existing README, catalog updates are optional unless catalog fields changed.
+For small prose edits to an existing README, catalog regeneration is still
+expected because managed README blocks and the generated index are checked in CI.
 
 ### Under-specified upload requests
 
@@ -552,12 +570,13 @@ Use these clues to generate an informed proposed README, lowercase kebab-case as
 5. Create the remote asset folder.
 6. Upload files to `latest/`.
 7. If needed, upload the same files to `releases/YYYY-MM-DD/`.
-8. Add `README.md` using the template.
-9. Add or update the catalog row.
+8. Add or update `docs/assets/{asset-slug}.md` using the template structure and required frontmatter.
+9. Run `uv run python scripts/catalog_docs.py generate` and review generated changes to managed README blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
 10. Verify remote file paths.
 11. Run `uv run python scripts/dataset_alerts.py upload-summary` with the asset slug and changed remote paths.
 12. For canonical vector/table assets, run `uv run python scripts/dataset_alerts.py check-schema` against the successfully published local canonical file.
-13. Open a PR with repo docs/catalog/script changes and list remote paths changed.
+13. Run `uv run python scripts/catalog_docs.py check`.
+14. Open a PR with repo docs/catalog/script changes and list remote paths changed.
 
 Minimal PR checklist:
 
@@ -568,11 +587,11 @@ Minimal PR checklist:
 [ ] CSV files have no geometry.
 [ ] Raster canonicals are valid COGs or documented Zarr manifests.
 [ ] Preview images are under previews/ and source rasters are documented exceptions.
-[ ] README.md exists and has owner/source/license/update cadence.
+[ ] `docs/assets/{asset-slug}.md` exists and has owner/source/license/update cadence.
 [ ] latest/ contains the recommended file.
 [ ] Zarr latest/ contains only manifest.json.
 [ ] releases/YYYY-MM-DD/ exists if cron-updated or multi-project-critical.
-[ ] Catalog updated if needed.
+[ ] Generated catalog/index/docs are current (`uv run python scripts/catalog_docs.py check`).
 ```
 
 ## 13. Manual dataset update workflow
@@ -583,8 +602,8 @@ Minimal PR checklist:
 4. If versioned, upload to `releases/YYYY-MM-DD/` first using no-clobber behavior.
 5. Validate the release, including COG/Zarr raster checks when applicable.
 6. Replace `latest/` files using generation preconditions.
-7. Update `README.md` last-updated/update-notes fields.
-8. Update catalog if catalog fields changed.
+7. Update `docs/assets/{asset-slug}.md` last-updated/update-notes fields and any file metadata.
+8. Run `uv run python scripts/catalog_docs.py generate` and `uv run python scripts/catalog_docs.py check`.
 9. Run `uv run python scripts/dataset_alerts.py upload-summary` for meaningful manual updates.
 10. For canonical vector/table assets, run `uv run python scripts/dataset_alerts.py check-schema` against the successfully published local canonical file.
 11. Document changed remote paths in the PR.
