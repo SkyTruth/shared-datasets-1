@@ -154,6 +154,15 @@ Production Terraform applies should use:
 uv run python scripts/terraform_prod_apply.py
 ```
 
+Static catalog web builds use:
+
+```bash
+uv run python scripts/catalog_site.py --out /tmp/shared-datasets-1/catalog-web
+```
+
+The generated site reads `catalog.json` at runtime and provides search, metadata
+copy buttons, and PMTiles previews for assets with map tiles.
+
 Install dependencies:
 
 ```bash

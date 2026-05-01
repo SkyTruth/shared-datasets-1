@@ -358,6 +358,23 @@ MBTiles intermediates go under `build/`. Set `SHARED_DATASETS_WORKDIR` or pass
 `--work-dir` for a different temp root. Use `--tile-simplify` only for dense
 display tiles; the canonical FGB is still generated without simplification.
 
+## Catalog web preview
+
+Build the zero-backend catalog and PMTiles preview site from repo metadata:
+
+```bash
+uv run python scripts/catalog_site.py --out /tmp/shared-datasets-1/catalog-web
+python3 -m http.server 4173 --directory /tmp/shared-datasets-1/catalog-web
+```
+
+The deploy target is:
+
+```text
+gs://skytruth-shared-datasets-1/_catalog/web/
+```
+
+See `docs/catalog-web-preview.md` for deployment and verification steps.
+
 ## PR expectations
 
 A PR that changes remote asset organization, ingestion jobs, or access behavior should state:

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SkyTruth Shared Datasets</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="catalog-panel" aria-label="Dataset catalog">
+        <header class="catalog-header">
+          <div>
+            <p class="eyebrow">SkyTruth data plane</p>
+            <h1>Shared datasets</h1>
+          </div>
+          <p id="catalog-count" class="result-count" aria-live="polite">Loading catalog</p>
+        </header>
+
+        <section class="filters" aria-label="Catalog filters">
+          <label class="search-label" for="search-input">Search</label>
+          <input
+            id="search-input"
+            class="search-input"
+            type="search"
+            autocomplete="off"
+            placeholder="Search assets, sources, licenses"
+          />
+
+          <div class="filter-grid">
+            <label>
+              <span>Category</span>
+              <select id="category-filter"></select>
+            </label>
+            <label>
+              <span>Format</span>
+              <select id="format-filter"></select>
+            </label>
+            <label>
+              <span>Cadence</span>
+              <select id="cadence-filter"></select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="status-filter"></select>
+            </label>
+          </div>
+        </section>
+
+        <main id="asset-list" class="asset-list" aria-label="Dataset results"></main>
+      </aside>
+
+      <section class="detail-panel" aria-label="Selected dataset">
+        <div id="detail-empty" class="empty-state">
+          <p class="eyebrow">Catalog ready</p>
+          <h2>Select a dataset</h2>
+          <p>Search or filter the catalog, then inspect metadata, paths, and previews here.</p>
+        </div>
+
+        <article id="detail-view" class="detail-view" hidden>
+          <header class="detail-header">
+            <div>
+              <p id="detail-taxonomy" class="eyebrow"></p>
+              <h2 id="detail-title"></h2>
+              <p id="detail-description" class="detail-description"></p>
+              <div id="selection-legend" class="selection-legend" hidden></div>
+            </div>
+            <a id="detail-docs" class="quiet-link" href="#" aria-haspopup="dialog">Open docs</a>
+          </header>
+
+          <section id="map-section" class="map-section" aria-label="Map" hidden>
+            <div class="section-title-row">
+              <div class="map-actions">
+                <label class="basemap-control" for="basemap-select">
+                  <span>Basemap</span>
+                  <select id="basemap-select">
+                    <option value="map">Map</option>
+                    <option value="satellite">Satellite</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="map-preview" class="map-preview">
+              <div id="map-status" class="map-status">Preview loads when PMTiles is selected.</div>
+            </div>
+            <div id="feature-inspector" class="feature-inspector" hidden></div>
+          </section>
+
+          <section class="meta-grid" aria-label="Dataset metadata">
+            <div>
+              <span>Last updated</span>
+              <strong id="detail-updated"></strong>
+            </div>
+            <div>
+              <span>Cadence</span>
+              <strong id="detail-cadence"></strong>
+            </div>
+            <div>
+              <span>Owner</span>
+              <strong id="detail-owner"></strong>
+            </div>
+            <div>
+              <span>Status</span>
+              <strong id="detail-status"></strong>
+            </div>
+          </section>
+
+          <section class="path-section" aria-label="Dataset paths">
+            <div id="version-path-row" class="path-row version-row" hidden>
+              <label class="version-control" for="version-select">
+                <span>Version</span>
+                <select id="version-select"></select>
+              </label>
+            </div>
+            <div class="path-row">
+              <div>
+                <span>Canonical GCS path</span>
+                <code id="detail-gs"></code>
+              </div>
+              <button id="copy-gs" class="icon-button" type="button" title="Copy canonical GCS path">Copy</button>
+            </div>
+            <div class="path-row">
+              <div>
+                <span>Public HTTPS URL</span>
+                <code id="detail-url"></code>
+              </div>
+              <button id="copy-url" class="icon-button" type="button" title="Copy public HTTPS URL">Copy</button>
+            </div>
+            <div id="pmtiles-path-row" class="path-row" hidden>
+              <div>
+                <span>PMTiles URL</span>
+                <code id="detail-pmtiles"></code>
+              </div>
+              <button id="copy-pmtiles" class="icon-button" type="button" title="Copy PMTiles URL">Copy</button>
+            </div>
+          </section>
+
+          <section class="source-section" aria-label="Source and license">
+            <h3>Source and terms</h3>
+            <dl>
+              <div>
+                <dt>Source</dt>
+                <dd id="detail-source"></dd>
+              </div>
+              <div>
+                <dt>License / terms</dt>
+                <dd>
+                  <span id="detail-license-text"></span>
+                  <span id="detail-license-note" class="terms-note" hidden></span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+        </article>
+      </section>
+    </div>
+
+    <div id="docs-viewer" class="docs-viewer" role="dialog" aria-modal="true" aria-labelledby="docs-title" hidden>
+      <button class="docs-backdrop" type="button" data-docs-close aria-label="Close docs"></button>
+      <article class="docs-dialog">
+        <header class="docs-header">
+          <div>
+            <p class="eyebrow">Dataset docs</p>
+            <h2 id="docs-title">Documentation</h2>
+          </div>
+          <div class="docs-actions">
+            <button id="docs-copy-markdown" class="icon-button" type="button" disabled>Copy Markdown</button>
+            <button id="docs-close" class="icon-button" type="button">Close</button>
+          </div>
+        </header>
+        <div id="docs-body" class="docs-body" tabindex="0"></div>
+      </article>
+    </div>
+
+    <template id="asset-card-template">
+      <button class="asset-card" type="button">
+        <span class="asset-card-main">
+          <span class="asset-title"></span>
+          <span class="asset-summary"></span>
+          <span class="asset-meta"></span>
+        </span>
+        <span class="asset-card-side">
+          <span class="asset-date"></span>
+          <span class="asset-formats"></span>
+        </span>
+      </button>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

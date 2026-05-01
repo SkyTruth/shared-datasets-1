@@ -1,0 +1,903 @@
+const state = {
+  catalog: null,
+  assets: [],
+  filtered: [],
+  selectedSlug: null,
+  selectedSlugs: [],
+  mapModule: null,
+  basemap: "map",
+  versionBySlug: {},
+  docsRequestSerial: 0,
+};
+
+const elements = {
+  count: document.querySelector("#catalog-count"),
+  list: document.querySelector("#asset-list"),
+  template: document.querySelector("#asset-card-template"),
+  search: document.querySelector("#search-input"),
+  category: document.querySelector("#category-filter"),
+  format: document.querySelector("#format-filter"),
+  cadence: document.querySelector("#cadence-filter"),
+  status: document.querySelector("#status-filter"),
+  empty: document.querySelector("#detail-empty"),
+  detail: document.querySelector("#detail-view"),
+  taxonomy: document.querySelector("#detail-taxonomy"),
+  title: document.querySelector("#detail-title"),
+  description: document.querySelector("#detail-description"),
+  selectionLegend: document.querySelector("#selection-legend"),
+  docs: document.querySelector("#detail-docs"),
+  licenseNote: document.querySelector("#detail-license-note"),
+  updated: document.querySelector("#detail-updated"),
+  cadenceValue: document.querySelector("#detail-cadence"),
+  owner: document.querySelector("#detail-owner"),
+  statusValue: document.querySelector("#detail-status"),
+  gs: document.querySelector("#detail-gs"),
+  url: document.querySelector("#detail-url"),
+  versionRow: document.querySelector("#version-path-row"),
+  versionSelect: document.querySelector("#version-select"),
+  pmtiles: document.querySelector("#detail-pmtiles"),
+  pmtilesRow: document.querySelector("#pmtiles-path-row"),
+  source: document.querySelector("#detail-source"),
+  licenseText: document.querySelector("#detail-license-text"),
+  mapSection: document.querySelector("#map-section"),
+  mapStatus: document.querySelector("#map-status"),
+  featureInspector: document.querySelector("#feature-inspector"),
+  basemap: document.querySelector("#basemap-select"),
+  copyGs: document.querySelector("#copy-gs"),
+  copyUrl: document.querySelector("#copy-url"),
+  copyPmtiles: document.querySelector("#copy-pmtiles"),
+  metaGrid: document.querySelector(".meta-grid"),
+  pathSection: document.querySelector(".path-section"),
+  sourceSection: document.querySelector(".source-section"),
+  docsViewer: document.querySelector("#docs-viewer"),
+  docsTitle: document.querySelector("#docs-title"),
+  docsCopyMarkdown: document.querySelector("#docs-copy-markdown"),
+  docsBody: document.querySelector("#docs-body"),
+  docsClose: document.querySelector("#docs-close"),
+};
+
+const collator = new Intl.Collator("en", { sensitivity: "base" });
+
+async function init() {
+  try {
+    const response = await fetch("./catalog.json", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`catalog.json returned HTTP ${response.status}`);
+    }
+    state.catalog = await response.json();
+    state.assets = Array.isArray(state.catalog.assets) ? state.catalog.assets : [];
+    state.filtered = state.assets;
+    state.basemap = "map";
+    elements.basemap.value = state.basemap;
+    populateFilters();
+    wireEvents();
+    applyFilters();
+    if (state.filtered.length) {
+      selectAsset(state.filtered[0].slug, { scroll: false });
+    }
+  } catch (error) {
+    renderFatalError(error);
+  }
+}
+
+function wireEvents() {
+  elements.search.addEventListener("input", applyFilters);
+  for (const select of [elements.category, elements.format, elements.cadence, elements.status]) {
+    select.addEventListener("change", applyFilters);
+  }
+  elements.copyGs.addEventListener("click", () => copyValue(elements.gs.textContent, elements.copyGs));
+  elements.copyUrl.addEventListener("click", () => copyValue(elements.url.textContent, elements.copyUrl));
+  elements.copyPmtiles.addEventListener("click", () => copyValue(elements.pmtiles.textContent, elements.copyPmtiles));
+  elements.docsCopyMarkdown.addEventListener("click", () =>
+    copyValue(elements.docsCopyMarkdown.dataset.markdown || "", elements.docsCopyMarkdown)
+  );
+  elements.docs.addEventListener("click", (event) => {
+    event.preventDefault();
+    const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
+    if (asset) {
+      openDocs(asset);
+    }
+  });
+  elements.docsClose.addEventListener("click", closeDocs);
+  for (const closer of document.querySelectorAll("[data-docs-close]")) {
+    closer.addEventListener("click", closeDocs);
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !elements.docsViewer.hidden) {
+      closeDocs();
+    }
+  });
+  elements.versionSelect.addEventListener("change", () => {
+    const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
+    if (!asset) return;
+    state.versionBySlug[asset.slug] = elements.versionSelect.value;
+    renderSelection();
+  });
+  elements.basemap.addEventListener("change", () => {
+    state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
+    renderSelectedPmtiles();
+  });
+}
+
+function populateFilters() {
+  setOptions(elements.category, "All categories", unique(state.assets.map((asset) => asset.category)));
+  setOptions(elements.format, "All formats", unique(state.assets.flatMap((asset) => asset.available_formats)));
+  setOptions(elements.cadence, "All cadences", unique(state.assets.map((asset) => asset.update_cadence)));
+  setOptions(elements.status, "All statuses", unique(state.assets.map((asset) => asset.status)));
+}
+
+function setOptions(select, label, values) {
+  select.replaceChildren();
+  select.append(new Option(label, ""));
+  for (const value of values.sort(collator.compare)) {
+    select.append(new Option(value, value));
+  }
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function applyFilters() {
+  const query = normalize(elements.search.value);
+  const category = elements.category.value;
+  const format = elements.format.value;
+  const cadence = elements.cadence.value;
+  const status = elements.status.value;
+
+  state.filtered = state.assets.filter((asset) => {
+    if (category && asset.category !== category) return false;
+    if (format && !asset.available_formats.includes(format)) return false;
+    if (cadence && asset.update_cadence !== cadence) return false;
+    if (status && asset.status !== status) return false;
+    if (!query) return true;
+    return searchableText(asset).includes(query);
+  });
+
+  renderList();
+  updateCount();
+
+  const filteredSlugs = new Set(state.filtered.map((asset) => asset.slug));
+  state.selectedSlugs = state.selectedSlugs.filter((slug) => filteredSlugs.has(slug));
+  if (state.selectedSlug && !filteredSlugs.has(state.selectedSlug)) {
+    state.selectedSlug = state.selectedSlugs[state.selectedSlugs.length - 1] || null;
+  }
+
+  if (!state.selectedSlugs.length) {
+    if (state.filtered[0]) {
+      selectAsset(state.filtered[0].slug, { scroll: false });
+    } else {
+      clearDetail();
+    }
+  } else {
+    renderSelection();
+    markSelected();
+  }
+}
+
+function searchableText(asset) {
+  return normalize(
+    [
+      asset.slug,
+      asset.title,
+      asset.category,
+      asset.subcategory,
+      asset.description,
+      asset.source,
+      asset.license,
+      asset.notes,
+      asset.available_formats.join(" "),
+    ].join(" ")
+  );
+}
+
+function normalize(value) {
+  return String(value || "").toLowerCase().trim();
+}
+
+function renderList() {
+  elements.list.replaceChildren();
+  if (!state.filtered.length) {
+    const message = document.createElement("div");
+    message.className = "error-state";
+    message.textContent = "No datasets match the active search and filters.";
+    elements.list.append(message);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  const selectedSet = new Set(state.selectedSlugs);
+  for (const asset of state.filtered) {
+    const node = elements.template.content.firstElementChild.cloneNode(true);
+    node.dataset.slug = asset.slug;
+    node.setAttribute("aria-selected", selectedSet.has(asset.slug) ? "true" : "false");
+    node.style.setProperty("--selection-color", colorForSlug(asset.slug));
+    node.querySelector(".asset-title").textContent = asset.title;
+    node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
+    node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
+    node.querySelector(".asset-date").textContent = asset.last_updated || "No date";
+    const formats = node.querySelector(".asset-formats");
+    for (const format of asset.available_formats) {
+      const chip = document.createElement("span");
+      chip.textContent = format;
+      formats.append(chip);
+    }
+    node.addEventListener("click", (event) => {
+      selectAsset(asset.slug, { additive: event.metaKey || event.ctrlKey });
+    });
+    fragment.append(node);
+  }
+  elements.list.append(fragment);
+}
+
+function updateCount() {
+  const total = state.assets.length;
+  const shown = state.filtered.length;
+  elements.count.textContent = `${shown} of ${total} assets`;
+}
+
+function selectAsset(slug, options = {}) {
+  const asset = state.assets.find((candidate) => candidate.slug === slug);
+  if (!asset) return;
+  state.selectedSlug = slug;
+  if (options.additive) {
+    const selected = new Set(state.selectedSlugs);
+    if (selected.has(slug)) {
+      selected.delete(slug);
+    } else {
+      selected.add(slug);
+    }
+    state.selectedSlugs = [...selected];
+    state.selectedSlug = state.selectedSlugs[state.selectedSlugs.length - 1] || null;
+  } else {
+    state.selectedSlugs = [slug];
+  }
+  renderSelection();
+  markSelected();
+  if (options.scroll !== false) {
+    document.querySelector(".detail-panel").scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function markSelected() {
+  const selected = new Set(state.selectedSlugs);
+  for (const card of elements.list.querySelectorAll(".asset-card")) {
+    card.setAttribute("aria-selected", selected.has(card.dataset.slug) ? "true" : "false");
+    card.style.setProperty("--selection-color", colorForSlug(card.dataset.slug));
+  }
+}
+
+function renderSelection() {
+  const assets = selectedAssets();
+  if (!assets.length) {
+    clearDetail();
+    return;
+  }
+  if (assets.length === 1) {
+    renderDetail(assets[0]);
+  } else {
+    renderMultiDetail(assets);
+  }
+}
+
+function selectedAssets() {
+  return state.selectedSlugs
+    .map((slug) => state.assets.find((asset) => asset.slug === slug))
+    .filter(Boolean);
+}
+
+function renderDetail(asset) {
+  elements.empty.hidden = true;
+  elements.detail.hidden = false;
+  elements.detail.classList.remove("multi-detail");
+  elements.docs.hidden = false;
+  elements.metaGrid.hidden = false;
+  elements.pathSection.hidden = false;
+  elements.sourceSection.hidden = false;
+  renderSelectionLegend([]);
+  elements.taxonomy.textContent = `${asset.category} / ${asset.subcategory}`;
+  elements.title.textContent = asset.title;
+  elements.description.textContent = asset.description || asset.notes || "No description is available yet.";
+  elements.docs.href = asset.docs_url;
+  elements.updated.textContent = asset.last_updated || "Unknown";
+  elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
+  elements.owner.textContent = asset.owner || "Unknown";
+  elements.statusValue.textContent = asset.status || "Unknown";
+  elements.source.textContent = asset.source || "Unknown";
+  elements.licenseText.textContent = asset.license || "Unknown";
+  renderVersionSelector(asset);
+  const reference = selectedReference(asset);
+  elements.gs.textContent = reference.canonical_path;
+  elements.url.textContent = reference.public_url;
+  renderLicenseNote(asset);
+  renderPmtiles([reference]);
+}
+
+function renderMultiDetail(assets) {
+  const mapAssets = selectedReferences(assets).filter((asset) => asset.pmtiles_url);
+  elements.empty.hidden = true;
+  elements.detail.hidden = false;
+  elements.detail.classList.add("multi-detail");
+  elements.docs.hidden = true;
+  elements.metaGrid.hidden = true;
+  elements.pathSection.hidden = true;
+  elements.sourceSection.hidden = true;
+  elements.taxonomy.textContent = "Map comparison";
+  elements.title.textContent = `${assets.length} datasets selected`;
+  elements.description.textContent =
+    mapAssets.length === assets.length
+      ? "Rendering selected map-ready datasets together. Cmd-click rows to add or remove datasets."
+      : `Rendering ${mapAssets.length} of ${assets.length} selected datasets with PMTiles previews. Cmd-click rows to add or remove datasets.`;
+  renderVersionSelector({ versions: [] });
+  renderSelectionLegend(assets);
+  renderPmtiles(mapAssets);
+}
+
+function selectedReferences(assets = selectedAssets()) {
+  return assets.map(selectedReference);
+}
+
+function selectedMapReferences() {
+  return selectedReferences().filter((asset) => asset.pmtiles_url);
+}
+
+function renderVersionSelector(asset) {
+  const versions = Array.isArray(asset.versions) ? asset.versions : [];
+  if (!versions.length) {
+    elements.versionRow.hidden = true;
+    elements.versionSelect.replaceChildren();
+    return;
+  }
+
+  elements.versionRow.hidden = false;
+  elements.versionSelect.replaceChildren();
+  const latestLabel = asset.last_updated ? `Latest (${asset.last_updated})` : "Latest";
+  elements.versionSelect.append(new Option(latestLabel, "latest"));
+  for (const version of versions) {
+    elements.versionSelect.append(new Option(version.date, version.date));
+  }
+  elements.versionSelect.value = selectedVersionValue(asset);
+}
+
+function selectedVersionValue(asset) {
+  const versions = Array.isArray(asset.versions) ? asset.versions : [];
+  const saved = state.versionBySlug[asset.slug];
+  if (saved === "latest" || versions.some((version) => version.date === saved)) {
+    return saved;
+  }
+  return "latest";
+}
+
+function selectedReference(asset) {
+  const selected = selectedVersionValue(asset);
+  if (selected === "latest") {
+    return asset;
+  }
+  const version = asset.versions.find((candidate) => candidate.date === selected);
+  return version ? { ...asset, ...version } : asset;
+}
+
+function renderSelectionLegend(assets) {
+  elements.selectionLegend.replaceChildren();
+  if (!assets.length) {
+    elements.selectionLegend.hidden = true;
+    return;
+  }
+
+  const mapAssets = selectedReferences(assets).filter((asset) => asset.pmtiles_url);
+  for (const asset of assets) {
+    const reference = selectedReference(asset);
+    const item = document.createElement("span");
+    item.className = "selection-legend-item";
+    const swatch = document.createElement("span");
+    swatch.className = "selection-swatch";
+    swatch.style.background = colorForSlug(asset.slug, mapAssets);
+    const label = document.createElement("span");
+    label.textContent = asset.title;
+    item.append(swatch, label);
+    if (!reference.pmtiles_url) {
+      const note = document.createElement("em");
+      note.textContent = "No map";
+      item.append(note);
+    }
+    elements.selectionLegend.append(item);
+  }
+  elements.selectionLegend.hidden = false;
+}
+
+function colorForSlug(slug, mapAssets = selectedMapReferences()) {
+  const index = mapAssets.findIndex((asset) => asset.slug === slug);
+  if (index === -1) {
+    return "#8b938d";
+  }
+  return datasetColor(index);
+}
+
+function datasetColor(index) {
+  const colors =
+    state.basemap === "satellite"
+      ? ["#00d6ff", "#ffd84d", "#ff7bb7", "#78ff8e", "#ff9d42", "#caa7ff"]
+      : ["#d84f2a", "#1f6fb2", "#8b4ec6", "#b88700", "#16715d", "#9a4261"];
+  return colors[index % colors.length];
+}
+
+function renderLicenseNote(asset) {
+  const actionableFlags = asset.license_flags.filter((flag) => flag !== "open");
+  if (!actionableFlags.length) {
+    elements.licenseNote.hidden = true;
+    elements.licenseNote.textContent = "";
+    return;
+  }
+  elements.licenseNote.hidden = false;
+  elements.licenseNote.textContent = `Reuse limits: ${actionableFlags.join(", ")}.`;
+}
+
+function renderSelectedPmtiles() {
+  const assets = selectedAssets();
+  if (!assets.length) {
+    return;
+  }
+  renderSelectionLegend(assets.length > 1 ? assets : []);
+  renderPmtiles(selectedReferences(assets).filter((asset) => asset.pmtiles_url));
+}
+
+async function renderPmtiles(assets) {
+  const mapAssets = (Array.isArray(assets) ? assets : [assets]).filter((asset) => asset?.pmtiles_url);
+  if (!mapAssets.length) {
+    elements.pmtilesRow.hidden = true;
+    elements.mapSection.hidden = true;
+    clearFeatureInspector();
+    return;
+  }
+
+  elements.pmtilesRow.hidden = mapAssets.length !== 1 || state.selectedSlugs.length !== 1;
+  if (!elements.pmtilesRow.hidden) {
+    elements.pmtiles.textContent = mapAssets[0].pmtiles_url;
+  }
+  elements.mapSection.hidden = false;
+  elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
+  clearFeatureInspector();
+
+  try {
+    if (!state.mapModule) {
+      const version = encodeURIComponent(state.catalog?.generated_at || "1");
+      state.mapModule = await import(`./map-preview.js?v=${version}`);
+    }
+    await state.mapModule.renderMapPreview({
+      container: document.querySelector("#map-preview"),
+      status: elements.mapStatus,
+      assets: mapAssets,
+      basemap: state.basemap,
+      onFeatureSelect: renderFeatureInspector,
+    });
+  } catch (error) {
+    elements.mapStatus.textContent = `Map unavailable. Open the PMTiles URL directly. ${error.message}`;
+  }
+}
+
+function clearFeatureInspector() {
+  elements.featureInspector.hidden = true;
+  elements.featureInspector.replaceChildren();
+}
+
+function renderFeatureInspector(features) {
+  const selectedFeatures = Array.isArray(features) ? features : [features].filter(Boolean);
+  if (!selectedFeatures.length) {
+    clearFeatureInspector();
+    return;
+  }
+
+  elements.featureInspector.replaceChildren();
+
+  const heading = document.createElement("div");
+  heading.className = "feature-inspector-heading";
+  const title = document.createElement("h4");
+  title.textContent = selectedFeatures.length === 1 ? "Selected object" : `${selectedFeatures.length} selected objects`;
+  const meta = document.createElement("span");
+  meta.textContent =
+    selectedFeatures.length === 1
+      ? [selectedFeatures[0].sourceLayer, selectedFeatures[0].geometryType].filter(Boolean).join(" / ")
+      : "Overlapping map hits";
+  heading.append(title, meta);
+  elements.featureInspector.append(heading);
+
+  for (const feature of selectedFeatures) {
+    appendFeatureHit(feature);
+  }
+  elements.featureInspector.hidden = false;
+}
+
+function appendFeatureHit(feature) {
+  const entries = Object.entries(feature.properties || {});
+  const hit = document.createElement("section");
+  hit.className = "feature-hit";
+  hit.style.setProperty("--feature-color", feature.color || "var(--accent)");
+
+  const hitHeader = document.createElement("div");
+  hitHeader.className = "feature-hit-heading";
+  const title = document.createElement("strong");
+  const swatch = document.createElement("span");
+  swatch.className = "selection-swatch";
+  swatch.style.background = feature.color || "var(--accent)";
+  title.append(swatch, document.createTextNode(feature.assetTitle || "Dataset feature"));
+  const meta = document.createElement("span");
+  meta.textContent = [feature.sourceLayer, feature.geometryType].filter(Boolean).join(" / ");
+  hitHeader.append(title, meta);
+  hit.append(hitHeader);
+
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "feature-inspector-empty";
+    empty.textContent = "This object has no published properties.";
+    hit.append(empty);
+    elements.featureInspector.append(hit);
+    return;
+  }
+
+  appendFeatureTable(hit, entries);
+  elements.featureInspector.append(hit);
+}
+
+function appendFeatureTable(container, entries) {
+  const table = document.createElement("table");
+  table.className = "feature-table";
+  const tbody = document.createElement("tbody");
+  for (let index = 0; index < entries.length; index += 2) {
+    const row = document.createElement("tr");
+    appendFeaturePair(row, entries[index], { side: "first" });
+    appendFeaturePair(row, entries[index + 1], { side: "second", empty: !entries[index + 1] });
+    tbody.append(row);
+  }
+  table.append(tbody);
+  container.append(table);
+}
+
+function appendFeaturePair(row, entry, options = {}) {
+  const field = document.createElement("th");
+  field.scope = "row";
+  const cell = document.createElement("td");
+  const pairClass = options.side === "second" ? "feature-pair-second" : "feature-pair-first";
+  field.classList.add("feature-pair-field", pairClass);
+  cell.classList.add("feature-pair-value", pairClass);
+  if (options.empty) {
+    field.classList.add("feature-empty");
+    cell.classList.add("feature-empty");
+    field.setAttribute("aria-hidden", "true");
+    cell.setAttribute("aria-hidden", "true");
+  } else {
+    field.textContent = entry[0];
+    cell.textContent = formatFeatureValue(entry[1]);
+  }
+  row.append(field, cell);
+}
+
+function formatFeatureValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "Not provided";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+async function openDocs(asset) {
+  const requestSerial = ++state.docsRequestSerial;
+  elements.docsViewer.hidden = false;
+  document.body.classList.add("docs-open");
+  elements.docsTitle.textContent = asset.title;
+  elements.docsCopyMarkdown.disabled = true;
+  delete elements.docsCopyMarkdown.dataset.markdown;
+  renderDocsMessage(`Loading ${asset.title} docs...`);
+  elements.docsBody.focus({ preventScroll: true });
+
+  try {
+    const response = await fetch(asset.docs_url, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`docs returned HTTP ${response.status}`);
+    }
+    const markdown = await response.text();
+    if (requestSerial !== state.docsRequestSerial) return;
+    elements.docsCopyMarkdown.dataset.markdown = markdown;
+    elements.docsCopyMarkdown.disabled = false;
+    renderMarkdownDocs(markdown, elements.docsBody);
+  } catch (error) {
+    if (requestSerial !== state.docsRequestSerial) return;
+    renderDocsError(error);
+  }
+}
+
+function closeDocs() {
+  state.docsRequestSerial += 1;
+  elements.docsCopyMarkdown.disabled = true;
+  delete elements.docsCopyMarkdown.dataset.markdown;
+  elements.docsViewer.hidden = true;
+  document.body.classList.remove("docs-open");
+  elements.docsBody.replaceChildren();
+}
+
+function renderDocsMessage(message) {
+  elements.docsBody.replaceChildren();
+  const paragraph = document.createElement("p");
+  paragraph.className = "docs-loading";
+  paragraph.textContent = message;
+  elements.docsBody.append(paragraph);
+}
+
+function renderDocsError(error) {
+  elements.docsBody.replaceChildren();
+  const message = document.createElement("div");
+  message.className = "error-state";
+  message.textContent = `Could not load docs. ${error.message}`;
+  elements.docsBody.append(message);
+}
+
+function renderMarkdownDocs(markdown, container) {
+  container.replaceChildren();
+  const lines = stripFrontmatter(markdown).replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+    if (line.trimStart().startsWith("<!--")) {
+      index = skipHtmlComment(lines, index);
+      continue;
+    }
+
+    if (line.trimStart().startsWith("```")) {
+      index = appendCodeBlock(container, lines, index);
+      continue;
+    }
+    if (isTableStart(lines, index)) {
+      index = appendMarkdownTable(container, lines, index);
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4);
+      const element = document.createElement(`h${level}`);
+      appendInline(element, heading[2].trim());
+      container.append(element);
+      index += 1;
+      continue;
+    }
+
+    if (isListLine(line)) {
+      index = appendList(container, lines, index);
+      continue;
+    }
+
+    index = appendParagraph(container, lines, index);
+  }
+
+  if (!container.children.length) {
+    renderDocsMessage("No documentation content is available yet.");
+  }
+}
+
+function stripFrontmatter(markdown) {
+  if (!markdown.startsWith("---\n")) {
+    return markdown;
+  }
+  const end = markdown.indexOf("\n---\n", 4);
+  return end === -1 ? markdown : markdown.slice(end + 5);
+}
+
+function appendCodeBlock(container, lines, start) {
+  const firstLine = lines[start].trim();
+  const language = firstLine.slice(3).trim();
+  const codeLines = [];
+  let index = start + 1;
+  while (index < lines.length && !lines[index].trimStart().startsWith("```")) {
+    codeLines.push(lines[index]);
+    index += 1;
+  }
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  if (language) {
+    code.dataset.language = language;
+  }
+  code.textContent = codeLines.join("\n");
+  pre.append(code);
+  container.append(pre);
+  return index < lines.length ? index + 1 : index;
+}
+
+function appendMarkdownTable(container, lines, start) {
+  const headers = splitMarkdownRow(lines[start]);
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const header of headers) {
+    const cell = document.createElement("th");
+    appendInline(cell, header);
+    headRow.append(cell);
+  }
+  thead.append(headRow);
+  table.append(thead);
+
+  const tbody = document.createElement("tbody");
+  let index = start + 2;
+  while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+    const row = document.createElement("tr");
+    for (const value of splitMarkdownRow(lines[index])) {
+      const cell = document.createElement("td");
+      appendInline(cell, value);
+      row.append(cell);
+    }
+    tbody.append(row);
+    index += 1;
+  }
+  table.append(tbody);
+
+  const scroller = document.createElement("div");
+  scroller.className = "docs-table-wrap";
+  scroller.append(table);
+  container.append(scroller);
+  return index;
+}
+
+function appendList(container, lines, start) {
+  const ordered = /^\s*\d+\.\s+/.test(lines[start]);
+  const list = document.createElement(ordered ? "ol" : "ul");
+  let index = start;
+  while (index < lines.length && isListLine(lines[index]) && /^\s*\d+\.\s+/.test(lines[index]) === ordered) {
+    const item = document.createElement("li");
+    appendInline(item, lines[index].replace(/^\s*(?:[-*]|\d+\.)\s+/, "").trim());
+    list.append(item);
+    index += 1;
+  }
+  container.append(list);
+  return index;
+}
+
+function appendParagraph(container, lines, start) {
+  const paragraphLines = [];
+  let index = start;
+  while (index < lines.length && !isMarkdownBlockStart(lines, index)) {
+    paragraphLines.push(lines[index].trim());
+    index += 1;
+  }
+  const paragraph = document.createElement("p");
+  appendInline(paragraph, paragraphLines.join(" "));
+  container.append(paragraph);
+  return index;
+}
+
+function isMarkdownBlockStart(lines, index) {
+  const line = lines[index] || "";
+  return (
+    !line.trim() ||
+    line.trimStart().startsWith("```") ||
+    line.trimStart().startsWith("<!--") ||
+    /^(#{1,4})\s+/.test(line) ||
+    isTableStart(lines, index) ||
+    isListLine(line)
+  );
+}
+
+function skipHtmlComment(lines, start) {
+  let index = start;
+  while (index < lines.length) {
+    if (lines[index].includes("-->")) {
+      return index + 1;
+    }
+    index += 1;
+  }
+  return index;
+}
+
+function isListLine(line) {
+  return /^\s*(?:[-*]|\d+\.)\s+\S/.test(line);
+}
+
+function isTableStart(lines, index) {
+  return Boolean(lines[index]?.includes("|") && lines[index + 1] && isTableSeparator(lines[index + 1]));
+}
+
+function isTableSeparator(line) {
+  const cells = splitMarkdownRow(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function appendInline(parent, text) {
+  const pattern = /(`([^`]+)`|\*\*([^*]+)\*\*|\[([^\]]+)\]\(([^)]+)\))/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) {
+      parent.append(document.createTextNode(text.slice(cursor, match.index)));
+    }
+    if (match[2] !== undefined) {
+      const code = document.createElement("code");
+      code.textContent = match[2];
+      parent.append(code);
+    } else if (match[3] !== undefined) {
+      const strong = document.createElement("strong");
+      strong.textContent = match[3];
+      parent.append(strong);
+    } else if (match[4] !== undefined && match[5] !== undefined) {
+      const link = document.createElement("a");
+      link.textContent = match[4];
+      const href = safeMarkdownHref(match[5]);
+      if (href) {
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      parent.append(link);
+    }
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) {
+    parent.append(document.createTextNode(text.slice(cursor)));
+  }
+}
+
+function safeMarkdownHref(href) {
+  const trimmed = String(href || "").trim();
+  if (!trimmed || /^(?:javascript|data):/i.test(trimmed)) {
+    return "";
+  }
+  return trimmed;
+}
+
+function clearDetail() {
+  state.selectedSlug = null;
+  state.selectedSlugs = [];
+  elements.detail.hidden = true;
+  elements.empty.hidden = false;
+  renderSelectionLegend([]);
+  clearFeatureInspector();
+  elements.empty.querySelector("h2").textContent = "No matching datasets";
+  elements.empty.querySelector("p:last-child").textContent =
+    "Adjust search or filters to bring assets back into view.";
+}
+
+async function copyValue(value, button) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.append(field);
+    field.select();
+    document.execCommand("copy");
+    field.remove();
+  }
+  const original = button.textContent;
+  button.textContent = "Copied";
+  button.classList.add("copied");
+  window.setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove("copied");
+  }, 1400);
+}
+
+function renderFatalError(error) {
+  elements.count.textContent = "Catalog unavailable";
+  elements.list.replaceChildren();
+  const message = document.createElement("div");
+  message.className = "error-state";
+  message.textContent = `Could not load catalog.json. ${error.message}`;
+  elements.list.append(message);
+}
+
+init();
