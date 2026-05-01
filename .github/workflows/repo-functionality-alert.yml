@@ -1,0 +1,30 @@
+name: Repo functionality alert
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install alert dependencies
+        run: python -m pip install typer
+
+      - name: Send fenced repo alerts
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: python scripts/repo_alerts.py send-from-github-event --event-path "$GITHUB_EVENT_PATH"

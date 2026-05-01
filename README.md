@@ -190,6 +190,31 @@ preferred because it avoids putting Slack OAuth material in Terraform inputs.
 
 ### Send lightweight dataset notifications
 
+The `repo-functionality-alert` GitHub Actions workflow runs after pushes to
+`main` and posts any fenced `repo-alert` blocks found in pushed commit messages.
+The committing agent decides whether the change is substantially exciting,
+generates custom alert copy, and appends the block without human input.
+
+Configure the workflow with the GitHub secret
+`SHARED_DATASETS_SLACK_WEBHOOK_URL`. Alert blocks use this format:
+
+````text
+```repo-alert
+emoji: 🗺️
+headline: Vector publishing helper added
+summary: A new command builds FlatGeobuf and PMTiles artifacts from source vectors.
+why_excited: Manual publishes are faster, more repeatable, and easier to review.
+```
+````
+
+To preview alerts from a saved GitHub push event JSON:
+
+```bash
+uv run python scripts/repo_alerts.py send-from-github-event \
+  --event-path /path/to/push-event.json \
+  --dry-run
+```
+
 Use the dataset alert helper after a manual dataset upload or meaningful update:
 
 ```bash

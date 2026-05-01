@@ -38,6 +38,16 @@ class SlackNotifyTests(unittest.TestCase):
                 payload = slack_notify.build_slack_payload(title="Alert", body="Body", status=status)
                 self.assertTrue(payload["text"].startswith(f"{emoji} Alert"))
 
+    def test_payload_can_override_status_emoji(self):
+        payload = slack_notify.build_slack_payload(
+            title="Vector publishing helper added",
+            body="Body",
+            status="info",
+            emoji="🗺️",
+        )
+
+        self.assertTrue(payload["text"].startswith("🗺️ Vector publishing helper added"))
+
     def test_webhook_failure_raises(self):
         def failing_open(_request, timeout):
             raise urllib.error.URLError("network down")

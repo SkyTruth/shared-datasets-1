@@ -28,11 +28,12 @@ def build_slack_payload(
     title: str,
     body: str,
     status: str = "info",
+    emoji: str | None = None,
     fields: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a compact Block Kit message payload."""
 
-    status_prefix = {
+    status_prefix = emoji or {
         "success": "✅",
         "warning": "⚠️",
         "error": "❌",
@@ -135,6 +136,7 @@ def notify(
     title: str,
     body: str,
     status: str = "info",
+    emoji: str | None = None,
     fields: Mapping[str, Any] | None = None,
     webhook_url: str | None = None,
     project_id: str = DEFAULT_PROJECT_ID,
@@ -143,7 +145,7 @@ def notify(
 ) -> bool:
     """Send a Slack message, returning False on best-effort delivery failures."""
 
-    payload = build_slack_payload(title=title, body=body, status=status, fields=fields)
+    payload = build_slack_payload(title=title, body=body, status=status, emoji=emoji, fields=fields)
     if dry_run:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return True

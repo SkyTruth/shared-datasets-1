@@ -807,13 +807,43 @@ Ask before:
 
 Do not ask before making routine template/docs corrections that clearly follow this file.
 
-## 22. Completion criteria for agent tasks
+## 22. Repository functionality Slack alerts
+
+When an agent is asked to commit staged changes, the agent must review the
+staged diff and independently decide whether the commit adds substantially
+exciting new repository functionality. Do not ask a human to choose. Do not add
+an alert for routine fixes, docs-only edits, small refactors, test-only changes,
+dependency churn, or maintenance work that does not add a meaningful new
+capability.
+
+If the change is alert-worthy, append one or more fenced `repo-alert` blocks to
+the commit message. Use a custom emoji that visually nods to the functionality,
+a clear headline, one brief summary sentence, and one brief reason readers
+should be excited:
+
+````text
+```repo-alert
+emoji: 🗺️
+headline: Vector publishing helper added
+summary: A new command builds FlatGeobuf and PMTiles artifacts from source vectors.
+why_excited: Manual publishes are faster, more repeatable, and easier to review.
+```
+````
+
+The `repo-functionality-alert` GitHub Actions workflow posts any fenced
+`repo-alert` blocks from commits that land on `main`. The workflow does not
+decide significance; the committing agent does.
+
+## 23. Completion criteria for agent tasks
 
 A task is complete when:
 
 - Files are in the correct repo/bucket location.
 - Remote writes were done with safe preconditions or explicitly documented as unsafe.
 - README/catalog/templates are updated when relevant.
+- If the commit adds substantially exciting new repository functionality, the
+  committing agent generated and appended a fenced `repo-alert` block without
+  human input.
 - The PR or final response lists changed files and remote paths.
 - Commands run or validation performed are stated.
 - Any uncertainty is explicitly called out.

@@ -74,11 +74,37 @@ with GDAL and converts them with `pmtiles convert`.
 The helper does not upload anything. Use `scripts/gcs_asset.py upload` for all
 Cloud Storage writes so no-clobber and generation preconditions stay enforced.
 
-Dataset notification helpers live in:
+Slack notification helpers live in:
 
 ```text
 scripts/dataset_alerts.py
+scripts/repo_alerts.py
 scripts/slack_notify.py
+```
+
+The committing agent decides whether a commit adds substantially exciting new
+repository functionality. When it does, the agent appends one or more fenced
+`repo-alert` blocks to the commit message. The `repo-functionality-alert`
+GitHub Actions workflow runs after pushes to `main` and posts any fenced alert
+blocks it finds.
+
+Alert blocks use this format:
+
+````text
+```repo-alert
+emoji: 🗺️
+headline: Vector publishing helper added
+summary: A new command builds FlatGeobuf and PMTiles artifacts from source vectors.
+why_excited: Manual publishes are faster, more repeatable, and easier to review.
+```
+````
+
+Preview alerts from a saved GitHub push event JSON:
+
+```bash
+uv run python scripts/repo_alerts.py send-from-github-event \
+  --event-path /path/to/push-event.json \
+  --dry-run
 ```
 
 After a successful manual dataset upload, post a lightweight summary:
