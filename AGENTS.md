@@ -51,6 +51,7 @@ Current repo-local skills:
 - `.claude/skills/align-virtual-environment/SKILL.md`
 - `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
+- `.claude/skills/repo-alert-commit-messages/SKILL.md`
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
 
 High-priority triggers:
@@ -58,9 +59,10 @@ High-priority triggers:
 - Use `.claude/skills/gcp-shared-datasets/SKILL.md` before inspecting, uploading, editing, replacing, publishing, or validating shared GCS objects.
 - Use `.claude/skills/deploy-scheduled-ingestion/SKILL.md` before deploying or updating Cloud Run + Cloud Scheduler ingestion jobs.
 - Use `.claude/skills/align-virtual-environment/SKILL.md` before creating, repairing, changing, or documenting Python environments.
+- Use `.claude/skills/repo-alert-commit-messages/SKILL.md` before committing staged changes or preparing repo-alert commit-message blocks.
 - Use `.claude/skills/shared-datasets-compliance-audit/SKILL.md` for read-only bucket/repo compliance walkthroughs.
 
-Keep skill examples repo-relative and maintainer-neutral. Avoid usernames, home-directory paths, shell-profile assumptions, and machine-local environment names. Treat the Git index as user-owned state: do not stage, unstage, reset, or restore staged files unless the user explicitly asks for that exact index operation.
+Keep skill examples repo-relative and maintainer-neutral. Avoid usernames, home-directory paths, shell-profile assumptions, and machine-local environment names. Treat the Git index and commit history as user-owned state: NEVER STAGE, UNSTAGE, OR COMMIT changes unless the user explicitly asks for that exact Git operation. Do not reset or restore staged files unless the user explicitly asks for that exact index operation.
 
 ## 3. Default environment
 
