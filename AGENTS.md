@@ -53,6 +53,7 @@ Current repo-local skills:
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
 - `.claude/skills/repo-alert-commit-messages/SKILL.md`
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
+- `.claude/skills/static-catalog-web-preview/SKILL.md`
 
 High-priority triggers:
 
@@ -61,6 +62,7 @@ High-priority triggers:
 - Use `.claude/skills/align-virtual-environment/SKILL.md` before creating, repairing, changing, or documenting Python environments.
 - Use `.claude/skills/repo-alert-commit-messages/SKILL.md` before committing staged changes or preparing repo-alert commit-message blocks.
 - Use `.claude/skills/shared-datasets-compliance-audit/SKILL.md` for read-only bucket/repo compliance walkthroughs.
+- Use `.claude/skills/static-catalog-web-preview/SKILL.md` before building, updating, QAing, or deploying the static catalog web preview under `_catalog/web/`.
 
 Keep skill examples repo-relative and maintainer-neutral. Avoid usernames, home-directory paths, shell-profile assumptions, and machine-local environment names. Treat the Git index and commit history as user-owned state: NEVER STAGE, UNSTAGE, OR COMMIT changes unless the user explicitly asks for that exact Git operation. Do not reset or restore staged files unless the user explicitly asks for that exact index operation.
 
