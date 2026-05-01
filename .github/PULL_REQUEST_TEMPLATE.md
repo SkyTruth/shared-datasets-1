@@ -10,7 +10,7 @@ Describe the asset, infrastructure, ingestion, tooling, or documentation change.
 
 ## Bucket Hygiene
 
-- [ ] No root-level bucket objects are introduced.
+- [ ] No root-level bucket objects are introduced except the intentional bucket `README.md`.
 - [ ] Every asset root has a `README.md`.
 - [ ] Catalog rows are current when asset ownership, source, license, cadence, format, or canonical path changed.
 - [ ] Remote `_catalog/shared-datasets-catalog.csv` is current when catalog contents changed.

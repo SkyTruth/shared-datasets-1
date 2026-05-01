@@ -16,6 +16,28 @@ SPEC.loader.exec_module(audit)
 
 
 class LocalComplianceAuditTests(unittest.TestCase):
+    def test_root_readme_is_ignored_as_intentional_bucket_landing_doc(self):
+        blob = audit.BlobInfo(
+            name="README.md",
+            size=1,
+            generation="1",
+            updated="2026-05-01T00:00:00+00:00",
+            content_type="text/markdown",
+            metadata={},
+        )
+
+        findings = audit.validate_asset_roots(
+            "skytruth-shared-datasets-1",
+            [blob],
+            {"100-geographic-reference": {"110-boundaries"}},
+            [],
+            {},
+            skip_readme_content=True,
+            prefix="",
+        )
+
+        self.assertEqual(findings, [])
+
     def test_local_catalog_validation_accepts_current_catalog(self):
         categories = audit.load_categories(REPO_ROOT / "catalog/categories.yaml")
         rows, _ = audit.load_catalog(REPO_ROOT / "catalog/shared-datasets-catalog.csv")

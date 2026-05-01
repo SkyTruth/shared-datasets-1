@@ -29,6 +29,7 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RUN_RECORD_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated", "000-system"}
+ROOT_ALLOWED_DOCS = {"README.md"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
 PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
@@ -93,6 +94,8 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
     if not parts:
         return ["object path is empty"]
     if len(parts) == 1:
+        if parts[0] in ROOT_ALLOWED_DOCS:
+            return []
         return ["root-level bucket objects are noncanonical; use a reserved system prefix or asset root"]
 
     top = parts[0]

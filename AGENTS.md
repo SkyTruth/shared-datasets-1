@@ -211,6 +211,7 @@ The bucket uses a lightweight Dewey-like taxonomy. Classify by what the asset **
 Top-level structure:
 
 ```text
+README.md
 _catalog/
 _templates/
 _scratch/
@@ -226,10 +227,15 @@ _deprecated/
 800-derived-ml-products/
 ```
 
+`README.md` at the bucket root is an intentional human landing page. Do not put
+other routine documents or data files at the bucket root.
+
 Suggested full tree:
 
 ```text
 gs://skytruth-shared-datasets-1/
+
+  README.md
 
   _catalog/
     shared-datasets-catalog.csv

@@ -26,9 +26,12 @@ class GcsAssetPathValidationTests(unittest.TestCase):
                 self.assertEqual(gcs_asset.validate_asset_object_name(path, CATEGORIES), [])
 
     def test_root_objects_are_rejected(self):
-        errors = gcs_asset.validate_asset_object_name("README.md", CATEGORIES)
+        errors = gcs_asset.validate_asset_object_name("AGENTS.md", CATEGORIES)
 
         self.assertIn("root-level bucket objects are noncanonical", errors[0])
+
+    def test_root_readme_is_allowed(self):
+        self.assertEqual(gcs_asset.validate_asset_object_name("README.md", CATEGORIES), [])
 
     def test_unknown_taxonomy_is_rejected(self):
         errors = gcs_asset.validate_asset_object_name(

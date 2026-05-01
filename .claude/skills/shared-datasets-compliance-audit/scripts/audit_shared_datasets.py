@@ -58,6 +58,7 @@ CATALOG_REQUIRED_COLUMNS = (
 )
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated"}
 SYSTEM_TOP_LEVEL = {"000-system"}
+ROOT_ALLOWED_DOCS = {"README.md"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RUN_RECORD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
@@ -244,6 +245,8 @@ def asset_root_for(name: str, categories: Dict[str, set[str]]) -> Tuple[Optional
     if not parts:
         return None, "empty object name"
     top = parts[0]
+    if len(parts) == 1 and top in ROOT_ALLOWED_DOCS:
+        return None, None
     if top in RESERVED_TOP_LEVEL or top in SYSTEM_TOP_LEVEL:
         return None, None
     if top not in categories:
@@ -263,6 +266,8 @@ def is_taxonomy_placeholder_or_doc(name: str, categories: Dict[str, set[str]]) -
     if name.endswith("/") or parts[-1] == ".keep":
         return True
     top = parts[0]
+    if len(parts) == 1 and top in ROOT_ALLOWED_DOCS:
+        return True
     if top in categories and len(parts) < 3 and parts[-1] == "README.md":
         return True
     if top in RESERVED_TOP_LEVEL or top in SYSTEM_TOP_LEVEL:

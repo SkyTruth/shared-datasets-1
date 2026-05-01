@@ -105,6 +105,7 @@ gs://skytruth-shared-datasets-1/
 The bucket uses this top-level structure:
 
 ```text
+README.md
 _catalog/
 _templates/
 _scratch/
@@ -120,6 +121,7 @@ _deprecated/
 800-derived-ml-products/
 ```
 
+`README.md` is the human landing page for someone browsing the bucket directly.
 Detailed subdirectories and classification rules are in `AGENTS.md`.
 
 ## Approved dataset formats
