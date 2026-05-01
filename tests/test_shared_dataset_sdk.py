@@ -17,6 +17,7 @@ if str(SDK_SRC) not in sys.path:
 from skytruth_shared_datasets import (  # noqa: E402
     Catalog,
     CatalogLoadError,
+    DEFAULT_PMTILES_CDN_BASE_URL,
     DatasetNotFoundError,
     FetchError,
     UnsupportedFormatError,
@@ -149,6 +150,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(fgb.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb")
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
+        self.assertEqual(pmtiles.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/example-vector.pmtiles")
         self.assertEqual(geojson.url, "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.geojson")
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format="csv")
@@ -162,6 +164,16 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
         self.assertEqual(pmtiles.url, "/pmtiles/example-vector.pmtiles")
+
+    def test_resolve_pmtiles_can_force_public_gcs_url(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+
+        pmtiles = catalog.resolve("example-vector", format="pmtiles", url_strategy="public_gcs")
+
+        self.assertEqual(
+            pmtiles.url,
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles",
+        )
 
     def test_fetch_downloads_to_cache_and_reuses_cache(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -212,7 +224,10 @@ class SharedDatasetSdkTests(unittest.TestCase):
         for asset in active_assets:
             ref = catalog.resolve(asset.slug)
             self.assertTrue(ref.gs_uri.startswith("gs://"))
-            self.assertTrue(ref.url.startswith("https://storage.googleapis.com/"))
+            if ref.format == "pmtiles":
+                self.assertTrue(ref.url.startswith(DEFAULT_PMTILES_CDN_BASE_URL))
+            else:
+                self.assertTrue(ref.url.startswith("https://storage.googleapis.com/"))
 
 
 if __name__ == "__main__":

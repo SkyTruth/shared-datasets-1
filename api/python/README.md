@@ -4,9 +4,10 @@ Tiny Python resolver SDK for the SkyTruth shared datasets catalog.
 
 The package reads the static CSV catalog and resolves dataset slugs to current
 `latest/` objects in Cloud Storage. The canonical resolved identifier is always
-the `gs://` URI. The browser-facing URL defaults to public `storage.googleapis.com`
-while public reads are available, but callers should treat that URL as a
-convenience access path rather than the durable dataset identity.
+the `gs://` URI. PMTiles browser-facing URLs default to the shared CDN path at
+`https://tiles.skytruth.org/pmtiles/...`; other formats still default to public
+`storage.googleapis.com` while public reads are available. Callers should treat
+every browser URL as an access path, not the durable dataset identity.
 
 ## Installation
 
@@ -69,27 +70,37 @@ catalog = Catalog.load_gcs()
 path = catalog.fetch("wdpa-marine", format="fgb", access="gcs")
 ```
 
-For browser clients that serve PMTiles through an application CDN, keep the
-canonical `gs_uri` and shape only the browser-facing URL:
+For browser clients, keep the canonical `gs_uri` and use the shared CDN URL as
+the browser-facing PMTiles path:
+
+```python
+pmtiles = catalog.resolve("wdpa-marine", format="pmtiles")
+assert pmtiles.gs_uri.startswith("gs://")
+assert pmtiles.url == "https://tiles.skytruth.org/pmtiles/wdpa-marine.pmtiles"
+```
+
+Applications with their own PMTiles route can still override only the browser
+URL while leaving object identity unchanged:
 
 ```python
 pmtiles = catalog.resolve("wdpa-marine", format="pmtiles", web_base_url="/pmtiles")
-assert pmtiles.gs_uri.startswith("gs://")
 assert pmtiles.url == "/pmtiles/wdpa-marine.pmtiles"
 ```
 
 PMTiles objects can live in a private bucket, but browser clients should not
 fetch private GCS objects directly. The intended private-bucket model is for
-Cerulean or another application layer to expose a normal HTTPS PMTiles path,
-backed by private GCS plus Cloud CDN signed cookies or signed URLs. The SDK only
-keeps the canonical `gs_uri` separate from that browser-facing URL.
+Cerulean or another application layer to issue a Cloud CDN signed cookie and
+load the normal `https://tiles.skytruth.org/pmtiles/{asset}.pmtiles` URL. The
+SDK only keeps the canonical `gs_uri` separate from that browser-facing URL; it
+does not sign cookies or expose CDN auth helpers.
 
 Command line:
 
 ```bash
 skytruth-datasets list
 skytruth-datasets url wdpa-marine --format pmtiles
-skytruth-datasets url wdpa-marine --format pmtiles --url-strategy cdn --web-base-url /pmtiles
+skytruth-datasets url wdpa-marine --format pmtiles --url-strategy public-gcs
+skytruth-datasets url wdpa-marine --format pmtiles --web-base-url /pmtiles
 skytruth-datasets fetch wdpa-marine --format fgb
 skytruth-datasets fetch wdpa-marine --format fgb --access gcs
 ```

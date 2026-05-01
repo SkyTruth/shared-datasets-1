@@ -21,3 +21,45 @@ variable "artifact_registry_repository" {
   type        = string
   default     = "shared-datasets-jobs"
 }
+
+variable "pmtiles_cdn_host" {
+  description = "Public hostname for CDN-mediated PMTiles browser access."
+  type        = string
+  default     = "tiles.skytruth.org"
+}
+
+variable "pmtiles_cdn_allowed_origins" {
+  description = "Browser origins allowed to make credentialed PMTiles range requests through the CDN."
+  type        = list(string)
+  default = [
+    "https://cerulean.skytruth.org",
+    "https://develop.cerulean.skytruth.org",
+    "https://test.cerulean.skytruth.org",
+    "http://localhost:3000",
+    "https://localhost:3000",
+  ]
+}
+
+variable "pmtiles_cdn_signed_request_key_name" {
+  description = "Cloud CDN signed request key name used by Cerulean when signing PMTiles cookies. The raw key value is not managed in Terraform state."
+  type        = string
+  default     = "shared-datasets-pmtiles-v1"
+}
+
+variable "pmtiles_cdn_secret_id" {
+  description = "Secret Manager secret that stores the raw Cloud CDN signed request key for authorized cookie-signing runtimes. Versions are added outside Terraform."
+  type        = string
+  default     = "pmtiles-cdn-signed-request-key"
+}
+
+variable "pmtiles_cdn_grant_fill_service_account" {
+  description = "Grant the Cloud CDN fill service account objectViewer access to the shared bucket. Enable after a signed request key has created the Google-managed service account."
+  type        = bool
+  default     = false
+}
+
+variable "cerulean_pmtiles_cookie_signer_service_accounts" {
+  description = "Service account members allowed to read the PMTiles CDN signing key secret, such as serviceAccount:name@project.iam.gserviceaccount.com."
+  type        = set(string)
+  default     = []
+}

@@ -15,12 +15,16 @@ resource "google_storage_bucket" "shared_bucket" {
   cors {
     origin          = ["*"]
     method          = ["GET", "HEAD", "OPTIONS"]
-    response_header = ["Content-Length", "Content-Range", "ETag", "Range"]
+    response_header = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag", "Range"]
     max_age_seconds = 3600
   }
 
   soft_delete_policy {
     retention_duration_seconds = 604800
+  }
+
+  hierarchical_namespace {
+    enabled = true
   }
 
   lifecycle {

@@ -31,6 +31,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
 | Dataset README format | `templates/dataset_README.template.md` |
+| CDN PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
 | Access protocols / APIs | `api/` and `docs/` |
@@ -75,6 +76,7 @@ When instructions conflict, follow this order:
 │   └── shared-datasets-catalog.csv
 ├── docs/
 │   ├── gcp-asset-operations.md
+│   ├── pmtiles-cdn.md
 │   └── tooling-decision-record.md
 ├── scripts/
 │   ├── README.md

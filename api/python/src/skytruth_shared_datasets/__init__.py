@@ -3,6 +3,7 @@
 from .catalog import (
     DEFAULT_CATALOG_GS_URI,
     DEFAULT_CATALOG_URL,
+    DEFAULT_PMTILES_CDN_BASE_URL,
     Catalog,
     CatalogAsset,
     CatalogLoadError,
@@ -20,6 +21,7 @@ from .catalog import (
 __all__ = [
     "DEFAULT_CATALOG_GS_URI",
     "DEFAULT_CATALOG_URL",
+    "DEFAULT_PMTILES_CDN_BASE_URL",
     "Catalog",
     "CatalogAsset",
     "CatalogLoadError",

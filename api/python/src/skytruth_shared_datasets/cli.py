@@ -27,10 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     url_parser.add_argument(
         "--url-strategy",
         choices=("public-gcs", "cdn"),
-        default="public-gcs",
-        help="Browser-facing URL strategy.",
+        help="Browser-facing URL strategy. Defaults to the SDK default: PMTiles use the shared CDN, other formats use public GCS.",
     )
-    url_parser.add_argument("--web-base-url", help="Base URL for CDN-style URLs, such as /pmtiles.")
+    url_parser.add_argument("--web-base-url", help="Base URL for CDN-style URLs, such as https://tiles.skytruth.org/pmtiles.")
 
     fetch_parser = subparsers.add_parser("fetch", help="Download a dataset file into the local cache.")
     fetch_parser.add_argument("slug")

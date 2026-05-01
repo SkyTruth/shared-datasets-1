@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_CATALOG_GS_URI = f"gs://{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_CATALOG_URL = f"https://storage.googleapis.com/{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
+DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 USER_AGENT = "skytruth-shared-datasets/0.1"
 
 AccessMode = Literal["public", "gcs"]
@@ -276,22 +277,26 @@ class Catalog:
     ) -> DatasetRef:
         """Resolve an asset to its canonical GCS URI and a browser-facing URL.
 
-        ``gs_uri`` is the stable object identity. ``url`` defaults to the
-        public storage.googleapis.com URL while public access remains available;
-        pass ``web_base_url`` or ``url_strategy="cdn"`` to shape CDN URLs for
-        browser clients.
+        ``gs_uri`` is the stable object identity. For PMTiles, ``url`` defaults
+        to the shared SkyTruth PMTiles CDN. Other formats default to public
+        storage.googleapis.com URLs while public access remains available. Pass
+        ``url_strategy="public_gcs"`` to force public GCS URLs, or pass
+        ``web_base_url`` to shape alternate CDN/application URLs.
         """
         if version != "latest":
             raise UnsupportedVersionError("Only version='latest' is supported by the static CSV catalog resolver")
         asset = self.get(slug)
         gs_uri = asset.path_for_format(format)
         resolved_format = _normalize_format(format or asset.canonical_format)
+        resolved_web_base_url = web_base_url
+        if resolved_format == "pmtiles" and url_strategy != "public_gcs" and resolved_web_base_url is None:
+            resolved_web_base_url = DEFAULT_PMTILES_CDN_BASE_URL
         return DatasetRef(
             slug=asset.slug,
             title=asset.title,
             format=resolved_format,
             gs_uri=gs_uri,
-            url=gs_to_web_url(gs_uri, url_strategy=url_strategy, web_base_url=web_base_url),
+            url=gs_to_web_url(gs_uri, url_strategy=url_strategy, web_base_url=resolved_web_base_url),
             last_updated=asset.last_updated,
         )
 
