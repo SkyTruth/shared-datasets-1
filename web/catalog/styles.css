@@ -806,6 +806,7 @@ h3 {
 }
 
 .color-legend-item {
+  appearance: none;
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -816,15 +817,41 @@ h3 {
   border-radius: 999px;
   background: var(--panel);
   color: #28332c;
+  cursor: pointer;
+  font: inherit;
   font-size: 0.72rem;
   font-weight: 700;
   line-height: 1.25;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 
 .color-legend-item span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.color-legend-item:hover {
+  border-color: rgba(17, 24, 20, 0.28);
+}
+
+.color-legend-item:focus-visible {
+  outline: 2px solid rgba(31, 111, 178, 0.42);
+  outline-offset: 2px;
+}
+
+.color-legend-item.is-focused {
+  border-color: rgba(17, 24, 20, 0.48);
+  box-shadow: 0 0 0 2px rgba(17, 24, 20, 0.08);
+  transform: translateY(-1px);
+}
+
+.color-legend-item.is-muted {
+  opacity: 0.32;
 }
 
 .color-legend-swatch {

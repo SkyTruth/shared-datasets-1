@@ -619,7 +619,7 @@ function clearColorLegend() {
 
 function renderColorLegend(legend) {
   const entries = Array.isArray(legend?.entries) ? legend.entries : [];
-  if (legend?.type !== "categorical" || !entries.length) {
+  if (!["categorical", "numeric", "temporal"].includes(legend?.type) || !entries.length) {
     clearColorLegend();
     return;
   }
@@ -630,20 +630,30 @@ function renderColorLegend(legend) {
   const title = document.createElement("strong");
   title.textContent = legend.field || "Categories";
   const count = document.createElement("span");
-  count.textContent = `${entries.length} values`;
+  count.textContent = `${entries.length} unique values`;
   heading.append(title, count);
 
   const items = document.createElement("div");
   items.className = "color-legend-items";
   for (const entry of entries) {
-    const item = document.createElement("span");
+    const item = document.createElement("button");
     item.className = "color-legend-item";
+    item.type = "button";
     item.title = entry.value;
+    item.setAttribute("aria-pressed", entry.value === legend.focusedValue ? "true" : "false");
+    if (legend.focusedValue) {
+      item.classList.toggle("is-focused", entry.value === legend.focusedValue);
+      item.classList.toggle("is-muted", entry.value !== legend.focusedValue);
+    }
     const swatch = document.createElement("span");
     swatch.className = "color-legend-swatch";
     swatch.style.background = entry.color;
     const label = document.createElement("span");
     label.textContent = entry.value;
+    item.addEventListener("click", () => {
+      const toggleFocus = state.mapModule?.toggleLegendFocus || state.mapModule?.toggleCategoricalFocus;
+      toggleFocus?.(entry.value);
+    });
     item.append(swatch, label);
     items.append(item);
   }

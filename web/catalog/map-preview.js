@@ -4,6 +4,7 @@ const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
 const MISSING_COLOR = "#949d97";
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
+const GRADIENT_LEGEND_VALUE_LIMIT = 20;
 const MIN_GRADIENT_VALUES = 4;
 const GRADIENT_PARSE_RATIO = 0.86;
 const STRICT_NUMBER_PATTERN = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:e[+-]?\d+)?$/i;
@@ -138,6 +139,7 @@ export async function renderMapPreview({
     basemap: resolvedBasemap,
     colorField: "",
     colorMode: { type: "dataset" },
+    focusedLegendValue: "",
     fieldSignature: "",
     colorSignature: "",
     refreshTimer: null,
@@ -164,16 +166,42 @@ export function setColorizeField(fieldName) {
   }
 
   const nextField = String(fieldName || "");
+  const previousField = context.colorField;
   context.colorField = context.availableFields?.includes(nextField) ? nextField : "";
+  if (context.colorField !== previousField) {
+    context.focusedLegendValue = "";
+  }
   if (!context.colorField) {
     context.colorMode = { type: "dataset" };
     context.colorSignature = "";
+    context.focusedLegendValue = "";
     applyDatasetColors(context);
+    applyFocusFilters(context);
     notifyColorLegend(context);
     return;
   }
 
   refreshColorSample(context);
+}
+
+export function toggleCategoricalFocus(value) {
+  toggleLegendFocus(value);
+}
+
+export function toggleLegendFocus(value) {
+  const context = activeColorContext;
+  if (!context || context.mapSources.length !== 1 || !modeSupportsLegendFocus(context.colorMode)) {
+    return;
+  }
+
+  const nextValue = normalizedValue(value);
+  if (!nextValue || !legendValuesForMode(context.colorMode).includes(nextValue)) {
+    return;
+  }
+
+  context.focusedLegendValue = context.focusedLegendValue === nextValue ? "" : nextValue;
+  applyFocusFilters(context);
+  notifyColorLegend(context);
 }
 
 function clearActiveMap() {
@@ -488,8 +516,10 @@ function refreshColorSample(context) {
   const samples = sampleFieldValues(context, context.colorField);
   const mode = inferColorMode(context.colorField, samples);
   const signature = colorModeSignature(mode);
+  const previousFocus = context.focusedLegendValue;
   context.colorMode = mode;
-  if (signature !== context.colorSignature) {
+  syncFocusedLegendValue(context);
+  if (signature !== context.colorSignature || previousFocus !== context.focusedLegendValue) {
     context.colorSignature = signature;
     applyColorMode(context);
     notifyColorLegend(context);
@@ -533,21 +563,35 @@ function querySourceLayerFeatures(map, source, layer) {
 
 function inferColorMode(field, samples) {
   const nonEmpty = samples.filter((sample) => sample.text);
-  const numericValues = nonEmpty
-    .map((sample) => parseNumericValue(sample.raw))
-    .filter((value) => value !== null);
+  const numericItems = nonEmpty
+    .map((sample) => ({ sample, parsed: parseNumericValue(sample.raw) }))
+    .filter((item) => item.parsed !== null);
   const temporalValues = nonEmpty
     .map((sample) => ({ sample, parsed: parseTemporalValue(sample.raw) }))
     .filter((item) => item.parsed !== null);
+  const numericValues = numericItems.map((item) => item.parsed);
+  const temporalNumbers = temporalValues.map((item) => item.parsed.value);
 
   if (isGradientCandidate(nonEmpty.length, numericValues)) {
     const extent = extentFor(numericValues);
-    return { type: "numeric", field, min: extent.min, max: extent.max };
+    return {
+      type: "numeric",
+      field,
+      min: extent.min,
+      max: extent.max,
+      legendValues: gradientLegendValues(numericItems),
+    };
   }
-  if (isGradientCandidate(nonEmpty.length, temporalValues.map((item) => item.parsed.value))) {
-    const values = uniqueSampleValues(temporalValues.map((item) => item.sample));
-    const extent = extentFor(temporalValues.map((item) => item.parsed.value));
-    return { type: "temporal", field, min: extent.min, max: extent.max, values };
+  if (isGradientCandidate(nonEmpty.length, temporalNumbers)) {
+    const extent = extentFor(temporalNumbers);
+    return {
+      type: "temporal",
+      field,
+      min: extent.min,
+      max: extent.max,
+      values: uniqueSampleValues(temporalValues.map((item) => item.sample)),
+      legendValues: gradientLegendValues(temporalValues),
+    };
   }
   return { type: "categorical", field, values: uniqueSampleValues(nonEmpty) };
 }
@@ -570,9 +614,32 @@ function uniqueSampleValues(samples) {
   return uniqueStrings(samples.map((sample) => sample.text)).slice(0, CATEGORICAL_MATCH_LIMIT);
 }
 
+function gradientLegendValues(items) {
+  const byText = new Map();
+  for (const item of items) {
+    const text = item.sample.text;
+    const parsed = typeof item.parsed === "number" ? item.parsed : item.parsed?.value;
+    if (!text || !Number.isFinite(parsed) || byText.has(text)) {
+      continue;
+    }
+    byText.set(text, parsed);
+  }
+  if (byText.size > GRADIENT_LEGEND_VALUE_LIMIT) {
+    return [];
+  }
+  return [...byText.entries()]
+    .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+    .map(([value]) => value);
+}
+
 function colorModeSignature(mode) {
   if (mode.type === "numeric") {
-    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}`;
+    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}|${(mode.legendValues || []).join("\u001f")}`;
+  }
+  if (mode.type === "temporal") {
+    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}|${(mode.values || []).join("\u001f")}|${(
+      mode.legendValues || []
+    ).join("\u001f")}`;
   }
   return `${mode.type}|${mode.field}|${mode.min ?? ""}|${mode.max ?? ""}|${(mode.values || []).join("\u001f")}`;
 }
@@ -580,25 +647,30 @@ function colorModeSignature(mode) {
 function applyColorMode(context) {
   if (context.colorMode.type === "dataset") {
     applyDatasetColors(context);
+    applyFocusFilters(context);
     return;
   }
   const colorExpression = colorExpressionForMode(context.colorMode, context.basemap);
   for (const source of context.mapSources) {
     applySourceColor(context.map, source, colorExpression);
   }
+  applyFocusFilters(context);
 }
 
 function notifyColorLegend(context) {
-  if (context.colorMode?.type !== "categorical") {
+  const mode = context.colorMode;
+  const values = legendValuesForMode(mode);
+  if (!mode || !values.length) {
     context.onColorLegendChange(null);
     return;
   }
   context.onColorLegendChange({
-    type: "categorical",
-    field: context.colorMode.field,
-    entries: (context.colorMode.values || []).map((value) => ({
+    type: mode.type,
+    field: mode.field,
+    focusedValue: context.focusedLegendValue || "",
+    entries: values.map((value) => ({
       value,
-      color: categoricalColor(value),
+      color: legendColorForValue(mode, value, context.basemap),
     })),
   });
 }
@@ -622,6 +694,69 @@ function setPaintColor(map, layerId, property, color) {
   if (map.getLayer(layerId)) {
     map.setPaintProperty(layerId, property, color);
   }
+}
+
+function syncFocusedLegendValue(context) {
+  if (
+    !modeSupportsLegendFocus(context.colorMode) ||
+    !context.focusedLegendValue ||
+    !legendValuesForMode(context.colorMode).includes(context.focusedLegendValue)
+  ) {
+    context.focusedLegendValue = "";
+  }
+}
+
+function applyFocusFilters(context) {
+  const focusedValue =
+    modeSupportsLegendFocus(context.colorMode) && context.focusedLegendValue ? context.focusedLegendValue : "";
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      setLayerFilter(context.map, layer.fillId, layerFilter("Polygon", context.colorMode, focusedValue));
+      setLayerFilter(context.map, layer.polygonOutlineId, layerFilter("Polygon", context.colorMode, focusedValue));
+      setLayerFilter(context.map, layer.lineId, layerFilter("LineString", context.colorMode, focusedValue));
+      setLayerFilter(context.map, layer.pointId, layerFilter("Point", context.colorMode, focusedValue));
+    }
+  }
+}
+
+function setLayerFilter(map, layerId, filter) {
+  if (map.getLayer(layerId)) {
+    map.setFilter(layerId, filter);
+  }
+}
+
+function layerFilter(geometryType, mode, focusedValue) {
+  const geometryFilter = ["==", ["geometry-type"], geometryType];
+  if (!modeSupportsLegendFocus(mode) || !mode.field || !focusedValue) {
+    return geometryFilter;
+  }
+  return ["all", geometryFilter, ["==", fieldStringExpression(mode.field), focusedValue]];
+}
+
+function modeSupportsLegendFocus(mode) {
+  return Boolean(mode?.field && legendValuesForMode(mode).length);
+}
+
+function legendValuesForMode(mode) {
+  if (!["categorical", "numeric", "temporal"].includes(mode?.type)) {
+    return [];
+  }
+  if (mode.type === "numeric" || mode.type === "temporal") {
+    return Array.isArray(mode.legendValues) ? mode.legendValues : [];
+  }
+  return Array.isArray(mode.values) ? mode.values : [];
+}
+
+function legendColorForValue(mode, value, basemap) {
+  if (mode.type === "numeric") {
+    const numeric = parseNumericValue(value);
+    return numeric === null ? MISSING_COLOR : gradientColor(numeric, mode.min, mode.max, basemap);
+  }
+  if (mode.type === "temporal") {
+    const temporal = parseTemporalValue(value);
+    return temporal === null ? MISSING_COLOR : gradientColor(temporal.value, mode.min, mode.max, basemap);
+  }
+  return categoricalColor(value);
 }
 
 function colorExpressionForMode(mode, basemap) {
