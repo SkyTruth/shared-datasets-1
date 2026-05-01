@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Optional, Tuple
 
 import typer
+import yaml
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from rich import print
@@ -23,6 +25,13 @@ from rich.table import Table
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
+SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+RUN_RECORD_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
+RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated", "000-system"}
+APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
+PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
 
 
 def parse_gs_uri(uri: str) -> Tuple[str, str]:
@@ -71,6 +80,81 @@ def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
         return "image/webp"
     guessed, _ = mimetypes.guess_type(path.name)
     return guessed
+
+
+def load_categories(path: Path) -> dict[str, set[str]]:
+    payload = yaml.safe_load(path.read_text()) or {}
+    categories = payload.get("categories", {})
+    return {name: set((data.get("subcategories") or {}).keys()) for name, data in categories.items()}
+
+
+def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> list[str]:
+    parts = [part for part in name.split("/") if part]
+    if not parts:
+        return ["object path is empty"]
+    if len(parts) == 1:
+        return ["root-level bucket objects are noncanonical; use a reserved system prefix or asset root"]
+
+    top = parts[0]
+    if top in RESERVED_TOP_LEVEL:
+        return []
+    if top not in categories:
+        return [f"unknown top-level prefix {top!r}"]
+    if len(parts) < 3:
+        return ["object under category must be inside {category}/{subcategory}/{asset-slug}/"]
+
+    subcategory = parts[1]
+    slug = parts[2]
+    errors: list[str] = []
+    if subcategory not in categories[top]:
+        errors.append(f"unknown subcategory {top}/{subcategory}")
+    if not SLUG_PATTERN.fullmatch(slug):
+        errors.append(f"asset slug must be lowercase kebab-case: {slug!r}")
+
+    rel = parts[3:]
+    if not rel:
+        errors.append("asset root object is missing README.md/latest/releases/runs path")
+        return errors
+    if rel == ["README.md"]:
+        return errors
+    if rel[0] == "latest":
+        if rel == ["latest", "manifest.json"]:
+            return errors
+        if len(rel) != 2:
+            errors.append("latest/ should contain direct files only, except latest/manifest.json for Zarr")
+        ext = Path(rel[-1]).suffix.lower()
+        if ext not in APPROVED_DATA_EXTENSIONS:
+            errors.append(f"latest/ file extension {ext or '<none>'} is not approved")
+        return errors
+    if rel[0] == "releases":
+        if len(rel) < 3:
+            errors.append("releases/ objects must be under releases/YYYY-MM-DD/")
+            return errors
+        if not DATE_PATTERN.fullmatch(rel[1]):
+            errors.append("releases/ child must be YYYY-MM-DD")
+        if any(part.endswith(".zarr") for part in rel):
+            return errors
+        ext = Path(rel[-1]).suffix.lower()
+        if ext not in APPROVED_DATA_EXTENSIONS:
+            errors.append(f"release file extension {ext or '<none>'} is not approved")
+        return errors
+    if rel[0] == "previews":
+        ext = Path(rel[-1]).suffix.lower()
+        if ext not in PREVIEW_EXTENSIONS:
+            errors.append(f"previews/ file extension {ext or '<none>'} is not an approved preview image format")
+        return errors
+    if rel[0] in {"source", "sources", "archive"}:
+        ext = Path(rel[-1]).suffix.lower()
+        if ext not in SOURCE_ARCHIVE_EXTENSIONS:
+            errors.append(f"{rel[0]}/ file extension {ext or '<none>'} is not a documented source/archive format")
+        return errors
+    if rel[0] == "runs":
+        if len(rel) != 2 or not RUN_RECORD_PATTERN.fullmatch(rel[1]):
+            errors.append("runs/ records must be named YYYY-MM-DD.json")
+        return errors
+
+    errors.append("object is outside README.md/latest/releases/previews/source/archive/runs layout")
+    return errors
 
 
 @app.command("list")
@@ -204,6 +288,37 @@ def upload(
     )
 
 
+@app.command("delete")
+def delete(
+    uri: str = typer.Argument(..., help="Object URI."),
+    generation: int = typer.Option(..., help="Delete only this exact object generation."),
+    confirm: str = typer.Option("", help="Must be DELETE to confirm a destructive operation."),
+) -> None:
+    """Delete one object using a generation precondition."""
+    if confirm != "DELETE":
+        raise typer.BadParameter("Pass --confirm DELETE to confirm the destructive delete.")
+    blob = get_blob(uri)
+    try:
+        blob.delete(if_generation_match=generation)
+    except NotFound as exc:
+        print(f"[red]Object not found:[/red] {uri}")
+        raise typer.Exit(1) from exc
+    except PreconditionFailed as exc:
+        print("[red]Precondition failed.[/red]")
+        print("Object generation changed or does not match the requested delete generation.")
+        raise typer.Exit(2) from exc
+    print(
+        json.dumps(
+            {
+                "deleted": uri,
+                "generation": generation,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
 @app.command("copy")
 def copy_object(
     src_uri: str = typer.Argument(..., help="Source object URI."),
@@ -265,6 +380,30 @@ def exists(uri: str = typer.Argument(..., help="Object URI.")) -> None:
         raise typer.Exit(0)
     print(f"missing: {uri}")
     raise typer.Exit(1)
+
+
+@app.command("validate-path")
+def validate_path(
+    uri: str = typer.Argument(..., help="Object URI or bucket-relative object name."),
+    categories: Path = typer.Option(Path("catalog/categories.yaml"), help="Categories YAML path."),
+) -> None:
+    """Validate an intended GCS object path against shared-datasets layout rules."""
+    if uri.startswith("gs://"):
+        bucket_name, name = parse_gs_uri(uri)
+    else:
+        bucket_name, name = "", uri
+    if not name:
+        raise typer.BadParameter("Expected object URI or object name, not a bucket root.")
+    errors = validate_asset_object_name(name, load_categories(categories))
+    payload = {
+        "valid": not errors,
+        "bucket": bucket_name or None,
+        "name": name,
+        "errors": errors,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    if errors:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

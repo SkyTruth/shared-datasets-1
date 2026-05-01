@@ -1,0 +1,48 @@
+name: Bucket hygiene audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 14 * * 1"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  UV_CACHE_DIR: .uv-cache
+
+jobs:
+  audit:
+    if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run bucket compliance audit
+        run: |
+          set +e
+          uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --format markdown --fail-on-findings > bucket-hygiene-audit.md
+          status=$?
+          cat bucket-hygiene-audit.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

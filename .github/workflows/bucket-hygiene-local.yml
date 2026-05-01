@@ -1,0 +1,41 @@
+name: Bucket hygiene local checks
+
+on:
+  pull_request:
+    paths:
+      - ".claude/skills/shared-datasets-compliance-audit/**"
+      - ".github/workflows/bucket-hygiene-local.yml"
+      - "catalog/**"
+      - "docs/assets/**"
+      - "scripts/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Validate local catalog hygiene
+        run: uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --local-only --format markdown --fail-on-findings
+
+      - name: Run focused hygiene tests
+        run: uv run python -m unittest tests.test_compliance_audit tests.test_gcs_asset tests.test_shared_dataset_sdk tests.test_raster_standards

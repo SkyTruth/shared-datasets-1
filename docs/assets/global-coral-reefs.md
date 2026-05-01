@@ -46,13 +46,13 @@ The canonical analytical file is the polygon layer. A companion point layer is r
 | `releases/YYYY-MM-DD/global-coral-reefs-points.fgb` | Dated companion point release |
 | `releases/YYYY-MM-DD/global-coral-reefs.pmtiles` | Dated map-tile release |
 
-## Schema Notes
+## Schema notes
 
 This is a format conversion from the local source shapefiles `WCMC008_CoralReef2018_Py_v4_1.shp` and `WCMC008_CoralReef2018_Pt_v4_1.shp` to FlatGeobuf and PMTiles. Source field names and values are preserved. The polygon output was promoted to multipolygon geometry and repaired with GDAL `-makevalid`.
 
 The local source package contains 17,504 polygon features and 925 point features. The source metadata states that the dataset was collected from 1954-2009, version 4.1 was released in March 2021, and corrections are made on an ad hoc basis.
 
-## Properties / Columns
+## Properties / columns
 
 | Name | Type | Description |
 |---|---|---|
@@ -75,7 +75,7 @@ The local source package contains 17,504 polygon features and 925 point features
 | `Shape_Area` | real | Source polygon area field. Polygon layer only. |
 | `REP_AREA_K` | string | Reported area in square kilometers, when available. |
 
-## Update Notes
+## Update notes
 
 Manually converted from `/Users/jonathanraphael/Desktop/14_001_WCMC008_CoralReefs2018_v4_1` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
 

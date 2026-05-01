@@ -144,3 +144,18 @@ Show help:
 ```bash
 uv run python scripts/gcs_asset.py --help
 ```
+
+Validate a target object path before upload:
+
+```bash
+uv run python scripts/gcs_asset.py validate-path \
+  gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
+```
+
+Delete only with an explicit object generation:
+
+```bash
+uv run python scripts/gcs_asset.py delete gs://skytruth-shared-datasets-1/path/to/object \
+  --generation 123456789 \
+  --confirm DELETE
+```

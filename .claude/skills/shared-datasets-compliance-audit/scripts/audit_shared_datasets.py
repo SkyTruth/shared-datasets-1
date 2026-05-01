@@ -36,6 +36,26 @@ from scripts.raster_asset import (
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
+CATALOG_REQUIRED_COLUMNS = (
+    "asset_slug",
+    "title",
+    "category",
+    "subcategory",
+    "status",
+    "owner",
+    "update_cadence",
+    "canonical_path",
+    "canonical_format",
+    "available_formats",
+    "metadata_paths",
+    "has_pmtiles",
+    "has_geojson",
+    "has_csv",
+    "last_updated",
+    "source",
+    "license",
+    "notes",
+)
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated"}
 SYSTEM_TOP_LEVEL = {"000-system"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -115,6 +135,11 @@ def parse_args() -> argparse.Namespace:
         "--skip-remote-catalog-check",
         action="store_true",
         help="Do not compare bucket _catalog CSV with local catalog.",
+    )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Validate local catalog/taxonomy shape only; do not contact GCS.",
     )
     parser.add_argument(
         "--fail-on-findings",
@@ -810,6 +835,139 @@ def validate_catalog(
     return findings
 
 
+def validate_local_catalog(
+    *,
+    bucket: str,
+    categories: Dict[str, set[str]],
+    catalog_rows: Sequence[Dict[str, str]],
+) -> List[Finding]:
+    findings: List[Finding] = []
+    seen_slugs: set[str] = set()
+    if catalog_rows:
+        fieldnames = set(catalog_rows[0].keys())
+        for column in CATALOG_REQUIRED_COLUMNS:
+            if column not in fieldnames:
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        "catalog/shared-datasets-catalog.csv",
+                        "catalog-column",
+                        f"Catalog is missing required column {column!r}.",
+                        "unknown",
+                        "Add the column before publishing catalog changes.",
+                    )
+                )
+
+    for row in catalog_rows:
+        slug = (row.get("asset_slug") or "").strip()
+        category = (row.get("category") or "").strip()
+        subcategory = (row.get("subcategory") or "").strip()
+        canonical_path = (row.get("canonical_path") or "").strip()
+        canonical_format = (row.get("canonical_format") or "").strip().lower()
+        available_formats = {
+            part.strip().lower()
+            for part in (row.get("available_formats") or "").split(";")
+            if part.strip()
+        }
+        path = slug or "catalog/shared-datasets-catalog.csv"
+
+        if not slug:
+            findings.append(Finding("ERROR", path, "catalog-slug", "Catalog row is missing asset_slug."))
+            continue
+        if slug in seen_slugs:
+            findings.append(Finding("ERROR", slug, "catalog-duplicate-slug", "Catalog contains a duplicate asset_slug."))
+        seen_slugs.add(slug)
+        if not SLUG_RE.fullmatch(slug):
+            findings.append(Finding("ERROR", slug, "catalog-slug", "asset_slug must be lowercase kebab-case."))
+        if category not in categories:
+            findings.append(Finding("ERROR", slug, "catalog-category", f"Unknown catalog category {category!r}."))
+        elif subcategory not in categories[category]:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-subcategory",
+                    f"Unknown catalog subcategory {category}/{subcategory}.",
+                )
+            )
+        if canonical_format not in APPROVED_CANONICAL_FORMATS:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-format",
+                    f"canonical_format {canonical_format!r} is not approved.",
+                )
+            )
+        if canonical_format and canonical_format not in available_formats:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-available-formats",
+                    "available_formats must include canonical_format.",
+                )
+            )
+        expected_root = f"gs://{bucket}/{category}/{subcategory}/{slug}/"
+        if not canonical_path.startswith(expected_root):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-canonical-path",
+                    f"canonical_path must start with {expected_root}.",
+                )
+            )
+        if canonical_format == "zarr":
+            if not canonical_path.endswith("/latest/manifest.json"):
+                findings.append(
+                    Finding(
+                        "ERROR",
+                        slug,
+                        "catalog-zarr-path",
+                        "Zarr canonical_path must point at latest/manifest.json.",
+                    )
+                )
+        elif "/latest/" not in canonical_path:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-latest-path",
+                    "canonical_path should point at a latest/ object.",
+                )
+            )
+        if canonical_format == "cog" and not canonical_path.lower().endswith((".tif", ".tiff")):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-cog-path",
+                    "COG canonical_path must end with .tif or .tiff.",
+                )
+            )
+        if canonical_format == "csv" and not canonical_path.lower().endswith(".csv"):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    slug,
+                    "catalog-csv-path",
+                    "CSV canonical_path must end with .csv.",
+                )
+            )
+        metadata_paths = row.get("metadata_paths") or ""
+        if "README.md" not in {part.strip() for part in metadata_paths.split(";") if part.strip()}:
+            findings.append(
+                Finding(
+                    "WARN",
+                    slug,
+                    "catalog-metadata-paths",
+                    "metadata_paths should include README.md.",
+                )
+            )
+    return findings
+
+
 def validate_asset_roots(
     bucket: str,
     blobs: Sequence[BlobInfo],
@@ -945,17 +1103,25 @@ def main() -> int:
     args = parse_args()
     categories = load_categories(Path(args.categories))
     catalog_rows, catalog_by_slug = load_catalog(Path(args.catalog))
-    blobs = list_blobs(args.bucket, args.prefix)
-    findings = validate_asset_roots(
-        args.bucket,
-        blobs,
-        categories,
-        catalog_rows,
-        catalog_by_slug,
-        skip_readme_content=args.skip_readme_content,
-        prefix=args.prefix,
-    )
-    if not args.skip_remote_catalog_check and not args.prefix:
+    if args.local_only:
+        blobs = []
+        findings = validate_local_catalog(
+            bucket=args.bucket,
+            categories=categories,
+            catalog_rows=catalog_rows,
+        )
+    else:
+        blobs = list_blobs(args.bucket, args.prefix)
+        findings = validate_asset_roots(
+            args.bucket,
+            blobs,
+            categories,
+            catalog_rows,
+            catalog_by_slug,
+            skip_readme_content=args.skip_readme_content,
+            prefix=args.prefix,
+        )
+    if not args.local_only and not args.skip_remote_catalog_check and not args.prefix:
         findings.extend(validate_remote_catalog(args.bucket, Path(args.catalog)))
 
     if args.format == "json":

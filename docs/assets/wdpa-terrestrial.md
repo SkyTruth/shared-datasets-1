@@ -55,6 +55,10 @@ Definitions are inherited from the Protected Planet WDPA/WDOECM source and need
 source confirmation for each monthly release. The job verifies that all selected
 source layers have identical fields before publishing.
 
+| Name | Type | Description |
+|---|---|---|
+| Source fields | varies | All fields are preserved from the Protected Planet WDPA/WDOECM source. Refer to the upstream user manual and source metadata for authoritative field names, types, and definitions for each monthly release. |
+
 ## Update notes
 
 Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
@@ -65,4 +69,3 @@ Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
 The canonical FGB intentionally keeps mixed point and polygon geometries. Some
 desktop GIS and map clients handle mixed-geometry layers less gracefully than
 single-geometry layers.
-
