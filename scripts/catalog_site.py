@@ -45,6 +45,7 @@ INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 MARKDOWN_TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RELEASE_PATH_RE = re.compile(r"^releases/(?P<date>\d{4}-\d{2}-\d{2}|YYYY-MM-DD)/(?P<object>.+)$")
+REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
 
 
 class CatalogSiteError(ValueError):
@@ -281,7 +282,7 @@ def license_flags(license_text: str) -> list[str]:
         flags.append("non-commercial")
     if "no redistribution" in lowered or "permission" in lowered:
         flags.append("redistribution-limited")
-    if "no explicit license" in lowered or "see source terms" in lowered:
+    if "no explicit license" in lowered or REFERENTIAL_TERMS_RE.search(lowered):
         flags.append("confirm-license")
     if "public domain" in lowered or "public u.s. government work" in lowered:
         flags.append("open")

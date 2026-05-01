@@ -211,6 +211,45 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(notifications, [("example-asset", 3)])
         self.assertEqual(result.warnings, ())
 
+    def test_metadata_generation_mismatch_blocks_success_run_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            readme = write_artifact(tmp_path, "README.md", b"# Updated docs\n")
+            bucket = FakeBucket()
+            latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
+            latest.exists = True
+            latest.generation = 12
+            remote_readme = bucket.blob("100-geographic-reference/110-boundaries/example-asset/README.md")
+            remote_readme.exists = True
+            remote_readme.generation = 5
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=None,
+                artifact_overrides={"fgb": artifact},
+                catalog_path=catalog,
+                client=FakeClient(bucket),
+                readme_path=readme,
+                schema_reader=lambda _path: [],
+            )
+            remote_readme.generation = 6
+
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "metadata object generation changed"):
+                publish_release.execute_publish_plan(
+                    plan,
+                    client=FakeClient(bucket),
+                    schema_updater=lambda _slug, _path: None,
+                    notifier=lambda _plan, _count: None,
+                )
+
+        release = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb")
+        run_record = bucket.blob("100-geographic-reference/110-boundaries/example-asset/runs/2026-05-01.json")
+        self.assertEqual(release.uploads[0][1], 0)
+        self.assertFalse(run_record.exists)
+        self.assertEqual(run_record.uploads, [])
+
     def test_cog_validation_failure_blocks_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -87,6 +87,21 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertIn("non-commercial", asset["license_flags"])
         self.assertIn("Reusable example boundary dataset", asset["description"])
 
+    def test_license_flags_mark_referential_terms_without_flagging_explicit_terms_of_use(self):
+        for license_text in (
+            "See Marine Regions terms",
+            "See Protected Planet WDPA terms",
+            "See source terms",
+        ):
+            with self.subTest(license_text=license_text):
+                self.assertIn("confirm-license", catalog_site.license_flags(license_text))
+
+        gfw_flags = catalog_site.license_flags(
+            "Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use"
+        )
+        self.assertIn("non-commercial", gfw_flags)
+        self.assertNotIn("confirm-license", gfw_flags)
+
     def test_build_site_writes_static_bundle_and_docs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -314,16 +314,6 @@ def execute_publish_plan(
         blob.reload()
         latest_objects.append(blob_info(artifact.latest_uri, blob))
 
-    run_record = write_run_record(
-        bucket=bucket,
-        plan=plan,
-        release_objects=release_objects,
-        latest_objects=latest_objects,
-        source_version=source_version,
-        row_count=row_count,
-        notes=notes,
-    )
-
     for metadata_upload in plan.metadata_uploads:
         blob = bucket.blob(object_name_from_uri(metadata_upload.uri))
         try:
@@ -338,6 +328,16 @@ def execute_publish_plan(
             raise PublishReleaseError(f"metadata object generation changed before upload: {metadata_upload.uri}") from exc
         blob.reload()
         metadata_objects.append(blob_info(metadata_upload.uri, blob))
+
+    run_record = write_run_record(
+        bucket=bucket,
+        plan=plan,
+        release_objects=release_objects,
+        latest_objects=latest_objects,
+        source_version=source_version,
+        row_count=row_count,
+        notes=notes,
+    )
 
     canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
     if update_schema_snapshot and canonical_artifact and canonical_artifact.format in SCHEMA_FORMATS:
