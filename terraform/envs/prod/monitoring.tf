@@ -225,7 +225,7 @@ EOT
 
   documentation {
     mime_type = "text/markdown"
-    subject   = "Shared dataset object deleted"
+    subject   = "⚠️ Shared dataset object deleted"
     content   = <<-EOT
 A shared dataset object was deleted from `${var.bucket_name}` outside the excluded operational prefixes.
 
