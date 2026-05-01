@@ -52,10 +52,7 @@ skytruth-datasets fetch wdpa-marine --format fgb
 skytruth-datasets fetch wdpa-marine --format fgb --access gcs
 ```
 
-`Catalog.load()` reads the public bucket catalog by default and falls back to the
-packaged snapshot only when the public URL appears unavailable. It raises on
-malformed live catalogs and permission failures so stale packaged metadata does
-not hide a broken or private catalog. Pass a local path, `gs://` URI, HTTPS URL,
-or `"packaged"` as `source` when callers need a specific catalog. Use
+`Catalog.load()` reads the public bucket catalog by default. Pass a local path,
+`gs://` URI, or HTTPS URL as `source` when callers need a specific catalog. Use
 `Catalog.load_gcs()` when the catalog is private and readable through
 Application Default Credentials.

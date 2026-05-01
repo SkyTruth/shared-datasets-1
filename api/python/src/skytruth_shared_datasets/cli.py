@@ -11,7 +11,7 @@ from .catalog import Catalog, SharedDatasetsError
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skytruth-datasets")
-    parser.add_argument("--catalog", help="Catalog source: local path, HTTPS URL, gs:// URI, or 'packaged'.")
+    parser.add_argument("--catalog", help="Catalog source: local path, HTTPS URL, or gs:// URI.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

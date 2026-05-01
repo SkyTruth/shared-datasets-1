@@ -20,4 +20,4 @@ skytruth-datasets = "skytruth_shared_datasets.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-skytruth_shared_datasets = ["data/*.csv", "py.typed"]
+skytruth_shared_datasets = ["py.typed"]

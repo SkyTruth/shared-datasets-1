@@ -7,12 +7,11 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from importlib import resources
 from io import StringIO
 from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable, Literal, Mapping
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -157,24 +156,23 @@ class Catalog:
 
     @classmethod
     def load(cls, source: str | os.PathLike[str] | None = None, *, timeout: float = 10.0) -> "Catalog":
-        """Load the catalog from a URL, path, gs:// URI, or packaged snapshot.
+        """Load the catalog from a URL, path, or gs:// URI.
 
-        With no source, the public bucket catalog is used first and the packaged
-        snapshot is used only as an offline/unavailable fallback.
+        With no source, the public bucket catalog is used.
         """
         if source is None:
             try:
                 text = _read_url(DEFAULT_CATALOG_URL, timeout=timeout)
             except Exception as exc:
-                if not _allows_packaged_fallback(exc):
-                    raise _catalog_load_error(DEFAULT_CATALOG_URL, exc) from exc
-                text = _read_packaged_catalog()
-                return cls.from_csv_text(text, source="packaged")
+                raise _catalog_load_error(DEFAULT_CATALOG_URL, exc) from exc
             return cls.from_csv_text(text, source=DEFAULT_CATALOG_URL)
 
         source_text = os.fspath(source)
         if source_text == "packaged":
-            return cls.from_csv_text(_read_packaged_catalog(), source="packaged")
+            raise CatalogLoadError(
+                "Packaged catalog snapshots are no longer shipped. "
+                "Pass a local catalog path, HTTPS URL, or gs:// URI instead."
+            )
         if _is_url(source_text):
             try:
                 return cls.from_csv_text(_read_url(source_text, timeout=timeout), source=source_text)
@@ -394,10 +392,6 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "skytruth-shared-datasets"
 
 
-def _read_packaged_catalog() -> str:
-    return resources.files(__package__).joinpath("data/shared-datasets-catalog.csv").read_text()
-
-
 def _read_url(url: str, *, timeout: float) -> str:
     request = Request(url, headers={"User-Agent": USER_AGENT})
     with urlopen(request, timeout=timeout) as response:
@@ -427,12 +421,6 @@ def _default_storage_client():
             "skytruth-shared-datasets[gcs] or pass a compatible client."
         ) from exc
     return storage.Client()
-
-
-def _allows_packaged_fallback(exc: BaseException) -> bool:
-    if isinstance(exc, HTTPError):
-        return exc.code in {408, 429} or exc.code >= 500
-    return isinstance(exc, (URLError, TimeoutError, OSError))
 
 
 def _catalog_load_error(source: str, exc: BaseException) -> CatalogLoadError:

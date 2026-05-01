@@ -67,20 +67,11 @@ class FakeGcsClient:
 
 
 class SharedDatasetSdkTests(unittest.TestCase):
-    def test_packaged_catalog_matches_repo_catalog(self):
-        packaged = SDK_SRC / "skytruth_shared_datasets/data/shared-datasets-catalog.csv"
-        canonical = REPO_ROOT / "catalog/shared-datasets-catalog.csv"
+    def test_packaged_catalog_source_is_not_supported(self):
+        with self.assertRaises(CatalogLoadError) as raised:
+            Catalog.load(source="packaged")
 
-        self.assertEqual(packaged.read_text(), canonical.read_text())
-
-    def test_loads_catalog_from_packaged_snapshot(self):
-        catalog = Catalog.load(source="packaged")
-
-        asset = catalog.get("wdpa-marine")
-
-        self.assertEqual(asset.canonical_format, "fgb")
-        self.assertIn("pmtiles", asset.available_formats)
-        self.assertEqual(catalog.source, "packaged")
+        self.assertIn("Packaged catalog snapshots are no longer shipped", str(raised.exception))
 
     def test_loads_catalog_from_local_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -107,12 +98,11 @@ class SharedDatasetSdkTests(unittest.TestCase):
         self.assertEqual(catalog.source, "gs://example-bucket/catalog.csv")
         self.assertEqual(client.requests, [("example-bucket", "catalog.csv")])
 
-    def test_default_load_falls_back_to_packaged_snapshot_when_public_url_fails(self):
+    def test_default_load_raises_when_public_url_fails(self):
         with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=OSError("offline")):
-            catalog = Catalog.load()
-
-        self.assertEqual(catalog.source, "packaged")
-        self.assertIn("wdpa-marine", catalog.slugs)
+            with self.assertRaises(CatalogLoadError) as raised:
+                Catalog.load()
+        self.assertIn("offline", str(raised.exception))
 
     def test_default_load_raises_on_malformed_live_catalog(self):
         malformed_catalog = b"not,catalog\nx,y\n"
@@ -215,11 +205,9 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
     def test_real_repo_catalog_parses_and_active_assets_resolve(self):
         catalog = Catalog.load(source=REPO_ROOT / "catalog/shared-datasets-catalog.csv")
-        packaged = Catalog.load(source="packaged")
 
         active_assets = catalog.search(status="active")
 
-        self.assertEqual(packaged.slugs, catalog.slugs)
         self.assertGreater(len(active_assets), 0)
         for asset in active_assets:
             ref = catalog.resolve(asset.slug)
