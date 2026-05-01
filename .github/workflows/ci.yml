@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run tests
+        run: |
+          mkdir -p test-results
+          uv run pytest --junitxml=test-results/pytest.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: test-results/pytest.xml
+          if-no-files-found: ignore
+
+  geospatial-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.filter.outputs.should_run }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect geospatial changes
+        id: filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          changed_files="$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)"
+
+          if printf '%s\n' "$changed_files" | grep -E '^(\.github/(docker/geospatial-ci\.Dockerfile|workflows/ci\.yml)|ingestion/|scripts/(vector_asset|raster_asset|dataset_alerts)\.py|tests/test_(raster_standards|wdpa_monthly|sea_ice_daily|eamlis_monthly)\.py)$' >/dev/null; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  geospatial-integration:
+    needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build geospatial CI image
+        run: docker build -f .github/docker/geospatial-ci.Dockerfile -t shared-datasets-geospatial-ci .
+
+      - name: Run geospatial integration tests
+        run: |
+          mkdir -p test-results
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -e UV_CACHE_DIR=.uv-cache \
+            -e UV_LINK_MODE=copy \
+            -e UV_PROJECT_ENVIRONMENT=/tmp/shared-datasets-geospatial-venv \
+            -e RUN_GDAL_INTEGRATION_TESTS=1 \
+            shared-datasets-geospatial-ci \
+            bash -lc 'uv sync --locked --all-groups && uv run pytest tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py --junitxml=test-results/geospatial-pytest.xml'
+
+      - name: Upload geospatial test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geospatial-pytest-results
+          path: test-results/geospatial-pytest.xml
+          if-no-files-found: ignore

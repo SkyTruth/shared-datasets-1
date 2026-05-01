@@ -266,7 +266,7 @@ Slack. Direct Terraform still works but will not send deployment summaries.
 ## Standard local setup
 
 ```bash
-uv sync
+UV_CACHE_DIR=.uv-cache uv sync --locked --all-groups
 
 export GOOGLE_CLOUD_PROJECT=shared-datasets-1
 export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
@@ -280,6 +280,27 @@ gcloud config set project shared-datasets-1
 ```
 
 For CI, use Workload Identity Federation or a CI-provided service account. Do not commit service account JSON keys.
+
+### Local tests
+
+The default test suite is network-free: remote services, GCS, Slack, and source
+downloads are mocked or represented by local fixtures.
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run pytest
+```
+
+Geospatial integration tests run only when the required native binaries are
+installed locally: GDAL CLI tools, Tippecanoe, and PMTiles. Enable the explicit
+GDAL integration flag for the tests that require it:
+
+```bash
+RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
+  tests/test_raster_standards.py \
+  tests/test_wdpa_monthly.py \
+  tests/test_sea_ice_daily.py \
+  tests/test_eamlis_monthly.py
+```
 
 ## GCS asset CLI
 

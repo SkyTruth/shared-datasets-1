@@ -11,6 +11,12 @@ dependencies = [
   "PyYAML>=6.0.0",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest>=9.0.0",
+]
+
 [tool.pytest.ini_options]
-pythonpath = ["."]
+addopts = "-ra --strict-config"
+pythonpath = [".", "api/python/src"]
 testpaths = ["tests"]
