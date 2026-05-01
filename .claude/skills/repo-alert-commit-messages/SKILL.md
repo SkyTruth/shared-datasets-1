@@ -34,6 +34,8 @@ Use this skill when:
 Do not add a `repo-alert` block for:
 
 - Routine fixes, docs-only edits, typo fixes, test-only changes, small refactors, dependency churn, or formatting-only updates.
+- Operational fixes to existing automation, alerting, CI, deployment, secrets, retries, permissions, or error handling unless the commit adds a genuinely new capability users or maintainers did not have before.
+- Repairs that make a recently added feature work as intended.
 - Dataset uploads where the relevant notification is a dataset upload alert, not a repo functionality alert.
 - Unstaged or unrelated files not included in the commit.
 - Human-requested marketing copy that is not grounded in the staged diff.
@@ -43,7 +45,11 @@ Negative examples:
 - A README typo fix should not get a repo-alert block.
 - A test-only patch for existing behavior should not get a repo-alert block.
 - A dependency lockfile refresh with no new user-facing capability should not get a repo-alert block.
+- Fixing a GitHub Actions secret, retry guard, webhook delivery, or clearer error message for an existing alert workflow should not get a repo-alert block.
+- Making a newly added workflow actually deliver after a configuration mistake should not get a repo-alert block; it is repair work, not a new capability.
 - A local dataset catalog row update should use dataset notification workflow, not a repo functionality alert, unless it also adds new repo behavior.
+
+Decision rule: a repo-alert is for net-new capability, not restoration. If the best headline starts with "Fix", "Restore", "Retry", "Handle missing", "Make X work", or "Improve diagnostics", do not add an alert unless the staged diff also introduces a distinct new feature.
 
 ## Workflow
 
