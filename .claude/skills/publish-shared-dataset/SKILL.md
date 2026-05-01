@@ -18,6 +18,8 @@ Read these before choosing names, paths, formats, or remote writes:
 - `docs/standards/dataset-taxonomy.md`
 - `docs/standards/asset-layout-and-formats.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS operation
+- `.claude/skills/static-catalog-web-preview/SKILL.md` before refreshing the
+  live catalog UI cache after dataset edits or uploads
 - Relevant existing `docs/assets/{asset-slug}.md` files and nearby catalog rows
 
 ## Under-Specified Upload Discovery
@@ -111,6 +113,39 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
 Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
 metadata changes.
 
+## Catalog UI Cache Refresh
+
+Every manual dataset edit or upload must refresh the live catalog UI cache after
+the local catalog metadata is current and any data-plane writes are complete.
+This applies even when only asset docs, README metadata, `latest/`, `releases/`,
+or PMTiles changed.
+
+Load `static-catalog-web-preview`, then rebuild the static catalog bundle:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
+  --out /tmp/shared-datasets-1/catalog-web
+```
+
+For normal dataset metadata changes, replace the deployed `catalog.json` with a
+generation precondition and set no-cache metadata:
+
+```bash
+DEST=gs://skytruth-shared-datasets-1/_catalog/web
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$DEST/catalog.json"
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
+  /tmp/shared-datasets-1/catalog-web/catalog.json "$DEST/catalog.json" \
+  --replace-generation <generation-from-stat>
+gcloud storage objects update \
+  --cache-control='no-cache, max-age=0, must-revalidate' \
+  "$DEST/catalog.json"
+```
+
+If the dataset publish replaced same-path PMTiles display artifacts, also set
+no-cache metadata on the affected `latest/*.pmtiles` and
+`releases/YYYY-MM-DD/*.pmtiles` objects. If static UI files changed, follow the
+full deployment and verification flow in `static-catalog-web-preview`.
+
 ## Publication Workflow
 
 For a new manual asset:
@@ -124,6 +159,7 @@ For a new manual asset:
    critical, difficult to recreate, or needs reproducible snapshots.
 7. Verify remote paths and object metadata.
 8. Run dataset upload/schema alert helpers when applicable.
+9. Refresh the catalog UI cache using the steps above.
 
 For an update to an existing versioned asset, prefer `publish-release` when the
 local publish directory is ready for an existing catalog asset:
@@ -171,6 +207,9 @@ Report:
 - Asset slug, category/subcategory, canonical format, and source/version.
 - Local files generated and validation commands run.
 - Catalog/doc generation commands run.
+- Catalog UI cache refresh commands run, including `catalog.json` generation,
+  generation-preconditioned upload, cache-control metadata update, and PMTiles
+  cache-control updates when PMTiles were replaced.
 - Remote paths changed, including `latest/`, `releases/`, `runs/`, and README
   paths.
 - Object generations for replacements when available.
