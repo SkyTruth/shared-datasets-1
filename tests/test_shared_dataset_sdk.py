@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.error import HTTPError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,11 +16,13 @@ if str(SDK_SRC) not in sys.path:
 
 from skytruth_shared_datasets import (  # noqa: E402
     Catalog,
+    CatalogLoadError,
     DatasetNotFoundError,
     FetchError,
     UnsupportedFormatError,
     UnsupportedVersionError,
     gs_to_https,
+    split_gs_uri,
 )
 
 
@@ -29,7 +32,47 @@ example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups
 """
 
 
+class FakeGcsBlob:
+    def __init__(self, *, text: str = "", content: bytes = b"") -> None:
+        self.text = text
+        self.content = content
+        self.downloads = []
+
+    def download_as_text(self, timeout):
+        self.downloads.append(("text", timeout))
+        return self.text
+
+    def download_to_filename(self, filename, timeout):
+        self.downloads.append(("file", timeout))
+        Path(filename).write_bytes(self.content)
+
+
+class FakeGcsBucket:
+    def __init__(self, client, bucket_name: str) -> None:
+        self.client = client
+        self.bucket_name = bucket_name
+
+    def blob(self, object_name: str) -> FakeGcsBlob:
+        self.client.requests.append((self.bucket_name, object_name))
+        return self.client.blobs[(self.bucket_name, object_name)]
+
+
+class FakeGcsClient:
+    def __init__(self, blobs: dict[tuple[str, str], FakeGcsBlob]) -> None:
+        self.blobs = blobs
+        self.requests: list[tuple[str, str]] = []
+
+    def bucket(self, bucket_name: str) -> FakeGcsBucket:
+        return FakeGcsBucket(self, bucket_name)
+
+
 class SharedDatasetSdkTests(unittest.TestCase):
+    def test_packaged_catalog_matches_repo_catalog(self):
+        packaged = SDK_SRC / "skytruth_shared_datasets/data/shared-datasets-catalog.csv"
+        canonical = REPO_ROOT / "catalog/shared-datasets-catalog.csv"
+
+        self.assertEqual(packaged.read_text(), canonical.read_text())
+
     def test_loads_catalog_from_packaged_snapshot(self):
         catalog = Catalog.load(source="packaged")
 
@@ -55,12 +98,42 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(catalog.get("example-vector").canonical_format, "fgb")
 
+    def test_loads_catalog_from_mocked_gcs_client(self):
+        client = FakeGcsClient({("example-bucket", "catalog.csv"): FakeGcsBlob(text=FIXTURE_CSV)})
+
+        catalog = Catalog.load_gcs("gs://example-bucket/catalog.csv", client=client)
+
+        self.assertEqual(catalog.get("example-vector").canonical_format, "fgb")
+        self.assertEqual(catalog.source, "gs://example-bucket/catalog.csv")
+        self.assertEqual(client.requests, [("example-bucket", "catalog.csv")])
+
     def test_default_load_falls_back_to_packaged_snapshot_when_public_url_fails(self):
         with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=OSError("offline")):
             catalog = Catalog.load()
 
         self.assertEqual(catalog.source, "packaged")
         self.assertIn("wdpa-marine", catalog.slugs)
+
+    def test_default_load_raises_on_malformed_live_catalog(self):
+        malformed_catalog = b"not,catalog\nx,y\n"
+        with mock.patch("skytruth_shared_datasets.catalog.urlopen", return_value=io.BytesIO(malformed_catalog)):
+            with self.assertRaises(CatalogLoadError):
+                Catalog.load()
+
+    def test_default_load_raises_on_catalog_permission_failures(self):
+        for status_code in (403, 404):
+            with self.subTest(status_code=status_code):
+                error = HTTPError(
+                    url="https://storage.googleapis.com/example/catalog.csv",
+                    code=status_code,
+                    msg="blocked",
+                    hdrs=None,
+                    fp=None,
+                )
+                with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=error):
+                    with self.assertRaises(CatalogLoadError) as raised:
+                        Catalog.load()
+                self.assertIn("Catalog.load_gcs()", str(raised.exception))
 
     def test_get_and_search_filter_catalog_assets(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -92,6 +165,14 @@ class SharedDatasetSdkTests(unittest.TestCase):
         with self.assertRaises(UnsupportedVersionError):
             catalog.resolve("example-vector", version="2026-04-30")
 
+    def test_resolve_cdn_url_keeps_canonical_gs_uri(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+
+        pmtiles = catalog.resolve("example-vector", format="pmtiles", web_base_url="/pmtiles")
+
+        self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
+        self.assertEqual(pmtiles.url, "/pmtiles/example-vector.pmtiles")
+
     def test_fetch_downloads_to_cache_and_reuses_cache(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
         calls = []
@@ -111,6 +192,20 @@ class SharedDatasetSdkTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertEqual(first.name, "example-vector.fgb")
             self.assertIn("2026-04-30", first.parts)
+
+    def test_fetch_downloads_from_mocked_gcs_client(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        ref = catalog.resolve("example-vector", format="fgb")
+        bucket_name, object_name = split_gs_uri(ref.gs_uri)
+        blob = FakeGcsBlob(content=b"gcs dataset bytes")
+        client = FakeGcsClient({(bucket_name, object_name): blob})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = catalog.fetch("example-vector", format="fgb", cache_dir=tmp, access="gcs", client=client)
+            self.assertEqual(path.read_bytes(), b"gcs dataset bytes")
+
+        self.assertEqual(client.requests, [(bucket_name, object_name)])
+        self.assertEqual(blob.downloads, [("file", 60.0)])
 
     def test_fetch_reports_download_failures(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)

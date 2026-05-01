@@ -11,13 +11,18 @@ from importlib import resources
 from io import StringIO
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Iterable, Literal, Mapping
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
+DEFAULT_CATALOG_GS_URI = f"gs://{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_CATALOG_URL = f"https://storage.googleapis.com/{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 USER_AGENT = "skytruth-shared-datasets/0.1"
+
+AccessMode = Literal["public", "gcs"]
+UrlStrategy = Literal["public_gcs", "cdn"]
 
 FORMAT_EXTENSIONS = {
     "fgb": ".fgb",
@@ -72,10 +77,10 @@ class CatalogAsset:
     source: str
     license: str
     notes: str
-    raw: Mapping[str, str] = field(repr=False)
+    raw: Mapping[str, str | None] = field(repr=False)
 
     @classmethod
-    def from_row(cls, row: Mapping[str, str]) -> "CatalogAsset":
+    def from_row(cls, row: Mapping[str, str | None]) -> "CatalogAsset":
         slug = _required(row, "asset_slug")
         canonical_path = _required(row, "canonical_path")
         canonical_format = _normalize_format(_required(row, "canonical_format"))
@@ -155,15 +160,17 @@ class Catalog:
         """Load the catalog from a URL, path, gs:// URI, or packaged snapshot.
 
         With no source, the public bucket catalog is used first and the packaged
-        snapshot is used as an offline fallback.
+        snapshot is used only as an offline/unavailable fallback.
         """
         if source is None:
             try:
                 text = _read_url(DEFAULT_CATALOG_URL, timeout=timeout)
-                return cls.from_csv_text(text, source=DEFAULT_CATALOG_URL)
-            except Exception:
+            except Exception as exc:
+                if not _allows_packaged_fallback(exc):
+                    raise _catalog_load_error(DEFAULT_CATALOG_URL, exc) from exc
                 text = _read_packaged_catalog()
                 return cls.from_csv_text(text, source="packaged")
+            return cls.from_csv_text(text, source=DEFAULT_CATALOG_URL)
 
         source_text = os.fspath(source)
         if source_text == "packaged":
@@ -172,17 +179,40 @@ class Catalog:
             try:
                 return cls.from_csv_text(_read_url(source_text, timeout=timeout), source=source_text)
             except Exception as exc:
-                raise CatalogLoadError(f"Could not load catalog from {source_text}: {exc}") from exc
+                raise _catalog_load_error(source_text, exc) from exc
         if source_text.startswith("gs://"):
             url = gs_to_https(source_text)
             try:
                 return cls.from_csv_text(_read_url(url, timeout=timeout), source=source_text)
             except Exception as exc:
-                raise CatalogLoadError(f"Could not load catalog from {source_text}: {exc}") from exc
+                raise _catalog_load_error(source_text, exc) from exc
         try:
             return cls.from_csv_text(Path(source_text).read_text(), source=source_text)
         except OSError as exc:
             raise CatalogLoadError(f"Could not load catalog from {source_text}: {exc}") from exc
+
+    @classmethod
+    def load_gcs(
+        cls,
+        source: str = DEFAULT_CATALOG_GS_URI,
+        *,
+        client=None,
+        timeout: float = 10.0,
+    ) -> "Catalog":
+        """Load the catalog from GCS with Application Default Credentials.
+
+        This path requires the optional ``google-cloud-storage`` dependency
+        unless a compatible client is supplied by the caller.
+        """
+        if not source.startswith("gs://"):
+            raise CatalogLoadError(f"Authenticated catalog loading requires a gs:// URI, got: {source}")
+        try:
+            text = _read_gcs_text(source, client=client, timeout=timeout)
+            return cls.from_csv_text(text, source=source)
+        except Exception as exc:
+            if isinstance(exc, CatalogLoadError):
+                raise
+            raise CatalogLoadError(f"Could not load catalog from {source} with authenticated GCS access: {exc}") from exc
 
     @classmethod
     def from_csv_text(cls, text: str, *, source: str = "") -> "Catalog":
@@ -190,11 +220,16 @@ class Catalog:
         if not reader.fieldnames:
             raise CatalogLoadError("Catalog CSV has no header row")
         assets: list[CatalogAsset] = []
+        seen_slugs: set[str] = set()
         for line_number, row in enumerate(reader, start=2):
             try:
-                assets.append(CatalogAsset.from_row(row))
+                asset = CatalogAsset.from_row(row)
             except ValueError as exc:
                 raise CatalogLoadError(f"Invalid catalog row at line {line_number}: {exc}") from exc
+            if asset.slug in seen_slugs:
+                raise CatalogLoadError(f"Invalid catalog row at line {line_number}: duplicate asset_slug {asset.slug!r}")
+            seen_slugs.add(asset.slug)
+            assets.append(asset)
         return cls(assets, source=source)
 
     def __iter__(self) -> Iterable[CatalogAsset]:
@@ -232,7 +267,22 @@ class Catalog:
             matches.append(asset)
         return matches
 
-    def resolve(self, slug: str, format: str | None = None, *, version: str = "latest") -> DatasetRef:
+    def resolve(
+        self,
+        slug: str,
+        format: str | None = None,
+        *,
+        version: str = "latest",
+        url_strategy: str | None = None,
+        web_base_url: str | None = None,
+    ) -> DatasetRef:
+        """Resolve an asset to its canonical GCS URI and a browser-facing URL.
+
+        ``gs_uri`` is the stable object identity. ``url`` defaults to the
+        public storage.googleapis.com URL while public access remains available;
+        pass ``web_base_url`` or ``url_strategy="cdn"`` to shape CDN URLs for
+        browser clients.
+        """
         if version != "latest":
             raise UnsupportedVersionError("Only version='latest' is supported by the static CSV catalog resolver")
         asset = self.get(slug)
@@ -243,7 +293,7 @@ class Catalog:
             title=asset.title,
             format=resolved_format,
             gs_uri=gs_uri,
-            url=gs_to_https(gs_uri),
+            url=gs_to_web_url(gs_uri, url_strategy=url_strategy, web_base_url=web_base_url),
             last_updated=asset.last_updated,
         )
 
@@ -255,6 +305,8 @@ class Catalog:
         cache_dir: str | os.PathLike[str] | None = None,
         force: bool = False,
         timeout: float = 60.0,
+        access: AccessMode = "public",
+        client=None,
     ) -> Path:
         ref = self.resolve(slug, format)
         destination = _cache_path(ref, cache_dir)
@@ -265,13 +317,18 @@ class Catalog:
         os.close(fd)
         temp_path = Path(temp_name)
         try:
-            request = Request(ref.url, headers={"User-Agent": USER_AGENT})
-            with urlopen(request, timeout=timeout) as response, temp_path.open("wb") as file_obj:
-                shutil.copyfileobj(response, file_obj)
+            access_mode = _normalize_access(access)
+            if access_mode == "public":
+                public_url = gs_to_https(ref.gs_uri)
+                request = Request(public_url, headers={"User-Agent": USER_AGENT})
+                with urlopen(request, timeout=timeout) as response, temp_path.open("wb") as file_obj:
+                    shutil.copyfileobj(response, file_obj)
+            else:
+                _download_gcs_to_path(ref.gs_uri, temp_path, client=client, timeout=timeout)
             temp_path.replace(destination)
         except Exception as exc:
             temp_path.unlink(missing_ok=True)
-            raise FetchError(f"Could not download {ref.url}: {exc}") from exc
+            raise FetchError(f"Could not download {ref.gs_uri} with {access!r} access: {exc}") from exc
         return destination
 
 
@@ -288,6 +345,40 @@ def gs_to_https(uri: str) -> str:
     if not bucket or not name:
         raise ValueError(f"Expected gs:// object URI, got: {uri}")
     return f"https://storage.googleapis.com/{bucket}/{quote(name)}"
+
+
+def gs_to_web_url(
+    uri: str,
+    *,
+    url_strategy: str | None = None,
+    web_base_url: str | None = None,
+) -> str:
+    """Convert a GCS URI into a browser-facing URL.
+
+    The default strategy returns the public ``storage.googleapis.com`` URL.
+    Passing ``web_base_url`` without an explicit strategy selects the CDN-style
+    strategy, mapping the object filename under that base URL.
+    """
+    strategy = _normalize_url_strategy(url_strategy or ("cdn" if web_base_url else "public_gcs"))
+    if strategy == "public_gcs":
+        return gs_to_https(uri)
+    if web_base_url is None:
+        raise ValueError("web_base_url is required when url_strategy='cdn'")
+    filename = uri.rstrip("/").rsplit("/", 1)[-1]
+    if not filename or filename == uri:
+        raise ValueError(f"Expected gs:// object URI with filename, got: {uri}")
+    return f"{web_base_url.rstrip('/')}/{quote(filename)}"
+
+
+def split_gs_uri(uri: str) -> tuple[str, str]:
+    """Return ``(bucket, object_name)`` for a gs:// object URI."""
+    if not uri.startswith("gs://"):
+        raise ValueError(f"Expected gs:// URI, got: {uri}")
+    rest = uri[5:]
+    bucket, separator, object_name = rest.partition("/")
+    if not bucket or not separator or not object_name:
+        raise ValueError(f"Expected gs:// object URI, got: {uri}")
+    return bucket, object_name
 
 
 def _cache_path(ref: DatasetRef, cache_dir: str | os.PathLike[str] | None) -> Path:
@@ -313,16 +404,56 @@ def _read_url(url: str, *, timeout: float) -> str:
         return response.read().decode("utf-8")
 
 
+def _read_gcs_text(uri: str, *, client=None, timeout: float) -> str:
+    bucket_name, object_name = split_gs_uri(uri)
+    storage_client = client or _default_storage_client()
+    blob = storage_client.bucket(bucket_name).blob(object_name)
+    return blob.download_as_text(timeout=timeout)
+
+
+def _download_gcs_to_path(uri: str, destination: Path, *, client=None, timeout: float) -> None:
+    bucket_name, object_name = split_gs_uri(uri)
+    storage_client = client or _default_storage_client()
+    blob = storage_client.bucket(bucket_name).blob(object_name)
+    blob.download_to_filename(str(destination), timeout=timeout)
+
+
+def _default_storage_client():
+    try:
+        from google.cloud import storage
+    except ImportError as exc:
+        raise CatalogLoadError(
+            "Authenticated GCS access requires google-cloud-storage; install "
+            "skytruth-shared-datasets[gcs] or pass a compatible client."
+        ) from exc
+    return storage.Client()
+
+
+def _allows_packaged_fallback(exc: BaseException) -> bool:
+    if isinstance(exc, HTTPError):
+        return exc.code in {408, 429} or exc.code >= 500
+    return isinstance(exc, (URLError, TimeoutError, OSError))
+
+
+def _catalog_load_error(source: str, exc: BaseException) -> CatalogLoadError:
+    if isinstance(exc, HTTPError) and exc.code in {403, 404}:
+        return CatalogLoadError(
+            f"Could not load catalog from {source}: HTTP {exc.code}. "
+            "If the bucket is private, use Catalog.load_gcs() with Application Default Credentials."
+        )
+    return CatalogLoadError(f"Could not load catalog from {source}: {exc}")
+
+
 def _is_url(value: str) -> bool:
     return value.startswith("https://") or value.startswith("http://")
 
 
-def _split_semicolon(value: str) -> tuple[str, ...]:
-    return tuple(part.strip() for part in value.split(";") if part.strip())
+def _split_semicolon(value: str | None) -> tuple[str, ...]:
+    return tuple(part.strip() for part in (value or "").split(";") if part.strip())
 
 
-def _required(row: Mapping[str, str], field: str) -> str:
-    value = row.get(field, "").strip()
+def _required(row: Mapping[str, str | None], field: str) -> str:
+    value = (row.get(field) or "").strip()
     if not value:
         raise ValueError(f"missing required field {field!r}")
     return value
@@ -344,3 +475,17 @@ def _normalize_format(format_name: str) -> str:
         ".tiff": "cog",
     }
     return aliases.get(normalized, normalized)
+
+
+def _normalize_access(access: str) -> AccessMode:
+    normalized = access.strip().lower()
+    if normalized not in {"public", "gcs"}:
+        raise ValueError("access must be 'public' or 'gcs'")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_url_strategy(url_strategy: str) -> UrlStrategy:
+    normalized = url_strategy.strip().lower().replace("-", "_")
+    if normalized not in {"public_gcs", "cdn"}:
+        raise ValueError("url_strategy must be 'public_gcs' or 'cdn'")
+    return normalized  # type: ignore[return-value]

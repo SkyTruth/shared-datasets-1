@@ -21,15 +21,28 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--status", default="active", help="Filter by status. Use --all-statuses to disable.")
     list_parser.add_argument("--all-statuses", action="store_true", help="Include assets with any status.")
 
-    url_parser = subparsers.add_parser("url", help="Resolve a dataset to a public HTTPS URL.")
+    url_parser = subparsers.add_parser("url", help="Resolve a dataset to a browser-facing URL.")
     url_parser.add_argument("slug")
     url_parser.add_argument("--format", dest="requested_format", help="Requested format, such as fgb or pmtiles.")
+    url_parser.add_argument(
+        "--url-strategy",
+        choices=("public-gcs", "cdn"),
+        default="public-gcs",
+        help="Browser-facing URL strategy.",
+    )
+    url_parser.add_argument("--web-base-url", help="Base URL for CDN-style URLs, such as /pmtiles.")
 
     fetch_parser = subparsers.add_parser("fetch", help="Download a dataset file into the local cache.")
     fetch_parser.add_argument("slug")
     fetch_parser.add_argument("--format", dest="requested_format", help="Requested format, such as fgb or pmtiles.")
     fetch_parser.add_argument("--cache-dir", type=Path, help="Cache directory.")
     fetch_parser.add_argument("--force", action="store_true", help="Re-download even when the cached file exists.")
+    fetch_parser.add_argument(
+        "--access",
+        choices=("public", "gcs"),
+        default="public",
+        help="Download via public HTTPS or authenticated GCS.",
+    )
 
     return parser
 
@@ -43,12 +56,27 @@ def main(argv: list[str] | None = None) -> int:
             status = None if args.all_statuses else args.status
             _print_assets(catalog.search(category=args.category, format=args.format, status=status))
         elif args.command == "url":
-            print(catalog.resolve(args.slug, args.requested_format).url)
+            print(
+                catalog.resolve(
+                    args.slug,
+                    args.requested_format,
+                    url_strategy=args.url_strategy,
+                    web_base_url=args.web_base_url,
+                ).url
+            )
         elif args.command == "fetch":
-            print(catalog.fetch(args.slug, args.requested_format, cache_dir=args.cache_dir, force=args.force))
+            print(
+                catalog.fetch(
+                    args.slug,
+                    args.requested_format,
+                    cache_dir=args.cache_dir,
+                    force=args.force,
+                    access=args.access,
+                )
+            )
         else:
             parser.error(f"unknown command: {args.command}")
-    except SharedDatasetsError as exc:
+    except (SharedDatasetsError, ValueError) as exc:
         print(f"skytruth-datasets: {exc}", file=sys.stderr)
         return 1
     return 0
