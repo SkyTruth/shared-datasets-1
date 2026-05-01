@@ -1,6 +1,18 @@
 const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css";
 const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
+const MISSING_COLOR = "#949d97";
+const SAMPLE_LIMIT = 700;
+const CATEGORICAL_MATCH_LIMIT = 320;
+const MIN_GRADIENT_VALUES = 4;
+const GRADIENT_PARSE_RATIO = 0.86;
+const STRICT_NUMBER_PATTERN = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:e[+-]?\d+)?$/i;
+const TIME_ONLY_PATTERN = /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(am|pm)?$/i;
+const ISO_DATE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/i;
+const SLASH_DATE_PATTERN = /^\d{1,4}\/\d{1,2}\/\d{1,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?)?$/i;
+const MONTH_DATE_PATTERN =
+  /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?)?$/i;
 const BASEMAPS = {
   map: {
     tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
@@ -14,13 +26,42 @@ const BASEMAPS = {
     maxzoom: 19,
   },
 };
+const CATEGORICAL_COLORS = [
+  "#d84f2a",
+  "#1f6fb2",
+  "#8b4ec6",
+  "#b88700",
+  "#16715d",
+  "#9a4261",
+  "#3d7b2f",
+  "#d15f96",
+  "#5368d7",
+  "#a56722",
+  "#008c95",
+  "#6e6e1f",
+];
+const NUMERIC_RAMPS = {
+  map: ["#2166ac", "#f7f7f7", "#b2182b"],
+  satellite: ["#00d6ff", "#fff36a", "#ff4b7b"],
+};
 
 let dependencyPromise = null;
 let protocolInstalled = false;
 let activeMap = null;
 let activeRenderSerial = 0;
+let activeColorContext = null;
 
-export async function renderMapPreview({ container, status, asset, assets, basemap = "map", onFeatureSelect = () => {} }) {
+export async function renderMapPreview({
+  container,
+  status,
+  asset,
+  assets,
+  basemap = "map",
+  colorField = "",
+  onColorFieldsChange = () => {},
+  onColorLegendChange = () => {},
+  onFeatureSelect = () => {},
+}) {
   const requestedAssets = (Array.isArray(assets) && assets.length ? assets : [asset]).filter(Boolean);
   const mapAssets = requestedAssets.filter((candidate) => candidate.pmtiles_url);
   if (!mapAssets.length) {
@@ -28,10 +69,7 @@ export async function renderMapPreview({ container, status, asset, assets, basem
   }
 
   const renderSerial = ++activeRenderSerial;
-  if (activeMap) {
-    activeMap.remove();
-    activeMap = null;
-  }
+  clearActiveMap();
 
   container.replaceChildren(status);
   status.hidden = false;
@@ -81,6 +119,9 @@ export async function renderMapPreview({ container, status, asset, assets, basem
     "Map render timed out."
   );
   if (!renderIsCurrent(renderSerial)) {
+    if (activeMap === map) {
+      activeMap = null;
+    }
     map.remove();
     return;
   }
@@ -89,8 +130,65 @@ export async function renderMapPreview({ container, status, asset, assets, basem
   if (bounds) {
     map.fitBounds(bounds, { padding: 34, duration: 0, maxZoom: 8 });
   }
+
+  const singleDataset = mapSources.length === 1;
+  activeColorContext = {
+    map,
+    mapSources,
+    basemap: resolvedBasemap,
+    colorField: "",
+    colorMode: { type: "dataset" },
+    fieldSignature: "",
+    colorSignature: "",
+    refreshTimer: null,
+    onColorFieldsChange: singleDataset ? onColorFieldsChange : () => {},
+    onColorLegendChange: singleDataset ? onColorLegendChange : () => {},
+  };
+  refreshAvailableFields(activeColorContext);
+  setColorizeField(singleDataset ? colorField : "");
+  if (singleDataset) {
+    enableColorRefresh(activeColorContext);
+  } else {
+    onColorFieldsChange([]);
+    onColorLegendChange(null);
+  }
+
   enableFeatureInspection(map, mapSources, onFeatureSelect);
   status.hidden = true;
+}
+
+export function setColorizeField(fieldName) {
+  const context = activeColorContext;
+  if (!context || !context.map || context.mapSources.length !== 1) {
+    return;
+  }
+
+  const nextField = String(fieldName || "");
+  context.colorField = context.availableFields?.includes(nextField) ? nextField : "";
+  if (!context.colorField) {
+    context.colorMode = { type: "dataset" };
+    context.colorSignature = "";
+    applyDatasetColors(context);
+    notifyColorLegend(context);
+    return;
+  }
+
+  refreshColorSample(context);
+}
+
+function clearActiveMap() {
+  clearActiveColorContext();
+  if (activeMap) {
+    activeMap.remove();
+    activeMap = null;
+  }
+}
+
+function clearActiveColorContext() {
+  if (activeColorContext?.refreshTimer) {
+    window.clearTimeout(activeColorContext.refreshTimer);
+  }
+  activeColorContext = null;
 }
 
 function renderIsCurrent(renderSerial) {
@@ -191,10 +289,11 @@ async function mapSourceForAsset(asset, index, basemap) {
   const metadata = await withTimeout(archive.getMetadata(), 8000, `${asset.title} PMTiles metadata request timed out.`);
   const header = await withTimeout(archive.getHeader(), 8000, `${asset.title} PMTiles header request timed out.`);
   const color = palette(index, basemap);
-  const sourceLayers = vectorLayers(metadata, asset).map((sourceLayer, layerIndex) => {
-    const baseId = `asset-${index}-${safeId(asset.slug)}-${layerIndex}-${safeId(sourceLayer)}`;
+  const sourceLayers = vectorLayerSpecs(metadata, asset).map((spec, layerIndex) => {
+    const baseId = `asset-${index}-${safeId(asset.slug)}-${layerIndex}-${safeId(spec.sourceLayer)}`;
     return {
-      sourceLayer,
+      sourceLayer: spec.sourceLayer,
+      fields: spec.fields,
       fillId: `${baseId}-fill`,
       polygonOutlineId: `${baseId}-polygon-outline`,
       lineId: `${baseId}-line`,
@@ -211,12 +310,34 @@ async function mapSourceForAsset(asset, index, basemap) {
   };
 }
 
-function vectorLayers(metadata, asset) {
+function vectorLayerSpecs(metadata, asset) {
   const layers = Array.isArray(metadata?.vector_layers) ? metadata.vector_layers : [];
   if (layers.length) {
-    return layers.map((layer) => String(layer.id || layer.name)).filter(Boolean);
+    return layers
+      .map((layer) => ({
+        sourceLayer: String(layer?.id || layer?.name || ""),
+        fields: fieldNamesFromMetadata(layer?.fields),
+      }))
+      .filter((layer) => layer.sourceLayer);
   }
-  return [asset.slug.replaceAll("-", "_")];
+  return [{ sourceLayer: asset.slug.replaceAll("-", "_"), fields: [] }];
+}
+
+function fieldNamesFromMetadata(fields) {
+  if (Array.isArray(fields)) {
+    return uniqueStrings(
+      fields
+        .map((field) => {
+          if (typeof field === "string") return field;
+          return field?.name || field?.id || "";
+        })
+        .filter(Boolean)
+    );
+  }
+  if (fields && typeof fields === "object") {
+    return uniqueStrings(Object.keys(fields));
+  }
+  return [];
 }
 
 function styleFor(mapSources, basemap) {
@@ -315,6 +436,247 @@ function styleFor(mapSources, basemap) {
   };
 }
 
+function enableColorRefresh(context) {
+  const refresh = () => scheduleColorRefresh(context);
+  context.map.on("idle", refresh);
+  context.map.on("moveend", refresh);
+  context.map.on("zoomend", refresh);
+}
+
+function scheduleColorRefresh(context) {
+  if (activeColorContext !== context) return;
+  if (context.refreshTimer) {
+    window.clearTimeout(context.refreshTimer);
+  }
+  context.refreshTimer = window.setTimeout(() => {
+    context.refreshTimer = null;
+    if (activeColorContext !== context) return;
+    refreshAvailableFields(context);
+    if (context.colorField) {
+      refreshColorSample(context);
+    }
+  }, 80);
+}
+
+function refreshAvailableFields(context) {
+  const fields = new Set();
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      for (const field of layer.fields) {
+        fields.add(field);
+      }
+      for (const feature of querySourceLayerFeatures(context.map, source, layer).slice(0, SAMPLE_LIMIT)) {
+        for (const field of Object.keys(feature.properties || {})) {
+          fields.add(field);
+        }
+      }
+    }
+  }
+  const availableFields = uniqueStrings([...fields]);
+  const signature = availableFields.join("\n");
+  context.availableFields = availableFields;
+  if (signature !== context.fieldSignature) {
+    context.fieldSignature = signature;
+    context.onColorFieldsChange(availableFields);
+  }
+}
+
+function refreshColorSample(context) {
+  if (!context.colorField) {
+    return;
+  }
+  const samples = sampleFieldValues(context, context.colorField);
+  const mode = inferColorMode(context.colorField, samples);
+  const signature = colorModeSignature(mode);
+  context.colorMode = mode;
+  if (signature !== context.colorSignature) {
+    context.colorSignature = signature;
+    applyColorMode(context);
+    notifyColorLegend(context);
+  }
+}
+
+function sampleFieldValues(context, field) {
+  const samples = [];
+  let seen = 0;
+  const random = seededRandom(hashString(field));
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      for (const feature of querySourceLayerFeatures(context.map, source, layer)) {
+        const properties = feature.properties || {};
+        if (!Object.prototype.hasOwnProperty.call(properties, field) || isEmptyValue(properties[field])) {
+          continue;
+        }
+        seen += 1;
+        const item = { raw: properties[field], text: normalizedValue(properties[field]) };
+        if (samples.length < SAMPLE_LIMIT) {
+          samples.push(item);
+        } else {
+          const replacementIndex = Math.floor(random() * seen);
+          if (replacementIndex < SAMPLE_LIMIT) {
+            samples[replacementIndex] = item;
+          }
+        }
+      }
+    }
+  }
+  return samples;
+}
+
+function querySourceLayerFeatures(map, source, layer) {
+  try {
+    return map.querySourceFeatures(source.sourceId, { sourceLayer: layer.sourceLayer });
+  } catch {
+    return [];
+  }
+}
+
+function inferColorMode(field, samples) {
+  const nonEmpty = samples.filter((sample) => sample.text);
+  const numericValues = nonEmpty
+    .map((sample) => parseNumericValue(sample.raw))
+    .filter((value) => value !== null);
+  const temporalValues = nonEmpty
+    .map((sample) => ({ sample, parsed: parseTemporalValue(sample.raw) }))
+    .filter((item) => item.parsed !== null);
+
+  if (isGradientCandidate(nonEmpty.length, numericValues)) {
+    const extent = extentFor(numericValues);
+    return { type: "numeric", field, min: extent.min, max: extent.max };
+  }
+  if (isGradientCandidate(nonEmpty.length, temporalValues.map((item) => item.parsed.value))) {
+    const values = uniqueSampleValues(temporalValues.map((item) => item.sample));
+    const extent = extentFor(temporalValues.map((item) => item.parsed.value));
+    return { type: "temporal", field, min: extent.min, max: extent.max, values };
+  }
+  return { type: "categorical", field, values: uniqueSampleValues(nonEmpty) };
+}
+
+function isGradientCandidate(totalCount, parsedValues) {
+  if (totalCount < MIN_GRADIENT_VALUES || parsedValues.length / totalCount < GRADIENT_PARSE_RATIO) {
+    return false;
+  }
+  return new Set(parsedValues.map((value) => String(value))).size >= 2;
+}
+
+function extentFor(values) {
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
+function uniqueSampleValues(samples) {
+  return uniqueStrings(samples.map((sample) => sample.text)).slice(0, CATEGORICAL_MATCH_LIMIT);
+}
+
+function colorModeSignature(mode) {
+  if (mode.type === "numeric") {
+    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}`;
+  }
+  return `${mode.type}|${mode.field}|${mode.min ?? ""}|${mode.max ?? ""}|${(mode.values || []).join("\u001f")}`;
+}
+
+function applyColorMode(context) {
+  if (context.colorMode.type === "dataset") {
+    applyDatasetColors(context);
+    return;
+  }
+  const colorExpression = colorExpressionForMode(context.colorMode, context.basemap);
+  for (const source of context.mapSources) {
+    applySourceColor(context.map, source, colorExpression);
+  }
+}
+
+function notifyColorLegend(context) {
+  if (context.colorMode?.type !== "categorical") {
+    context.onColorLegendChange(null);
+    return;
+  }
+  context.onColorLegendChange({
+    type: "categorical",
+    field: context.colorMode.field,
+    entries: (context.colorMode.values || []).map((value) => ({
+      value,
+      color: categoricalColor(value),
+    })),
+  });
+}
+
+function applyDatasetColors(context) {
+  for (const source of context.mapSources) {
+    applySourceColor(context.map, source, source.color);
+  }
+}
+
+function applySourceColor(map, source, color) {
+  for (const layer of source.sourceLayers) {
+    setPaintColor(map, layer.fillId, "fill-color", color);
+    setPaintColor(map, layer.polygonOutlineId, "line-color", color);
+    setPaintColor(map, layer.lineId, "line-color", color);
+    setPaintColor(map, layer.pointId, "circle-color", color);
+  }
+}
+
+function setPaintColor(map, layerId, property, color) {
+  if (map.getLayer(layerId)) {
+    map.setPaintProperty(layerId, property, color);
+  }
+}
+
+function colorExpressionForMode(mode, basemap) {
+  if (mode.type === "numeric") {
+    return numericColorExpression(mode.field, mode.min, mode.max, basemap);
+  }
+  if (mode.type === "temporal") {
+    return temporalColorExpression(mode.field, mode.values, mode.min, mode.max, basemap);
+  }
+  return categoricalColorExpression(mode.field, mode.values);
+}
+
+function numericColorExpression(field, min, max, basemap) {
+  const ramp = NUMERIC_RAMPS[basemap] || NUMERIC_RAMPS.map;
+  const midpoint = min + (max - min) / 2;
+  const sentinel = min - Math.max(1, Math.abs(max - min));
+  const numericValue = ["to-number", ["get", field], sentinel];
+  return [
+    "case",
+    ["all", presentExpression(field), ["!=", numericValue, sentinel]],
+    ["interpolate", ["linear"], numericValue, min, ramp[0], midpoint, ramp[1], max, ramp[2]],
+    MISSING_COLOR,
+  ];
+}
+
+function temporalColorExpression(field, values, min, max, basemap) {
+  const matches = [];
+  for (const value of values) {
+    const parsed = parseTemporalValue(value);
+    if (parsed !== null) {
+      matches.push(value, gradientColor(parsed.value, min, max, basemap));
+    }
+  }
+  if (!matches.length) {
+    return MISSING_COLOR;
+  }
+  return ["case", presentExpression(field), ["match", fieldStringExpression(field), ...matches, MISSING_COLOR], MISSING_COLOR];
+}
+
+function categoricalColorExpression(field, values) {
+  const matches = values.flatMap((value) => [value, categoricalColor(value)]);
+  if (!matches.length) {
+    return MISSING_COLOR;
+  }
+  return ["case", presentExpression(field), ["match", fieldStringExpression(field), ...matches, MISSING_COLOR], MISSING_COLOR];
+}
+
+function presentExpression(field) {
+  return ["all", ["has", field], ["!=", fieldStringExpression(field), ""]];
+}
+
+function fieldStringExpression(field) {
+  return ["to-string", ["coalesce", ["get", field], ""]];
+}
+
 function enableFeatureInspection(map, mapSources, onFeatureSelect) {
   const inspectableLayers = mapSources.flatMap(layerIdsForSource);
   const sourcesById = new Map(mapSources.map((source) => [source.sourceId, source]));
@@ -351,14 +713,35 @@ function serializeFeatures(features, sourcesById) {
 }
 
 function serializeFeature(feature, source) {
+  const properties = feature.properties || {};
   return {
     assetSlug: source.asset.slug,
     assetTitle: source.asset.title,
-    color: source.color,
+    color: colorForFeature(properties, source),
     sourceLayer: feature.sourceLayer || feature.layer?.["source-layer"] || "",
     geometryType: feature.geometry?.type || geometryTypeFromLayer(feature.layer?.type),
-    properties: feature.properties || {},
+    properties,
   };
+}
+
+function colorForFeature(properties, source) {
+  const mode = activeColorContext?.colorMode;
+  if (!mode || mode.type === "dataset" || !mode.field) {
+    return source.color;
+  }
+  const value = properties?.[mode.field];
+  if (isEmptyValue(value)) {
+    return MISSING_COLOR;
+  }
+  if (mode.type === "numeric") {
+    const numeric = parseNumericValue(value);
+    return numeric === null ? MISSING_COLOR : gradientColor(numeric, mode.min, mode.max, activeColorContext.basemap);
+  }
+  if (mode.type === "temporal") {
+    const temporal = parseTemporalValue(value);
+    return temporal === null ? MISSING_COLOR : gradientColor(temporal.value, mode.min, mode.max, activeColorContext.basemap);
+  }
+  return categoricalColor(normalizedValue(value));
 }
 
 function geometryTypeFromLayer(layerType) {
@@ -366,6 +749,149 @@ function geometryTypeFromLayer(layerType) {
   if (layerType === "line") return "LineString";
   if (layerType === "fill") return "Polygon";
   return "";
+}
+
+function parseNumericValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  if (!STRICT_NUMBER_PATTERN.test(text)) {
+    return null;
+  }
+  const number = Number(text);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseTemporalValue(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+
+  const timeOnly = parseTimeOnlyValue(text);
+  if (timeOnly !== null) {
+    return { value: timeOnly };
+  }
+  if (/^\d{8}$/.test(text)) {
+    const year = Number(text.slice(0, 4));
+    const month = Number(text.slice(4, 6));
+    const day = Number(text.slice(6, 8));
+    const time = Date.UTC(year, month - 1, day);
+    return validDateParts(year, month, day, time) ? { value: time } : null;
+  }
+  if (STRICT_NUMBER_PATTERN.test(text)) {
+    return null;
+  }
+  if (ISO_DATE_PATTERN.test(text) || SLASH_DATE_PATTERN.test(text) || MONTH_DATE_PATTERN.test(text)) {
+    const time = Date.parse(text);
+    return Number.isFinite(time) ? { value: time } : null;
+  }
+  return null;
+}
+
+function parseTimeOnlyValue(text) {
+  const match = text.match(TIME_ONLY_PATTERN);
+  if (!match) {
+    return null;
+  }
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3] || 0);
+  const period = match[4]?.toLowerCase();
+  if (period === "pm" && hour < 12) hour += 12;
+  if (period === "am" && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59 || second > 59) {
+    return null;
+  }
+  return hour * 3600 + minute * 60 + second;
+}
+
+function validDateParts(year, month, day, time) {
+  if (!Number.isFinite(time)) {
+    return false;
+  }
+  const date = new Date(time);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function gradientColor(value, min, max, basemap) {
+  if (!Number.isFinite(value) || min === max) {
+    return MISSING_COLOR;
+  }
+  const ramp = NUMERIC_RAMPS[basemap] || NUMERIC_RAMPS.map;
+  const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  if (ratio <= 0.5) {
+    return interpolateHex(ramp[0], ramp[1], ratio * 2);
+  }
+  return interpolateHex(ramp[1], ramp[2], (ratio - 0.5) * 2);
+}
+
+function categoricalColor(value) {
+  return CATEGORICAL_COLORS[hashString(value) % CATEGORICAL_COLORS.length];
+}
+
+function interpolateHex(start, end, amount) {
+  const a = hexToRgb(start);
+  const b = hexToRgb(end);
+  return rgbToHex({
+    r: Math.round(a.r + (b.r - a.r) * amount),
+    g: Math.round(a.g + (b.g - a.g) * amount),
+    b: Math.round(a.b + (b.b - a.b) * amount),
+  });
+}
+
+function hexToRgb(hex) {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return {
+    r: (value >> 16) & 255,
+    g: (value >> 8) & 255,
+    b: value & 255,
+  };
+}
+
+function rgbToHex(color) {
+  return `#${[color.r, color.g, color.b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function normalizedValue(value) {
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value ?? "").trim();
+}
+
+function isEmptyValue(value) {
+  return value === null || value === undefined || normalizedValue(value) === "";
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+}
+
+function seededRandom(seed) {
+  let state = seed || 1;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (const char of String(value)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function palette(index, basemap) {
@@ -377,10 +903,12 @@ function palette(index, basemap) {
 }
 
 function safeId(value) {
-  return String(value || "layer")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "layer";
+  return (
+    String(value || "layer")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "layer"
+  );
 }
 
 function boundsFromHeader(header) {

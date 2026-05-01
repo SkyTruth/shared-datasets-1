@@ -70,7 +70,15 @@
 
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
-              <div class="map-actions">
+              <div class="map-actions map-actions-left">
+                <label id="colorize-control" class="colorize-control" for="colorize-select" hidden>
+                  <span>Colorize by</span>
+                  <select id="colorize-select">
+                    <option value="">None</option>
+                  </select>
+                </label>
+              </div>
+              <div class="map-actions map-actions-right">
                 <label class="basemap-control" for="basemap-select">
                   <span>Basemap</span>
                   <select id="basemap-select">
@@ -83,6 +91,7 @@
             <div id="map-preview" class="map-preview">
               <div id="map-status" class="map-status">Preview loads when PMTiles is selected.</div>
             </div>
+            <div id="color-legend" class="color-legend" hidden></div>
             <div id="feature-inspector" class="feature-inspector" hidden></div>
           </section>
 

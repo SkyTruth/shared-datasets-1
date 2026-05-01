@@ -7,6 +7,8 @@ const state = {
   mapModule: null,
   basemap: "map",
   versionBySlug: {},
+  colorFieldByReference: {},
+  colorFieldsByReference: {},
   docsRequestSerial: 0,
 };
 
@@ -41,8 +43,11 @@ const elements = {
   licenseText: document.querySelector("#detail-license-text"),
   mapSection: document.querySelector("#map-section"),
   mapStatus: document.querySelector("#map-status"),
+  colorLegend: document.querySelector("#color-legend"),
   featureInspector: document.querySelector("#feature-inspector"),
   basemap: document.querySelector("#basemap-select"),
+  colorizeControl: document.querySelector("#colorize-control"),
+  colorize: document.querySelector("#colorize-select"),
   copyGs: document.querySelector("#copy-gs"),
   copyUrl: document.querySelector("#copy-url"),
   copyPmtiles: document.querySelector("#copy-pmtiles"),
@@ -72,9 +77,6 @@ async function init() {
     populateFilters();
     wireEvents();
     applyFilters();
-    if (state.filtered.length) {
-      selectAsset(state.filtered[0].slug, { scroll: false });
-    }
   } catch (error) {
     renderFatalError(error);
   }
@@ -116,6 +118,16 @@ function wireEvents() {
   elements.basemap.addEventListener("change", () => {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
     renderSelectedPmtiles();
+  });
+  elements.colorize.addEventListener("change", () => {
+    const asset = selectedColorizeAsset();
+    if (!asset) return;
+    state.colorFieldByReference[colorReferenceKey(asset)] = elements.colorize.value;
+    clearColorLegend();
+    clearFeatureInspector();
+    if (state.mapModule?.setColorizeField) {
+      state.mapModule.setColorizeField(elements.colorize.value);
+    }
   });
 }
 
@@ -164,8 +176,9 @@ function applyFilters() {
   }
 
   if (!state.selectedSlugs.length) {
-    if (state.filtered[0]) {
-      selectAsset(state.filtered[0].slug, { scroll: false });
+    const firstVisible = orderedAssetsForList(state.filtered)[0];
+    if (firstVisible) {
+      selectAsset(firstVisible.slug, { scroll: false });
     } else {
       clearDetail();
     }
@@ -207,27 +220,64 @@ function renderList() {
 
   const fragment = document.createDocumentFragment();
   const selectedSet = new Set(state.selectedSlugs);
-  for (const asset of state.filtered) {
-    const node = elements.template.content.firstElementChild.cloneNode(true);
-    node.dataset.slug = asset.slug;
-    node.setAttribute("aria-selected", selectedSet.has(asset.slug) ? "true" : "false");
-    node.style.setProperty("--selection-color", colorForSlug(asset.slug));
-    node.querySelector(".asset-title").textContent = asset.title;
-    node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
-    node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
-    node.querySelector(".asset-date").textContent = asset.last_updated || "No date";
-    const formats = node.querySelector(".asset-formats");
-    for (const format of asset.available_formats) {
-      const chip = document.createElement("span");
-      chip.textContent = format;
-      formats.append(chip);
+  let currentGroup = "";
+  for (const asset of orderedAssetsForList(state.filtered)) {
+    const group = subcategoryGroupKey(asset);
+    if (group !== currentGroup) {
+      currentGroup = group;
+      fragment.append(renderSubcategoryHeading(asset));
     }
-    node.addEventListener("click", (event) => {
-      selectAsset(asset.slug, { additive: event.metaKey || event.ctrlKey });
-    });
-    fragment.append(node);
+    fragment.append(renderAssetCard(asset, selectedSet));
   }
   elements.list.append(fragment);
+}
+
+function orderedAssetsForList(assets) {
+  return [...assets].sort((left, right) => {
+    const category = collator.compare(left.category || "", right.category || "");
+    if (category) return category;
+    const subcategory = collator.compare(left.subcategory || "", right.subcategory || "");
+    if (subcategory) return subcategory;
+    const title = collator.compare(left.title || "", right.title || "");
+    if (title) return title;
+    return collator.compare(left.slug || "", right.slug || "");
+  });
+}
+
+function subcategoryGroupKey(asset) {
+  return `${asset.category || ""}/${asset.subcategory || ""}`;
+}
+
+function renderSubcategoryHeading(asset) {
+  const heading = document.createElement("div");
+  heading.className = "asset-group-heading";
+  const subcategory = document.createElement("span");
+  subcategory.textContent = asset.subcategory || "Uncategorized";
+  const category = document.createElement("em");
+  category.textContent = asset.category || "";
+  heading.append(subcategory, category);
+  return heading;
+}
+
+function renderAssetCard(asset, selectedSet) {
+  const node = elements.template.content.firstElementChild.cloneNode(true);
+  node.dataset.slug = asset.slug;
+  node.setAttribute("aria-selected", selectedSet.has(asset.slug) ? "true" : "false");
+  node.style.setProperty("--selection-color", colorForSlug(asset.slug));
+  node.querySelector(".asset-title").textContent = asset.title;
+  node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
+  node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
+  node.querySelector(".asset-date").textContent = asset.last_updated || "No date";
+  const formats = node.querySelector(".asset-formats");
+  for (const format of asset.available_formats) {
+    const chip = document.createElement("span");
+    chip.textContent = format;
+    formats.append(chip);
+  }
+  node.addEventListener("click", (event) => {
+    selectAsset(asset.slug, { additive: event.metaKey || event.ctrlKey });
+  });
+  return node;
 }
 
 function updateCount() {
@@ -446,6 +496,8 @@ async function renderPmtiles(assets) {
   if (!rawMapAssets.length) {
     elements.pmtilesRow.hidden = true;
     elements.mapSection.hidden = true;
+    resetColorizeControl();
+    clearColorLegend();
     clearFeatureInspector();
     return;
   }
@@ -455,8 +507,11 @@ async function renderPmtiles(assets) {
     elements.pmtiles.textContent = rawMapAssets[0].pmtiles_url;
   }
   const mapAssets = rawMapAssets.map(withPmtilesCacheBust);
+  const colorizeAsset = selectedColorizeAsset(rawMapAssets);
+  const colorField = prepareColorizeControl(colorizeAsset);
   elements.mapSection.hidden = false;
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
+  clearColorLegend();
   clearFeatureInspector();
 
   try {
@@ -469,6 +524,9 @@ async function renderPmtiles(assets) {
       status: elements.mapStatus,
       assets: mapAssets,
       basemap: state.basemap,
+      colorField,
+      onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
+      onColorLegendChange: renderColorLegend,
       onFeatureSelect: renderFeatureInspector,
     });
   } catch (error) {
@@ -476,9 +534,122 @@ async function renderPmtiles(assets) {
   }
 }
 
+function selectedColorizeAsset(assets = selectedReferences()) {
+  const mapAssets = assets.filter((asset) => asset?.pmtiles_url);
+  if (state.selectedSlugs.length !== 1 || mapAssets.length !== 1) {
+    return null;
+  }
+  return mapAssets[0];
+}
+
+function prepareColorizeControl(asset) {
+  if (!asset) {
+    resetColorizeControl();
+    return "";
+  }
+
+  elements.colorizeControl.hidden = false;
+  const key = colorReferenceKey(asset);
+  const fields = state.colorFieldsByReference[key] || [];
+  renderColorizeOptions(asset, fields, { loading: !fields.length });
+  return selectedColorField(asset, fields);
+}
+
+function resetColorizeControl() {
+  elements.colorizeControl.hidden = true;
+  elements.colorize.disabled = true;
+  elements.colorize.replaceChildren(new Option("None", ""));
+  elements.colorize.value = "";
+}
+
+function updateColorizeFields(asset, fields) {
+  if (!asset) return;
+  const key = colorReferenceKey(asset);
+  state.colorFieldsByReference[key] = unique(Array.isArray(fields) ? fields : []);
+  const previous = elements.colorize.value;
+  renderColorizeOptions(asset, state.colorFieldsByReference[key]);
+  if (elements.colorize.value !== previous && state.mapModule?.setColorizeField) {
+    state.mapModule.setColorizeField(elements.colorize.value);
+  }
+}
+
+function renderColorizeOptions(asset, fields, options = {}) {
+  if (options.loading && !fields.length) {
+    elements.colorize.replaceChildren(new Option("Reading fields...", ""));
+    elements.colorize.disabled = true;
+    elements.colorize.value = "";
+    return;
+  }
+  const selected = selectedColorField(asset, fields);
+  elements.colorize.replaceChildren();
+  elements.colorize.append(new Option("None", ""));
+  for (const field of fields) {
+    elements.colorize.append(new Option(field, field));
+  }
+  elements.colorize.disabled = !fields.length;
+  elements.colorize.value = selected;
+}
+
+function selectedColorField(asset, fields) {
+  const key = colorReferenceKey(asset);
+  const saved = state.colorFieldByReference[key] || "";
+  if (!saved || !fields.length) {
+    return "";
+  }
+  if (fields.includes(saved)) {
+    return saved;
+  }
+  delete state.colorFieldByReference[key];
+  return "";
+}
+
+function colorReferenceKey(asset) {
+  return `${asset.slug}|${selectedVersionValue(asset)}`;
+}
+
 function clearFeatureInspector() {
   elements.featureInspector.hidden = true;
   elements.featureInspector.replaceChildren();
+}
+
+function clearColorLegend() {
+  elements.colorLegend.hidden = true;
+  elements.colorLegend.replaceChildren();
+}
+
+function renderColorLegend(legend) {
+  const entries = Array.isArray(legend?.entries) ? legend.entries : [];
+  if (legend?.type !== "categorical" || !entries.length) {
+    clearColorLegend();
+    return;
+  }
+
+  elements.colorLegend.replaceChildren();
+  const heading = document.createElement("div");
+  heading.className = "color-legend-heading";
+  const title = document.createElement("strong");
+  title.textContent = legend.field || "Categories";
+  const count = document.createElement("span");
+  count.textContent = `${entries.length} values`;
+  heading.append(title, count);
+
+  const items = document.createElement("div");
+  items.className = "color-legend-items";
+  for (const entry of entries) {
+    const item = document.createElement("span");
+    item.className = "color-legend-item";
+    item.title = entry.value;
+    const swatch = document.createElement("span");
+    swatch.className = "color-legend-swatch";
+    swatch.style.background = entry.color;
+    const label = document.createElement("span");
+    label.textContent = entry.value;
+    item.append(swatch, label);
+    items.append(item);
+  }
+
+  elements.colorLegend.append(heading, items);
+  elements.colorLegend.hidden = false;
 }
 
 function renderFeatureInspector(features) {
