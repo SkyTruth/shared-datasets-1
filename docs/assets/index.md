@@ -16,7 +16,7 @@
 
 | Asset | Subcategory | Status | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|
-| [Sentinel-1 Footprints](sentinel-1-footprints.md) | 210-satellite-indexes | active | `fgb;pmtiles` | 2026-05-01 | `latest/sentinel-1-footprints.fgb` |
+| [Cerulean S1 Envelope](cerulean-s1-envelope.md) | 210-satellite-indexes | active | `fgb;pmtiles` | 2026-05-01 | `latest/cerulean-s1-envelope.fgb` |
 | [IMS Sea-Ice Extent](ims-sea-ice-extent.md) | 250-weather-climate | active | `fgb;pmtiles` | 2026-04-29 | `latest/ims-sea-ice-extent.fgb` |
 
 ## 300-infrastructure-industrial
