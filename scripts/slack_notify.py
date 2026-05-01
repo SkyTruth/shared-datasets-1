@@ -83,6 +83,8 @@ def load_webhook_url(
     environ = env or os.environ
     if environ.get(WEBHOOK_ENV):
         return environ[WEBHOOK_ENV].strip()
+    if environ.get("GITHUB_ACTIONS") and WEBHOOK_ENV in environ:
+        raise SlackNotificationError(f"GitHub Actions secret {WEBHOOK_ENV} is not configured")
 
     resolved_secret_id = secret_id or environ.get(SECRET_ENV) or DEFAULT_SECRET_ID
     command = [

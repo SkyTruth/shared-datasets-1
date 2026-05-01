@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   announce:
-    if: ${{ github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

@@ -145,6 +145,7 @@ summary: A new command builds vector artifacts.
         self.assertIn("- main", workflow)
         self.assertIn("send-from-github-event", workflow)
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", workflow)
+        self.assertNotIn("github.run_attempt", workflow)
 
 
 if __name__ == "__main__":

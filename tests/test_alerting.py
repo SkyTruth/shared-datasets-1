@@ -64,6 +64,13 @@ class SlackNotifyTests(unittest.TestCase):
             "https://example",
         )
 
+    def test_load_webhook_reports_missing_github_actions_secret(self):
+        def runner(_command, **_kwargs):
+            raise AssertionError("runner should not be called")
+
+        with self.assertRaisesRegex(slack_notify.SlackNotificationError, "GitHub Actions secret"):
+            slack_notify.load_webhook_url(env={"GITHUB_ACTIONS": "true", slack_notify.WEBHOOK_ENV: ""}, runner=runner)
+
     def test_load_webhook_uses_gcloud_secret(self):
         def runner(command, **kwargs):
             self.assertIn("shared-datasets-slack-webhook-url", command)
