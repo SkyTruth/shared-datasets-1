@@ -7,6 +7,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         gdal-bin \
+    && echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends -t bookworm-backports \
+        tippecanoe \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

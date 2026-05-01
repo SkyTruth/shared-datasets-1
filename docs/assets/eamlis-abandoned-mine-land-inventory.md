@@ -11,30 +11,34 @@ canonical_format: fgb
 canonical_file: latest/eamlis-abandoned-mine-land-inventory.fgb
 available_formats:
 - fgb
-- geojson
+- pmtiles
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-04-30'
+last_updated: '2026-05-01'
 source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
-notes: Initial upload from supplied GeoJSON source accessed 2025-10-24; release 2026-04-30; source rows 62220; unique AMLIS_KEY
-  24062; fgb sha256 0da1ecfd89d5d981350dfb76416044659421e4af827dc9a980a2fc0c34696a01; source geojson sha256 0d039c14ac175926fc4000b9b3728c6bcf8e6021c6724119cba4e9d76b306643;
-  embedded collection name says 2024-10-24; monthly Cloud Run job skips when source fingerprint and generated FGB hash are
-  unchanged
+notes: Scheduled refresh release 2026-05-01; source rows 63110; unique AMLIS_KEY 24427; fgb sha256 556cabc1d073f4d165d1ad13a5539cbd095951096a17cb9f61520a7f8d1f2e41;
+  pmtiles sha256 ab09dd5deebc579f68b84bc7860538b458f8730faba7c31b7474cbf502640792; PMTiles generated with Tippecanoe no feature
+  limit/no tile size limit/drop-rate 1 for low-zoom point fidelity; stale initial GeoJSON remains only under source/provenance
+  paths and is not advertised as an active data-plane format
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
   role: canonical
   purpose: Canonical WGS84 point dataset
-- path: latest/eamlis-abandoned-mine-land-inventory.geojson
-  format: geojson
+- path: latest/eamlis-abandoned-mine-land-inventory.pmtiles
+  format: pmtiles
   role: companion
-  purpose: GeoJSON companion copy for small-tool interchange and provenance
+  purpose: Web map tiles generated from the same point features
 - path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
   role: release
   purpose: Dated canonical releases
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated map-tile releases
 - path: runs/YYYY-MM-DD.json
   format: json
   role: run-record
@@ -50,10 +54,10 @@ files:
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-30
+- **Last updated:** 2026-05-01
 - **Update cadence:** monthly, skipped when unchanged
 - **Canonical file:** `latest/eamlis-abandoned-mine-land-inventory.fgb`
-- **Available formats:** `fgb`, `geojson`
+- **Available formats:** `fgb`, `pmtiles`
 - **Source:** U.S. Department of the Interior OSMRE e-AMLIS
 - **License / terms:** Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 <!-- END GENERATED asset-summary -->
@@ -68,7 +72,7 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 
 - Use this as a reusable national point layer for OSMRE abandoned mine land problem features.
 - Use `AMLIS_KEY` to group multiple problem-type records that share a problem area.
-- Use the FlatGeobuf file for analytical work.
+- Use the FlatGeobuf file for analytical work and the PMTiles file for web-map display.
 - Do not treat this as a complete inventory of every abandoned mine, active mine, post-1982 mine, responsible operator, or underground mine footprint.
 - Do not use the source GeoJSON as the analytical default; it is preserved for provenance.
 
@@ -78,8 +82,9 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 | File | Format | Role | Purpose |
 |---|---|---|---|
 | `latest/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `canonical` | Canonical WGS84 point dataset |
-| `latest/eamlis-abandoned-mine-land-inventory.geojson` | `geojson` | `companion` | GeoJSON companion copy for small-tool interchange and provenance |
+| `latest/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point features |
 | `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `release` | Dated canonical releases |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `release` | Dated map-tile releases |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Scheduled ingestion run records |
 | `sources/eamlis-data-accessed-2025-10-24-4326.geojson` | `geojson` | `source` | Initial source GeoJSON supplied for the first upload; noncanonical because it is large and less efficient for analysis |
 <!-- END GENERATED files-table -->
@@ -88,9 +93,11 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 
 Geometry is WGS84 point geometry derived from the public ArcGIS hosted feature layer. The public service also exposes `EST_LATITUDE` and `EST_LONGITUDE` display fields that may be less precise than the feature geometry; use the geometry column for geospatial analysis.
 
-Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The initial manual snapshot contains 62,220 features, 24,062 unique `AMLIS_KEY` values, 56 `STATE_KEY` values, 44 unique `PROB_TY_CD` values, and no null geometries. Scheduled run records document the current public source count for each refresh attempt.
+Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The current 2026-05-01 scheduled release contains 63,110 features, 24,427 unique `AMLIS_KEY` values, 55 `STATE_KEY` values, 43 unique `PROB_TY_CD` values, and no null geometries. Scheduled run records document the current public source count for each refresh attempt.
 
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
+
+The PMTiles artifact is generated with Tippecanoe from the same point features, with zooms 0 through 8. It uses `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom tiles retain dense point content for visual inspection. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -156,17 +163,19 @@ Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date 
 
 ## Update notes
 
-Manually converted from the supplied GeoJSON source to FlatGeobuf on 2026-04-30 using GDAL.
+The current release was generated by the monthly Cloud Run job on 2026-05-01 from the public ArcGIS hosted feature layer, then PMTiles were added with Tippecanoe.
 
 Output summary:
 
-- Source GeoJSON features: 62,220
-- Published FGB features: 62,220
-- Unique `AMLIS_KEY` values: 24,062
+- Source features: 63,110
+- Published FGB features: 63,110
+- PMTiles zoom 0 decoded point features: 63,110
+- Unique `AMLIS_KEY` values: 24,427
 - Null geometries: 0
 - Extent: -161.234444, 28.503843 to -71.249444, 70.500000
-- FGB SHA-256: `0da1ecfd89d5d981350dfb76416044659421e4af827dc9a980a2fc0c34696a01`
-- Source GeoJSON SHA-256: `0d039c14ac175926fc4000b9b3728c6bcf8e6021c6724119cba4e9d76b306643`
+- FGB SHA-256: `556cabc1d073f4d165d1ad13a5539cbd095951096a17cb9f61520a7f8d1f2e41`
+- PMTiles SHA-256: `ab09dd5deebc579f68b84bc7860538b458f8730faba7c31b7474cbf502640792`
+- Toolchain: GDAL 3.6.2, Tippecanoe 2.79.0; PMTiles CLI unavailable locally, so archive validation used successful Tippecanoe generation plus `tippecanoe-decode` feature-count checks.
 
 Monthly scheduled ingestion was added after the initial manual upload. The job checks the public ArcGIS layer metadata and source statistics first, skips unchanged source fingerprints without downloading features, and also skips publication when a changed source fingerprint generates the same FGB SHA-256 as the latest successful run.
 

@@ -60,7 +60,7 @@ const collator = new Intl.Collator("en", { sensitivity: "base" });
 
 async function init() {
   try {
-    const response = await fetch("./catalog.json", { cache: "no-store" });
+    const response = await fetch(cacheBustedUrl("./catalog.json", Date.now()), { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`catalog.json returned HTTP ${response.status}`);
     }
@@ -442,18 +442,19 @@ function renderSelectedPmtiles() {
 }
 
 async function renderPmtiles(assets) {
-  const mapAssets = (Array.isArray(assets) ? assets : [assets]).filter((asset) => asset?.pmtiles_url);
-  if (!mapAssets.length) {
+  const rawMapAssets = (Array.isArray(assets) ? assets : [assets]).filter((asset) => asset?.pmtiles_url);
+  if (!rawMapAssets.length) {
     elements.pmtilesRow.hidden = true;
     elements.mapSection.hidden = true;
     clearFeatureInspector();
     return;
   }
 
-  elements.pmtilesRow.hidden = mapAssets.length !== 1 || state.selectedSlugs.length !== 1;
+  elements.pmtilesRow.hidden = rawMapAssets.length !== 1 || state.selectedSlugs.length !== 1;
   if (!elements.pmtilesRow.hidden) {
-    elements.pmtiles.textContent = mapAssets[0].pmtiles_url;
+    elements.pmtiles.textContent = rawMapAssets[0].pmtiles_url;
   }
+  const mapAssets = rawMapAssets.map(withPmtilesCacheBust);
   elements.mapSection.hidden = false;
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
   clearFeatureInspector();
@@ -592,7 +593,9 @@ async function openDocs(asset) {
   elements.docsBody.focus({ preventScroll: true });
 
   try {
-    const response = await fetch(asset.docs_url, { cache: "no-store" });
+    const response = await fetch(cacheBustedUrl(asset.docs_url, state.catalog?.generated_at || Date.now()), {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error(`docs returned HTTP ${response.status}`);
     }
@@ -605,6 +608,30 @@ async function openDocs(asset) {
     if (requestSerial !== state.docsRequestSerial) return;
     renderDocsError(error);
   }
+}
+
+function withPmtilesCacheBust(asset) {
+  return {
+    ...asset,
+    pmtiles_url: cacheBustedUrl(asset.pmtiles_url, pmtilesCacheKey(asset)),
+  };
+}
+
+function pmtilesCacheKey(asset) {
+  const hash = String(asset.notes || "").match(/\bpmtiles sha256\s+([a-f0-9]{64})\b/i);
+  if (hash) {
+    return hash[1];
+  }
+  return [asset.last_updated, state.catalog?.generated_at, asset.slug].filter(Boolean).join("-");
+}
+
+function cacheBustedUrl(url, key) {
+  if (!url || !key) {
+    return url;
+  }
+  const [withoutHash, hash = ""] = String(url).split("#", 2);
+  const separator = withoutHash.includes("?") ? "&" : "?";
+  return `${withoutHash}${separator}v=${encodeURIComponent(String(key))}${hash ? `#${hash}` : ""}`;
 }
 
 function closeDocs() {

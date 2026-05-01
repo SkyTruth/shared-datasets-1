@@ -51,17 +51,24 @@ source fingerprint from:
 If that fingerprint matches the latest successful run record, the job writes a
 skipped run record and does not download the source. If the fingerprint changed,
 the job downloads the filtered layer with paginated ArcGIS queries, converts it
-to FlatGeobuf, validates row count and geometry type, and compares the generated
-FGB SHA-256 to the latest successful run. Matching output hashes are also
-skipped.
+to FlatGeobuf and PMTiles, validates row count and geometry type, and compares
+the generated FGB SHA-256 to the latest successful run. Matching output hashes
+are also skipped.
 
 When changed, the job writes:
 
 ```text
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.fgb
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.pmtiles
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/runs/YYYY-MM-DD.json
 ```
+
+The PMTiles artifact uses Tippecanoe zooms 0 through 8 with
+`--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom
+tiles retain dense point content for visual inspection. The canonical FGB
+remains the analytical source.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the observed generation. If release objects exist without a run

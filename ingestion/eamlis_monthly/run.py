@@ -46,7 +46,10 @@ ASSET_PARENT = "300-infrastructure-industrial/320-mining"
 ASSET_SLUG = "eamlis-abandoned-mine-land-inventory"
 LAYER_NAME = "eamlis_abandoned_mine_land_inventory"
 RUN_RECORD_VERSION = 1
-RELEASE_SUFFIXES = (".fgb",)
+RELEASE_SUFFIXES = (".fgb", ".pmtiles")
+PMTILES_MINZOOM = 0
+PMTILES_MAXZOOM = 8
+PMTILES_RETENTION_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 
 
 @dataclass(frozen=True)
@@ -106,6 +109,7 @@ class SourceExtract:
 @dataclass(frozen=True)
 class AssetOutput:
     fgb: Path
+    pmtiles: Path
     row_count: int
     sha256: dict[str, str]
 
@@ -395,6 +399,34 @@ def convert_geojson_to_fgb(source: Path, output: Path) -> None:
     )
 
 
+def convert_geojson_to_pmtiles(source: Path, output: Path) -> None:
+    remove_if_exists(output)
+    run_command(
+        [
+            "tippecanoe",
+            "-f",
+            "-q",
+            "--projection=EPSG:4326",
+            "--minimum-zoom",
+            str(PMTILES_MINZOOM),
+            "--maximum-zoom",
+            str(PMTILES_MAXZOOM),
+            "-o",
+            str(output),
+            "-l",
+            LAYER_NAME,
+            "-n",
+            "OSMRE e-AMLIS Abandoned Mine Land Inventory",
+            "-N",
+            "OSMRE e-AMLIS abandoned mine land inventory point tiles",
+            *PMTILES_RETENTION_ARGS,
+            str(source),
+        ]
+    )
+    if not output.exists() or output.stat().st_size <= 0:
+        raise RuntimeError(f"PMTiles output is missing or empty: {output}")
+
+
 FIELD_LINE_RE = re.compile(
     r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"
     r"(Integer|Integer64|Real|String|Date|DateTime|Time|Binary|JSON|"
@@ -438,6 +470,7 @@ def output_layer_summary(path: Path) -> dict[str, Any]:
 
 def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: Path) -> AssetOutput:
     fgb = workdir / f"{ASSET.slug}.fgb"
+    pmtiles = workdir / f"{ASSET.slug}.pmtiles"
     convert_geojson_to_fgb(extract.geojson, fgb)
     summary = output_layer_summary(fgb)
     if summary["feature_count"] != source.stats.feature_count:
@@ -452,10 +485,13 @@ def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: 
     if missing_fields:
         raise RuntimeError("FGB output is missing source fields: " + ", ".join(missing_fields))
 
+    convert_geojson_to_pmtiles(extract.geojson, pmtiles)
+
     return AssetOutput(
         fgb=fgb,
+        pmtiles=pmtiles,
         row_count=summary["feature_count"],
-        sha256={"fgb": sha256_file(fgb)},
+        sha256={"fgb": sha256_file(fgb), "pmtiles": sha256_file(pmtiles)},
     )
 
 
@@ -583,9 +619,19 @@ def publish_changed_asset(
         object_name=ASSET.release_object(run_date, ".fgb"),
         metadata=metadata,
     )
+    release_pmtiles = publisher.upload_new_object(
+        local_path=output.pmtiles,
+        object_name=ASSET.release_object(run_date, ".pmtiles"),
+        metadata=metadata,
+    )
     latest_fgb = publisher.replace_latest_object(
         local_path=output.fgb,
         object_name=ASSET.latest_object(".fgb"),
+        metadata=metadata,
+    )
+    latest_pmtiles = publisher.replace_latest_object(
+        local_path=output.pmtiles,
+        object_name=ASSET.latest_object(".pmtiles"),
         metadata=metadata,
     )
 
@@ -604,8 +650,8 @@ def publish_changed_asset(
             "max_objectid": source.stats.max_objectid,
         },
         "release_path": f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
-        "release_paths": [release_fgb],
-        "latest_paths": [latest_fgb],
+        "release_paths": [release_fgb, release_pmtiles],
+        "latest_paths": [latest_fgb, latest_pmtiles],
         "rows": output.row_count,
         "sha256": output.sha256,
         "field_count": len(source.fields),
@@ -643,7 +689,7 @@ def assert_current_record_allows_run(
 
 def run() -> list[dict[str, Any]]:
     configure_logging()
-    for binary in ("ogrinfo", "ogr2ogr"):
+    for binary in ("ogrinfo", "ogr2ogr", "tippecanoe"):
         require_binary(binary)
 
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
@@ -712,6 +758,7 @@ def run() -> list[dict[str, Any]]:
             output=output,
         )
         remove_if_exists(output.fgb)
+        remove_if_exists(output.pmtiles)
         return [record]
 
 

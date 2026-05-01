@@ -14,13 +14,14 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-02-02'
+last_updated: '2026-05-01'
 source: Global Fishing Watch Anchorages Version 2
 license: Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms
   of Use
 notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-02-02; source rows 166497; published rows
   166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
-  pmtiles sha256 8e9eacf2e668faba941fda6fba50501538a6aee32842a6a2a58d793cc04b57cf
+  pmtiles sha256 287bf2af37e7f4e831afa24a98f142026823a7c5ef5247af8727094715a6cb04; PMTiles rebuilt 2026-05-01 with Tippecanoe
+  no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points
 files:
 - path: latest/gfw-anchorages.fgb
   format: fgb
@@ -45,7 +46,7 @@ files:
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
-- **Last updated:** 2026-02-02
+- **Last updated:** 2026-05-01
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-anchorages.fgb`
 - **Available formats:** `fgb`, `pmtiles`
@@ -83,7 +84,7 @@ Geometry is generated from the source `lon` and `lat` fields as WGS84 point geom
 
 One source row is omitted from the geospatial outputs because its longitude is outside valid EPSG:4326 bounds: `s2id=8efe7543`, `lat=11.84060637`, `lon=1001`, `label=POINTE NOIRE`.
 
-The PMTiles artifact is generated with Tippecanoe from the same filtered point features, with zooms 0 through 8. Lower zooms are generalized for display and should not be used as the analytical source.
+The PMTiles artifact is generated with Tippecanoe from the same filtered point features, with zooms 0 through 8. It uses `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom tiles retain dense point content for visual inspection. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -104,13 +105,15 @@ The PMTiles artifact is generated with Tippecanoe from the same filtered point f
 
 Manually converted from `named_anchorages_v2_pipe_v3_202601.csv` on 2026-04-30 using GDAL, Tippecanoe, and PMTiles tooling. Source release date is tracked as 2026-02-02 based on the Global Fishing Watch Data Download Portal last update date.
 
+The PMTiles artifact was rebuilt on 2026-05-01 from the canonical FGB to avoid Tippecanoe low-zoom feature dropping. The rebuild used GDAL 3.6.2 at `/Users/jonathanraphael/miniforge3/bin/ogr2ogr` and Tippecanoe v2.79.0 at `/usr/local/bin/tippecanoe`; the standalone `pmtiles` CLI was unavailable locally. The old zoom 0 PMTiles tile decoded to 109 points, while the rebuilt zoom 0 tile decodes to all 166,496 published points.
+
 Output summary:
 
 - Source rows: 166,497
 - Published point features: 166,496
 - Omitted invalid coordinate rows: 1
 - FGB SHA-256: `9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351`
-- PMTiles SHA-256: `8e9eacf2e668faba941fda6fba50501538a6aee32842a6a2a58d793cc04b57cf`
+- PMTiles SHA-256: `287bf2af37e7f4e831afa24a98f142026823a7c5ef5247af8727094715a6cb04`
 
 ## Known caveats
 

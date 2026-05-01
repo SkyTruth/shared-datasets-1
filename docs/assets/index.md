@@ -23,8 +23,8 @@
 | Asset | Subcategory | Status | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|
 | [PETRODATA Petroleum Fields](petrodata.md) | 310-energy | active | `fgb;pmtiles` | 2026-04-29 | `latest/petrodata.fgb` |
-| [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | `fgb;geojson` | 2026-04-30 | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
-| [Global Fishing Watch SAR Fixed Infrastructure](gfw-fixed-infrastructure.md) | 330-offshore-platforms | active | `fgb;pmtiles` | 2026-04-30 | `latest/gfw-fixed-infrastructure.fgb` |
+| [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | `fgb;pmtiles` | 2026-05-01 | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
+| [Global Fishing Watch SAR Fixed Infrastructure](gfw-fixed-infrastructure.md) | 330-offshore-platforms | active | `fgb;pmtiles` | 2026-05-01 | `latest/gfw-fixed-infrastructure.fgb` |
 
 ## 500-conservation-ecosystems
 
@@ -36,4 +36,4 @@
 
 | Asset | Subcategory | Status | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|
-| [Global Fishing Watch Anchorages](gfw-anchorages.md) | 640-ocean-activity | active | `fgb;pmtiles` | 2026-02-02 | `latest/gfw-anchorages.fgb` |
+| [Global Fishing Watch Anchorages](gfw-anchorages.md) | 640-ocean-activity | active | `fgb;pmtiles` | 2026-05-01 | `latest/gfw-anchorages.fgb` |

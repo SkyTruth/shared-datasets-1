@@ -42,6 +42,7 @@ class VectorBuildPlan:
     minzoom: int
     maxzoom: int
     tile_simplify: float | None
+    tippecanoe_extra_args: tuple[str, ...]
     title: str
     description: str
     commands: list[list[str]]
@@ -145,6 +146,7 @@ def build_plan(
     tippecanoe_bin: str = "tippecanoe",
     pmtiles_bin: str = "pmtiles",
     pmtiles_engine: str = "tippecanoe",
+    tippecanoe_extra_args: Sequence[str] = (),
     allow_repo_output: bool = False,
 ) -> VectorBuildPlan:
     validate_asset_slug(asset_slug)
@@ -216,8 +218,9 @@ def build_plan(
         dataset_title,
         "-N",
         dataset_description,
-        str(tippecanoe_input_path),
     ]
+    tippecanoe_command.extend(tippecanoe_extra_args)
+    tippecanoe_command.append(str(tippecanoe_input_path))
 
     mbtiles_command = [
         ogr2ogr_bin,
@@ -279,6 +282,7 @@ def build_plan(
         minzoom=minzoom,
         maxzoom=maxzoom,
         tile_simplify=tile_simplify,
+        tippecanoe_extra_args=tuple(tippecanoe_extra_args),
         title=dataset_title,
         description=dataset_description,
         commands=[fgb_command, *pmtiles_commands],
@@ -406,6 +410,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         tippecanoe_bin=args.tippecanoe_bin,
         pmtiles_bin=args.pmtiles_bin,
         pmtiles_engine=args.pmtiles_engine,
+        tippecanoe_extra_args=args.tippecanoe_arg,
         allow_repo_output=args.allow_repo_output,
     )
     if args.dry_run:
@@ -452,6 +457,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--description", help="Tileset description metadata.")
     build_parser.add_argument("--ogr2ogr-bin", default="ogr2ogr")
     build_parser.add_argument("--tippecanoe-bin", default="tippecanoe")
+    build_parser.add_argument(
+        "--tippecanoe-arg",
+        action="append",
+        default=[],
+        help=(
+            "Additional argument passed through to Tippecanoe. Repeat for multiple flags; "
+            "for dense point layers use flags such as --no-feature-limit, "
+            "--no-tile-size-limit, and --drop-rate=1."
+        ),
+    )
     build_parser.add_argument("--pmtiles-bin", default="pmtiles")
     build_parser.add_argument(
         "--pmtiles-engine",

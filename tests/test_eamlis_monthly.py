@@ -17,9 +17,9 @@ from ingestion.common.gcs import GcsPublisher
 
 
 def gdal_binaries_work() -> bool:
-    if not (shutil.which("ogrinfo") and shutil.which("ogr2ogr")):
+    if not (shutil.which("ogrinfo") and shutil.which("ogr2ogr") and shutil.which("tippecanoe")):
         return False
-    for binary in ("ogrinfo", "ogr2ogr"):
+    for binary in ("ogrinfo", "ogr2ogr", "tippecanoe"):
         try:
             completed = subprocess.run(
                 [binary, "--version"],
@@ -236,18 +236,23 @@ class EamlisMonthlyTests(unittest.TestCase):
         latest = bucket.blob(eamlis.ASSET.latest_object(".fgb"))
         latest.exists = True
         latest.generation = 7
+        latest_pmtiles = bucket.blob(eamlis.ASSET.latest_object(".pmtiles"))
         publisher = GcsPublisher(
             FakeClient(bucket),
             bucket.name,
             release_suffixes=eamlis.RELEASE_SUFFIXES,
         )
-        with tempfile.NamedTemporaryFile() as tmp:
-            tmp.write(b"fgb")
-            tmp.flush()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            fgb = tmp_path / "asset.fgb"
+            pmtiles = tmp_path / "asset.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
             output = eamlis.AssetOutput(
-                fgb=Path(tmp.name),
+                fgb=fgb,
+                pmtiles=pmtiles,
                 row_count=2,
-                sha256={"fgb": "new-sha"},
+                sha256={"fgb": "new-sha", "pmtiles": "pmtiles-sha"},
             )
             record = eamlis.publish_changed_asset(
                 publisher=publisher,
@@ -257,12 +262,18 @@ class EamlisMonthlyTests(unittest.TestCase):
             )
 
         release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
+        release_pmtiles = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".pmtiles"))
         run_blob = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
         self.assertEqual(release.uploads[0][1], 0)
+        self.assertEqual(release_pmtiles.uploads[0][1], 0)
         self.assertEqual(latest.uploads[0][1], 7)
+        self.assertEqual(latest_pmtiles.uploads[0][1], 0)
         self.assertEqual(run_blob.uploads[0][1], 0)
         self.assertEqual(record["status"], "success")
         self.assertEqual(record["sha256"]["fgb"], "new-sha")
+        self.assertEqual(record["sha256"]["pmtiles"], "pmtiles-sha")
+        self.assertEqual(len(record["release_paths"]), 2)
+        self.assertEqual(len(record["latest_paths"]), 2)
 
     def test_output_hash_unchanged_writes_skipped_record_without_publish(self):
         bucket = FakeBucket()
@@ -280,6 +291,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         source = sample_source_state(fingerprint_hash="new")
         output = eamlis.AssetOutput(
             fgb=Path("/tmp/nonexistent.fgb"),
+            pmtiles=Path("/tmp/nonexistent.pmtiles"),
             row_count=2,
             sha256={"fgb": "same-sha"},
         )
@@ -296,7 +308,9 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(records[0]["status"], "skipped")
         self.assertEqual(records[0]["reason"], "generated FGB hash unchanged")
         release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
+        release_pmtiles = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".pmtiles"))
         self.assertFalse(release.uploads)
+        self.assertFalse(release_pmtiles.uploads)
 
     def test_parse_ogrinfo_summary_from_text_output(self):
         summary = eamlis.parse_ogrinfo_summary(

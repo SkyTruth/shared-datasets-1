@@ -111,6 +111,28 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
 Repeat for changed static files and copied docs. Do not use unsafe overwrites for
 catalog deployment.
 
+After upload, keep the live web shell and runtime contract revalidating on every
+request. The catalog app also appends cache-busting query strings to
+`catalog.json`, docs Markdown, and PMTiles URLs, but the object metadata should
+not invite a browser or CDN to hold stale catalog or tile bytes after a same-path
+replacement:
+
+```bash
+gcloud storage objects update \
+  --cache-control='no-cache, max-age=0, must-revalidate' \
+  "$DEST/index.html" "$DEST/styles.css" "$DEST/app.js" "$DEST/map-preview.js" "$DEST/catalog.json"
+```
+
+When replacing same-path PMTiles display artifacts, also set no-cache metadata on
+the replaced PMTiles objects after the generation-preconditioned upload:
+
+```bash
+gcloud storage objects update \
+  --cache-control='no-cache, max-age=0, must-revalidate' \
+  gs://skytruth-shared-datasets-1/path/to/asset/latest/asset.pmtiles \
+  gs://skytruth-shared-datasets-1/path/to/asset/releases/YYYY-MM-DD/asset.pmtiles
+```
+
 ## CORS
 
 PMTiles previews require browser range requests. The production bucket was

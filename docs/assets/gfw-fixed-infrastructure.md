@@ -14,11 +14,12 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-30'
+last_updated: '2026-05-01'
 source: Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
 license: Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
 notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
-  pmtiles sha256 85d5faf9d893b15dbc9abe30ecc548154da97a6f396dede2c6f1408137b0fbfd; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
+  pmtiles sha256 dd035c98252a8b6e4d673a334de5148272d4f4a996d1745fd1b424243473c64e; PMTiles rebuilt 2026-05-01 with Tippecanoe
+  no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 57681 points; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
 files:
 - path: latest/gfw-fixed-infrastructure.fgb
   format: fgb
@@ -47,7 +48,7 @@ files:
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-30
+- **Last updated:** 2026-05-01
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-fixed-infrastructure.fgb`
 - **Available formats:** `fgb`, `pmtiles`
@@ -87,7 +88,7 @@ Geometry is generated from the source `lon` and `lat` fields as WGS84 point geom
 
 `structure_start_date` and `structure_end_date` are source-provided epoch timestamps in milliseconds. Empty source `structure_end_date` values are preserved as null values in the geospatial outputs.
 
-The PMTiles artifact is generated with Tippecanoe from the same point features, with zooms 0 through 8. Lower zooms are generalized for display and should not be used as the analytical source.
+The PMTiles artifact is generated with Tippecanoe from the same point features, with zooms 0 through 8. It uses `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom tiles retain dense point content for visual inspection. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -116,8 +117,10 @@ Output summary:
 - Structure end date range where present: 2017-01-01 to 2025-11-01 UTC
 - Empty source `structure_end_date` rows: 23,442
 - FGB SHA-256: `159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447`
-- PMTiles SHA-256: `85d5faf9d893b15dbc9abe30ecc548154da97a6f396dede2c6f1408137b0fbfd`
+- PMTiles zoom 0 decoded point features: 57,681
+- PMTiles SHA-256: `dd035c98252a8b6e4d673a334de5148272d4f4a996d1745fd1b424243473c64e`
 - Source CSV SHA-256: `07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9`
+- PMTiles rebuild toolchain: GDAL 3.6.2, Tippecanoe 2.79.0; PMTiles CLI unavailable locally, so archive validation used successful Tippecanoe generation plus `tippecanoe-decode` feature-count checks.
 
 ## Known caveats
 

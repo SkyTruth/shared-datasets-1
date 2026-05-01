@@ -30,6 +30,7 @@ class VectorAssetTests(unittest.TestCase):
                 minzoom=0,
                 maxzoom=6,
                 tile_simplify=0.01,
+                tippecanoe_extra_args=("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
                 title="Natural Earth 10m Land",
                 description="Natural Earth land polygons",
             )
@@ -53,6 +54,12 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn("0.01", plan.commands[1])
         self.assertEqual(plan.commands[2][0], "tippecanoe")
         self.assertIn("--maximum-zoom", plan.commands[2])
+        self.assertEqual(
+            plan.tippecanoe_extra_args,
+            ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
+        )
+        self.assertIn("--no-feature-limit", plan.commands[2])
+        self.assertLess(plan.commands[2].index("--drop-rate=1"), len(plan.commands[2]) - 1)
 
     def test_gdal_mbtiles_fallback_plan_converts_to_pmtiles(self):
         with tempfile.TemporaryDirectory() as tmp:

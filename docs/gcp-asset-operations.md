@@ -84,6 +84,21 @@ The standard vector build is:
 
 `--tile-simplify` is for dense display tiles only. It is applied to the
 temporary tiling input and does not simplify the canonical FGB.
+
+For dense point layers where low-zoom completeness matters, pass explicit
+Tippecanoe retention flags instead of allowing feature dropping:
+
+```bash
+uv run python scripts/vector_asset.py build ./source.fgb \
+  --asset-slug example-points \
+  --tippecanoe-arg=--no-feature-limit \
+  --tippecanoe-arg=--no-tile-size-limit \
+  --tippecanoe-arg=--drop-rate=1
+```
+
+Use this for point catalogs where users need to see most or all point features
+while zoomed far out. Expect larger low-zoom tiles and validate browser
+performance before publishing.
 Run the helper through `uv run python` so repo Python dependencies come from the
 project environment. GDAL, Tippecanoe, and PMTiles are external command-line
 tools resolved from `PATH`; the helper records their versions in the build plan.
