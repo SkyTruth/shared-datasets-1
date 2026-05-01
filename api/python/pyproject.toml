@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skytruth-shared-datasets"
+version = "0.1.0"
+description = "Tiny resolver SDK for SkyTruth shared dataset catalog entries."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+skytruth-datasets = "skytruth_shared_datasets.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+skytruth_shared_datasets = ["data/*.csv", "py.typed"]
