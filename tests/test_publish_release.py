@@ -36,6 +36,10 @@ class FakeBlob:
         if not self.exists:
             raise NotFound("not found")
 
+    def download_as_text(self) -> str:
+        self.reload()
+        return self.text
+
     def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
         self._check_generation(if_generation_match)
         self.exists = True
@@ -69,6 +73,9 @@ class FakeBucket:
         if name not in self.blobs:
             self.blobs[name] = FakeBlob(name)
         return self.blobs[name]
+
+    def list_blobs(self, prefix: str = ""):
+        return [blob for blob in self.blobs.values() if blob.exists and blob.name.startswith(prefix)]
 
 
 class FakeClient:
@@ -207,6 +214,11 @@ class PublishReleaseTests(unittest.TestCase):
         payload = json.loads(run_record.text)
         self.assertEqual(payload["source_version"], "source-v1")
         self.assertEqual(payload["row_count"], 3)
+        release_index_blob = bucket.blob("_catalog/releases/example-asset.json")
+        self.assertTrue(release_index_blob.exists)
+        release_index_payload = json.loads(release_index_blob.text)
+        self.assertEqual(release_index_payload["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(result.run_record["release_index"]["path"], "gs://test-bucket/_catalog/releases/example-asset.json")
         self.assertEqual(schema_updates, [("example-asset", "example-asset.fgb")])
         self.assertEqual(notifications, [("example-asset", 3)])
         self.assertEqual(result.warnings, ())
@@ -296,6 +308,54 @@ class PublishReleaseTests(unittest.TestCase):
         payload = json.loads(result.output)
         self.assertEqual(payload["asset_slug"], "gfw-fixed-infrastructure")
         self.assertEqual(payload["stale_formats"], ["pmtiles"])
+
+    def test_cli_release_index_rebuild_dry_run_reads_remote_runs_and_releases(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            bucket = FakeBucket()
+            release = bucket.blob(
+                "100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb"
+            )
+            release.exists = True
+            release.generation = 8
+            release.size = 13
+            run_record = bucket.blob(
+                "100-geographic-reference/110-boundaries/example-asset/runs/2026-05-01.json"
+            )
+            run_record.exists = True
+            run_record.text = json.dumps(
+                {
+                    "asset_slug": "example-asset",
+                    "run_date": "2026-05-01",
+                    "status": "success",
+                    "release_path": "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/",
+                    "release_paths": [
+                        "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb"
+                    ],
+                }
+            )
+            with mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)):
+                result = runner.invoke(
+                    app,
+                    [
+                        "release-index",
+                        "rebuild",
+                        "--asset-slug",
+                        "example-asset",
+                        "--catalog",
+                        str(catalog),
+                        "--dry-run",
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["payload"]["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(payload["payload"]["latest_release"]["files"][0]["generation"], 8)
+        self.assertFalse(bucket.blob("_catalog/releases/example-asset.json").exists)
 
     def test_invalid_release_date_is_rejected(self):
         with self.assertRaisesRegex(publish_release.PublishReleaseError, "YYYY-MM-DD"):

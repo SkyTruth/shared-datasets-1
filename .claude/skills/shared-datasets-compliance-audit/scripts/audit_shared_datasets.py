@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import json
 import os
 import re
@@ -63,6 +64,9 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RUN_RECORD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 UPLOADER_METADATA_KEYS = ("uploaded_by", "uploader", "created_by", "creator", "owner", "author")
+RELEASE_INDEX_PREFIX = "_catalog/releases"
+RELEASE_INDEX_MODES = {"report": "INFO", "warn": "WARN", "enforce": "ERROR"}
+SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 
 README_REQUIRED_SNIPPETS = {
     "status": "**Status:**",
@@ -146,6 +150,12 @@ def parse_args() -> argparse.Namespace:
         "--fail-on-findings",
         action="store_true",
         help="Exit 1 if WARN or ERROR findings exist.",
+    )
+    parser.add_argument(
+        "--release-integrity-mode",
+        choices=("report", "warn", "enforce"),
+        default="warn",
+        help="Validate JSON release indexes as info, non-blocking warnings, or blocking errors.",
     )
     return parser.parse_args()
 
@@ -1063,6 +1073,304 @@ def validate_asset_roots(
     return findings
 
 
+def release_integrity_severity(mode: str) -> str:
+    return RELEASE_INDEX_MODES[mode]
+
+
+def row_asset_root(bucket: str, row: Dict[str, str]) -> str:
+    canonical_path = row.get("canonical_path", "")
+    expected_prefix = f"gs://{bucket}/"
+    if not canonical_path.startswith(expected_prefix) or "/latest/" not in canonical_path:
+        return ""
+    return canonical_path[len(expected_prefix) :].split("/latest/", 1)[0]
+
+
+def scheduled_cadence(row: Dict[str, str]) -> str:
+    cadence = (row.get("update_cadence") or "").lower()
+    for candidate in SCHEDULE_FRESHNESS_DAYS:
+        if candidate in cadence:
+            return candidate
+    return ""
+
+
+def is_versioned_active_asset(
+    *,
+    root: str,
+    row: Dict[str, str],
+    object_names: set[str],
+) -> bool:
+    if (row.get("status") or "").strip().lower() != "active":
+        return False
+    if scheduled_cadence(row):
+        return True
+    if any(name.startswith(f"{root}/releases/") for name in object_names):
+        return True
+    if any(name.startswith(f"{root}/runs/") for name in object_names):
+        return True
+    metadata_paths = row.get("metadata_paths") or ""
+    return any(part.strip().startswith("runs/") for part in metadata_paths.split(";"))
+
+
+def parse_iso_date(value: Any) -> dt.date | None:
+    if not isinstance(value, str) or not DATE_RE.match(value):
+        return None
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def gcs_object_name_if_same_bucket(bucket: str, uri: str) -> str:
+    expected_prefix = f"gs://{bucket}/"
+    if not uri.startswith(expected_prefix):
+        return ""
+    return uri[len(expected_prefix) :]
+
+
+def validate_indexed_file_exists(
+    *,
+    bucket: str,
+    root: str,
+    release_date: str,
+    file_entry: Any,
+    object_names: set[str],
+    severity: str,
+) -> List[Finding]:
+    if not isinstance(file_entry, dict):
+        return [
+            Finding(
+                severity,
+                root,
+                "release-index-file-entry",
+                f"Release {release_date} has a non-object file entry.",
+                "unknown",
+                "Rebuild the release index from remote releases and run records.",
+            )
+        ]
+    path = str(file_entry.get("path") or "")
+    object_name = gcs_object_name_if_same_bucket(bucket, path)
+    if not object_name or object_name not in object_names:
+        return [
+            Finding(
+                severity,
+                path or root,
+                "release-index-file-exists",
+                f"Indexed release file for {release_date} does not exist in the bucket listing.",
+                "unknown",
+                "Confirm the release object path, then rebuild or repair the release index.",
+            )
+        ]
+    return []
+
+
+def validate_release_integrity(
+    *,
+    bucket: str,
+    blobs: Sequence[BlobInfo],
+    catalog_rows: Sequence[Dict[str, str]],
+    mode: str,
+    today: dt.date | None = None,
+) -> List[Finding]:
+    severity = release_integrity_severity(mode)
+    findings: List[Finding] = []
+    object_by_name = {blob.name: blob for blob in blobs}
+    object_names = set(object_by_name)
+    current_date = today or dt.datetime.now(dt.UTC).date()
+
+    for row in catalog_rows:
+        slug = (row.get("asset_slug") or "").strip()
+        if not slug:
+            continue
+        root = row_asset_root(bucket, row)
+        if not root or not is_versioned_active_asset(root=root, row=row, object_names=object_names):
+            continue
+
+        index_name = f"{RELEASE_INDEX_PREFIX}/{slug}.json"
+        index_blob = object_by_name.get(index_name)
+        if not index_blob:
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-exists",
+                    "Versioned active asset has no JSON release index.",
+                    "unknown",
+                    "Run `uv run python scripts/gcs_asset.py release-index rebuild --asset-slug "
+                    f"{slug} --dry-run`, review it, then rerun without --dry-run.",
+                )
+            )
+            continue
+
+        try:
+            payload = json.loads(download_object_text(bucket, index_blob.name, index_blob.generation))
+        except (json.JSONDecodeError, OSError) as exc:
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-json",
+                    f"Release index is not valid JSON: {exc}.",
+                    uploader_hint(index_blob),
+                    "Rebuild the release index from remote releases and run records.",
+                )
+            )
+            continue
+        if not isinstance(payload, dict):
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-json",
+                    "Release index must be a JSON object.",
+                    uploader_hint(index_blob),
+                    "Rebuild the release index from remote releases and run records.",
+                )
+            )
+            continue
+        if payload.get("asset_slug") not in (None, slug):
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-slug",
+                    f"Release index asset_slug is {payload.get('asset_slug')!r}, expected {slug!r}.",
+                    uploader_hint(index_blob),
+                    "Rebuild or replace the mismatched release index.",
+                )
+            )
+
+        releases = payload.get("releases") or []
+        if not isinstance(releases, list):
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-releases",
+                    "Release index `releases` must be a list.",
+                    uploader_hint(index_blob),
+                    "Rebuild the release index from remote releases and run records.",
+                )
+            )
+            continue
+
+        release_dates = []
+        for release in releases:
+            if not isinstance(release, dict):
+                findings.append(
+                    Finding(
+                        severity,
+                        f"gs://{bucket}/{index_name}",
+                        "release-index-release-entry",
+                        "Release index contains a non-object release entry.",
+                        uploader_hint(index_blob),
+                        "Rebuild the release index from remote releases and run records.",
+                    )
+                )
+                continue
+            release_date = str(release.get("date") or "")
+            if parse_iso_date(release_date):
+                release_dates.append(release_date)
+            run_record_path = str(release.get("run_record_path") or "")
+            run_record_name = gcs_object_name_if_same_bucket(bucket, run_record_path)
+            if not run_record_name or run_record_name not in object_names:
+                findings.append(
+                    Finding(
+                        severity,
+                        run_record_path or f"gs://{bucket}/{index_name}",
+                        "release-index-run-record-exists",
+                        f"Indexed release {release_date or '<unknown>'} has no existing run record.",
+                        uploader_hint(index_blob),
+                        "Confirm the run record path, then rebuild or repair the release index.",
+                    )
+                )
+            for file_entry in release.get("files") or []:
+                findings.extend(
+                    validate_indexed_file_exists(
+                        bucket=bucket,
+                        root=f"gs://{bucket}/{root}",
+                        release_date=release_date or "<unknown>",
+                        file_entry=file_entry,
+                        object_names=object_names,
+                        severity=severity,
+                    )
+                )
+
+        latest_release = payload.get("latest_release") or {}
+        latest_release_date = latest_release.get("date") if isinstance(latest_release, dict) else None
+        newest_release_date = max(release_dates) if release_dates else None
+        if newest_release_date and latest_release_date != newest_release_date:
+            findings.append(
+                Finding(
+                    severity,
+                    f"gs://{bucket}/{index_name}",
+                    "release-index-latest-release",
+                    f"latest_release is {latest_release_date!r}, expected newest successful release {newest_release_date!r}.",
+                    uploader_hint(index_blob),
+                    "Rebuild the release index so latest_release points at the newest success.",
+                )
+            )
+
+        indexed_success_dates = set(release_dates)
+        for run_blob in sorted(
+            (blob for blob in blobs if blob.name.startswith(f"{root}/runs/") and blob.name.endswith(".json")),
+            key=lambda item: item.name,
+        ):
+            try:
+                run_payload = json.loads(download_object_text(bucket, run_blob.name, run_blob.generation))
+            except (json.JSONDecodeError, OSError):
+                continue
+            run_date = str(run_payload.get("run_date") or Path(run_blob.name).stem)
+            if run_payload.get("status") == "success" and run_date not in indexed_success_dates:
+                findings.append(
+                    Finding(
+                        severity,
+                        f"gs://{bucket}/{run_blob.name}",
+                        "release-index-success-run-indexed",
+                        f"Successful run record {run_date} is not present in the release index.",
+                        uploader_hint(run_blob),
+                        "Rebuild the release index from remote releases and run records.",
+                    )
+                )
+
+        cadence = scheduled_cadence(row)
+        if cadence:
+            latest_run = payload.get("latest_run") or {}
+            latest_run_date = parse_iso_date(latest_run.get("date") if isinstance(latest_run, dict) else None)
+            if not latest_run_date:
+                findings.append(
+                    Finding(
+                        severity,
+                        f"gs://{bucket}/{index_name}",
+                        "release-index-latest-run",
+                        "Scheduled asset release index has no dated latest_run.",
+                        uploader_hint(index_blob),
+                        "Update scheduled publishing so every success or meaningful skip refreshes latest_run.",
+                    )
+                )
+                continue
+            max_age = SCHEDULE_FRESHNESS_DAYS[cadence]
+            age_days = (current_date - latest_run_date).days
+            if age_days > max_age:
+                findings.append(
+                    Finding(
+                        severity,
+                        f"gs://{bucket}/{index_name}",
+                        "release-index-latest-run-fresh",
+                        f"Scheduled {cadence} asset latest_run is {age_days} day(s) old; expected <= {max_age}.",
+                        uploader_hint(index_blob),
+                        "Check the Cloud Scheduler/Cloud Run job and update latest_run after a successful retry or source-unchanged skip.",
+                    )
+                )
+
+    return findings
+
+
+def finding_blocks_exit(finding: Finding, *, release_integrity_mode: str) -> bool:
+    if finding.check.startswith("release-index-") and release_integrity_mode == "warn":
+        return False
+    return finding.severity in {"ERROR", "WARN"}
+
+
 def render_markdown(findings: Sequence[Finding], bucket: str, prefix: str, object_count: int) -> str:
     counts = {"ERROR": 0, "WARN": 0, "INFO": 0}
     for finding in findings:
@@ -1128,6 +1436,15 @@ def main() -> int:
         )
     if not args.local_only and not args.skip_remote_catalog_check and not args.prefix:
         findings.extend(validate_remote_catalog(args.bucket, Path(args.catalog)))
+    if not args.local_only and not args.prefix:
+        findings.extend(
+            validate_release_integrity(
+                bucket=args.bucket,
+                blobs=blobs,
+                catalog_rows=catalog_rows,
+                mode=args.release_integrity_mode,
+            )
+        )
 
     if args.format == "json":
         print(
@@ -1145,7 +1462,10 @@ def main() -> int:
     else:
         print(render_markdown(findings, args.bucket, args.prefix, len(blobs)))
 
-    if args.fail_on_findings and any(f.severity in {"ERROR", "WARN"} for f in findings):
+    if args.fail_on_findings and any(
+        finding_blocks_exit(f, release_integrity_mode=args.release_integrity_mode)
+        for f in findings
+    ):
         return 1
     return 0
 

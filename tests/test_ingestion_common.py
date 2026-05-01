@@ -5,9 +5,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
+from ingestion.common import release_index
 from ingestion.common.gcs import GcsPublisher
 
 
@@ -63,6 +65,9 @@ class FakeBucket:
         if name not in self.blobs:
             self.blobs[name] = FakeBlob(name)
         return self.blobs[name]
+
+    def list_blobs(self, prefix: str = ""):
+        return [blob for blob in self.blobs.values() if blob.exists and blob.name.startswith(prefix)]
 
 
 class FakeClient:
@@ -167,17 +172,29 @@ class GcsPublisherTests(unittest.TestCase):
         run_date = dt.date(2026, 4, 29)
         blob = bucket.blob(asset.run_record_object(run_date))
         blob.exists = True
-        blob.text = json.dumps({"status": "success"})
+        blob.text = json.dumps(
+            {
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "status": "success",
+                "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                "release_paths": [
+                    {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
+                ],
+            }
+        )
 
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         info = publisher.write_run_record(
             asset=asset,
             run_date=run_date,
-            payload={"status": "success"},
+            payload=json.loads(blob.text),
         )
 
         self.assertEqual(info["generation"], blob.generation)
         self.assertEqual(blob.uploads, [])
+        index = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)
+        self.assertEqual(index["latest_release"]["date"], "2026-04-29")
 
     def test_partial_release_blocks_publish_for_configured_suffixes(self):
         bucket = FakeBucket()
@@ -189,6 +206,89 @@ class GcsPublisherTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "without a successful run record"):
             publisher.assert_no_partial_release(asset, run_date)
+
+    def test_write_success_run_record_updates_release_index(self):
+        bucket = FakeBucket()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+        payload = {
+            "asset_slug": asset.slug,
+            "run_date": run_date.isoformat(),
+            "status": "success",
+            "source_version": "source-v1",
+            "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+            "release_paths": [
+                {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb", "generation": 2},
+                {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.pmtiles", "generation": 3},
+            ],
+            "rows": 10,
+            "sha256": {"fgb": "abc", "pmtiles": "def"},
+        }
+
+        publisher.write_run_record(asset=asset, run_date=run_date, payload=payload)
+
+        index = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)
+        self.assertEqual(index["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(index["latest_run"]["status"], "success")
+        self.assertEqual([item["format"] for item in index["latest_release"]["files"]], ["fgb", "pmtiles"])
+
+    def test_skipped_run_record_updates_latest_run_only(self):
+        bucket = FakeBucket()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+
+        publisher.write_run_record(
+            asset=asset,
+            run_date=run_date,
+            payload={
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "status": "skipped",
+                "reason": "source unchanged",
+            },
+        )
+
+        index = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)
+        self.assertEqual(index["releases"], [])
+        self.assertEqual(index["latest_run"]["status"], "skipped")
+        self.assertEqual(index["latest_run"]["reason"], "source unchanged")
+
+    def test_release_index_merge_is_idempotent_by_date(self):
+        entry = {
+            "date": "2026-05-01",
+            "release_path": "gs://test-bucket/asset/releases/2026-05-01/",
+            "files": [{"path": "gs://test-bucket/asset/releases/2026-05-01/asset.fgb", "format": "fgb"}],
+        }
+
+        index = release_index.empty_release_index("test-asset")
+        index = release_index.merge_successful_release(index, entry, updated_at="2026-05-01T00:00:00+00:00")
+        index = release_index.merge_successful_release(index, entry, updated_at="2026-05-01T00:00:00+00:00")
+
+        self.assertEqual(len(index["releases"]), 1)
+        self.assertEqual(index["latest_release"]["date"], "2026-05-01")
+
+    def test_release_index_update_retries_generation_mismatch(self):
+        bucket = FakeBucket()
+        attempts = []
+        real_write = release_index.write_release_index
+
+        def flaky_write(bucket_arg, asset_slug, payload, *, generation):
+            attempts.append(generation)
+            if len(attempts) == 1:
+                raise PreconditionFailed("race")
+            return real_write(bucket_arg, asset_slug, payload, generation=generation)
+
+        with mock.patch("ingestion.common.release_index.write_release_index", side_effect=flaky_write):
+            info = release_index.record_latest_run(
+                bucket,
+                "test-asset",
+                {"asset_slug": "test-asset", "run_date": "2026-05-01", "status": "skipped"},
+            )
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(info["path"], "gs://test-bucket/_catalog/releases/test-asset.json")
 
 
 if __name__ == "__main__":

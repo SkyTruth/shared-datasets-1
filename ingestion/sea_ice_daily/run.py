@@ -590,6 +590,7 @@ def run() -> dict[str, Any]:
         "SEA_ICE_MAX_LOOKBACK_DAYS",
     )
 
+    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
     try:
         available_source = find_latest_available_source(
             source_template=source_template,
@@ -598,25 +599,41 @@ def run() -> dict[str, Any]:
         )
     except FileNotFoundError as exc:
         LOGGER.info("%s", exc)
-        return {
+        record = {
             "asset_slug": ASSET.slug,
             "run_date": anchor_day.isoformat(),
             "status": "skipped",
             "reason": str(exc),
         }
+        record["release_index"] = publisher.update_latest_run_index(
+            asset=ASSET,
+            payload=record,
+        )
+        return record
 
-    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
     if publisher.successful_run_record(ASSET, available_source.filename_date):
         LOGGER.info(
             "%s already has a successful run record for %s",
             ASSET.slug,
             available_source.filename_date,
         )
-        return {
+        record = {
             "asset_slug": ASSET.slug,
-            "run_date": available_source.filename_date.isoformat(),
+            "run_date": anchor_day.isoformat(),
             "status": "skipped",
+            "reason": "latest available source already published",
+            "source": available_source.source_url,
+            "source_url": available_source.source_url,
+            "source_filename": available_source.source_filename,
+            "source_filename_date": available_source.filename_date.isoformat(),
+            "documented_valid_date": available_source.documented_valid_date.isoformat(),
+            "source_version": available_source.source_filename,
         }
+        record["release_index"] = publisher.update_latest_run_index(
+            asset=ASSET,
+            payload=record,
+        )
+        return record
     publisher.assert_no_partial_release(ASSET, available_source.filename_date)
 
     with tempfile.TemporaryDirectory(prefix="sea-ice-daily-") as tmp:

@@ -129,7 +129,16 @@ class WdpaMonthlyTests(unittest.TestCase):
         self.assertEqual(len(records), len(wdpa.ASSETS))
         self.assertEqual({record["status"] for record in records}, {"skipped"})
         self.assertEqual({record["reason"] for record in records}, {"source not ready"})
-        self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+        uploaded = [blob for blob in bucket.blobs.values() if blob.uploads]
+        self.assertEqual(
+            {blob.name for blob in uploaded},
+            {f"_catalog/releases/{asset.slug}.json" for asset in wdpa.ASSETS},
+        )
+        for asset in wdpa.ASSETS:
+            payload = json.loads(bucket.blob(f"_catalog/releases/{asset.slug}.json").text)
+            self.assertEqual(payload["latest_run"]["status"], "skipped")
+            self.assertEqual(payload["latest_run"]["reason"], "source not ready")
+            self.assertEqual(payload["releases"], [])
 
     def test_prepare_source_datasets_extracts_nested_zips(self):
         with tempfile.TemporaryDirectory() as tmp:

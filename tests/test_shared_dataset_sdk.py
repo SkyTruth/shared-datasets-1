@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from urllib.error import HTTPError
 
@@ -24,6 +26,7 @@ from skytruth_shared_datasets import (  # noqa: E402
     gs_to_https,
     split_gs_uri,
 )
+from skytruth_shared_datasets import cli as sdk_cli  # noqa: E402
 
 
 FIXTURE_CSV = """asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
@@ -153,7 +156,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format="csv")
         with self.assertRaises(UnsupportedVersionError):
-            catalog.resolve("example-vector", version="2026-04-30")
+            catalog.resolve("example-vector", version="2026-4-30")
 
     def test_resolve_cdn_url_keeps_canonical_gs_uri(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -162,6 +165,108 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
         self.assertEqual(pmtiles.url, "/pmtiles/example-vector.pmtiles")
+
+    def test_versions_and_dated_resolve_use_release_index(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        release_index = {
+            "asset_slug": "example-vector",
+            "latest_release": {"date": "2026-04-30"},
+            "latest_run": {"date": "2026-04-30", "status": "success"},
+            "releases": [
+                {
+                    "date": "2026-04-30",
+                    "release_path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/",
+                    "files": [
+                        {
+                            "format": "fgb",
+                            "path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.fgb",
+                        },
+                        {
+                            "format": "pmtiles",
+                            "path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.pmtiles",
+                        },
+                    ],
+                }
+            ],
+        }
+        client = FakeGcsClient(
+            {
+                ("example-bucket", "_catalog/releases/example-vector.json"): FakeGcsBlob(
+                    text=json.dumps(release_index)
+                )
+            }
+        )
+
+        versions = catalog.versions("example-vector", access="gcs", client=client)
+        ref = catalog.resolve(
+            "example-vector",
+            format="pmtiles",
+            version="2026-04-30",
+            access="gcs",
+            client=client,
+            web_base_url=None,
+        )
+
+        self.assertEqual(versions["latest_release"]["date"], "2026-04-30")
+        self.assertEqual(
+            ref.gs_uri,
+            "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.pmtiles",
+        )
+        self.assertEqual(
+            ref.url,
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.pmtiles",
+        )
+        with self.assertRaises(ValueError):
+            catalog.resolve(
+                "example-vector",
+                format="pmtiles",
+                version="2026-04-30",
+                access="gcs",
+                client=client,
+                web_base_url="/pmtiles",
+            )
+
+    def test_dated_fetch_uses_exact_version_cache_path(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        release_index = {
+            "asset_slug": "example-vector",
+            "releases": [
+                {
+                    "date": "2026-04-30",
+                    "files": [
+                        {
+                            "format": "fgb",
+                            "path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.fgb",
+                        }
+                    ],
+                }
+            ],
+        }
+        release_blob = FakeGcsBlob(content=b"dated bytes")
+        client = FakeGcsClient(
+            {
+                ("example-bucket", "_catalog/releases/example-vector.json"): FakeGcsBlob(
+                    text=json.dumps(release_index)
+                ),
+                (
+                    "example-bucket",
+                    "100-geographic-reference/110-boundaries/example-vector/releases/2026-04-30/example-vector.fgb",
+                ): release_blob,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = catalog.fetch(
+                "example-vector",
+                format="fgb",
+                version="2026-04-30",
+                cache_dir=tmp,
+                access="gcs",
+                client=client,
+            )
+            self.assertIn("2026-04-30", path.parts)
+            self.assertEqual(path.name, "example-vector.fgb")
+            self.assertEqual(path.read_bytes(), b"dated bytes")
 
     def test_fetch_downloads_to_cache_and_reuses_cache(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -213,6 +318,61 @@ class SharedDatasetSdkTests(unittest.TestCase):
             ref = catalog.resolve(asset.slug)
             self.assertTrue(ref.gs_uri.startswith("gs://"))
             self.assertTrue(ref.url.startswith("https://storage.googleapis.com/"))
+
+
+class SharedDatasetCliTests(unittest.TestCase):
+    def test_versions_command_prints_release_index_rows(self):
+        fake_catalog = SimpleNamespace(
+            versions=lambda slug, **_kwargs: {
+                "releases": [
+                    {
+                        "date": "2026-04-30",
+                        "release_path": f"gs://example-bucket/releases/{slug}/2026-04-30/",
+                        "files": [{"format": "fgb"}, {"format": "pmtiles"}],
+                    }
+                ]
+            }
+        )
+
+        with (
+            mock.patch.object(sdk_cli.Catalog, "load", return_value=fake_catalog),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = sdk_cli.main(["versions", "example-vector"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("2026-04-30\tfgb;pmtiles", stdout.getvalue())
+
+    def test_url_command_passes_exact_version_to_resolver(self):
+        calls = []
+
+        def resolve(slug, requested_format, **kwargs):
+            calls.append((slug, requested_format, kwargs))
+            return SimpleNamespace(url="https://storage.googleapis.com/example/release.pmtiles")
+
+        fake_catalog = SimpleNamespace(resolve=resolve)
+
+        with (
+            mock.patch.object(sdk_cli.Catalog, "load", return_value=fake_catalog),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = sdk_cli.main(
+                [
+                    "url",
+                    "example-vector",
+                    "--format",
+                    "pmtiles",
+                    "--version",
+                    "2026-04-30",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls[0][0], "example-vector")
+        self.assertEqual(calls[0][1], "pmtiles")
+        self.assertEqual(calls[0][2]["version"], "2026-04-30")
+        self.assertEqual(calls[0][2]["access"], "public")
+        self.assertIn("release.pmtiles", stdout.getvalue())
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from typing import Any, Callable, Iterable
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
+from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
 from scripts.raster_asset import validate_cog
 
@@ -329,8 +330,7 @@ def execute_publish_plan(
         blob.reload()
         metadata_objects.append(blob_info(metadata_upload.uri, blob))
 
-    run_record = write_run_record(
-        bucket=bucket,
+    run_record_payload = build_run_record_payload(
         plan=plan,
         release_objects=release_objects,
         latest_objects=latest_objects,
@@ -338,6 +338,21 @@ def execute_publish_plan(
         row_count=row_count,
         notes=notes,
     )
+    run_record = write_run_record(
+        bucket=bucket,
+        plan=plan,
+        payload=run_record_payload,
+    )
+    try:
+        release_index_info = release_index.record_successful_release(
+            bucket,
+            plan.asset_slug,
+            run_record_payload,
+            run_record_info=run_record,
+        )
+        run_record["release_index"] = release_index_info
+    except Exception as exc:  # noqa: BLE001 - data was already published; report metadata repair separately
+        warnings.append(f"release index update failed: {exc}")
 
     canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
     if update_schema_snapshot and canonical_artifact and canonical_artifact.format in SCHEMA_FORMATS:
@@ -537,20 +552,8 @@ def write_run_record(
     *,
     bucket: Any,
     plan: PublishPlan,
-    release_objects: list[dict[str, Any]],
-    latest_objects: list[dict[str, Any]],
-    source_version: str,
-    row_count: int | None,
-    notes: str,
+    payload: dict[str, Any],
 ) -> dict[str, Any]:
-    payload = build_run_record_payload(
-        plan=plan,
-        release_objects=release_objects,
-        latest_objects=latest_objects,
-        source_version=source_version,
-        row_count=row_count,
-        notes=notes,
-    )
     blob = bucket.blob(object_name_from_uri(plan.run_record_uri))
     blob.metadata = {"asset_slug": plan.asset_slug, "run_date": plan.release_date}
     try:
