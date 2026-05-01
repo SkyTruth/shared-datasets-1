@@ -100,13 +100,15 @@ class DatasetAlertsTests(unittest.TestCase):
             changed_paths=["gs://bucket/100/ref/asset/latest/asset.fgb"],
             release_path="gs://bucket/100/ref/asset/releases/2026-04-30/",
             row_count=10,
+            sample_columns=["id", "name", "status", "source", "updated", "notes"],
         )
 
-        self.assertEqual(title, "Dataset upload: asset")
-        self.assertIn("100-geographic-reference/130-protected-areas", body)
+        self.assertEqual(title, "New dataset added!")
+        self.assertIn("Source: source.", body)
+        self.assertIn("*Rows:* `10`", body)
+        self.assertIn("`id`, `name`, `status`, `source`, `updated`, +1 more", body)
         self.assertIn("gs://bucket/100/ref/asset", body)
-        self.assertEqual(fields["Rows"], "10")
-        self.assertEqual(fields["Formats"], "fgb;pmtiles")
+        self.assertEqual(fields, {})
 
     def test_schema_warning_writes_structured_cloud_log(self):
         calls = []

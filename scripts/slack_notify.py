@@ -33,11 +33,12 @@ def build_slack_payload(
     """Build a compact Block Kit message payload."""
 
     status_prefix = {
-        "success": "[success]",
-        "warning": "[warning]",
-        "error": "[error]",
-        "info": "[info]",
-    }.get(status, "[info]")
+        "success": "✅",
+        "warning": "⚠️",
+        "error": "❌",
+        "info": "💡",
+        "new": "🎉",
+    }.get(status, "💡")
     text = f"{status_prefix} {title}\n{body}".strip()
     blocks: list[dict[str, Any]] = [
         {
@@ -45,7 +46,7 @@ def build_slack_payload(
             "text": {
                 "type": "plain_text",
                 "text": f"{status_prefix} {title}"[:150],
-                "emoji": False,
+                "emoji": True,
             },
         },
         {

@@ -197,7 +197,8 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --asset-slug gfw-fixed-infrastructure \
   --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
   --release-path gs://skytruth-shared-datasets-1/path/to/releases/YYYY-MM-DD/ \
-  --row-count 123
+  --row-count 123 \
+  --dataset-path ./gfw-fixed-infrastructure.fgb
 ```
 
 For canonical vector/table assets, compare fields against the last stored schema

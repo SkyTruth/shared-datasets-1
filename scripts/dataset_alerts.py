@@ -28,6 +28,7 @@ from scripts.slack_notify import notify
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 SCHEMA_SNAPSHOT_PREFIX = "_catalog/schema-snapshots"
 SCHEMA_ALERT_LOG_NAME = "shared-datasets-alerts"
+SAMPLE_COLUMN_LIMIT = 5
 OGRINFO_FIELD_RE = re.compile(r"^([^:]+):\s+([A-Za-z][A-Za-z0-9_]*)\b")
 OGRINFO_NON_FIELD_NAMES = {
     "INFO",
@@ -54,6 +55,31 @@ def asset_root_from_canonical(canonical_path: str) -> str:
     return canonical_path.split("/latest/", 1)[0]
 
 
+def dataset_description(asset_slug: str, row: dict[str, str] | None) -> str:
+    if not row:
+        return asset_slug
+    title = row.get("title") or asset_slug
+    source = row.get("source", "").strip()
+    if source and source != title:
+        return f"{title}. Source: {source}."
+    return title
+
+
+def format_sample_columns(sample_columns: list[str] | None, *, limit: int = SAMPLE_COLUMN_LIMIT) -> str:
+    if not sample_columns:
+        return "`unknown`"
+    visible = sample_columns[:limit]
+    formatted = ", ".join(f"`{column}`" for column in visible)
+    remaining = len(sample_columns) - len(visible)
+    if remaining > 0:
+        formatted = f"{formatted}, +{remaining} more"
+    return formatted
+
+
+def sample_columns_from_schema(fields: list[dict[str, str]]) -> list[str]:
+    return [field["name"] for field in fields if field.get("name")]
+
+
 def build_upload_summary(
     *,
     asset_slug: str,
@@ -61,36 +87,18 @@ def build_upload_summary(
     changed_paths: list[str],
     release_path: str | None = None,
     row_count: int | None = None,
+    sample_columns: list[str] | None = None,
 ) -> tuple[str, str, dict[str, str]]:
-    title = f"Dataset upload: {asset_slug}"
+    title = "New dataset added!"
     canonical_path = row.get("canonical_path", "") if row else ""
     asset_root = asset_root_from_canonical(canonical_path) if canonical_path else "unknown"
-    category_path = "/".join(
-        part for part in [row.get("category", "") if row else "", row.get("subcategory", "") if row else ""] if part
-    )
-    formats = row.get("available_formats", "") if row else ""
     body_lines = [
-        f"*Asset:* `{asset_slug}`",
-        f"*Category path:* `{category_path or 'unknown'}`",
+        f"*Asset:* {dataset_description(asset_slug, row)}",
+        f"*Rows:* `{row_count}`" if row_count is not None else "*Rows:* `unknown`",
+        f"*Sample columns:* {format_sample_columns(sample_columns)}",
         f"*Asset root:* `{asset_root}`",
     ]
-    if canonical_path:
-        body_lines.append(f"*Canonical:* `{canonical_path}`")
-    if release_path:
-        body_lines.append(f"*Release:* `{release_path}`")
-    if changed_paths:
-        body_lines.append("*Changed remote paths:*")
-        body_lines.extend(f"- `{path}`" for path in changed_paths[:12])
-        if len(changed_paths) > 12:
-            body_lines.append(f"- ... {len(changed_paths) - 12} more")
-
-    fields = {
-        "Formats": formats or "unknown",
-        "Rows": str(row_count) if row_count is not None else "unknown",
-        "Source": (row.get("source", "") if row else "") or "unknown",
-        "License": (row.get("license", "") if row else "") or "unknown",
-    }
-    return title, "\n".join(body_lines), fields
+    return title, "\n".join(body_lines), {}
 
 
 def infer_scalar_type(value: str) -> str:
@@ -321,19 +329,34 @@ def upload_summary(
     changed_path: list[str] = typer.Option([], "--changed-path", help="Remote path changed by this upload."),
     release_path: Optional[str] = typer.Option(None, help="Release path, if one was published."),
     row_count: Optional[int] = typer.Option(None, help="Published row count, if known."),
+    dataset_path: Optional[Path] = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="Local canonical file for sample columns.",
+    ),
+    sample_column: list[str] = typer.Option(
+        [],
+        "--sample-column",
+        help="Sample column name to include in the Slack summary.",
+    ),
     dry_run: bool = typer.Option(False, help="Print Slack payload instead of posting."),
 ) -> None:
     """Post a lightweight dataset upload summary."""
 
     row = load_catalog().get(asset_slug)
+    sample_columns = sample_column or (
+        sample_columns_from_schema(schema_for_path(dataset_path)) if dataset_path else None
+    )
     title, body, fields = build_upload_summary(
         asset_slug=asset_slug,
         row=row,
         changed_paths=changed_path,
         release_path=release_path,
         row_count=row_count,
+        sample_columns=sample_columns,
     )
-    notify(title=title, body=body, status="info", fields=fields, dry_run=dry_run)
+    notify(title=title, body=body, status="new", fields=fields, dry_run=dry_run)
 
 
 @app.command("check-schema")

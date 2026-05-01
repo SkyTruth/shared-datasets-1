@@ -86,7 +86,8 @@ After a successful manual dataset upload, post a lightweight summary:
 ```bash
 uv run python scripts/dataset_alerts.py upload-summary \
   --asset-slug example-asset \
-  --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb
+  --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
+  --dataset-path ./example-asset.fgb
 ```
 
 For canonical vector/table assets, compare and update the schema snapshot:

@@ -19,10 +19,24 @@ class SlackNotifyTests(unittest.TestCase):
             fields={"Asset": "wdpa"},
         )
 
-        self.assertIn("[success] Dataset upload", payload["text"])
+        self.assertIn("✅ Dataset upload", payload["text"])
         self.assertEqual(payload["blocks"][0]["type"], "header")
+        self.assertTrue(payload["blocks"][0]["text"]["emoji"])
         self.assertIn("Uploaded asset", payload["blocks"][1]["text"]["text"])
         self.assertIn("wdpa", payload["blocks"][2]["fields"][0]["text"])
+
+    def test_payload_uses_status_emoji_prefixes(self):
+        expected = {
+            "success": "✅",
+            "warning": "⚠️",
+            "error": "❌",
+            "info": "💡",
+            "new": "🎉",
+        }
+        for status, emoji in expected.items():
+            with self.subTest(status=status):
+                payload = slack_notify.build_slack_payload(title="Alert", body="Body", status=status)
+                self.assertTrue(payload["text"].startswith(f"{emoji} Alert"))
 
     def test_webhook_failure_raises(self):
         def failing_open(_request, timeout):
@@ -63,7 +77,7 @@ class SlackWebhookTerraformTests(unittest.TestCase):
         self.assertIn('resource "google_secret_manager_secret_iam_member" "slack_webhook_accessors"', monitoring_tf)
         self.assertIn("roles/secretmanager.secretAccessor", monitoring_tf)
         self.assertIn("slack_webhook_secret_accessors", monitoring_variables_tf)
-        self.assertIn("user:christian@skytruth.org", monitoring_variables_tf)
+        self.assertIn("domain:skytruth.org", monitoring_variables_tf)
 
 
 if __name__ == "__main__":
