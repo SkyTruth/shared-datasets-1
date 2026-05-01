@@ -25,6 +25,8 @@ from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(no_args_is_help=True)
+release_index_app = typer.Typer(no_args_is_help=True)
+app.add_typer(release_index_app, name="release-index")
 console = Console()
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -470,6 +472,75 @@ def publish_release(
         raise typer.Exit(2) from exc
 
     sys.stdout.write(json.dumps(publish_release_core.result_to_dict(result), indent=2, sort_keys=True) + "\n")
+
+
+@release_index_app.command("rebuild")
+def rebuild_release_index(
+    asset_slug: str = typer.Option(..., help="Existing catalog asset slug."),
+    catalog_path: Path = typer.Option(
+        Path("catalog/shared-datasets-catalog.csv"),
+        "--catalog",
+        exists=True,
+        dir_okay=False,
+        help="Local catalog CSV used to locate the asset root.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the rebuilt release index without writing it.",
+    ),
+) -> None:
+    """Rebuild _catalog/releases/{asset_slug}.json from remote releases and runs."""
+    from ingestion.common import release_index as release_index_core
+    from scripts import publish_release as publish_release_core
+
+    try:
+        catalog = publish_release_core.load_catalog(catalog_path)
+        row = catalog.get(asset_slug)
+        if row is None:
+            raise release_index_core.ReleaseIndexError(f"asset slug is not in the catalog: {asset_slug}")
+        bucket_name, _asset_root = release_index_core.asset_root_from_catalog_row(row)
+        bucket = get_client().bucket(bucket_name)
+        payload = release_index_core.rebuild_index_from_bucket(bucket, row)
+        index_uri = release_index_core.release_index_uri(bucket.name, asset_slug)
+        if dry_run:
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "dry_run": True,
+                        "release_index": index_uri,
+                        "payload": payload,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            return
+
+        loaded = release_index_core.load_release_index(bucket, asset_slug)
+        write_info = release_index_core.write_release_index(
+            bucket,
+            asset_slug,
+            payload,
+            generation=loaded.generation,
+        )
+    except (release_index_core.ReleaseIndexError, PreconditionFailed) as exc:
+        print(f"[red]release-index rebuild failed:[/red] {exc}", file=sys.stderr)
+        raise typer.Exit(2) from exc
+
+    sys.stdout.write(
+        json.dumps(
+            {
+                "dry_run": False,
+                "release_index": write_info,
+                "payload": payload,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 @app.command("validate-path")

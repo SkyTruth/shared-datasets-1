@@ -22,15 +22,18 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Concern | Source of truth |
 |---|---|
 | Repo purpose and quick start | `README.md` |
-| Agent/maintainer operating rules | `AGENTS.md` |
+| Agent/maintainer routing and safety rules | `AGENTS.md` |
 | Claude Code shim | `CLAUDE.md` |
 | Repo-local skill catalog | `.claude/skills/`, mirrored at `.agents/skills` |
-| Remote GCS access/upload/edit procedure | `.claude/skills/gcp-shared-datasets/SKILL.md` |
+| Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
+| Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment procedure | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
 | Python environment/tooling alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
 | Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
-| Dataset categories and bucket paths | `AGENTS.md`, `catalog/categories.yaml` |
-| Dataset README format | `templates/dataset_README.template.md` |
+| Dataset categories and bucket paths | `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md` |
+| Asset layout, formats, and README requirements | `docs/standards/asset-layout-and-formats.md` |
+| Dataset README templates | `templates/dataset_README.template.md`, `templates/dataset_README.minimal.template.md` |
+| Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | CDN PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
@@ -67,9 +70,17 @@ When instructions conflict, follow this order:
 │   └── skills/
 │       ├── align-virtual-environment/
 │       │   └── SKILL.md
+│       ├── deploy-scheduled-ingestion/
+│       │   └── SKILL.md
 │       ├── gcp-shared-datasets/
 │       │   └── SKILL.md
-│       └── shared-datasets-compliance-audit/
+│       ├── publish-shared-dataset/
+│       │   └── SKILL.md
+│       ├── repo-alert-commit-messages/
+│       │   └── SKILL.md
+│       ├── shared-datasets-compliance-audit/
+│       │   └── SKILL.md
+│       └── static-catalog-web-preview/
 │           └── SKILL.md
 ├── catalog/
 │   ├── categories.yaml
@@ -77,6 +88,9 @@ When instructions conflict, follow this order:
 ├── docs/
 │   ├── gcp-asset-operations.md
 │   ├── pmtiles-cdn.md
+│   ├── standards/
+│   │   ├── asset-layout-and-formats.md
+│   │   └── dataset-taxonomy.md
 │   └── tooling-decision-record.md
 ├── scripts/
 │   ├── README.md
@@ -124,7 +138,8 @@ _deprecated/
 ```
 
 `README.md` is the human landing page for someone browsing the bucket directly.
-Detailed subdirectories and classification rules are in `AGENTS.md`.
+The category data lives in `catalog/categories.yaml`; classification guidance is
+in `docs/standards/dataset-taxonomy.md`.
 
 ## Approved dataset formats
 
@@ -140,20 +155,21 @@ Detailed subdirectories and classification rules are in `AGENTS.md`.
 
 COGs must be internally tiled, internally overviewed, georeferenced, and self-contained. Zarr assets publish immutable release prefixes and expose `latest/manifest.json`; do not mirror chunk objects directly under `latest/`. PNG/JPEG/WebP files are previews only, and raw source rasters such as NetCDF, GRIB, HDF, or non-COG GeoTIFF require a documented source/archive exception.
 
-Do not add new canonical file formats without updating `AGENTS.md`, the templates, the catalog schema, and the review checklist.
+See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README, COG, and Zarr rules. Do not add new canonical file formats without updating that standards doc, the templates, the catalog schema/validation, and the review checklist.
 
 ## Quick start for contributors
 
 ### Add or update a dataset
 
 1. Read `AGENTS.md`.
-2. Pick the correct bucket category/subcategory.
-3. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-4. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
-5. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
-6. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
-7. Use `.claude/skills/gcp-shared-datasets/SKILL.md` and `scripts/gcs_asset.py` for any approved remote GCS operations.
-8. Open a PR describing the remote asset paths changed.
+2. Load `.claude/skills/publish-shared-dataset/SKILL.md`.
+3. Pick the correct bucket category/subcategory using `catalog/categories.yaml` and `docs/standards/dataset-taxonomy.md`.
+4. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
+5. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
+6. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
+7. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
+8. Use `.claude/skills/gcp-shared-datasets/SKILL.md` and `scripts/gcs_asset.py` for any approved remote GCS operations.
+9. Open a PR describing the remote asset paths changed.
 
 ### Generated catalog and asset docs
 
@@ -351,7 +367,7 @@ uv run python scripts/gcs_asset.py publish-release \
   --dry-run
 ```
 
-Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations.
+Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations. For manual dataset add/update work, read `.claude/skills/publish-shared-dataset/SKILL.md` first.
 
 ## Vector artifact builds
 

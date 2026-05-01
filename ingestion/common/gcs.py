@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
+from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
 
 
@@ -157,6 +158,7 @@ class GcsPublisher:
             "asset_slug": asset.slug,
             "run_date": run_date.isoformat(),
         }
+        index_payload = payload
         try:
             blob.upload_from_string(
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -167,6 +169,7 @@ class GcsPublisher:
             existing = self.load_json(object_name)
             if existing and existing.get("status") == "success":
                 self.logger.info("%s run record already exists", asset.slug)
+                index_payload = existing
                 blob.reload()
             else:
                 raise RuntimeError(
@@ -174,8 +177,37 @@ class GcsPublisher:
                     f"gs://{self.bucket.name}/{object_name}"
                 ) from exc
         blob.reload()
-        return {
+        run_record_info = {
             "path": f"gs://{self.bucket.name}/{object_name}",
             "generation": int(blob.generation),
             "size": int(blob.size or 0),
         }
+        if index_payload.get("status") == "success":
+            release_index.record_successful_release(
+                self.bucket,
+                asset.slug,
+                index_payload,
+                run_record_info=run_record_info,
+            )
+        else:
+            release_index.record_latest_run(
+                self.bucket,
+                asset.slug,
+                index_payload,
+                run_record_info=run_record_info,
+            )
+        return run_record_info
+
+    def update_latest_run_index(
+        self,
+        *,
+        asset: ReleaseAsset,
+        payload: dict[str, Any],
+        run_record_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return release_index.record_latest_run(
+            self.bucket,
+            asset.slug,
+            payload,
+            run_record_info=run_record_info,
+        )

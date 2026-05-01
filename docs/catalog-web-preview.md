@@ -165,4 +165,4 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 
 Resolve visible hygiene issues before announcing the catalog, especially stray
 desktop files, missing asset READMEs, stale bucket-side catalog objects, and
-README sections required by `AGENTS.md`.
+README sections required by `docs/standards/asset-layout-and-formats.md`.

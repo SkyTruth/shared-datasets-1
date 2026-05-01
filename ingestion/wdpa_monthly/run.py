@@ -814,15 +814,22 @@ def run() -> list[dict[str, Any]]:
             download_file(source_url, source_zip)
         except SourceNotAvailableError as exc:
             LOGGER.info("%s", exc)
-            return [
-                {
+            records = []
+            for asset in publish_specs:
+                record = {
                     "asset_slug": asset.slug,
                     "run_date": run_date.isoformat(),
                     "status": "skipped",
                     "reason": str(exc),
+                    "source": source_url,
+                    "source_version": source_version,
                 }
-                for asset in publish_specs
-            ]
+                record["release_index"] = publisher.update_latest_run_index(
+                    asset=asset,
+                    payload=record,
+                )
+                records.append(record)
+            return records
         source_datasets = prepare_source_datasets(source_zip, workdir)
         source = source_datasets[0]
         source_layers, split_field, source_fields = discover_source_layers(source_datasets)

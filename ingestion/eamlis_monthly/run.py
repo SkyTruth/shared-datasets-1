@@ -599,6 +599,11 @@ def skipped_record(
         payload=record,
     )
     record["run_record"] = run_record
+    record["release_index"] = publisher.update_latest_run_index(
+        asset=ASSET,
+        payload=record,
+        run_record_info=run_record,
+    )
     return record
 
 

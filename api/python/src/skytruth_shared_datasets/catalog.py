@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv
+import datetime as dt
+import json
 import os
 import shutil
 import tempfile
@@ -10,7 +12,7 @@ from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Literal, Mapping
+from typing import Any, Iterable, Literal, Mapping
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -19,6 +21,7 @@ DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_CATALOG_GS_URI = f"gs://{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_CATALOG_URL = f"https://storage.googleapis.com/{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
+RELEASE_INDEX_PREFIX = "_catalog/releases"
 USER_AGENT = "skytruth-shared-datasets/0.1"
 
 AccessMode = Literal["public", "gcs"]
@@ -266,6 +269,37 @@ class Catalog:
             matches.append(asset)
         return matches
 
+    def versions(
+        self,
+        slug: str,
+        *,
+        access: AccessMode = "public",
+        client=None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Fetch the JSON release index for one asset."""
+        asset = self.get(slug)
+        release_index_uri = release_index_uri_for_asset(asset)
+        try:
+            access_mode = _normalize_access(access)
+            if access_mode == "public":
+                text = _read_url(gs_to_https(release_index_uri), timeout=timeout)
+            else:
+                text = _read_gcs_text(release_index_uri, client=client, timeout=timeout)
+            payload = json.loads(text)
+        except Exception as exc:
+            if isinstance(exc, SharedDatasetsError):
+                raise
+            raise CatalogLoadError(f"Could not load release index for {slug!r}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise CatalogLoadError(f"Release index for {slug!r} is not a JSON object")
+        if payload.get("asset_slug") not in (None, slug):
+            raise CatalogLoadError(f"Release index asset_slug mismatch for {slug!r}")
+        releases = payload.get("releases")
+        if releases is not None and not isinstance(releases, list):
+            raise CatalogLoadError(f"Release index for {slug!r} has invalid releases")
+        return payload
+
     def resolve(
         self,
         slug: str,
@@ -274,6 +308,9 @@ class Catalog:
         version: str = "latest",
         url_strategy: str | None = None,
         web_base_url: str | None = None,
+        access: AccessMode = "public",
+        client=None,
+        timeout: float = 10.0,
     ) -> DatasetRef:
         """Resolve an asset to its canonical GCS URI and a browser-facing URL.
 
@@ -283,9 +320,26 @@ class Catalog:
         ``url_strategy="public_gcs"`` to force public GCS URLs, or pass
         ``web_base_url`` to shape alternate CDN/application URLs.
         """
-        if version != "latest":
-            raise UnsupportedVersionError("Only version='latest' is supported by the static CSV catalog resolver")
         asset = self.get(slug)
+        if version != "latest":
+            version_date = _parse_version(version)
+            release_index = self.versions(slug, access=access, client=client, timeout=timeout)
+            gs_uri, resolved_format = release_path_for_version(
+                asset=asset,
+                release_index=release_index,
+                version=version_date,
+                format=format,
+            )
+            if web_base_url or (url_strategy and _normalize_url_strategy(url_strategy) != "public_gcs"):
+                raise ValueError("Dated releases resolve to exact GCS object URLs; CDN URL strategy is only supported for latest")
+            return DatasetRef(
+                slug=asset.slug,
+                title=asset.title,
+                format=resolved_format,
+                gs_uri=gs_uri,
+                url=gs_to_https(gs_uri),
+                last_updated=version_date,
+            )
         gs_uri = asset.path_for_format(format)
         resolved_format = _normalize_format(format or asset.canonical_format)
         resolved_web_base_url = web_base_url
@@ -310,8 +364,16 @@ class Catalog:
         timeout: float = 60.0,
         access: AccessMode = "public",
         client=None,
+        version: str = "latest",
     ) -> Path:
-        ref = self.resolve(slug, format)
+        ref = self.resolve(
+            slug,
+            format,
+            version=version,
+            access=access,
+            client=client,
+            timeout=timeout,
+        )
         destination = _cache_path(ref, cache_dir)
         if destination.exists() and not force:
             return destination
@@ -382,6 +444,50 @@ def split_gs_uri(uri: str) -> tuple[str, str]:
     if not bucket or not separator or not object_name:
         raise ValueError(f"Expected gs:// object URI, got: {uri}")
     return bucket, object_name
+
+
+def release_index_uri_for_asset(asset: CatalogAsset) -> str:
+    bucket_name, _object_name = split_gs_uri(asset.canonical_path)
+    return f"gs://{bucket_name}/{RELEASE_INDEX_PREFIX}/{asset.slug}.json"
+
+
+def release_path_for_version(
+    *,
+    asset: CatalogAsset,
+    release_index: Mapping[str, Any],
+    version: str,
+    format: str | None,
+) -> tuple[str, str]:
+    resolved_format = _normalize_format(format or asset.canonical_format)
+    releases = release_index.get("releases") or []
+    for release in releases:
+        if not isinstance(release, Mapping) or release.get("date") != version:
+            continue
+        files = release.get("files") or []
+        for file_entry in files:
+            if not isinstance(file_entry, Mapping):
+                continue
+            if _normalize_format(str(file_entry.get("format") or "")) != resolved_format:
+                continue
+            path = str(file_entry.get("path") or "")
+            if not path:
+                break
+            split_gs_uri(path)
+            return path, resolved_format
+        available = ", ".join(
+            sorted(
+                {
+                    _normalize_format(str(item.get("format") or ""))
+                    for item in files
+                    if isinstance(item, Mapping) and item.get("format")
+                }
+            )
+        ) or "none"
+        raise UnsupportedFormatError(
+            f"{asset.slug!r} release {version} does not publish format {resolved_format!r}; "
+            f"available formats: {available}"
+        )
+    raise UnsupportedVersionError(f"{asset.slug!r} does not have release version {version}")
 
 
 def _cache_path(ref: DatasetRef, cache_dir: str | os.PathLike[str] | None) -> Path:
@@ -468,6 +574,16 @@ def _normalize_format(format_name: str) -> str:
         ".tiff": "cog",
     }
     return aliases.get(normalized, normalized)
+
+
+def _parse_version(version: str) -> str:
+    try:
+        parsed = dt.date.fromisoformat(version)
+    except ValueError as exc:
+        raise UnsupportedVersionError("version must be 'latest' or an exact YYYY-MM-DD release date") from exc
+    if parsed.isoformat() != version:
+        raise UnsupportedVersionError("version must be 'latest' or an exact zero-padded YYYY-MM-DD release date")
+    return version
 
 
 def _normalize_access(access: str) -> AccessMode:

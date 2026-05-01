@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,7 +179,9 @@ class CatalogSiteTests(unittest.TestCase):
         )
 
         active_assets = [asset for asset in payload["assets"] if asset["status"] == "active"]
-        self.assertEqual(len(active_assets), 11)
+        with (REPO_ROOT / "catalog/shared-datasets-catalog.csv").open(newline="") as catalog_file:
+            expected_active_assets = sum(1 for row in csv.DictReader(catalog_file) if row["status"] == "active")
+        self.assertEqual(len(active_assets), expected_active_assets)
         self.assertTrue(all(asset["canonical_path"].startswith("gs://") for asset in active_assets))
         self.assertTrue(all(asset["versions"] for asset in active_assets))
         self.assertTrue(any(asset["pmtiles_url"] for asset in active_assets))
