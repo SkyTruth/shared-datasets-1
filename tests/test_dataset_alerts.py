@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import subprocess
 from pathlib import Path
 
 from scripts import dataset_alerts
@@ -46,6 +47,44 @@ class DatasetAlertsTests(unittest.TestCase):
                 {"name": "name", "type": "String"},
             ],
         )
+
+    def test_ogr_schema_falls_back_to_text_output_for_older_gdal(self):
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append(command)
+            if "-json" in command:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr="FAILURE: Unknown option name '-json'",
+                )
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=(
+                    "Layer name: land\n"
+                    "Geometry: Multi Polygon\n"
+                    "Feature Count: 11\n"
+                    "featurecla: String (11.0)\n"
+                    "scalerank: Integer (3.0)\n"
+                    "min_zoom: Real (5.1)\n"
+                ),
+                stderr="",
+            )
+
+        schema = dataset_alerts.schema_from_ogr(Path("asset.fgb"), runner=runner)
+
+        self.assertEqual(
+            schema,
+            [
+                {"name": "featurecla", "type": "String"},
+                {"name": "scalerank", "type": "Integer"},
+                {"name": "min_zoom", "type": "Real"},
+            ],
+        )
+        self.assertEqual(len(calls), 2)
 
     def test_upload_summary_uses_catalog_values(self):
         title, body, fields = dataset_alerts.build_upload_summary(

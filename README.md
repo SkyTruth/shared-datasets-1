@@ -145,9 +145,10 @@ Do not add new canonical file formats without updating `AGENTS.md`, the template
 1. Read `AGENTS.md`.
 2. Pick the correct bucket category/subcategory.
 3. Use `templates/dataset_README.template.md` or the minimal template.
-4. Use `.claude/skills/gcp-shared-datasets/SKILL.md` for remote GCS operations.
-5. Update `catalog/shared-datasets-catalog.csv` if the asset is new or meaningfully changed.
-6. Open a PR describing the remote asset paths changed.
+4. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
+5. Use `.claude/skills/gcp-shared-datasets/SKILL.md` for remote GCS operations.
+6. Update `catalog/shared-datasets-catalog.csv` if the asset is new or meaningfully changed.
+7. Open a PR describing the remote asset paths changed.
 
 ### Add a cron or ingestion job
 
@@ -264,6 +265,28 @@ uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datas
 ```
 
 Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations.
+
+## Vector artifact builds
+
+Use `scripts/vector_asset.py` to create upload-ready FGB and PMTiles artifacts
+without writing generated data into git. The helper uses GDAL for canonical FGB
+and Tippecanoe for direct PMTiles generation:
+
+```bash
+uv run python scripts/vector_asset.py build ./source.shp \
+  --asset-slug example-asset \
+  --layer-name example_asset \
+  --title "Example Asset" \
+  --description "Example vector tiles" \
+  --maxzoom 8 \
+  --tile-simplify 0.001
+```
+
+By default, outputs go under
+`$TMPDIR/shared-datasets-1/vector-assets/{asset-slug}/publish/` and temporary
+MBTiles intermediates go under `build/`. Set `SHARED_DATASETS_WORKDIR` or pass
+`--work-dir` for a different temp root. Use `--tile-simplify` only for dense
+display tiles; the canonical FGB is still generated without simplification.
 
 ## PR expectations
 
