@@ -19,7 +19,7 @@ Use this skill to inspect the shared datasets control plane and data plane for c
 
 ## Audit Workflow
 
-1. Read `AGENTS.md`, `catalog/categories.yaml`, `catalog/shared-datasets-catalog.csv`, and `.claude/skills/gcp-shared-datasets/SKILL.md`.
+1. Read `AGENTS.md`, `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md`, `docs/standards/asset-layout-and-formats.md`, `catalog/shared-datasets-catalog.csv`, and `.claude/skills/gcp-shared-datasets/SKILL.md`.
 2. Run the read-only audit script:
 
 ```bash

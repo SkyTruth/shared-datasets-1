@@ -33,7 +33,7 @@ Use this skill when:
 
 Do not use this skill for:
 
-- General dataset uploads with no catalog web impact; use `gcp-shared-datasets`.
+- General dataset uploads with no catalog web impact; use `publish-shared-dataset`.
 - Cloud Run or Scheduler deployment unrelated to catalog PMTiles behavior; use `deploy-scheduled-ingestion`.
 - Read-only compliance walkthroughs; use `shared-datasets-compliance-audit`.
 - Pure docs typo fixes that do not affect generated catalog output or deployed web behavior.
@@ -47,6 +47,7 @@ Negative examples:
 
 1. Load required context:
    - Read `AGENTS.md`.
+   - Read `.claude/skills/publish-shared-dataset/SKILL.md` when manually publishing or updating dataset assets.
    - Read `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS object write.
    - Read `docs/catalog-web-preview.md`.
    - Inspect `catalog/shared-datasets-catalog.csv`, relevant `docs/assets/*.md`, `scripts/catalog_site.py`, and `web/catalog/*`.

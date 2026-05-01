@@ -16,4 +16,7 @@ Current skills:
 - `align-virtual-environment`
 - `deploy-scheduled-ingestion`
 - `gcp-shared-datasets`
+- `publish-shared-dataset`
+- `repo-alert-commit-messages`
 - `shared-datasets-compliance-audit`
+- `static-catalog-web-preview`

@@ -1,39 +1,29 @@
 ---
 name: gcp-shared-datasets
-description: "Use this skill whenever an agent needs to inspect, download, upload, edit, replace, publish, or validate files in the shared GCP Cloud Storage bucket for SkyTruth shared datasets. Also use it when designing ingestion jobs that write to the bucket."
+description: Use before inspecting, downloading, uploading, editing, replacing, deleting, publishing, or validating objects in the shared SkyTruth GCS dataset bucket. Focuses on safe Cloud Storage object operations and generation preconditions.
 ---
 
-# GCP Shared Datasets Skill
+# GCP Shared Datasets
 
-This skill defines the standard way for agents and maintainers to work with remote files in the SkyTruth shared datasets GCP project.
+Use this skill for remote object safety in
+`gs://skytruth-shared-datasets-1/`. For manual dataset add/update workflows,
+also load `publish-shared-dataset`. For scheduled ingestion deployment, also
+load `deploy-scheduled-ingestion`.
 
 ## Decision
 
-Use a **repo-owned Python CLI/library built on `google-cloud-storage`** for dataset object operations.
+Use the repo-owned Python CLI/library built on `google-cloud-storage` for
+dataset object operations.
 
-Use **Terraform** for infrastructure.
+Use Terraform for infrastructure.
 
-Use **`gcloud storage`** for human diagnostics and emergency one-off operations.
+Use `gcloud storage` only for human diagnostics and emergency one-off
+operations.
 
-Do **not** use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical dataset uploads/edits.
+Do not use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical
+dataset uploads/edits.
 
-## Why this is the standard
-
-Cloud Storage object operations need safe read-modify-write behavior. The Python Cloud Storage client and GCS APIs expose generation and metageneration preconditions, which prevent accidental overwrites and race conditions. A repo-owned Python CLI can encode SkyTruth-specific path rules, approved formats, catalog updates, dry-run behavior, and validation checks.
-
-Terraform is excellent for infrastructure state but poor for frequently changing data objects. Cloud Storage FUSE is useful for some read-heavy exploration, but its filesystem semantics differ from POSIX, it does not preserve all object metadata, and it should not be used for canonical writes.
-
-## Tool responsibilities
-
-| Layer | Standard tool | Allowed use |
-|---|---|---|
-| Buckets, IAM, service accounts, schedulers, Cloud Run jobs, APIs, monitoring | Terraform | Required for reviewed infrastructure changes |
-| Dataset object upload/download/edit/copy/stat/list | Python CLI in `scripts/gcs_asset.py` | Required default for agents |
-| Manual diagnostics | `gcloud storage` | Allowed for inspection and emergency copies |
-| Mounted exploration | Cloud Storage FUSE | Read-heavy exploration only; avoid writes |
-| Routine data object management | Terraform/Pulumi | Do not use |
-
-## Required environment
+## Required Environment
 
 Expected project:
 
@@ -47,6 +37,9 @@ Expected bucket:
 export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
 ```
 
+Use `uv run` for repo-owned Python commands. Do not create ad hoc pip virtualenvs
+or mamba environments for routine GCS object operations.
+
 Local authentication:
 
 ```bash
@@ -56,156 +49,120 @@ gcloud config set project shared-datasets-1
 
 CI/runtime authentication:
 
-- Prefer Workload Identity Federation, Cloud Run service accounts, or other managed identity.
+- Prefer Workload Identity Federation, Cloud Run service accounts, or other
+  managed identity.
 - Never commit service account JSON keys.
 - Never print access tokens or signed URLs into logs unless explicitly required.
 
-## Install local dependencies
+## Safe Object Model
 
-```bash
-uv sync
-```
-
-Use `uv run` for repo-owned Python commands. Do not create ad hoc pip virtualenvs or mamba environments for routine GCS object operations.
-
-## Safe object operation model
-
-Cloud Storage objects have immutable `generation` values. To safely replace an object:
+Cloud Storage objects have immutable `generation` values. To safely replace an
+object:
 
 1. Read object metadata.
 2. Capture its current `generation`.
-3. Upload the replacement with `if_generation_match=<that_generation>`.
+3. Upload the replacement with `if_generation_match=<that_generation>`, exposed
+   by `scripts/gcs_asset.py` as `--replace-generation`.
 4. Verify the new object and generation.
 
-For new objects, use `if_generation_match=0`, which succeeds only if no live object exists at that path.
+For new objects, use `if_generation_match=0`, exposed by the CLI's default
+no-clobber upload behavior.
 
-Never perform a blind overwrite unless the user explicitly asks for an unsafe overwrite or you are operating in a scratch path.
+Never perform a blind overwrite unless the user explicitly asks for an unsafe
+overwrite or you are operating in `_scratch/`.
 
-## Core commands
+## Core Commands
 
 List remote prefix:
 
 ```bash
-uv run python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py list \
+  gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/
 ```
 
 Inspect object metadata:
 
 ```bash
-uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
+  gs://$SHARED_DATASETS_BUCKET/README.md
 ```
 
 Download object:
 
 ```bash
-uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/README.md /tmp/shared-datasets-README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py download \
+  gs://$SHARED_DATASETS_BUCKET/README.md /tmp/shared-datasets-README.md
 ```
 
-Upload new object without clobbering:
+Upload a new object without clobbering:
 
 ```bash
-uv run python scripts/gcs_asset.py upload ./wdpa.fgb gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
+  ./asset.fgb gs://$SHARED_DATASETS_BUCKET/path/to/latest/asset.fgb
 ```
 
-Replace existing object safely:
+Replace an existing object safely:
 
 ```bash
-uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/README.md
-uv run python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --replace-generation 123456789
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
+  gs://$SHARED_DATASETS_BUCKET/path/to/README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
+  ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md \
+  --replace-generation 123456789
+```
+
+Copy a remote object without clobbering the destination:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py copy \
+  gs://$SHARED_DATASETS_BUCKET/src/file.fgb \
+  gs://$SHARED_DATASETS_BUCKET/dst/file.fgb
 ```
 
 Unsafe overwrite, only when explicitly approved:
 
 ```bash
-uv run python scripts/gcs_asset.py upload ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md --unsafe-overwrite
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
+  ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md \
+  --unsafe-overwrite
 ```
 
-Copy remote object without clobbering destination:
+Delete only with an explicit generation and confirmation:
 
 ```bash
-uv run python scripts/gcs_asset.py copy gs://$SHARED_DATASETS_BUCKET/src/file.fgb gs://$SHARED_DATASETS_BUCKET/dst/file.fgb
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py delete \
+  gs://$SHARED_DATASETS_BUCKET/path/to/object --generation 123456789 \
+  --confirm DELETE
 ```
 
-## Editing a remote README
+## Editing Remote Text Files
 
-Use this workflow:
+Use this read-modify-write pattern for remote README or metadata edits:
 
 ```bash
-URI=gs://$SHARED_DATASETS_BUCKET/100-geographic-reference/130-protected-areas/wdpa/README.md
-uv run python scripts/gcs_asset.py stat "$URI"
-uv run python scripts/gcs_asset.py download "$URI" /tmp/wdpa.README.md
-# edit /tmp/wdpa.README.md
-uv run python scripts/gcs_asset.py upload /tmp/wdpa.README.md "$URI" --replace-generation <generation-from-stat>
-uv run python scripts/gcs_asset.py stat "$URI"
+URI=gs://$SHARED_DATASETS_BUCKET/path/to/README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$URI"
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py download "$URI" /tmp/asset.README.md
+# edit /tmp/asset.README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
+  /tmp/asset.README.md "$URI" --replace-generation <generation-from-stat>
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$URI"
 ```
 
-After editing, ensure the repo-side catalog is updated if owner/source/license/cadence/canonical path changed.
-
-## Adding a new dataset
-
-1. Pick category/subcategory using `AGENTS.md`.
-2. Pick an asset slug in lowercase kebab-case.
-3. Create local asset files using approved formats.
-4. Create `README.md` from `templates/dataset_README.template.md` or the minimal template, including a properties/columns table where field names and meanings can be derived. For COG or Zarr assets, include the raster metadata table.
-5. Upload to `latest/` with no-clobber behavior.
-6. If versioned, upload to `releases/YYYY-MM-DD/` with no-clobber behavior.
-7. Update `catalog/shared-datasets-catalog.csv`.
-8. Verify remote paths.
-9. In the PR/final response, list all remote paths changed.
-
-Raster notes:
-
-- COG is the default canonical raster format. Upload as `.tif` with content type `image/tiff; application=geotiff; profile=cloud-optimized`.
-- Zarr is for multidimensional/chunked arrays. Upload immutable chunks under `releases/YYYY-MM-DD/{asset-slug}.zarr/`, then update only `latest/manifest.json`.
-- PNG, JPEG, and WebP are previews only under `previews/`; raw NetCDF, GRIB, HDF, or non-COG GeoTIFF files belong only under documented source/archive exceptions.
-
-Example:
+If the edit changes owner, source, license, cadence, canonical path, available
+formats, schema, or update notes, update `docs/assets/{asset-slug}.md` and run:
 
 ```bash
-ASSET_ROOT=gs://$SHARED_DATASETS_BUCKET/300-infrastructure-industrial/330-offshore-platforms/offshore-platforms
-uv run python scripts/gcs_asset.py upload ./offshore-platforms.fgb     $ASSET_ROOT/latest/offshore-platforms.fgb
-uv run python scripts/gcs_asset.py upload ./offshore-platforms.pmtiles $ASSET_ROOT/latest/offshore-platforms.pmtiles
-uv run python scripts/gcs_asset.py upload ./README.md                 $ASSET_ROOT/README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
 ```
 
-## Updating a versioned dataset
+Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
+metadata changes.
 
-Preferred order:
+## `gcloud storage`
 
-```bash
-ASSET_ROOT=gs://$SHARED_DATASETS_BUCKET/400-events-observations/420-flaring-thermal-events/viirs-flares
-RELEASE=2026-04-29
-
-uv run python scripts/gcs_asset.py upload ./viirs-flares.csv     $ASSET_ROOT/releases/$RELEASE/viirs-flares.csv
-uv run python scripts/gcs_asset.py upload ./viirs-flares.geojson $ASSET_ROOT/releases/$RELEASE/viirs-flares.geojson
-
-# After validation, replace latest safely.
-uv run python scripts/gcs_asset.py stat $ASSET_ROOT/latest/viirs-flares.csv
-uv run python scripts/gcs_asset.py upload ./viirs-flares.csv $ASSET_ROOT/latest/viirs-flares.csv --replace-generation <generation>
-```
-
-If `latest/` does not exist yet, upload without `--replace-generation`; the CLI will use no-clobber behavior by default.
-
-## Designing cron jobs that write assets
-
-Cron jobs must be idempotent.
-
-Required behavior:
-
-1. Determine deterministic release path.
-2. If that release already exists and is valid, exit success.
-3. Generate outputs in local temp or work prefix.
-4. Validate outputs.
-5. Upload `releases/YYYY-MM-DD/` with no-clobber behavior.
-6. Update `latest/` after release upload succeeds.
-7. Write `runs/YYYY-MM-DD.json`.
-8. Leave previous `latest/` untouched on failure.
-
-Do not let a retry corrupt or delete a successful previous release.
-
-## When `gcloud storage` is acceptable
-
-Use `gcloud storage` for:
+`gcloud storage` is acceptable for:
 
 - Quick listing.
 - Manual inspection.
@@ -218,14 +175,17 @@ Examples:
 ```bash
 gcloud storage ls gs://$SHARED_DATASETS_BUCKET/
 gcloud storage cp gs://$SHARED_DATASETS_BUCKET/README.md /tmp/README.md
-gcloud storage cp ./README.md gs://$SHARED_DATASETS_BUCKET/README.md --if-generation-match=<generation>
+gcloud storage cp ./README.md gs://$SHARED_DATASETS_BUCKET/README.md \
+  --if-generation-match=<generation>
 ```
 
-Do not use ad hoc `gcloud storage cp` commands as hidden production automation when a repo script/job should exist.
+Do not use ad hoc `gcloud storage cp` commands as hidden production automation
+when a repo script/job should exist.
 
-## When Cloud Storage FUSE is acceptable
+## Cloud Storage FUSE
 
-Cloud Storage FUSE is acceptable for read-heavy local exploration when an application expects filesystem paths.
+Cloud Storage FUSE is acceptable only for read-heavy local exploration when an
+application expects filesystem paths.
 
 Do not use it for:
 
@@ -236,21 +196,17 @@ Do not use it for:
 - Database-like workloads.
 - Anything that needs atomic patching or POSIX locking.
 
-## Validation before upload
+## Validation
 
 Before uploading, check:
 
-- Path follows the bucket taxonomy.
+- Path follows the taxonomy and asset layout.
 - Asset slug is lowercase kebab-case.
-- Format is approved.
-- CSV has no geometry.
+- Format is approved by `docs/standards/asset-layout-and-formats.md`.
+- CSV files do not contain canonical geometry.
 - README exists for dataset roots.
-- README includes property/column names, types, and explanations where available; if meanings are unknown, it still lists names/types and flags definitions for source confirmation.
-- File is not accidentally huge for `.geojson` previews.
 - Release path is dated if cron/versioned.
 - Existing destination object is not overwritten blindly.
-
-## Validation after upload
 
 After uploading, verify:
 
@@ -258,10 +214,10 @@ After uploading, verify:
 - Object size is nonzero.
 - Generation changed or was created.
 - Content type is reasonable.
-- README/catalog references correct remote path.
+- README/catalog references correct remote path when metadata changed.
 - For releases, `latest/` points to or contains the intended latest data.
 
-## Failure handling
+## Failure Handling
 
 If an upload fails due to `412 Precondition Failed`:
 
@@ -275,9 +231,9 @@ If a cron job fails after writing a release but before updating `latest/`:
 
 - Keep the release if it is valid.
 - Write or update run status as failed/partial if possible.
-- Next retry should detect existing files and continue safely.
+- Let the next retry detect existing files and continue safely.
 
-## Never do this
+## Never Do This
 
 ```bash
 # Bad: blind overwrite of canonical object.
@@ -291,7 +247,7 @@ vim ./mnt/path/README.md
 resource "google_storage_bucket_object" "latest_dataset" { ... }
 ```
 
-## Official references
+## Official References
 
 - Cloud Storage request preconditions: https://cloud.google.com/storage/docs/request-preconditions
 - Google Cloud Python authentication / ADC: https://cloud.google.com/docs/authentication/application-default-credentials
