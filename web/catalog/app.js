@@ -35,6 +35,12 @@ const elements = {
   owner: document.querySelector("#detail-owner"),
   statusValue: document.querySelector("#detail-status"),
   accessTierValue: document.querySelector("#detail-access-tier"),
+  geometryCard: document.querySelector("#detail-geometry-card"),
+  geometry: document.querySelector("#detail-geometry"),
+  rowCountCard: document.querySelector("#detail-row-count-card"),
+  rowCount: document.querySelector("#detail-row-count"),
+  boundsCard: document.querySelector("#detail-bounds-card"),
+  bounds: document.querySelector("#detail-bounds"),
   gs: document.querySelector("#detail-gs"),
   url: document.querySelector("#detail-url"),
   versionRow: document.querySelector("#version-path-row"),
@@ -42,6 +48,8 @@ const elements = {
   pmtiles: document.querySelector("#detail-pmtiles"),
   pmtilesRow: document.querySelector("#pmtiles-path-row"),
   source: document.querySelector("#detail-source"),
+  sourceUrlRow: document.querySelector("#detail-source-url-row"),
+  sourceUrl: document.querySelector("#detail-source-url"),
   licenseText: document.querySelector("#detail-license-text"),
   mapSection: document.querySelector("#map-section"),
   mapStatus: document.querySelector("#map-status"),
@@ -202,8 +210,13 @@ function searchableText(asset) {
       asset.subcategory,
       asset.access_tier,
       asset.description,
+      asset.geometry_type,
+      formatRowCount(asset.row_count),
+      formatBounds(asset.bounds),
       asset.source,
+      asset.source_url,
       asset.license,
+      Array.isArray(asset.license_flags) ? asset.license_flags.join(" ") : "",
       asset.notes,
       asset.available_formats.join(" "),
     ].join(" ")
@@ -362,6 +375,8 @@ function renderDetail(asset) {
   elements.accessTierValue.textContent = asset.access_tier || "Unknown";
   elements.source.textContent = asset.source || "Unknown";
   elements.licenseText.textContent = asset.license || "Unknown";
+  renderDiscoveryMetadata(asset);
+  renderSourceUrl(asset);
   renderVersionSelector(asset);
   const reference = selectedReference(asset);
   elements.gs.textContent = reference.canonical_path;
@@ -479,7 +494,8 @@ function datasetColor(index) {
 }
 
 function renderLicenseNote(asset) {
-  const actionableFlags = asset.license_flags.filter((flag) => flag !== "open");
+  const flags = Array.isArray(asset.license_flags) ? asset.license_flags : [];
+  const actionableFlags = flags.filter((flag) => flag !== "open");
   if (!actionableFlags.length) {
     elements.licenseNote.hidden = true;
     elements.licenseNote.textContent = "";
@@ -487,6 +503,45 @@ function renderLicenseNote(asset) {
   }
   elements.licenseNote.hidden = false;
   elements.licenseNote.textContent = `Reuse limits: ${actionableFlags.join(", ")}.`;
+}
+
+function renderDiscoveryMetadata(asset) {
+  setOptionalMeta(elements.geometryCard, elements.geometry, asset.geometry_type);
+  setOptionalMeta(elements.rowCountCard, elements.rowCount, formatRowCount(asset.row_count));
+  setOptionalMeta(elements.boundsCard, elements.bounds, formatBounds(asset.bounds));
+}
+
+function setOptionalMeta(card, valueElement, value) {
+  const text = String(value || "").trim();
+  card.hidden = !text;
+  valueElement.textContent = text;
+}
+
+function formatRowCount(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? new Intl.NumberFormat("en").format(numeric) : String(value);
+}
+
+function formatBounds(bounds) {
+  if (!Array.isArray(bounds) || bounds.length !== 4) {
+    return "";
+  }
+  return bounds.map((value) => Number(value).toFixed(4)).join(", ");
+}
+
+function renderSourceUrl(asset) {
+  if (!asset.source_url) {
+    elements.sourceUrlRow.hidden = true;
+    elements.sourceUrl.removeAttribute("href");
+    elements.sourceUrl.textContent = "";
+    return;
+  }
+  elements.sourceUrlRow.hidden = false;
+  elements.sourceUrl.href = asset.source_url;
+  elements.sourceUrl.textContent = asset.source_url;
 }
 
 function renderSelectedPmtiles() {

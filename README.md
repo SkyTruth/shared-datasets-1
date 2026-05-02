@@ -53,7 +53,7 @@ When instructions conflict, follow this order:
 2. **Low overhead wins.** Prefer predictable paths, simple READMEs, and generated catalogs over heavy metadata processes.
 3. **Stable paths beat clever names.** Someone should be able to guess where a dataset belongs before searching.
 4. **Canonical data is boring.** Approved formats are `.fgb`, COG `.tif`, `.zarr/`, `.pmtiles`, `.geojson`, `.ndgeojson`, and geometry-free `.csv`.
-5. **Cron jobs must be safe to retry.** Scheduled jobs should be idempotent and should not destroy previous releases.
+5. **Cron jobs must be safe to retry.** Scheduled jobs should be idempotent, skip unchanged assets without writing new dataset artifacts, and never destroy previous releases.
 6. **Infrastructure and data are managed differently.** Terraform manages cloud resources. The Python GCS asset tooling manages data objects.
 7. **Agents must leave things clearer than they found them.** Any remote asset change should update the relevant README/catalog when appropriate.
 
@@ -191,13 +191,18 @@ asset doc, refreshes the CSV catalog, and refreshes `docs/assets/index.md`.
 `check` is the CI-safe drift detector. `export-readmes` writes upload-ready
 bucket README files under category/subcategory/asset paths without touching GCS.
 
+Optional discovery frontmatter such as `bounds`, `geometry_type`, `row_count`,
+`source_url`, and `license_flags` is preserved by the docs generator and exposed
+in the static catalog JSON/site when present. The CSV catalog remains the
+backward-compatible core metadata table.
+
 ### Add a cron or ingestion job
 
 1. Create a distinct package under `ingestion/<job_slug>/` with a README, `run.py`, and a Dockerfile when containerized.
 2. Put shared runtime or publishing helpers in `ingestion/common/`; do not import from another job package just to reuse behavior.
 3. Add focused tests under `tests/test_<job_slug>.py` and run tests for any job touched by shared helper changes.
 4. Use a distinct Terraform file such as `terraform/envs/prod/<job_slug>.tf` for Cloud Scheduler, Cloud Run, service accounts, IAM, secrets references, and monitoring.
-5. Make the job idempotent, write to a dated release before updating `latest/`, and include a run record using `templates/cron_run.template.json` when applicable.
+5. Make the job idempotent, write to a dated release before updating `latest/`, and include a run record using `templates/cron_run.template.json` when applicable. By default, cron jobs should write a skipped run record and leave release and `latest/` dataset artifacts unchanged when the source or generated output has not changed.
 
 ### Change infrastructure
 

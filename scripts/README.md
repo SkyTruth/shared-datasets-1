@@ -112,6 +112,36 @@ with GDAL and converts them with `pmtiles convert`.
 The helper does not upload anything. Use `scripts/gcs_asset.py upload` for all
 Cloud Storage writes so no-clobber and generation preconditions stay enforced.
 
+Publishing concierge planning lives in:
+
+```text
+scripts/publishing_concierge.py
+```
+
+Use it at the start of a manual dataset publish when you want one local plan
+that ties together slug, taxonomy, canonical path, draft asset docs, build
+commands, catalog checks, and the eventual safe upload path. The concierge never
+writes to Cloud Storage.
+
+Example:
+
+```bash
+uv run python scripts/publishing_concierge.py ./source.shp \
+  --asset-slug example-asset \
+  --title "Example Asset" \
+  --category 100-geographic-reference \
+  --subcategory 110-boundaries \
+  --source-name "Example source v1" \
+  --license "Example terms" \
+  --with-pmtiles \
+  --release-date 2026-05-01 \
+  --write-draft-doc
+```
+
+Review the generated JSON plan and draft `docs/assets/{asset-slug}.md`, then run
+the suggested existing helpers. Remote writes still go through
+`scripts/gcs_asset.py`.
+
 Slack notification helpers live in:
 
 ```text

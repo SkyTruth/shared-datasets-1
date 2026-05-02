@@ -30,6 +30,14 @@ Keep source-specific parsing, filtering, schema choices, asset slugs, canonical
 paths, conversion rules, environment variables, and scheduler configuration in
 the owning job package.
 
+## Default Publishing Semantics
+
+Cron jobs should publish only meaningful dataset changes. When the source or
+generated output is unchanged, write a skipped run record for observability and
+leave release and `latest/` dataset artifacts unchanged. Do not repeat this
+behavior in asset `update_cadence` metadata; use cadence values such as `daily`,
+`weekly`, or `monthly`.
+
 ## Live Job Boundaries
 
 Do not import from one job package into another. For example, a new protected

@@ -419,6 +419,7 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             releases_by_date.setdefault(release_date, []).append(blob)
 
     records: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    successful_run_dates: set[str] = set()
     for blob in bucket.list_blobs(prefix=f"{asset_root}/runs/"):
         if not blob.name.endswith(".json"):
             continue
@@ -428,6 +429,7 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             continue
         run_date = str(record.get("run_date") or Path(blob.name).stem)
         if record.get("status") == "success":
+            successful_run_dates.add(run_date)
             release_entries = release_file_entries_from_blobs(
                 bucket.name,
                 releases_by_date.get(run_date, []),
@@ -449,6 +451,20 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
                     "generation": int(blob.generation),
                     "size": int(blob.size or 0),
                 },
+            )
+        )
+    for release_date, blobs in releases_by_date.items():
+        if release_date in successful_run_dates:
+            continue
+        records.append(
+            (
+                {
+                    "run_date": release_date,
+                    "status": "success",
+                    "release_path": f"gs://{bucket.name}/{asset_root}/releases/{release_date}/",
+                    "release_paths": release_file_entries_from_blobs(bucket.name, blobs),
+                },
+                None,
             )
         )
     return build_index_from_records(asset_slug=asset_slug, records=records)

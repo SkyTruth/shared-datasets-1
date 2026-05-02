@@ -146,7 +146,8 @@ Remote GCS objects:
   `scripts/gcs_asset.py`.
 - Never delete old `releases/` during a refresh unless explicitly instructed.
 - For cron jobs, write a dated release first, validate it, then update
-  `latest/`.
+  `latest/`. If the source or generated output is unchanged, write a skipped
+  run record and do not write new release or `latest/` dataset artifacts.
 - Do not use Cloud Storage FUSE for canonical writes.
 - Record remote paths changed in the PR description or final response.
 

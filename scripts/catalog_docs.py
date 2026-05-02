@@ -61,9 +61,22 @@ FRONTMATTER_KEYS = [
     "metadata_paths",
     "last_updated",
     "source",
+    "source_url",
     "license",
+    "license_flags",
     "notes",
+    "bounds",
+    "geometry_type",
+    "row_count",
     "files",
+]
+
+OPTIONAL_DISCOVERY_FIELDS = [
+    "source_url",
+    "license_flags",
+    "bounds",
+    "geometry_type",
+    "row_count",
 ]
 
 REQUIRED_SCALAR_FIELDS = [
@@ -94,6 +107,7 @@ APPROVED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeo
 PUBLISHED_ROLES = {"canonical", "companion"}
 FILE_ROLES = {"canonical", "companion", "release", "run-record", "source", "preview", "metadata"}
 ACCESS_TIERS = {"public", "private"}
+DISALLOWED_CADENCE_DETAIL_RE = re.compile(r"\b(skip|skipped|unchanged|no[- ]?change)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -297,6 +311,10 @@ def normalize_metadata(
         notes = catalog_row.get("notes", "")
     metadata["notes"] = as_text(notes).strip()
 
+    for key in OPTIONAL_DISCOVERY_FIELDS:
+        if key in raw:
+            metadata[key] = raw[key]
+
     available_formats = normalize_list(raw.get("available_formats"))
     if not available_formats and catalog_row and allow_legacy:
         available_formats = normalize_list(catalog_row.get("available_formats", ""))
@@ -331,6 +349,10 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
         raise CatalogDocsError(f"{path}: schema_version must be {SCHEMA_VERSION}")
     if metadata.get("access_tier") not in ACCESS_TIERS:
         raise CatalogDocsError(f"{path}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
+    if DISALLOWED_CADENCE_DETAIL_RE.search(metadata["update_cadence"]):
+        raise CatalogDocsError(
+            f"{path}: update_cadence must describe schedule only; unchanged-source skip behavior is the default for cron jobs"
+        )
     slug = metadata["asset_slug"]
     if not SLUG_RE.fullmatch(slug):
         raise CatalogDocsError(f"{path}: asset_slug must be lowercase kebab-case")
@@ -365,6 +387,35 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
         raise CatalogDocsError(
             f"{path}: available_formats {metadata['available_formats']} must match latest canonical/companion file formats {latest_formats}"
         )
+    validate_optional_discovery_metadata(path, metadata)
+
+
+def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -> None:
+    if "bounds" in metadata and metadata["bounds"] not in (None, ""):
+        bounds = metadata["bounds"]
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+            raise CatalogDocsError(f"{path}: bounds must be [min_lon, min_lat, max_lon, max_lat]")
+        try:
+            min_lon, min_lat, max_lon, max_lat = [float(value) for value in bounds]
+        except (TypeError, ValueError) as error:
+            raise CatalogDocsError(f"{path}: bounds values must be numbers") from error
+        if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180 and -90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+            raise CatalogDocsError(f"{path}: bounds must be valid WGS84 longitude/latitude values")
+        if min_lon > max_lon or min_lat > max_lat:
+            raise CatalogDocsError(f"{path}: bounds minimums must not exceed maximums")
+    if "row_count" in metadata and metadata["row_count"] not in (None, ""):
+        try:
+            row_count = int(metadata["row_count"])
+        except (TypeError, ValueError) as error:
+            raise CatalogDocsError(f"{path}: row_count must be an integer") from error
+        if row_count < 0:
+            raise CatalogDocsError(f"{path}: row_count must be non-negative")
+    if "license_flags" in metadata and metadata["license_flags"] not in (None, ""):
+        flags = metadata["license_flags"]
+        if isinstance(flags, str):
+            return
+        if not isinstance(flags, list) or not all(as_text(flag).strip() for flag in flags):
+            raise CatalogDocsError(f"{path}: license_flags must be a list or delimited string")
 
 
 def validate_body(path: Path, metadata: dict[str, Any], body: str) -> None:
@@ -569,7 +620,7 @@ def render_body(path: Path, metadata: dict[str, Any], body: str) -> str:
 
 
 def render_frontmatter(metadata: dict[str, Any]) -> str:
-    ordered = {key: metadata[key] for key in FRONTMATTER_KEYS}
+    ordered = {key: metadata[key] for key in FRONTMATTER_KEYS if key in metadata}
     return yaml.safe_dump(ordered, sort_keys=False, width=120)
 
 

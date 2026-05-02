@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""Plan a manual shared-datasets publish without writing remote objects."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import re
+import subprocess
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+import yaml
+
+
+DEFAULT_BUCKET = "skytruth-shared-datasets-1"
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+VECTOR_SOURCE_EXTENSIONS = {".shp", ".gpkg", ".geojson", ".json", ".fgb"}
+FORMAT_EXTENSIONS = {
+    ".fgb": "fgb",
+    ".pmtiles": "pmtiles",
+    ".geojson": "geojson",
+    ".ndgeojson": "ndgeojson",
+    ".csv": "csv",
+    ".tif": "cog",
+    ".tiff": "cog",
+}
+FORMAT_FILE_EXTENSIONS = {
+    "fgb": "fgb",
+    "pmtiles": "pmtiles",
+    "geojson": "geojson",
+    "ndgeojson": "ndgeojson",
+    "csv": "csv",
+    "cog": "tif",
+    "zarr": "zarr",
+}
+SUPPORTED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
+
+
+class ConciergeError(ValueError):
+    """Raised when a publish plan cannot be built."""
+
+
+@dataclass(frozen=True)
+class ConciergePlan:
+    asset_slug: str
+    title: str
+    category: str
+    subcategory: str
+    canonical_format: str
+    available_formats: list[str]
+    asset_root: str
+    canonical_path: str
+    asset_doc_path: str
+    standard_work_dir: str
+    publish_dir: str
+    release_date: str | None
+    blocking_questions: list[str]
+    suggested_commands: list[str]
+    remote_write_commands: list[str]
+    notes: list[str]
+
+
+def load_categories(path: Path) -> dict[str, set[str]]:
+    payload = yaml.safe_load(path.read_text()) or {}
+    categories = payload.get("categories") or {}
+    return {
+        str(category): set((data.get("subcategories") or {}).keys())
+        for category, data in categories.items()
+    }
+
+
+def infer_slug(source: Path) -> str:
+    stem = source.name
+    for suffix in (".tar.gz", ".zip"):
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    else:
+        stem = source.stem
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", stem).strip("-").lower()
+    normalized = re.sub(r"-+", "-", normalized)
+    if not normalized or not SLUG_RE.fullmatch(normalized):
+        raise ConciergeError("could not infer a lowercase kebab-case asset slug; pass --asset-slug")
+    return normalized
+
+
+def infer_format(source: Path, explicit: str | None) -> str:
+    if explicit:
+        normalized = explicit.strip().lower()
+        aliases = {"flatgeobuf": "fgb", "geotiff": "cog", "tif": "cog", "tiff": "cog"}
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in SUPPORTED_CANONICAL_FORMATS:
+            raise ConciergeError(f"unsupported canonical format: {explicit!r}")
+        return normalized
+    if source.is_dir() and source.name.lower().endswith(".zarr"):
+        return "zarr"
+    suffix = source.suffix.lower()
+    if suffix in FORMAT_EXTENSIONS:
+        return FORMAT_EXTENSIONS[suffix]
+    if suffix in VECTOR_SOURCE_EXTENSIONS:
+        return "fgb"
+    raise ConciergeError(f"could not infer canonical format from {source}; pass --canonical-format")
+
+
+def validate_taxonomy(category: str, subcategory: str, categories: dict[str, set[str]]) -> None:
+    if category not in categories:
+        raise ConciergeError(f"unknown category {category!r}")
+    if subcategory not in categories[category]:
+        raise ConciergeError(f"unknown subcategory {category}/{subcategory}")
+
+
+def build_plan(
+    *,
+    source: Path,
+    asset_slug: str | None,
+    title: str | None,
+    category: str,
+    subcategory: str,
+    owner: str,
+    source_name: str | None,
+    license_text: str | None,
+    update_cadence: str,
+    canonical_format: str | None,
+    access_tier: str,
+    bucket: str,
+    release_date: str | None,
+    with_pmtiles: bool,
+    categories_path: Path,
+    docs_dir: Path,
+) -> ConciergePlan:
+    if not source.exists():
+        raise ConciergeError(f"source path does not exist: {source}")
+    categories = load_categories(categories_path)
+    validate_taxonomy(category, subcategory, categories)
+
+    slug = asset_slug or infer_slug(source)
+    if not SLUG_RE.fullmatch(slug):
+        raise ConciergeError(f"asset slug must be lowercase kebab-case: {slug!r}")
+    resolved_format = infer_format(source, canonical_format)
+    if access_tier not in {"public", "private"}:
+        raise ConciergeError("access tier must be public or private")
+    if release_date:
+        try:
+            parsed = dt.date.fromisoformat(release_date)
+        except ValueError as exc:
+            raise ConciergeError(f"release date must be YYYY-MM-DD: {release_date!r}") from exc
+        if parsed.isoformat() != release_date:
+            raise ConciergeError(f"release date must be zero-padded YYYY-MM-DD: {release_date!r}")
+
+    dataset_title = title or slug.replace("-", " ").title()
+    asset_root = f"{category}/{subcategory}/{slug}"
+    ext = FORMAT_FILE_EXTENSIONS[resolved_format]
+    canonical_file = f"latest/{slug}.{ext}" if resolved_format != "zarr" else "latest/manifest.json"
+    canonical_path = f"gs://{bucket}/{asset_root}/{canonical_file}"
+    work_dir = f"$TMPDIR/shared-datasets-1/vector-assets/{slug}"
+    publish_dir = f"{work_dir}/publish"
+    formats = [resolved_format]
+    if with_pmtiles and resolved_format == "fgb":
+        formats.append("pmtiles")
+
+    blocking = []
+    if not source_name:
+        blocking.append("Confirm source name or URL.")
+    if not license_text:
+        blocking.append("Confirm license or terms.")
+
+    commands = [
+        f"UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path {canonical_path}",
+    ]
+    if resolved_format == "fgb":
+        if source.suffix.lower() == ".fgb" and not with_pmtiles:
+            commands.append(f"mkdir -p {publish_dir} && cp {source} {publish_dir}/{slug}.fgb")
+        else:
+            commands.append(
+                "UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build "
+                f"{source} --asset-slug {slug} --title {json.dumps(dataset_title)} "
+                f"--description {json.dumps(dataset_title + ' vector tiles')}"
+            )
+    elif resolved_format == "cog":
+        commands.append(f"UV_CACHE_DIR=.uv-cache uv run python scripts/raster_asset.py validate-cog {source}")
+    commands.extend(
+        [
+            "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate",
+            "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check",
+        ]
+    )
+
+    remote_commands = []
+    if release_date:
+        remote_commands.append(
+            "UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py publish-release "
+            f"--asset-slug {slug} --release-date {release_date} --publish-dir {publish_dir} --dry-run"
+        )
+    else:
+        remote_commands.append(
+            "Use scripts/gcs_asset.py upload with no-clobber or --replace-generation after reviewing generated artifacts."
+        )
+
+    notes = [
+        "This concierge plan does not write to Cloud Storage.",
+        "Review generated docs/catalog diffs before any remote upload.",
+    ]
+    if resolved_format == "csv":
+        notes.append("CSV must remain geometry-free under shared-datasets standards.")
+    if with_pmtiles and resolved_format != "fgb":
+        notes.append("--with-pmtiles only adds a PMTiles companion for vector FGB assets.")
+
+    return ConciergePlan(
+        asset_slug=slug,
+        title=dataset_title,
+        category=category,
+        subcategory=subcategory,
+        canonical_format=resolved_format,
+        available_formats=formats,
+        asset_root=asset_root,
+        canonical_path=canonical_path,
+        asset_doc_path=str(docs_dir / f"{slug}.md"),
+        standard_work_dir=work_dir,
+        publish_dir=publish_dir,
+        release_date=release_date,
+        blocking_questions=blocking,
+        suggested_commands=commands,
+        remote_write_commands=remote_commands,
+        notes=notes,
+    )
+
+
+def draft_asset_doc(
+    plan: ConciergePlan,
+    *,
+    owner: str,
+    source_name: str | None,
+    license_text: str | None,
+    update_cadence: str,
+    access_tier: str,
+) -> str:
+    canonical_file = plan.canonical_path.split(f"{plan.asset_root}/", 1)[1]
+    files = [
+        {
+            "path": canonical_file,
+            "format": plan.canonical_format,
+            "role": "canonical",
+            "purpose": "Canonical dataset",
+        }
+    ]
+    if "pmtiles" in plan.available_formats:
+        files.append(
+            {
+                "path": f"latest/{plan.asset_slug}.pmtiles",
+                "format": "pmtiles",
+                "role": "companion",
+                "purpose": "Web map tiles generated from the canonical vector dataset",
+            }
+        )
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "asset_slug": plan.asset_slug,
+        "title": plan.title,
+        "category": plan.category,
+        "subcategory": plan.subcategory,
+        "status": "active",
+        "access_tier": access_tier,
+        "owner": owner,
+        "update_cadence": update_cadence,
+        "canonical_format": plan.canonical_format,
+        "canonical_file": canonical_file,
+        "available_formats": plan.available_formats,
+        "metadata_paths": ["README.md"],
+        "last_updated": plan.release_date or "YYYY-MM-DD",
+        "source": source_name or "NEEDS SOURCE CONFIRMATION",
+        "license": license_text or "NEEDS LICENSE CONFIRMATION",
+        "notes": "Draft generated by scripts/publishing_concierge.py; review before publishing.",
+        "files": files,
+    }
+    body = f"""# {plan.title}
+
+<!-- BEGIN GENERATED asset-summary -->
+Run `uv run python scripts/catalog_docs.py generate` after reviewing the frontmatter.
+<!-- END GENERATED asset-summary -->
+
+## What this is
+
+Draft description. Replace this with a concise explanation of the dataset identity,
+source, and intended shared use.
+
+## When to use it
+
+- Use this for ...
+- Do not use this for ...
+
+## Files
+
+<!-- BEGIN GENERATED files-table -->
+Run `uv run python scripts/catalog_docs.py generate` after reviewing the `files` list.
+<!-- END GENERATED files-table -->
+
+## Schema notes
+
+Describe fields, geometry type, CRS, units, join keys, and source quirks.
+
+## Properties / columns
+
+| Name | Type | Description |
+|---|---|---|
+| `field_name` | type | Needs source confirmation. |
+
+## Update notes
+
+Drafted by `scripts/publishing_concierge.py`. Replace with the real publish
+method, source version, release date, checks, and toolchain versions.
+
+## Known caveats
+
+List license, redistribution, completeness, freshness, and quality caveats.
+"""
+    return "---\n" + yaml.safe_dump(metadata, sort_keys=False, width=120) + "---\n\n" + body
+
+
+def write_draft_doc(path: Path, text: str, *, overwrite: bool) -> None:
+    if path.exists() and not overwrite:
+        raise ConciergeError(f"refusing to overwrite existing asset doc: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def run_catalog_check() -> int:
+    return subprocess.run(
+        ["uv", "run", "python", "scripts/catalog_docs.py", "check"],
+        check=False,
+    ).returncode
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source", type=Path, help="Local source file or directory to inspect.")
+    parser.add_argument("--asset-slug", help="Lowercase kebab-case asset slug. Inferred from source name when omitted.")
+    parser.add_argument("--title", help="Human-readable dataset title. Inferred from slug when omitted.")
+    parser.add_argument("--category", required=True, help="Top-level bucket category.")
+    parser.add_argument("--subcategory", required=True, help="Bucket subcategory.")
+    parser.add_argument("--owner", default="SkyTruth")
+    parser.add_argument("--source-name", help="Source name, URL, or version.")
+    parser.add_argument("--license", dest="license_text", help="License or terms summary.")
+    parser.add_argument("--update-cadence", default="manual")
+    parser.add_argument("--canonical-format", help="Canonical format override.")
+    parser.add_argument("--access-tier", default="public", choices=["public", "private"])
+    parser.add_argument("--bucket", default=DEFAULT_BUCKET)
+    parser.add_argument("--release-date", help="Optional intended release date in YYYY-MM-DD form.")
+    parser.add_argument("--with-pmtiles", action="store_true", help="Plan a PMTiles companion for vector FGB assets.")
+    parser.add_argument("--categories", type=Path, default=Path("catalog/categories.yaml"))
+    parser.add_argument("--docs-dir", type=Path, default=Path("docs/assets"))
+    parser.add_argument("--write-draft-doc", action="store_true", help="Write docs/assets/{asset_slug}.md locally.")
+    parser.add_argument("--overwrite-doc", action="store_true", help="Allow replacing an existing draft asset doc.")
+    parser.add_argument("--run-catalog-check", action="store_true", help="Run catalog_docs.py check after planning.")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        plan = build_plan(
+            source=args.source,
+            asset_slug=args.asset_slug,
+            title=args.title,
+            category=args.category,
+            subcategory=args.subcategory,
+            owner=args.owner,
+            source_name=args.source_name,
+            license_text=args.license_text,
+            update_cadence=args.update_cadence,
+            canonical_format=args.canonical_format,
+            access_tier=args.access_tier,
+            bucket=args.bucket,
+            release_date=args.release_date,
+            with_pmtiles=args.with_pmtiles,
+            categories_path=args.categories,
+            docs_dir=args.docs_dir,
+        )
+        if args.write_draft_doc:
+            write_draft_doc(
+                Path(plan.asset_doc_path),
+                draft_asset_doc(
+                    plan,
+                    owner=args.owner,
+                    source_name=args.source_name,
+                    license_text=args.license_text,
+                    update_cadence=args.update_cadence,
+                    access_tier=args.access_tier,
+                ),
+                overwrite=args.overwrite_doc,
+            )
+        payload = asdict(plan)
+        if args.write_draft_doc:
+            payload["draft_doc_written"] = plan.asset_doc_path
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        if args.run_catalog_check:
+            return run_catalog_check()
+        return 0
+    except ConciergeError as exc:
+        print(f"publishing-concierge: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

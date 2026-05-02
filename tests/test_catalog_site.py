@@ -22,6 +22,16 @@ example-asset,Example Asset,100-geographic-reference,110-boundaries,active,publi
 
 DOC = """---
 asset_slug: example-asset
+source_url: https://example.test/source
+license_flags:
+- attribution-required
+bounds:
+- -10.5
+- 20.25
+- 30.75
+- 40.125
+geometry_type: Polygon
+row_count: 12345
 files:
 - path: latest/example-asset.fgb
   format: fgb
@@ -88,7 +98,28 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-04-30/example-asset.fgb")
         self.assertEqual(asset["versions"][0]["pmtiles_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-04-30/example-asset.pmtiles")
         self.assertIn("non-commercial", asset["license_flags"])
+        self.assertIn("attribution-required", asset["license_flags"])
+        self.assertEqual(asset["bounds"], [-10.5, 20.25, 30.75, 40.125])
+        self.assertEqual(asset["geometry_type"], "Polygon")
+        self.assertEqual(asset["row_count"], 12345)
+        self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertIn("Reusable example boundary dataset", asset["description"])
+
+    def test_optional_discovery_metadata_validation(self):
+        bad_doc = DOC.replace("row_count: 12345", "row_count: many")
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "row_count must be an integer"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
 
     def test_license_flags_mark_referential_terms_without_flagging_explicit_terms_of_use(self):
         for license_text in (

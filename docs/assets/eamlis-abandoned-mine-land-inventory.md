@@ -7,7 +7,7 @@ subcategory: 320-mining
 status: active
 access_tier: public
 owner: SkyTruth
-update_cadence: monthly, skipped when unchanged
+update_cadence: monthly
 canonical_format: fgb
 canonical_file: latest/eamlis-abandoned-mine-land-inventory.fgb
 available_formats:
@@ -16,13 +16,13 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-05-01'
+last_updated: '2026-05-02'
 source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
-notes: Scheduled refresh release 2026-05-01; source rows 63110; unique AMLIS_KEY 24427; fgb sha256 556cabc1d073f4d165d1ad13a5539cbd095951096a17cb9f61520a7f8d1f2e41;
-  pmtiles sha256 ab09dd5deebc579f68b84bc7860538b458f8730faba7c31b7474cbf502640792; PMTiles generated with Tippecanoe no feature
-  limit/no tile size limit/drop-rate 1 for low-zoom point fidelity; stale initial GeoJSON remains only under source/provenance
-  paths and is not advertised as an active data-plane format
+notes: Scheduled refresh release 2026-05-02; source rows 63112; source version fa9c166297d6546b619a32e584c1ffd2c95f068b107cc3dc110ec9fc3ce34375;
+  fgb sha256 23c517e741d86b0e9e676f699ae7f1345118c21dbc728d88edcbf086f0c3af80; pmtiles sha256 bb20a449992556e2a4aaf125f93fe2f418f23841ad5a1034fde8266c114256cc;
+  PMTiles generated with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for low-zoom point fidelity; stale initial
+  GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
@@ -56,8 +56,8 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-01
-- **Update cadence:** monthly, skipped when unchanged
+- **Last updated:** 2026-05-02
+- **Update cadence:** monthly
 - **Canonical file:** `latest/eamlis-abandoned-mine-land-inventory.fgb`
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** U.S. Department of the Interior OSMRE e-AMLIS
@@ -95,7 +95,7 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 
 Geometry is WGS84 point geometry derived from the public ArcGIS hosted feature layer. The public service also exposes `EST_LATITUDE` and `EST_LONGITUDE` display fields that may be less precise than the feature geometry; use the geometry column for geospatial analysis.
 
-Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The current 2026-05-01 scheduled release contains 63,110 features, 24,427 unique `AMLIS_KEY` values, 55 `STATE_KEY` values, 43 unique `PROB_TY_CD` values, and no null geometries. Scheduled run records document the current public source count for each refresh attempt.
+Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The current 2026-05-02 scheduled release contains 63,112 features. Scheduled run records document the current public source count for each refresh attempt.
 
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
 

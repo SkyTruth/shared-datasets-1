@@ -290,6 +290,31 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertEqual(info["path"], "gs://test-bucket/_catalog/releases/test-asset.json")
 
+    def test_rebuild_index_from_bucket_uses_releases_without_run_records(self):
+        bucket = FakeBucket()
+        first = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        first.exists = True
+        first.generation = 8
+        first.size = 13
+        second = bucket.blob("asset/releases/2026-04-01/asset.pmtiles")
+        second.exists = True
+        second.generation = 6
+        second.size = 21
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        self.assertEqual([item["date"] for item in index["releases"]], ["2026-05-01", "2026-04-01"])
+        self.assertEqual(index["latest_release"]["files"][0]["path"], "gs://test-bucket/asset/releases/2026-05-01/asset.fgb")
+        self.assertEqual(index["latest_release"]["files"][0]["generation"], 8)
+        self.assertEqual(index["latest_run"]["status"], "success")
+        self.assertNotIn("run_record_path", index["latest_run"])
+
 
 if __name__ == "__main__":
     unittest.main()

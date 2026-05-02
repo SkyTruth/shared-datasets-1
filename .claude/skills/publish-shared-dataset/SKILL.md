@@ -20,6 +20,8 @@ Read these before choosing names, paths, formats, or remote writes:
 - `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS operation
 - `.claude/skills/static-catalog-web-preview/SKILL.md` before refreshing the
   live catalog UI cache after dataset edits or uploads
+- `scripts/publishing_concierge.py` before new manual asset intake or
+  under-specified upload planning
 - Relevant existing `docs/assets/{asset-slug}.md` files and nearby catalog rows
 
 ## Under-Specified Upload Discovery
@@ -40,6 +42,38 @@ Use the evidence to propose a lowercase kebab-case asset slug, taxonomy
 classification, canonical format, target asset directory, and README content. If
 confidence is still low after discovery, stop before remote writes and ask for
 the missing confirmation.
+
+## Publishing Concierge
+
+For a new manual asset, an under-specified upload, or any intake where the
+slug/taxonomy/format/doc path is not already settled, run the local concierge
+before building artifacts or writing asset docs:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py ./source.shp \
+  --asset-slug example-asset \
+  --title "Example Asset" \
+  --category 100-geographic-reference \
+  --subcategory 110-boundaries \
+  --source-name "Example source v1" \
+  --license "Example terms" \
+  --with-pmtiles \
+  --release-date YYYY-MM-DD
+```
+
+Use `--write-draft-doc` only when you want the concierge to create a local
+`docs/assets/{asset-slug}.md` draft. Review the JSON plan and resolve every
+`blocking_questions` item before any remote write. The concierge is a planner:
+it never writes to Cloud Storage, and it does not replace `gcs_asset.py`,
+`publish-release`, catalog checks, or the GCS safety rules.
+
+Prefer the concierge output over ad hoc path math for:
+
+- Asset root and canonical `gs://` path.
+- Canonical format and PMTiles companion expectations.
+- Draft asset doc location and first-pass frontmatter.
+- Standard work directory and publish directory.
+- Suggested build, catalog, validation, and dry-run publish commands.
 
 ## Classification And Standards
 
@@ -135,10 +169,8 @@ DEST=gs://skytruth-shared-datasets-1/_catalog/web
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$DEST/catalog.json"
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
   /tmp/shared-datasets-1/catalog-web/catalog.json "$DEST/catalog.json" \
-  --replace-generation <generation-from-stat>
-gcloud storage objects update \
-  --cache-control='no-cache, max-age=0, must-revalidate' \
-  "$DEST/catalog.json"
+  --replace-generation <generation-from-stat> \
+  --cache-control "no-cache, max-age=0, must-revalidate"
 ```
 
 If the dataset publish replaced same-path PMTiles display artifacts, also set
@@ -150,19 +182,21 @@ full deployment and verification flow in `static-catalog-web-preview`.
 
 For a new manual asset:
 
-1. Complete discovery, classification, slug selection, and local artifact build.
-2. Update the asset doc and regenerate catalog outputs.
-3. Load `gcp-shared-datasets`.
-4. Validate target paths and inspect existing remote objects if replacing.
-5. Upload new objects with no-clobber behavior.
-6. Use `releases/YYYY-MM-DD/` when the asset is cron-updated, multi-project
+1. Run the publishing concierge unless all slug, taxonomy, format, doc, and
+   target path decisions are already explicit and verified.
+2. Complete discovery, classification, slug selection, and local artifact build.
+3. Update the asset doc and regenerate catalog outputs.
+4. Load `gcp-shared-datasets`.
+5. Validate target paths and inspect existing remote objects if replacing.
+6. Upload new objects with no-clobber behavior.
+7. Use `releases/YYYY-MM-DD/` when the asset is cron-updated, multi-project
    critical, difficult to recreate, or needs reproducible snapshots.
-7. Verify remote paths and object metadata.
-8. Run dataset upload/schema alert helpers when applicable. Do not rerun Slack
+8. Verify remote paths and object metadata.
+9. Run dataset upload/schema alert helpers when applicable. Do not rerun Slack
    upload announcements for corrective renames, cache refreshes, README/catalog
    metadata repairs, or same-release republishing after an initial alert already
    went out; report those follow-up fixes in the final response instead.
-9. Refresh the catalog UI cache using the steps above.
+10. Refresh the catalog UI cache using the steps above.
 
 For an update to an existing versioned asset, prefer `publish-release` when the
 local publish directory is ready for an existing catalog asset:
@@ -218,6 +252,7 @@ explicitly in the final response.
 Report:
 
 - Asset slug, category/subcategory, canonical format, and source/version.
+- Concierge plan path or command run, or why it was intentionally skipped.
 - Local files generated and validation commands run.
 - Catalog/doc generation commands run.
 - Catalog UI cache refresh commands run, including `catalog.json` generation,

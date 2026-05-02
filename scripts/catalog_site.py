@@ -86,6 +86,10 @@ class CatalogAsset:
     source: str
     license: str
     notes: str
+    bounds: list[float] | None
+    geometry_type: str | None
+    row_count: int | None
+    source_url: str | None
     public_url: str
     pmtiles_path: str | None
     pmtiles_url: str | None
@@ -188,6 +192,64 @@ def read_doc_metadata(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CatalogSiteError(f"{path}: frontmatter must be a mapping")
     return payload
+
+
+def optional_text(metadata: dict[str, Any], key: str, *, doc_path: Path) -> str | None:
+    if key not in metadata or metadata[key] is None:
+        return None
+    value = str(metadata[key]).strip()
+    return value or None
+
+
+def optional_int(metadata: dict[str, Any], key: str, *, doc_path: Path) -> int | None:
+    if key not in metadata or metadata[key] is None or metadata[key] == "":
+        return None
+    try:
+        value = int(metadata[key])
+    except (TypeError, ValueError) as error:
+        raise CatalogSiteError(f"{doc_path}: {key} must be an integer") from error
+    if value < 0:
+        raise CatalogSiteError(f"{doc_path}: {key} must be non-negative")
+    return value
+
+
+def optional_bounds(metadata: dict[str, Any], *, doc_path: Path) -> list[float] | None:
+    if "bounds" not in metadata or metadata["bounds"] in (None, ""):
+        return None
+    raw_bounds = metadata["bounds"]
+    if not isinstance(raw_bounds, (list, tuple)) or len(raw_bounds) != 4:
+        raise CatalogSiteError(f"{doc_path}: bounds must be [min_lon, min_lat, max_lon, max_lat]")
+    try:
+        bounds = [float(value) for value in raw_bounds]
+    except (TypeError, ValueError) as error:
+        raise CatalogSiteError(f"{doc_path}: bounds values must be numbers") from error
+    min_lon, min_lat, max_lon, max_lat = bounds
+    if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180 and -90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        raise CatalogSiteError(f"{doc_path}: bounds must be valid WGS84 longitude/latitude values")
+    if min_lon > max_lon or min_lat > max_lat:
+        raise CatalogSiteError(f"{doc_path}: bounds minimums must not exceed maximums")
+    return bounds
+
+
+def frontmatter_license_flags(metadata: dict[str, Any], *, doc_path: Path) -> list[str]:
+    if "license_flags" not in metadata or metadata["license_flags"] in (None, ""):
+        return []
+    raw_flags = metadata["license_flags"]
+    if isinstance(raw_flags, str):
+        flags = split_semicolon(raw_flags) if ";" in raw_flags else [part.strip() for part in raw_flags.split(",") if part.strip()]
+    elif isinstance(raw_flags, (list, tuple)):
+        flags = [str(flag).strip() for flag in raw_flags if str(flag).strip()]
+    else:
+        raise CatalogSiteError(f"{doc_path}: license_flags must be a list or delimited string")
+    return flags
+
+
+def merged_license_flags(license_text: str, metadata: dict[str, Any], *, doc_path: Path) -> list[str]:
+    flags: list[str] = []
+    for flag in [*license_flags(license_text), *frontmatter_license_flags(metadata, doc_path=doc_path)]:
+        if flag not in flags:
+            flags.append(flag)
+    return flags
 
 
 def require_iso_date(value: str, *, context: str) -> str:
@@ -353,6 +415,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
     pmtiles_path = path_for_format(canonical_path, slug, "pmtiles") if "pmtiles" in formats else None
     docs_path = f"docs/assets/{slug}.md"
     doc_path = docs_dir / f"{slug}.md"
+    doc_metadata = read_doc_metadata(doc_path)
     last_updated = row["last_updated"].strip()
     versions = release_versions(
         doc_path=doc_path,
@@ -382,13 +445,17 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
         source=row["source"].strip(),
         license=row["license"].strip(),
         notes=row.get("notes", "").strip(),
+        bounds=optional_bounds(doc_metadata, doc_path=doc_path),
+        geometry_type=optional_text(doc_metadata, "geometry_type", doc_path=doc_path),
+        row_count=optional_int(doc_metadata, "row_count", doc_path=doc_path),
+        source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,
         pmtiles_url=pmtiles_cdn_url(slug, access_tier) if pmtiles_path else None,
         docs_path=docs_path,
         docs_url=docs_path,
         description=read_description(doc_path),
-        license_flags=license_flags(row["license"].strip()),
+        license_flags=merged_license_flags(row["license"].strip(), doc_metadata, doc_path=doc_path),
         versions=versions,
         sort_key=f"{last_updated}|{slug}",
     )

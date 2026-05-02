@@ -16,6 +16,12 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
+# Keep direct invocation (`python scripts/gcs_asset.py ...`) equivalent to
+# module/imported use by making repo-root packages importable.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import typer
 import yaml
 from google.api_core.exceptions import NotFound, PreconditionFailed
@@ -74,6 +80,16 @@ def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
         return "application/vnd.pmtiles"
     if suffix in {".json", ".geojson"}:
         return "application/json"
+    if suffix == ".csv":
+        return "text/csv"
+    if suffix == ".html":
+        return "text/html"
+    if suffix == ".css":
+        return "text/css"
+    if suffix == ".js":
+        return "application/javascript"
+    if suffix == ".md":
+        return "text/markdown"
     if suffix == ".ndgeojson":
         return "application/x-ndjson"
     if suffix == ".png":
@@ -244,6 +260,7 @@ def upload(
         help="Blindly overwrite existing destination. Use only with explicit approval.",
     ),
     content_type: Optional[str] = typer.Option(None, help="Explicit content type."),
+    cache_control: Optional[str] = typer.Option(None, help="Explicit Cache-Control metadata."),
     metadata_json: Optional[str] = typer.Option(None, help="JSON object of custom metadata."),
 ) -> None:
     """Upload a local file.
@@ -253,6 +270,8 @@ def upload(
     Use --unsafe-overwrite only when explicitly approved.
     """
     blob = get_blob(uri)
+    if cache_control:
+        blob.cache_control = cache_control
     if metadata_json:
         metadata = json.loads(metadata_json)
         if not isinstance(metadata, dict):
@@ -287,6 +306,7 @@ def upload(
                 "generation": blob.generation,
                 "size": blob.size,
                 "content_type": blob.content_type,
+                "cache_control": blob.cache_control,
             },
             indent=2,
             sort_keys=True,

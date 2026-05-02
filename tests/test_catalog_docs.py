@@ -36,8 +36,18 @@ metadata_paths:
 - README.md
 last_updated: '2026-04-30'
 source: Example source
+source_url: https://example.test/source
 license: Example license
+license_flags:
+- attribution-required
 notes: Example notes
+bounds:
+- -10.5
+- 20.25
+- 30.75
+- 40.125
+geometry_type: Polygon
+row_count: 12345
 files:
 - path: latest/example-asset.fgb
   format: fgb
@@ -161,6 +171,9 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(row["has_pmtiles"], "true")
         self.assertIn("<!-- BEGIN GENERATED asset-summary -->", rendered)
         self.assertIn("- **Access tier:** public", rendered)
+        self.assertIn("source_url: https://example.test/source", rendered)
+        self.assertIn("geometry_type: Polygon", rendered)
+        self.assertIn("row_count: 12345", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
 
     def test_legacy_generate_backfills_frontmatter_from_catalog_and_files_table(self):
@@ -230,6 +243,36 @@ class CatalogDocsTests(unittest.TestCase):
             rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "access_tier"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+    def test_invalid_discovery_bounds_fail(self):
+        bad_doc = STRICT_DOC.replace("- 40.125", "- 200.0", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "bounds"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+    def test_update_cadence_rejects_unchanged_skip_detail(self):
+        bad_doc = STRICT_DOC.replace("update_cadence: manual", "update_cadence: monthly, skipped when unchanged")
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "schedule only"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,

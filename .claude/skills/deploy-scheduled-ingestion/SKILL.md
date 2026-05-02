@@ -32,6 +32,7 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Do not edit a functioning live job to support a new job unless the user explicitly requests a behavior-preserving refactor.
 - Preserve live surfaces unless explicitly approved: Cloud Run job names, scheduler names, service account identities, asset slugs, canonical GCS paths, output formats, schemas, entrypoints, and run-record shape.
 - Any change to `ingestion/common/` must run focused tests for every production job that imports it.
+- Default cron publishing semantics: if the source or generated output is unchanged, write a skipped run record for observability and do not write new release or `latest/` dataset artifacts. Keep this as job behavior, not asset `update_cadence` metadata.
 
 ## Large-source sizing
 

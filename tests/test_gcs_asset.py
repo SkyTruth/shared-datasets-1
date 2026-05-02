@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts import gcs_asset
 
@@ -12,6 +16,20 @@ CATEGORIES = {
 
 
 class GcsAssetPathValidationTests(unittest.TestCase):
+    def test_catalog_web_content_types_are_inferred(self):
+        expected = {
+            "catalog.json": "application/json",
+            "shared-datasets-catalog.csv": "text/csv",
+            "index.html": "text/html",
+            "styles.css": "text/css",
+            "app.js": "application/javascript",
+            "README.md": "text/markdown",
+        }
+
+        for name, content_type in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(gcs_asset.content_type_for(Path(name), None), content_type)
+
     def test_valid_asset_paths_pass(self):
         paths = [
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/README.md",
@@ -48,6 +66,35 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         )
 
         self.assertTrue(any("latest/ should contain direct files only" in error for error in errors))
+
+    def test_direct_script_invocation_can_import_repo_packages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "catalog.csv"
+            catalog.write_text(
+                "asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,"
+                "canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,"
+                "last_updated,source,license,notes\n"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parents[1] / "scripts" / "gcs_asset.py"),
+                    "release-index",
+                    "rebuild",
+                    "--asset-slug",
+                    "missing-asset",
+                    "--catalog",
+                    str(catalog),
+                    "--dry-run",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("asset slug is not in the catalog", result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
 
 
 if __name__ == "__main__":

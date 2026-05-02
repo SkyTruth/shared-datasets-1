@@ -357,6 +357,42 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(payload["payload"]["latest_release"]["files"][0]["generation"], 8)
         self.assertFalse(bucket.blob("_catalog/releases/example-asset.json").exists)
 
+    def test_cli_release_index_rebuild_dry_run_reads_releases_without_runs(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            bucket = FakeBucket()
+            release = bucket.blob(
+                "100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb"
+            )
+            release.exists = True
+            release.generation = 8
+            release.size = 13
+            with mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)):
+                result = runner.invoke(
+                    app,
+                    [
+                        "release-index",
+                        "rebuild",
+                        "--asset-slug",
+                        "example-asset",
+                        "--catalog",
+                        str(catalog),
+                        "--dry-run",
+                    ],
+                )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertEqual(payload["payload"]["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(
+            payload["payload"]["latest_release"]["files"][0]["path"],
+            "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb",
+        )
+        self.assertEqual(payload["payload"]["latest_run"]["status"], "success")
+        self.assertFalse(bucket.blob("_catalog/releases/example-asset.json").exists)
+
     def test_invalid_release_date_is_rejected(self):
         with self.assertRaisesRegex(publish_release.PublishReleaseError, "YYYY-MM-DD"):
             publish_release.parse_release_date("2026-5-1")

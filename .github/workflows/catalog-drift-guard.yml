@@ -1,0 +1,60 @@
+name: Catalog drift guard
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  catalog-drift:
+    if: >-
+      ${{
+        vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' &&
+        vars.GCP_SERVICE_ACCOUNT != '' &&
+        (
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Check live catalog drift
+        run: uv run python scripts/catalog_drift_guard.py

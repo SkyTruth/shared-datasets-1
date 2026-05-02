@@ -15,8 +15,14 @@ metadata_paths:
   - "README.md"
 last_updated: "YYYY-MM-DD"
 source: "{source-name-or-url}"
+source_url: "{optional-source-homepage-or-api-url}"
 license: "{license-or-terms-summary}"
+license_flags:
+  - "{optional-discovery-flag}"
 notes: "{short catalog note}"
+bounds: ["{min_lon}", "{min_lat}", "{max_lon}", "{max_lat}"] # optional WGS84 extent
+geometry_type: "{optional geometry type}"
+row_count: "{optional integer row count}"
 files:
   - path: "latest/{asset-slug}.{ext}"
     format: "{format}"

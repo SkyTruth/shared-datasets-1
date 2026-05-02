@@ -1,12 +1,32 @@
 ---
 name: shared-datasets-consumer
-description: Use when integrating a consuming SkyTruth project with shared-datasets-1 using the minimum safe change, especially replacing direct GCS PMTiles URLs with the shared tiered PMTiles URL contract or adding the Python resolver SDK to a backend.
+description: Use when driving shared-datasets-1 adoption in downstream SkyTruth repos, especially scanning for hardcoded shared dataset URLs, replacing direct GCS PMTiles links with tiles.skytruth.org or the Python resolver SDK, and opening small focused PRs.
 ---
 
 # Shared Datasets Consumer Integration
 
-Use this skill to make another SkyTruth project consume shared-datasets-1 with
-the smallest safe change.
+Use this skill to make another SkyTruth project adopt shared-datasets-1 with
+the smallest safe change. The main job is adoption, not redesign: find
+hardcoded shared dataset access paths, replace them with the stable shared
+access contract, and package each consumer change as a small focused PR.
+
+## Adoption Workflow
+
+Use this workflow when moving downstream repos off direct shared bucket URLs.
+
+1. Scan the consuming repo for hardcoded shared dataset URLs, PMTiles paths,
+   dataset slugs, and ad hoc GCS access.
+2. Classify each hit by runtime surface:
+   - Browser map PMTiles should use `tiles.skytruth.org`.
+   - Backend/server downloads or catalog resolution should use the Python SDK.
+   - Unrelated references, docs, tests, and comments should only change when
+     they would otherwise keep the old integration pattern alive.
+3. Make the smallest coherent replacement. Prefer a tiny helper such as
+   `sharedPmtilesUrl("<slug>")` over broad map-layer refactors.
+4. Keep PRs focused by repo, surface, and dataset. Do not combine unrelated UI,
+   infrastructure, dependency, or formatting changes with adoption work.
+5. In the PR description, call out the old hardcoded access path, the new shared
+   access path, and the focused validation that was run.
 
 ## Recommended Path
 

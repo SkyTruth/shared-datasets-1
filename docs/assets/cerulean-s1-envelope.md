@@ -19,7 +19,8 @@ metadata_paths:
 last_updated: '2026-05-01'
 source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
-notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; release 2026-05-01; source features
+notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
+  is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 21baa832ee89013c1e04f9b79aaaeefc58b765bf8cad02b93242f8558d61e4a4;
   PMTiles generated with Tippecanoe zooms 0-8 and no simplification; canonical FGB preserves the source WKT geometry as an
   envelope only
@@ -106,6 +107,11 @@ The source CSV is not published as a canonical format because shared-datasets
 CSV assets must not contain geometry columns. The PMTiles artifact was generated
 with Tippecanoe 2.79.0 from a temporary GeoJSON tiling input, with zooms 0
 through 8 and no display simplification.
+
+The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
+was an initial name for this dataset before the framing was corrected. It is
+treated as a deprecated legacy prefix for audit purposes, not as a separate
+catalog asset and not as the canonical publishing location.
 
 ## Properties / columns
 

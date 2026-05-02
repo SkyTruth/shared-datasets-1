@@ -39,6 +39,12 @@ the generator emits a `versions` array. Exact release dates are preserved. For
 templated release paths, the current catalog `last_updated` date becomes the
 selectable dated release for the web preview.
 
+Optional discovery fields in asset-doc frontmatter are emitted when present:
+`bounds` as `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
+`source_url`, and frontmatter `license_flags` merged with license-text-derived
+flags. These fields are additive so existing CSV and JSON consumers can ignore
+them.
+
 ## Validate
 
 ```bash

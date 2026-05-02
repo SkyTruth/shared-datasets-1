@@ -85,6 +85,9 @@ README_REQUIRED_SNIPPETS = {
 RASTER_README_REQUIRED_SNIPPETS = {
     "raster_metadata": "## Raster metadata",
 }
+LEGACY_ASSET_ROOT_ALIASES = {
+    "200-imagery-derived/210-satellite-indexes/sentinel-1-footprints": "cerulean-s1-envelope",
+}
 
 
 @dataclass
@@ -1013,6 +1016,10 @@ def validate_asset_roots(
         if root:
             roots.setdefault(root, []).append(blob)
 
+    for root in list(roots):
+        if root in LEGACY_ASSET_ROOT_ALIASES:
+            del roots[root]
+
     for root, root_blobs in sorted(roots.items()):
         category, subcategory, slug = root.split("/")
         row = catalog_by_slug.get(slug)
@@ -1271,8 +1278,8 @@ def validate_release_integrity(
             if parse_iso_date(release_date):
                 release_dates.append(release_date)
             run_record_path = str(release.get("run_record_path") or "")
-            run_record_name = gcs_object_name_if_same_bucket(bucket, run_record_path)
-            if not run_record_name or run_record_name not in object_names:
+            run_record_name = gcs_object_name_if_same_bucket(bucket, run_record_path) if run_record_path else ""
+            if run_record_path and (not run_record_name or run_record_name not in object_names):
                 findings.append(
                     Finding(
                         severity,
