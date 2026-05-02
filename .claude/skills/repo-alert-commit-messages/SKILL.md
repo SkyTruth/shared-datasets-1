@@ -76,7 +76,7 @@ Decide whether the commit adds substantially exciting new repository functionali
 
 ````text
 ```repo-alert
-emoji: 🗺️
+emoji: 🧰
 headline: Vector publishing helper added
 summary: A new command builds FlatGeobuf and PMTiles artifacts from source vectors.
 why_excited: Manual publishes are faster, more repeatable, and easier to review.
@@ -86,6 +86,8 @@ why_excited: Manual publishes are faster, more repeatable, and easier to review.
 Fields:
 
 - `emoji`: one visual emoji that nods to the functionality.
+  Do not use map or globe emojis, including `🗺️`, `🌍`, `🌎`, `🌏`, or `🌐`;
+  these are overused in this repository and are not valid repo-alert choices.
 - `headline`: short, clear, announcement-style title.
 - `summary`: one brief sentence describing what changed.
 - `why_excited`: one brief sentence explaining why the team should care.

@@ -3,7 +3,8 @@ data "google_project" "current" {
 }
 
 locals {
-  pmtiles_catalog_rows = csvdecode(file("${path.module}/../../../catalog/shared-datasets-catalog.csv"))
+  pmtiles_catalog_rows       = csvdecode(file("${path.module}/../../../catalog/shared-datasets-catalog.csv"))
+  pmtiles_redirector_enabled = var.pmtiles_serving_mode == "redirect"
 
   pmtiles_cdn_object_paths = {
     for row in local.pmtiles_catalog_rows :
@@ -63,6 +64,108 @@ resource "google_compute_backend_bucket" "pmtiles_cdn" {
   ]
 }
 
+module "pmtiles_redirector_service_account" {
+  count = local.pmtiles_redirector_enabled ? 1 : 0
+
+  source = "../../modules/service_account"
+
+  project_id   = var.project_id
+  account_id   = "pmtiles-redirector"
+  display_name = "PMTiles redirector Cloud Run service"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_cloud_run_v2_service" "pmtiles_redirector" {
+  count = local.pmtiles_redirector_enabled ? 1 : 0
+
+  project             = var.project_id
+  location            = var.region
+  name                = "pmtiles-redirector"
+  deletion_protection = false
+  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+
+  template {
+    service_account = module.pmtiles_redirector_service_account[0].email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 10
+    }
+
+    containers {
+      image = var.pmtiles_redirector_image
+
+      ports {
+        container_port = 8080
+      }
+
+      env {
+        name  = "PMTILES_ALLOWED_ORIGINS"
+        value = join(",", var.pmtiles_cdn_allowed_origins)
+      }
+
+      env {
+        name  = "PMTILES_CATALOG_TTL_SECONDS"
+        value = tostring(var.pmtiles_redirector_catalog_ttl_seconds)
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_artifact_registry_repository.jobs,
+    google_project_service.required,
+  ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "pmtiles_redirector_public_invoker" {
+  count = local.pmtiles_redirector_enabled ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.pmtiles_redirector[0].name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_compute_region_network_endpoint_group" "pmtiles_redirector" {
+  count = local.pmtiles_redirector_enabled ? 1 : 0
+
+  project               = var.project_id
+  name                  = "shared-datasets-pmtiles-redirector"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+
+  cloud_run {
+    service = google_cloud_run_v2_service.pmtiles_redirector[0].name
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "google_compute_backend_service" "pmtiles_redirector" {
+  count = local.pmtiles_redirector_enabled ? 1 : 0
+
+  project               = var.project_id
+  name                  = "shared-datasets-pmtiles-redirector"
+  description           = "Temporary Cloud Run redirector for stable PMTiles URLs."
+  load_balancing_scheme = "EXTERNAL_MANAGED"
+  protocol              = "HTTP"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.pmtiles_redirector[0].id
+  }
+}
+
 resource "google_storage_bucket_iam_member" "shared_bucket_cloud_cdn_fill_object_viewer" {
   count = var.pmtiles_cdn_grant_fill_service_account ? 1 : 0
 
@@ -99,7 +202,16 @@ resource "google_compute_url_map" "pmtiles_cdn" {
     }
 
     dynamic "path_rule" {
-      for_each = local.pmtiles_cdn_object_paths
+      for_each = local.pmtiles_redirector_enabled ? toset(["redirect"]) : toset([])
+
+      content {
+        paths   = ["/pmtiles/*"]
+        service = google_compute_backend_service.pmtiles_redirector[0].self_link
+      }
+    }
+
+    dynamic "path_rule" {
+      for_each = local.pmtiles_redirector_enabled ? {} : local.pmtiles_cdn_object_paths
 
       content {
         paths   = ["/pmtiles/${path_rule.key}.pmtiles"]
@@ -125,7 +237,7 @@ resource "google_compute_url_map" "pmtiles_cdn" {
   }
 
   dynamic "test" {
-    for_each = local.pmtiles_cdn_object_paths
+    for_each = local.pmtiles_redirector_enabled ? {} : local.pmtiles_cdn_object_paths
 
     content {
       host                = var.pmtiles_cdn_host
@@ -170,7 +282,7 @@ resource "google_compute_global_forwarding_rule" "pmtiles_cdn_https" {
   name                  = "shared-datasets-pmtiles-cdn-https"
   ip_address            = google_compute_global_address.pmtiles_cdn.address
   ip_protocol           = "TCP"
-  load_balancing_scheme = "EXTERNAL"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "443"
   target                = google_compute_target_https_proxy.pmtiles_cdn.self_link
 }
@@ -180,7 +292,7 @@ resource "google_compute_global_forwarding_rule" "pmtiles_cdn_http" {
   name                  = "shared-datasets-pmtiles-cdn-http"
   ip_address            = google_compute_global_address.pmtiles_cdn.address
   ip_protocol           = "TCP"
-  load_balancing_scheme = "EXTERNAL"
+  load_balancing_scheme = "EXTERNAL_MANAGED"
   port_range            = "80"
   target                = google_compute_target_http_proxy.pmtiles_cdn_http_redirect.self_link
 }

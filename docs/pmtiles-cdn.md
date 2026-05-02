@@ -1,15 +1,18 @@
-# CDN-Mediated PMTiles Access
+# PMTiles Browser Access
 
 Shared PMTiles are stored once, under their canonical
 `gs://skytruth-shared-datasets-1/.../latest/{asset}.pmtiles` object paths. Browser
-clients should use the shared CDN surface instead:
+clients should use the shared `tiles.skytruth.org` surface instead:
 
 ```text
 https://tiles.skytruth.org/pmtiles/{asset}.pmtiles
 ```
 
-The SDK resolves PMTiles to that browser URL by default while keeping
-`DatasetRef.gs_uri` as the durable object identity.
+Today this path is served by a temporary Cloud Run redirector that returns
+`307 Temporary Redirect` to the current public GCS PMTiles object. The future
+serving mode is Cloud CDN with signed cookies. The SDK resolves PMTiles to the
+same browser URL in both modes while keeping `DatasetRef.gs_uri` as the durable
+object identity.
 
 ## Terraform-Owned Resources
 
@@ -17,6 +20,7 @@ The production Terraform stack owns:
 
 - A global HTTPS load balancer address and managed certificate for
   `tiles.skytruth.org`.
+- A temporary Cloud Run redirector for `pmtiles_serving_mode="redirect"`.
 - A Cloud CDN backend bucket for `skytruth-shared-datasets-1`.
 - URL map rules from flat `/pmtiles/{asset}.pmtiles` paths to canonical
   `latest/{asset}.pmtiles` objects. The rules are generated from
@@ -34,6 +38,34 @@ The raw Cloud CDN signing key value is intentionally not managed by Terraform.
 The current Terraform state lives in the shared bucket, and the bucket remains
 public during rollout. Do not put signed request key material into Terraform
 variables, resources, outputs, commit history, logs, or PR comments.
+
+## Temporary Redirect Mode
+
+`pmtiles_serving_mode="redirect"` routes `/pmtiles/*` to the Cloud Run
+redirector. The redirector validates `/pmtiles/{asset}.pmtiles`, resolves the
+asset through the shared catalog, and returns:
+
+```text
+307 Temporary Redirect
+Location: https://storage.googleapis.com/skytruth-shared-datasets-1/.../latest/{asset}.pmtiles
+```
+
+This mode keeps the browser-facing `tiles.skytruth.org` URL stable before the
+signed-cookie CDN path is ready. It does not make PMTiles private, and browser
+network tools will still show the final `storage.googleapis.com` request.
+
+Build and push the redirector image before applying redirect mode:
+
+```bash
+IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:$(date -u +%Y%m%d%H%M%S)
+
+docker build --platform linux/amd64 -f services/pmtiles_redirector/Dockerfile -t "$IMAGE" .
+docker push "$IMAGE"
+
+UV_CACHE_DIR=.uv-cache uv run python scripts/terraform_prod_apply.py \
+  --var "pmtiles_serving_mode=redirect" \
+  --var "pmtiles_redirector_image=$IMAGE"
+```
 
 ## DNS
 
@@ -93,7 +125,11 @@ The cookie value must contain `URLPrefix`, `Expires`, `KeyName`, and
 
 ## Cerulean Runtime Contract
 
-Cerulean should expose an endpoint such as `/api/pmtiles/session` that:
+In temporary redirect mode, Cerulean can load the stable PMTiles URLs directly
+without a PMTiles session endpoint. The request will redirect to public GCS.
+
+In future CDN signed-cookie mode, Cerulean should expose an endpoint such as
+`/api/pmtiles/session` that:
 
 - Verifies the user is allowed to load the Cerulean map.
 - Signs the shared URL prefix, not individual PMTiles object URLs.
@@ -113,24 +149,34 @@ MPA selection/join key.
 
 ## Rollout
 
-1. Apply the Terraform CDN resources while `allUsers` public object access
-   remains in place.
+1. Build and push the PMTiles redirector image.
+2. Apply Terraform with `pmtiles_serving_mode="redirect"` and
+   `pmtiles_redirector_image` set to the pushed image.
+3. Configure DNS and wait for the managed certificate to become active.
+4. Verify `https://tiles.skytruth.org/pmtiles/{asset}.pmtiles` returns `307`
+   and follows to a public GCS PMTiles object.
+5. Deploy consuming apps with stable `tiles.skytruth.org` PMTiles URLs.
+
+Future CDN signed-cookie rollout:
+
+1. Keep `allUsers` public object access in place.
 2. Configure DNS and wait for the managed certificate to become active.
 3. Install the signed request key on the backend bucket and Secret Manager.
 4. Enable `pmtiles_cdn_grant_fill_service_account=true` and apply Terraform
    again so Cloud CDN can fill from private GCS.
 5. Grant the Cerulean runtime service account access to the secret with
    `cerulean_pmtiles_cookie_signer_service_accounts`.
-6. Deploy Cerulean with the PMTiles session endpoint and CDN PMTiles URLs.
-7. Verify the Cerulean map makes no PMTiles requests to
+6. Switch Terraform to `pmtiles_serving_mode="cdn"`.
+7. Deploy Cerulean with the PMTiles session endpoint and the same PMTiles URLs.
+8. Verify the Cerulean map makes no PMTiles requests to
    `storage.googleapis.com`.
-8. Invalidate `/pmtiles/*` or the PMTiles paths touched during rollout before
+9. Invalidate `/pmtiles/*` or the PMTiles paths touched during rollout before
    removing public GCS access. Signed and unsigned Cloud CDN cache entries are
    separate, and public-rollout testing can leave temporary unsigned cache
    entries behind.
-9. Verify unsigned CDN requests return `403` once public bucket access is
+10. Verify unsigned CDN requests return `403` once public bucket access is
    removed, and signed requests return `200` or `206`.
-10. Remove `google_storage_bucket_iam_member.shared_bucket_public_object_viewer`
+11. Remove `google_storage_bucket_iam_member.shared_bucket_public_object_viewer`
    in a separate Terraform change after CDN access is proven.
 
 ## Cache Operations

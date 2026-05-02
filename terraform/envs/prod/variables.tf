@@ -28,6 +28,29 @@ variable "pmtiles_cdn_host" {
   default     = "tiles.skytruth.org"
 }
 
+variable "pmtiles_serving_mode" {
+  description = "How /pmtiles/* is served: redirect uses Cloud Run 307 redirects to public GCS today; cdn uses the Cloud CDN backend bucket."
+  type        = string
+  default     = "redirect"
+
+  validation {
+    condition     = contains(["redirect", "cdn"], var.pmtiles_serving_mode)
+    error_message = "pmtiles_serving_mode must be either redirect or cdn."
+  }
+}
+
+variable "pmtiles_redirector_image" {
+  description = "Container image URI for the temporary PMTiles redirector Cloud Run service. Override with an immutable tag for production deploys."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:latest"
+}
+
+variable "pmtiles_redirector_catalog_ttl_seconds" {
+  description = "Seconds the PMTiles redirector caches the shared datasets catalog before refreshing."
+  type        = number
+  default     = 300
+}
+
 variable "pmtiles_cdn_allowed_origins" {
   description = "Browser origins allowed to make credentialed PMTiles range requests through the CDN."
   type        = list(string)

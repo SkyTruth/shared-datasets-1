@@ -14,6 +14,14 @@ output "pmtiles_cdn_backend_bucket" {
   value = google_compute_backend_bucket.pmtiles_cdn.name
 }
 
+output "pmtiles_serving_mode" {
+  value = var.pmtiles_serving_mode
+}
+
+output "pmtiles_redirector_service_name" {
+  value = try(google_cloud_run_v2_service.pmtiles_redirector[0].name, null)
+}
+
 output "pmtiles_cdn_signed_request_key_name" {
   value = var.pmtiles_cdn_signed_request_key_name
 }

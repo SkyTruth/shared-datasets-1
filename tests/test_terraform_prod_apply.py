@@ -42,6 +42,8 @@ class TerraformProdApplyTests(unittest.TestCase):
                     "wdpa_monthly_image=image",
                     "--var",
                     "sea_ice_daily_image=image",
+                    "--var",
+                    "eamlis_monthly_image=image",
                     "--slack-dry-run",
                 ],
                 runner=runner,
@@ -69,6 +71,8 @@ class TerraformProdApplyTests(unittest.TestCase):
                     "wdpa_monthly_image=image",
                     "--var",
                     "sea_ice_daily_image=image",
+                    "--var",
+                    "eamlis_monthly_image=image",
                 ],
                 runner=runner,
             )
@@ -95,6 +99,8 @@ class TerraformProdApplyTests(unittest.TestCase):
                     "wdpa_monthly_image=image",
                     "--var",
                     "sea_ice_daily_image=image",
+                    "--var",
+                    "eamlis_monthly_image=image",
                 ],
                 runner=runner,
             )

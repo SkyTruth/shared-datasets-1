@@ -84,6 +84,8 @@ def default_vars(existing: dict[str, str], *, runner: Any = subprocess.run) -> d
         values["wdpa_monthly_image"] = current_cloud_run_image("wdpa-monthly", runner=runner)
     if "sea_ice_daily_image" not in values:
         values["sea_ice_daily_image"] = current_cloud_run_image("sea-ice-daily", runner=runner)
+    if "eamlis_monthly_image" not in values:
+        values["eamlis_monthly_image"] = current_cloud_run_image("eamlis-monthly", runner=runner)
     return values
 
 
