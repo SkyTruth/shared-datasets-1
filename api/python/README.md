@@ -1,46 +1,100 @@
 # skytruth-shared-datasets
 
-Tiny Python resolver SDK for the SkyTruth shared datasets catalog.
+Tiny Python SDK for SkyTruth shared datasets.
 
-The package reads the static CSV catalog and resolves dataset slugs to current
-`latest/` objects in Cloud Storage. The canonical resolved identifier is always
-the `gs://` URI. PMTiles browser-facing URLs default to the shared CDN path at
-`https://tiles.skytruth.org/pmtiles/...`; other formats still default to public
-`storage.googleapis.com` while public reads are available. Callers should treat
-every browser URL as an access path, not the durable dataset identity.
+## Fastest Paths
 
-## Installation
+### Browser PMTiles: no SDK needed
 
-This package is currently distributed from this GitHub repository, not PyPI.
-Install it from the `api/python` subdirectory:
+If a frontend already knows the asset slug, build the PMTiles URL directly:
 
-```bash
-pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
+```text
+https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles
 ```
 
-If your access to the repository is through SSH:
+Example:
 
-```bash
-pip install "skytruth-shared-datasets @ git+ssh://git@github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
+```text
+https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
 ```
 
-For service-account-mediated GCS reads, install the optional GCS extra:
+The access tier is part of the contract so public layers can coexist with
+future logged-in/private layers.
+
+### Backend/server data: one helper call
+
+Install the GCS extra from this repository:
 
 ```bash
 pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
 ```
 
-Or with SSH:
+Then let the runtime service account do the work:
+
+```python
+from skytruth_shared_datasets import fetch_dataset
+
+path = fetch_dataset("wdpa-marine", "fgb")
+```
+
+That loads the catalog from `gs://skytruth-shared-datasets-1/_catalog/` and
+downloads the current object with Application Default Credentials. In Cloud Run,
+Cloud Scheduler jobs, GitHub Actions with Workload Identity Federation, or other
+managed runtimes, there should be no JSON key and no credential code.
+
+The consuming runtime service account needs this IAM grant:
+
+```text
+roles/storage.objectViewer on gs://skytruth-shared-datasets-1
+```
+
+The shared-datasets production Terraform sets up these reader service accounts
+for common SkyTruth consumer projects:
+
+```text
+Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
+30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
+Monitor:      shared-datasets-reader@skytruth-monitor.iam.gserviceaccount.com
+SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
+```
+
+Run the backend job/service as the reader service account for its project, then
+use `fetch_dataset(...)` without any credential setup code.
+
+To resolve without downloading:
+
+```python
+from skytruth_shared_datasets import resolve_dataset
+
+ref = resolve_dataset("wdpa-marine", "pmtiles")
+print(ref.gs_uri)       # canonical object identity
+print(ref.url)          # https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
+print(ref.access_tier)  # public
+```
+
+## Installation
+
+This package is currently distributed from GitHub, not PyPI.
+
+Public/browser-url-only usage:
+
+```bash
+pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
+```
+
+Authenticated GCS usage:
+
+```bash
+pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
+```
+
+If your repository access is through SSH:
 
 ```bash
 pip install "skytruth-shared-datasets[gcs] @ git+ssh://git@github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
 ```
 
-For production consumers, pin a tag or commit SHA instead of `main`:
-
-```bash
-pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@<tag-or-sha>#subdirectory=api/python"
-```
+For production consumers, pin a tag or commit SHA instead of `main`.
 
 For local development inside this repository:
 
@@ -48,64 +102,76 @@ For local development inside this repository:
 pip install -e "api/python[gcs]"
 ```
 
-## Basic usage
+## Lower-Level SDK Usage
 
-```python
-from skytruth_shared_datasets import Catalog
-
-catalog = Catalog.load()
-wdpa = catalog.resolve("wdpa-marine", format="fgb")
-print(wdpa.gs_uri)
-print(wdpa.url)
-path = catalog.fetch("wdpa-marine", format="fgb")
-```
-
-The default install has no runtime dependencies. Service-account-mediated GCS
-reads require the `gcs` extra and Application Default Credentials:
+Use `Catalog` directly when a backend needs to list, search, resolve, or fetch
+multiple assets:
 
 ```python
 from skytruth_shared_datasets import Catalog
 
 catalog = Catalog.load_gcs()
-path = catalog.fetch("wdpa-marine", format="fgb", access="gcs")
+
+for asset in catalog.search(format="pmtiles"):
+    print(asset.slug, asset.access_tier)
+
+ref = catalog.resolve("wdpa-marine", "pmtiles")
+path = catalog.fetch("wdpa-marine", "fgb", access="gcs")
 ```
 
-For browser clients, keep the canonical `gs_uri` and use the shared CDN URL as
-the browser-facing PMTiles path:
+`DatasetRef.gs_uri` is the durable object identity. `DatasetRef.url` is a
+browser-facing access URL. PMTiles default to the tiered shared URL:
 
 ```python
-pmtiles = catalog.resolve("wdpa-marine", format="pmtiles")
+pmtiles = catalog.resolve("wdpa-marine", "pmtiles")
 assert pmtiles.gs_uri.startswith("gs://")
-assert pmtiles.url == "https://tiles.skytruth.org/pmtiles/wdpa-marine.pmtiles"
+assert pmtiles.url == "https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles"
 ```
 
-Applications with their own PMTiles route can still override only the browser
-URL while leaving object identity unchanged:
+Apps with their own PMTiles route can override only the browser base URL:
 
 ```python
-pmtiles = catalog.resolve("wdpa-marine", format="pmtiles", web_base_url="/pmtiles")
-assert pmtiles.url == "/pmtiles/wdpa-marine.pmtiles"
+pmtiles = catalog.resolve("wdpa-marine", "pmtiles", web_base_url="/pmtiles")
+assert pmtiles.url == "/pmtiles/public/wdpa-marine.pmtiles"
 ```
 
-PMTiles objects can live in a private bucket, but browser clients should not
-fetch private GCS objects directly. The intended private-bucket model is for
-Cerulean or another application layer to issue a Cloud CDN signed cookie and
-load the normal `https://tiles.skytruth.org/pmtiles/{asset}.pmtiles` URL. The
-SDK only keeps the canonical `gs_uri` separate from that browser-facing URL; it
-does not sign cookies or expose CDN auth helpers.
+To force current public GCS URLs while the bucket remains public:
 
-Command line:
+```python
+pmtiles = catalog.resolve("wdpa-marine", "pmtiles", url_strategy="public_gcs")
+```
+
+## CLI
 
 ```bash
 skytruth-datasets list
+skytruth-datasets list --access-tier public --format pmtiles
 skytruth-datasets url wdpa-marine --format pmtiles
 skytruth-datasets url wdpa-marine --format pmtiles --url-strategy public-gcs
-skytruth-datasets url wdpa-marine --format pmtiles --web-base-url /pmtiles
-skytruth-datasets fetch wdpa-marine --format fgb
 skytruth-datasets fetch wdpa-marine --format fgb --access gcs
+skytruth-datasets versions wdpa-marine --access gcs
 ```
 
-`Catalog.load()` reads the public bucket catalog by default. Pass a local path,
-`gs://` URI, or HTTPS URL as `source` when callers need a specific catalog. Use
-`Catalog.load_gcs()` when the catalog is private and readable through
-Application Default Credentials.
+The CLI is useful for diagnostics. Production backend code should prefer
+`fetch_dataset(...)` or `resolve_dataset(...)` when authenticated GCS access is
+the normal path.
+
+## Private-Bucket Direction
+
+All current assets are `public`. Future private PMTiles can use the same shape
+with a different tier:
+
+```text
+https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
+```
+
+Browser clients should not authenticate directly to private GCS. The intended
+private model is:
+
+- backend/server code uses ADC/service accounts and this SDK;
+- browser PMTiles use `tiles.skytruth.org`;
+- the consuming app issues Cloud CDN signed cookies only for users allowed to
+  access private-tier PMTiles.
+
+The SDK does not sign CDN cookies. It keeps canonical GCS object identity,
+access tier metadata, and browser URL construction separate.

@@ -5,6 +5,7 @@ title: Cerulean S1 Envelope
 category: 200-imagery-derived
 subcategory: 210-satellite-indexes
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -49,6 +50,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-05-01
 - **Update cadence:** manual

@@ -16,8 +16,8 @@ CATEGORIES = """categories:
       "110-boundaries": "Boundaries."
 """
 
-CATALOG = """asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,CC BY-NC 4.0,Example notes
+CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,CC BY-NC 4.0,Example notes
 """
 
 DOC = """---
@@ -79,8 +79,10 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(payload["generated_at"], "2026-05-01T00:00:00Z")
         asset = payload["assets"][0]
         self.assertEqual(asset["slug"], "example-asset")
+        self.assertEqual(asset["access_tier"], "public")
         self.assertEqual(asset["public_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
         self.assertEqual(asset["pmtiles_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.pmtiles")
+        self.assertEqual(asset["pmtiles_url"], "https://tiles.skytruth.org/pmtiles/public/example-asset.pmtiles")
         self.assertEqual(asset["docs_url"], "docs/assets/example-asset.md")
         self.assertEqual(asset["versions"][0]["date"], "2026-04-30")
         self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-04-30/example-asset.fgb")
@@ -159,6 +161,20 @@ class CatalogSiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), bad_uri)
             with self.assertRaisesRegex(catalog_site.CatalogSiteError, "expected gs://"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_invalid_access_tier_fails(self):
+        bad_tier = CATALOG.replace(",public,", ",internal,", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), bad_tier)
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "access_tier"):
                 catalog_site.build_catalog_payload(
                     catalog_path=catalog_path,
                     categories_path=categories_path,

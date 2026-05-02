@@ -5,6 +5,7 @@ title: Global Fishing Watch Anchorages
 category: 600-maritime-ocean
 subcategory: 640-ocean-activity
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -45,6 +46,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-05-01
 - **Update cadence:** manual

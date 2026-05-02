@@ -29,3 +29,10 @@ output "pmtiles_cdn_signed_request_key_name" {
 output "pmtiles_cdn_signing_key_secret_id" {
   value = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
 }
+
+output "shared_dataset_consumer_service_accounts" {
+  value = {
+    for name, service_account in google_service_account.shared_dataset_consumers :
+    name => service_account.email
+  }
+}

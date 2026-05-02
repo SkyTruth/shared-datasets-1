@@ -29,6 +29,7 @@ CATALOG_COLUMNS = [
     "category",
     "subcategory",
     "status",
+    "access_tier",
     "owner",
     "update_cadence",
     "canonical_path",
@@ -51,6 +52,7 @@ FRONTMATTER_KEYS = [
     "category",
     "subcategory",
     "status",
+    "access_tier",
     "owner",
     "update_cadence",
     "canonical_format",
@@ -70,6 +72,7 @@ REQUIRED_SCALAR_FIELDS = [
     "category",
     "subcategory",
     "status",
+    "access_tier",
     "owner",
     "update_cadence",
     "canonical_format",
@@ -90,6 +93,7 @@ REQUIRED_SECTIONS = [
 APPROVED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 PUBLISHED_ROLES = {"canonical", "companion"}
 FILE_ROLES = {"canonical", "companion", "release", "run-record", "source", "preview", "metadata"}
+ACCESS_TIERS = {"public", "private"}
 
 
 @dataclass
@@ -280,6 +284,8 @@ def normalize_metadata(
 
     for key in REQUIRED_SCALAR_FIELDS:
         value = raw.get(key)
+        if key == "access_tier" and not value and allow_legacy:
+            value = (catalog_row or {}).get("access_tier") or "public"
         if key == "canonical_file" and not value and allow_legacy:
             value = canonical_file_from_row(catalog_row)
         if not value and catalog_row and key in {"last_updated", "source", "license"} and allow_legacy:
@@ -323,6 +329,8 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
             raise CatalogDocsError(f"{path}: missing required frontmatter field {key!r}")
     if metadata.get("schema_version") != SCHEMA_VERSION:
         raise CatalogDocsError(f"{path}: schema_version must be {SCHEMA_VERSION}")
+    if metadata.get("access_tier") not in ACCESS_TIERS:
+        raise CatalogDocsError(f"{path}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
     slug = metadata["asset_slug"]
     if not SLUG_RE.fullmatch(slug):
         raise CatalogDocsError(f"{path}: asset_slug must be lowercase kebab-case")
@@ -423,6 +431,7 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "category": metadata["category"],
         "subcategory": metadata["subcategory"],
         "status": metadata["status"],
+        "access_tier": metadata["access_tier"],
         "owner": metadata["owner"],
         "update_cadence": metadata["update_cadence"],
         "canonical_path": canonical_gs_uri(metadata, bucket),
@@ -472,8 +481,8 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
                 [
                     f"## {current_category}",
                     "",
-                    "| Asset | Subcategory | Status | Formats | Last updated | Canonical file |",
-                    "|---|---|---|---|---|---|",
+                    "| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |",
+                    "|---|---|---|---|---|---|---|",
                 ]
             )
         formats = ";".join(metadata["available_formats"])
@@ -484,6 +493,7 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
                     markdown_link(f"{metadata['asset_slug']}.md", metadata["title"]),
                     metadata["subcategory"],
                     metadata["status"],
+                    metadata["access_tier"],
                     f"`{formats}`",
                     metadata["last_updated"],
                     f"`{metadata['canonical_file']}`",
@@ -501,6 +511,7 @@ def summary_block(metadata: dict[str, Any]) -> str:
         [
             "<!-- BEGIN GENERATED asset-summary -->",
             f"- **Status:** {metadata['status']}",
+            f"- **Access tier:** {metadata['access_tier']}",
             f"- **Owner:** {metadata['owner']}",
             f"- **Last updated:** {metadata['last_updated']}",
             f"- **Update cadence:** {metadata['update_cadence']}",

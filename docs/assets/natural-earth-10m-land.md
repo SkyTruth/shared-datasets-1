@@ -5,6 +5,7 @@ title: Natural Earth 10m Land
 category: 100-geographic-reference
 subcategory: 110-boundaries
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -44,6 +45,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-04-30
 - **Update cadence:** manual

@@ -24,15 +24,17 @@ from skytruth_shared_datasets import (  # noqa: E402
     FetchError,
     UnsupportedFormatError,
     UnsupportedVersionError,
+    fetch_dataset,
     gs_to_https,
+    resolve_dataset,
     split_gs_uri,
 )
 from skytruth_shared_datasets import cli as sdk_cli  # noqa: E402
 
 
-FIXTURE_CSV = """asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
-example-vector,Example Vector,100-geographic-reference,110-boundaries,active,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,true,true,false,2026-04-30,Example source,Example license,Example notes
-example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,false,false,true,2026-04-29,Example table source,Example license,Deprecated table
+FIXTURE_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
+example-vector,Example Vector,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,true,true,false,2026-04-30,Example source,Example license,Example notes
+example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,public,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,false,false,true,2026-04-29,Example table source,Example license,Deprecated table
 """
 
 
@@ -102,6 +104,16 @@ class SharedDatasetSdkTests(unittest.TestCase):
         self.assertEqual(catalog.source, "gs://example-bucket/catalog.csv")
         self.assertEqual(client.requests, [("example-bucket", "catalog.csv")])
 
+    def test_load_gcs_failure_mentions_adc_service_account_setup(self):
+        with mock.patch("skytruth_shared_datasets.catalog._read_gcs_text", side_effect=RuntimeError("denied")):
+            with self.assertRaises(CatalogLoadError) as raised:
+                Catalog.load_gcs("gs://example-bucket/catalog.csv")
+
+        message = str(raised.exception)
+        self.assertIn("Application Default Credentials", message)
+        self.assertIn("roles/storage.objectViewer", message)
+        self.assertIn("do not use service account JSON keys", message)
+
     def test_default_load_raises_when_public_url_fails(self):
         with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=OSError("offline")):
             with self.assertRaises(CatalogLoadError) as raised:
@@ -135,6 +147,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         self.assertEqual(catalog.get("example-vector").slug, "example-vector")
         self.assertEqual([asset.slug for asset in catalog.search(category="100-geographic-reference")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(format="pmtiles")], ["example-vector"])
+        self.assertEqual([asset.slug for asset in catalog.search(access_tier="public")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(status=None)], ["example-vector", "example-table"])
         with self.assertRaises(DatasetNotFoundError):
             catalog.get("missing")
@@ -153,7 +166,8 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(fgb.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb")
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
-        self.assertEqual(pmtiles.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/example-vector.pmtiles")
+        self.assertEqual(pmtiles.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
+        self.assertEqual(pmtiles.access_tier, "public")
         self.assertEqual(geojson.url, "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.geojson")
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format="csv")
@@ -166,7 +180,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         pmtiles = catalog.resolve("example-vector", format="pmtiles", web_base_url="/pmtiles")
 
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
-        self.assertEqual(pmtiles.url, "/pmtiles/example-vector.pmtiles")
+        self.assertEqual(pmtiles.url, "/pmtiles/public/example-vector.pmtiles")
 
     def test_resolve_pmtiles_can_force_public_gcs_url(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -313,6 +327,48 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(client.requests, [(bucket_name, object_name)])
         self.assertEqual(blob.downloads, [("file", 60.0)])
+
+    def test_magic_helpers_use_authenticated_gcs_client(self):
+        catalog_blob = FakeGcsBlob(text=FIXTURE_CSV)
+        dataset_blob = FakeGcsBlob(content=b"magic gcs bytes")
+        client = FakeGcsClient(
+            {
+                ("example-bucket", "catalog.csv"): catalog_blob,
+                (
+                    "example-bucket",
+                    "100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb",
+                ): dataset_blob,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ref = resolve_dataset(
+                "example-vector",
+                "pmtiles",
+                client=client,
+                catalog_source="gs://example-bucket/catalog.csv",
+            )
+            path = fetch_dataset(
+                "example-vector",
+                "fgb",
+                client=client,
+                catalog_source="gs://example-bucket/catalog.csv",
+                cache_dir=tmp,
+            )
+            self.assertEqual(path.read_bytes(), b"magic gcs bytes")
+
+        self.assertEqual(ref.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
+        self.assertEqual(
+            client.requests,
+            [
+                ("example-bucket", "catalog.csv"),
+                ("example-bucket", "catalog.csv"),
+                (
+                    "example-bucket",
+                    "100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb",
+                ),
+            ],
+        )
 
     def test_fetch_reports_download_failures(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)

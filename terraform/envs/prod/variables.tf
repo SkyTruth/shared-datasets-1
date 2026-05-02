@@ -16,6 +16,33 @@ variable "bucket_name" {
   default     = "skytruth-shared-datasets-1"
 }
 
+variable "shared_dataset_consumer_projects" {
+  description = "Consumer GCP projects that get a shared-datasets-reader service account and read access to the shared datasets bucket."
+  type = map(object({
+    project_id         = string
+    service_account_id = optional(string, "shared-datasets-reader")
+    display_name       = optional(string, "Shared datasets reader")
+  }))
+  default = {
+    cerulean = {
+      project_id   = "cerulean-338116"
+      display_name = "Shared datasets reader for Cerulean"
+    }
+    thirty_by_thirty = {
+      project_id   = "x30-399415"
+      display_name = "Shared datasets reader for 30x30"
+    }
+    monitor = {
+      project_id   = "skytruth-monitor"
+      display_name = "Shared datasets reader for Monitor"
+    }
+    skytruth_tech = {
+      project_id   = "skytruth-tech"
+      display_name = "Shared datasets reader for SkyTruthTech"
+    }
+  }
+}
+
 variable "artifact_registry_repository" {
   description = "Artifact Registry Docker repository for ingestion job images."
   type        = string
@@ -29,7 +56,7 @@ variable "pmtiles_cdn_host" {
 }
 
 variable "pmtiles_serving_mode" {
-  description = "How /pmtiles/* is served: redirect uses Cloud Run 307 redirects to public GCS today; cdn uses the Cloud CDN backend bucket."
+  description = "How tiered /pmtiles/* URLs are served: redirect uses Cloud Run 307 redirects to public GCS today; cdn uses the Cloud CDN backend bucket."
   type        = string
   default     = "redirect"
 

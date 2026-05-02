@@ -21,6 +21,7 @@ const elements = {
   format: document.querySelector("#format-filter"),
   cadence: document.querySelector("#cadence-filter"),
   status: document.querySelector("#status-filter"),
+  accessTier: document.querySelector("#access-tier-filter"),
   empty: document.querySelector("#detail-empty"),
   detail: document.querySelector("#detail-view"),
   taxonomy: document.querySelector("#detail-taxonomy"),
@@ -33,6 +34,7 @@ const elements = {
   cadenceValue: document.querySelector("#detail-cadence"),
   owner: document.querySelector("#detail-owner"),
   statusValue: document.querySelector("#detail-status"),
+  accessTierValue: document.querySelector("#detail-access-tier"),
   gs: document.querySelector("#detail-gs"),
   url: document.querySelector("#detail-url"),
   versionRow: document.querySelector("#version-path-row"),
@@ -84,7 +86,7 @@ async function init() {
 
 function wireEvents() {
   elements.search.addEventListener("input", applyFilters);
-  for (const select of [elements.category, elements.format, elements.cadence, elements.status]) {
+  for (const select of [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier]) {
     select.addEventListener("change", applyFilters);
   }
   elements.copyGs.addEventListener("click", () => copyValue(elements.gs.textContent, elements.copyGs));
@@ -136,6 +138,7 @@ function populateFilters() {
   setOptions(elements.format, "All formats", unique(state.assets.flatMap((asset) => asset.available_formats)));
   setOptions(elements.cadence, "All cadences", unique(state.assets.map((asset) => asset.update_cadence)));
   setOptions(elements.status, "All statuses", unique(state.assets.map((asset) => asset.status)));
+  setOptions(elements.accessTier, "All access tiers", unique(state.assets.map((asset) => asset.access_tier)));
 }
 
 function setOptions(select, label, values) {
@@ -156,12 +159,14 @@ function applyFilters() {
   const format = elements.format.value;
   const cadence = elements.cadence.value;
   const status = elements.status.value;
+  const accessTier = elements.accessTier.value;
 
   state.filtered = state.assets.filter((asset) => {
     if (category && asset.category !== category) return false;
     if (format && !asset.available_formats.includes(format)) return false;
     if (cadence && asset.update_cadence !== cadence) return false;
     if (status && asset.status !== status) return false;
+    if (accessTier && asset.access_tier !== accessTier) return false;
     if (!query) return true;
     return searchableText(asset).includes(query);
   });
@@ -195,6 +200,7 @@ function searchableText(asset) {
       asset.title,
       asset.category,
       asset.subcategory,
+      asset.access_tier,
       asset.description,
       asset.source,
       asset.license,
@@ -353,6 +359,7 @@ function renderDetail(asset) {
   elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
   elements.owner.textContent = asset.owner || "Unknown";
   elements.statusValue.textContent = asset.status || "Unknown";
+  elements.accessTierValue.textContent = asset.access_tier || "Unknown";
   elements.source.textContent = asset.source || "Unknown";
   elements.licenseText.textContent = asset.license || "Unknown";
   renderVersionSelector(asset);

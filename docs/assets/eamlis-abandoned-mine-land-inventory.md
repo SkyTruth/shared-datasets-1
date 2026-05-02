@@ -5,6 +5,7 @@ title: OSMRE e-AMLIS Abandoned Mine Land Inventory
 category: 300-infrastructure-industrial
 subcategory: 320-mining
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: monthly, skipped when unchanged
 canonical_format: fgb
@@ -53,6 +54,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-05-01
 - **Update cadence:** monthly, skipped when unchanged

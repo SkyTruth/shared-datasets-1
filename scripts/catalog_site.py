@@ -19,13 +19,16 @@ import yaml
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
+DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
+ACCESS_TIERS = {"public", "private"}
 REQUIRED_FIELDS = [
     "asset_slug",
     "title",
     "category",
     "subcategory",
     "status",
+    "access_tier",
     "owner",
     "update_cadence",
     "canonical_path",
@@ -69,6 +72,7 @@ class CatalogAsset:
     category: str
     subcategory: str
     status: str
+    access_tier: str
     owner: str
     update_cadence: str
     canonical_path: str
@@ -132,6 +136,10 @@ def split_gs_uri(uri: str) -> tuple[str, str]:
 def gs_to_https(uri: str) -> str:
     bucket, object_name = split_gs_uri(uri)
     return f"https://storage.googleapis.com/{bucket}/{quote(object_name)}"
+
+
+def pmtiles_cdn_url(slug: str, access_tier: str) -> str:
+    return f"{DEFAULT_PMTILES_CDN_BASE_URL}/{quote(access_tier)}/{quote(slug)}.pmtiles"
 
 
 def latest_root(uri: str) -> str:
@@ -306,6 +314,9 @@ def validate_row(
         raise CatalogSiteError(f"{prefix}: duplicate asset_slug {slug!r}")
     if not SLUG_RE.fullmatch(slug):
         raise CatalogSiteError(f"{prefix}: asset_slug must be lowercase kebab-case")
+    access_tier = row["access_tier"].strip()
+    if access_tier not in ACCESS_TIERS:
+        raise CatalogSiteError(f"{prefix}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
     category = row["category"].strip()
     subcategory = row["subcategory"].strip()
     if category not in categories:
@@ -337,6 +348,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
     canonical_path = row["canonical_path"].strip()
     canonical_format = row["canonical_format"].strip()
     formats = split_semicolon(row["available_formats"])
+    access_tier = row["access_tier"].strip()
     metadata_paths = split_semicolon(row["metadata_paths"])
     pmtiles_path = path_for_format(canonical_path, slug, "pmtiles") if "pmtiles" in formats else None
     docs_path = f"docs/assets/{slug}.md"
@@ -356,6 +368,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
         category=row["category"].strip(),
         subcategory=row["subcategory"].strip(),
         status=row["status"].strip(),
+        access_tier=access_tier,
         owner=row["owner"].strip(),
         update_cadence=row["update_cadence"].strip(),
         canonical_path=canonical_path,
@@ -371,7 +384,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
         notes=row.get("notes", "").strip(),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,
-        pmtiles_url=gs_to_https(pmtiles_path) if pmtiles_path else None,
+        pmtiles_url=pmtiles_cdn_url(slug, access_tier) if pmtiles_path else None,
         docs_path=docs_path,
         docs_url=docs_path,
         description=read_description(doc_path),

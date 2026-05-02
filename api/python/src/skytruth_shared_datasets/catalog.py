@@ -23,9 +23,16 @@ DEFAULT_CATALOG_URL = f"https://storage.googleapis.com/{DEFAULT_BUCKET}/_catalog
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 USER_AGENT = "skytruth-shared-datasets/0.1"
+AUTHENTICATED_GCS_HINT = (
+    "Use Application Default Credentials (ADC) with a runtime service account "
+    "that has roles/storage.objectViewer on gs://skytruth-shared-datasets-1; "
+    "do not use service account JSON keys."
+)
 
 AccessMode = Literal["public", "gcs"]
 UrlStrategy = Literal["public_gcs", "cdn"]
+AccessTier = Literal["public", "private"]
+ACCESS_TIERS = {"public", "private"}
 
 FORMAT_EXTENSIONS = {
     "fgb": ".fgb",
@@ -70,6 +77,7 @@ class CatalogAsset:
     category: str
     subcategory: str
     status: str
+    access_tier: AccessTier
     owner: str
     update_cadence: str
     canonical_path: str
@@ -96,6 +104,7 @@ class CatalogAsset:
             category=row.get("category", ""),
             subcategory=row.get("subcategory", ""),
             status=row.get("status", ""),
+            access_tier=_normalize_access_tier(row.get("access_tier") or "public"),
             owner=row.get("owner", ""),
             update_cadence=row.get("update_cadence", ""),
             canonical_path=canonical_path,
@@ -143,6 +152,7 @@ class DatasetRef:
     gs_uri: str
     url: str
     last_updated: str
+    access_tier: AccessTier = "public"
     cache_path: Path | None = None
 
     @property
@@ -214,7 +224,10 @@ class Catalog:
         except Exception as exc:
             if isinstance(exc, CatalogLoadError):
                 raise
-            raise CatalogLoadError(f"Could not load catalog from {source} with authenticated GCS access: {exc}") from exc
+            raise CatalogLoadError(
+                f"Could not load catalog from {source} with authenticated GCS access: {exc}. "
+                f"{AUTHENTICATED_GCS_HINT}"
+            ) from exc
 
     @classmethod
     def from_csv_text(cls, text: str, *, source: str = "") -> "Catalog":
@@ -256,13 +269,17 @@ class Catalog:
         category: str | None = None,
         format: str | None = None,
         status: str | None = "active",
+        access_tier: str | None = None,
     ) -> list[CatalogAsset]:
         requested_format = _normalize_format(format) if format else None
+        requested_access_tier = _normalize_access_tier(access_tier) if access_tier else None
         matches = []
         for asset in self._assets:
             if status is not None and asset.status != status:
                 continue
             if category is not None and asset.category != category:
+                continue
+            if requested_access_tier is not None and asset.access_tier != requested_access_tier:
                 continue
             if requested_format is not None and requested_format not in asset.available_formats:
                 continue
@@ -339,6 +356,7 @@ class Catalog:
                 gs_uri=gs_uri,
                 url=gs_to_https(gs_uri),
                 last_updated=version_date,
+                access_tier=asset.access_tier,
             )
         gs_uri = asset.path_for_format(format)
         resolved_format = _normalize_format(format or asset.canonical_format)
@@ -350,8 +368,14 @@ class Catalog:
             title=asset.title,
             format=resolved_format,
             gs_uri=gs_uri,
-            url=gs_to_web_url(gs_uri, url_strategy=url_strategy, web_base_url=resolved_web_base_url),
+            url=gs_to_web_url(
+                gs_uri,
+                url_strategy=url_strategy,
+                web_base_url=resolved_web_base_url,
+                access_tier=asset.access_tier,
+            ),
             last_updated=asset.last_updated,
+            access_tier=asset.access_tier,
         )
 
     def fetch(
@@ -393,8 +417,57 @@ class Catalog:
             temp_path.replace(destination)
         except Exception as exc:
             temp_path.unlink(missing_ok=True)
-            raise FetchError(f"Could not download {ref.gs_uri} with {access!r} access: {exc}") from exc
+            hint = f" {AUTHENTICATED_GCS_HINT}" if str(access).strip().lower() == "gcs" else ""
+            raise FetchError(f"Could not download {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
         return destination
+
+
+def resolve_dataset(
+    slug: str,
+    format: str | None = None,
+    *,
+    version: str = "latest",
+    timeout: float = 10.0,
+    client=None,
+    catalog_source: str = DEFAULT_CATALOG_GS_URI,
+    web_base_url: str | None = None,
+) -> DatasetRef:
+    """Resolve a dataset through authenticated GCS using ADC/service accounts."""
+    catalog = Catalog.load_gcs(catalog_source, client=client, timeout=timeout)
+    return catalog.resolve(
+        slug,
+        format,
+        version=version,
+        access="gcs",
+        client=client,
+        timeout=timeout,
+        web_base_url=web_base_url,
+    )
+
+
+def fetch_dataset(
+    slug: str,
+    format: str | None = None,
+    *,
+    version: str = "latest",
+    cache_dir: str | os.PathLike[str] | None = None,
+    force: bool = False,
+    timeout: float = 60.0,
+    client=None,
+    catalog_source: str = DEFAULT_CATALOG_GS_URI,
+) -> Path:
+    """Fetch a dataset through authenticated GCS using ADC/service accounts."""
+    catalog = Catalog.load_gcs(catalog_source, client=client, timeout=timeout)
+    return catalog.fetch(
+        slug,
+        format,
+        version=version,
+        cache_dir=cache_dir,
+        force=force,
+        timeout=timeout,
+        access="gcs",
+        client=client,
+    )
 
 
 def gs_to_https(uri: str) -> str:
@@ -417,22 +490,24 @@ def gs_to_web_url(
     *,
     url_strategy: str | None = None,
     web_base_url: str | None = None,
+    access_tier: str = "public",
 ) -> str:
     """Convert a GCS URI into a browser-facing URL.
 
     The default strategy returns the public ``storage.googleapis.com`` URL.
     Passing ``web_base_url`` without an explicit strategy selects the CDN-style
-    strategy, mapping the object filename under that base URL.
+    strategy, mapping the object filename under ``{base}/{access_tier}/``.
     """
     strategy = _normalize_url_strategy(url_strategy or ("cdn" if web_base_url else "public_gcs"))
     if strategy == "public_gcs":
         return gs_to_https(uri)
     if web_base_url is None:
         raise ValueError("web_base_url is required when url_strategy='cdn'")
+    resolved_access_tier = _normalize_access_tier(access_tier)
     filename = uri.rstrip("/").rsplit("/", 1)[-1]
     if not filename or filename == uri:
         raise ValueError(f"Expected gs:// object URI with filename, got: {uri}")
-    return f"{web_base_url.rstrip('/')}/{quote(filename)}"
+    return f"{web_base_url.rstrip('/')}/{quote(resolved_access_tier)}/{quote(filename)}"
 
 
 def split_gs_uri(uri: str) -> tuple[str, str]:
@@ -529,7 +604,8 @@ def _default_storage_client():
     except ImportError as exc:
         raise CatalogLoadError(
             "Authenticated GCS access requires google-cloud-storage; install "
-            "skytruth-shared-datasets[gcs] or pass a compatible client."
+            "skytruth-shared-datasets[gcs] or pass a compatible client. "
+            f"{AUTHENTICATED_GCS_HINT}"
         ) from exc
     return storage.Client()
 
@@ -590,6 +666,13 @@ def _normalize_access(access: str) -> AccessMode:
     normalized = access.strip().lower()
     if normalized not in {"public", "gcs"}:
         raise ValueError("access must be 'public' or 'gcs'")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_access_tier(access_tier: str) -> AccessTier:
+    normalized = access_tier.strip().lower().replace("-", "_")
+    if normalized not in ACCESS_TIERS:
+        raise ValueError("access_tier must be 'public' or 'private'")
     return normalized  # type: ignore[return-value]
 
 

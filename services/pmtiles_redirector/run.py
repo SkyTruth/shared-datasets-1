@@ -1,4 +1,4 @@
-"""Cloud Run service that redirects flat PMTiles URLs to public GCS objects."""
+"""Cloud Run service that redirects tiered public PMTiles URLs to GCS objects."""
 
 from __future__ import annotations
 
@@ -27,7 +27,9 @@ DEFAULT_ALLOWED_ORIGINS = (
     "https://localhost:3000",
 )
 DEFAULT_CATALOG_TTL_SECONDS = 300.0
-PMTILES_PATH_RE = re.compile(r"^/pmtiles/(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.pmtiles$")
+PMTILES_PATH_RE = re.compile(
+    r"^/pmtiles/(?P<access_tier>public|private)/(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.pmtiles$"
+)
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,7 @@ def handle_request(
             return text_response(HTTPStatus.FORBIDDEN, "origin not allowed", {})
         return Response(HTTPStatus.NO_CONTENT, cors_headers)
 
+    access_tier = match.group("access_tier")
     slug = match.group("slug")
     try:
         catalog = catalog_cache.get()
@@ -127,6 +130,9 @@ def handle_request(
         return text_response(HTTPStatus.NOT_FOUND, "not found", cors_headers)
     except SharedDatasetsError:
         return text_response(HTTPStatus.BAD_GATEWAY, "catalog error", cors_headers)
+
+    if access_tier != "public" or getattr(ref, "access_tier", "public") != access_tier:
+        return text_response(HTTPStatus.NOT_FOUND, "not found", cors_headers)
 
     response_headers = {
         **cors_headers,

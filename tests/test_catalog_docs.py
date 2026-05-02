@@ -24,6 +24,7 @@ title: Example Asset
 category: 100-geographic-reference
 subcategory: 110-boundaries
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -121,8 +122,8 @@ Manual.
 """
 
 
-CATALOG_CSV = """asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,Example license,Example notes
+CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,Example license,Example notes
 """
 
 
@@ -156,8 +157,10 @@ class CatalogDocsTests(unittest.TestCase):
         row = catalog_docs.catalog_row(docs[0].metadata, "example-bucket")
         rendered = catalog_docs.render_asset_doc(docs[0])
         self.assertEqual(row["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
+        self.assertEqual(row["access_tier"], "public")
         self.assertEqual(row["has_pmtiles"], "true")
         self.assertIn("<!-- BEGIN GENERATED asset-summary -->", rendered)
+        self.assertIn("- **Access tier:** public", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
 
     def test_legacy_generate_backfills_frontmatter_from_catalog_and_files_table(self):
@@ -175,6 +178,7 @@ class CatalogDocsTests(unittest.TestCase):
 
         metadata = docs[0].metadata
         self.assertEqual(metadata["schema_version"], 1)
+        self.assertEqual(metadata["access_tier"], "public")
         self.assertEqual(metadata["canonical_file"], "latest/example-asset.fgb")
         self.assertEqual(metadata["available_formats"], ["fgb", "pmtiles"])
         self.assertEqual(metadata["files"][1]["role"], "companion")
@@ -211,6 +215,21 @@ class CatalogDocsTests(unittest.TestCase):
             rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaises(catalog_docs.CatalogDocsError):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+    def test_invalid_access_tier_fails(self):
+        bad_doc = STRICT_DOC.replace("access_tier: public", "access_tier: internal")
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "access_tier"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,

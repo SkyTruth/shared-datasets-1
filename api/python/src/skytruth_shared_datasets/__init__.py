@@ -13,8 +13,10 @@ from .catalog import (
     SharedDatasetsError,
     UnsupportedFormatError,
     UnsupportedVersionError,
+    fetch_dataset,
     gs_to_https,
     gs_to_web_url,
+    resolve_dataset,
     split_gs_uri,
 )
 
@@ -31,7 +33,9 @@ __all__ = [
     "SharedDatasetsError",
     "UnsupportedFormatError",
     "UnsupportedVersionError",
+    "fetch_dataset",
     "gs_to_https",
     "gs_to_web_url",
+    "resolve_dataset",
     "split_gs_uri",
 ]

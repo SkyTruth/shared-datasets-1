@@ -8,7 +8,7 @@ locals {
 
   pmtiles_cdn_object_paths = {
     for row in local.pmtiles_catalog_rows :
-    row.asset_slug => replace(
+    "${lower(row.access_tier)}/${row.asset_slug}" => replace(
       replace(row.canonical_path, "/[^/]+$/", "${row.asset_slug}.pmtiles"),
       "gs://${var.bucket_name}/",
       ""
@@ -179,7 +179,7 @@ resource "google_storage_bucket_iam_member" "shared_bucket_cloud_cdn_fill_object
 resource "google_compute_url_map" "pmtiles_cdn" {
   project     = var.project_id
   name        = "shared-datasets-pmtiles-cdn"
-  description = "Expose flat /pmtiles/{asset}.pmtiles URLs backed by canonical shared dataset GCS objects."
+  description = "Expose /pmtiles/{access-tier}/{asset}.pmtiles URLs backed by canonical shared dataset GCS objects."
 
   default_url_redirect {
     path_redirect          = "/pmtiles/"

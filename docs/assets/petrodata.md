@@ -5,6 +5,7 @@ title: PETRODATA Petroleum Fields
 category: 300-infrastructure-industrial
 subcategory: 310-energy
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -42,6 +43,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-04-29
 - **Update cadence:** manual

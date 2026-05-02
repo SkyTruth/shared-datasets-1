@@ -18,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="List catalog assets.")
     list_parser.add_argument("--category", help="Filter by top-level category.")
     list_parser.add_argument("--format", help="Filter by available format.")
+    list_parser.add_argument("--access-tier", choices=("public", "private"), help="Filter by access tier.")
     list_parser.add_argument("--status", default="active", help="Filter by status. Use --all-statuses to disable.")
     list_parser.add_argument("--all-statuses", action="store_true", help="Include assets with any status.")
 
@@ -70,7 +71,14 @@ def main(argv: list[str] | None = None) -> int:
         catalog = Catalog.load(args.catalog)
         if args.command == "list":
             status = None if args.all_statuses else args.status
-            _print_assets(catalog.search(category=args.category, format=args.format, status=status))
+            _print_assets(
+                catalog.search(
+                    category=args.category,
+                    format=args.format,
+                    status=status,
+                    access_tier=args.access_tier,
+                )
+            )
         elif args.command == "url":
             print(
                 catalog.resolve(
@@ -104,9 +112,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_assets(assets) -> None:
-    print("asset_slug\ttitle\tformats\tlast_updated")
+    print("asset_slug\ttitle\taccess_tier\tformats\tlast_updated")
     for asset in assets:
-        print(f"{asset.slug}\t{asset.title}\t{';'.join(asset.available_formats)}\t{asset.last_updated}")
+        print(f"{asset.slug}\t{asset.title}\t{asset.access_tier}\t{';'.join(asset.available_formats)}\t{asset.last_updated}")
 
 
 def _print_versions(payload) -> None:

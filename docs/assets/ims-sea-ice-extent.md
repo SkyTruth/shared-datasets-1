@@ -5,6 +5,7 @@ title: IMS Sea-Ice Extent
 category: 200-imagery-derived
 subcategory: 250-weather-climate
 status: active
+access_tier: public
 owner: SkyTruth
 update_cadence: daily
 canonical_format: fgb
@@ -46,6 +47,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Last updated:** 2026-04-29
 - **Update cadence:** daily
