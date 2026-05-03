@@ -272,6 +272,14 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./gfw-fixed-infrastructure.fgb
 ```
 
+The repo commit that updates catalog metadata for a new asset slug or meaningful
+dataset release is the state marker for this announcement. If that commit does
+not exist yet, assume the announcement has not been sent. When creating the
+catalog-update commit, send the upload summary first. Once that commit exists,
+treat the release as announced and do not send duplicate summaries for
+same-release cache refreshes, README wording fixes, PMTiles repairs, or other
+corrective follow-ups unless explicitly requested.
+
 For canonical vector/table assets, compare fields against the last stored schema
 snapshot after a successful publish:
 

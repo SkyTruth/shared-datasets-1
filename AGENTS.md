@@ -157,6 +157,14 @@ Dataset metadata and local files:
   rows and bucket README content.
 - Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
   metadata changes; update the asset doc and regenerate catalog outputs.
+- The repo commit that updates catalog metadata for a new asset slug or
+  meaningful dataset release is the durable marker that the dataset upload
+  announcement has been sent. Until that commit exists, assume the announcement
+  has not been run. When committing that catalog update, send the dataset upload
+  announcement before creating the commit. Do not create the commit unless the
+  announcement was sent or the human explicitly directs a commit without it.
+  After the commit exists, treat the release as announced and do not repeat the
+  announcement for corrective same-release follow-ups unless explicitly asked.
 - Keep generated publishable data artifacts outside the repo tree unless they
   are tiny intentional fixtures.
 - Do not commit downloaded data files to this repo unless they are tiny
@@ -214,6 +222,9 @@ A task is complete when:
 - Remote writes were done with safe preconditions or explicitly documented as
   unsafe.
 - README/catalog/templates are updated when relevant.
+- For a new asset slug or meaningful dataset release, the catalog-update commit
+  exists only after the dataset upload announcement has been sent or an explicit
+  skip was directed by the human.
 - If a requested commit adds substantially exciting new repository
   functionality, the committing agent generated and appended any warranted
   fenced `repo-alert` block without asking the human to decide.

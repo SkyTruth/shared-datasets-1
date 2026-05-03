@@ -197,10 +197,13 @@ For a new manual asset:
 7. Use `releases/YYYY-MM-DD/` when the asset is cron-updated, multi-project
    critical, difficult to recreate, or needs reproducible snapshots.
 8. Verify remote paths and object metadata.
-9. Run dataset upload/schema alert helpers when applicable. Do not rerun Slack
-   upload announcements for corrective renames, cache refreshes, README/catalog
-   metadata repairs, or same-release republishing after an initial alert already
-   went out; report those follow-up fixes in the final response instead.
+9. Run dataset upload/schema alert helpers when applicable. The catalog-update
+   commit is the state marker for dataset upload announcements: until the commit
+   exists, assume the announcement has not been sent; when creating that commit,
+   send the announcement first. Do not rerun Slack upload announcements for
+   corrective renames, cache refreshes, README/catalog metadata repairs, or
+   same-release republishing after the catalog-update commit already exists;
+   report those follow-up fixes in the final response instead.
 10. Refresh the catalog UI cache using the steps above.
 
 For an update to an existing versioned asset, prefer `publish-release` when the
@@ -219,16 +222,17 @@ Review the dry-run plan before running without `--dry-run`. `publish-release`
 validates local files, rejects existing release objects, captures current
 `latest/` generations, uploads `releases/YYYY-MM-DD/` first, updates `latest/`,
 writes a run record, and emits upload/schema alerts. If the operation is a
-corrective rename or follow-up repair for a release that was already announced,
-do not run a second announceable publish path unless the user explicitly asks
-for another Slack notification.
+corrective rename or follow-up repair for a release whose catalog-update commit
+already exists, do not run a second announceable publish path unless the user
+explicitly asks for another Slack notification.
 
 If intentionally publishing only a subset of catalog-listed formats, name each
 unchanged companion explicitly with `--allow-stale-format`.
 
 ## Alerts And Schema Checks
 
-After a meaningful manual dataset upload or update, run:
+After a meaningful manual dataset upload or update, run the dataset upload
+announcement before creating the repo commit that updates the catalog metadata:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py upload-summary \
@@ -246,11 +250,12 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py check-schema \
 ```
 
 Alert once per meaningful release. If a Slack upload alert already went out for
-the dataset release, skip additional Slack alerts for corrective renames,
-cache-control fixes, static catalog refreshes, README wording, slug/title
-repairs, or other non-material follow-up work. Still verify the changed objects,
-schema snapshots, and catalog state locally/remotely; document the skipped alert
-explicitly in the final response.
+the dataset release, or if the catalog-update commit for that release already
+exists, skip additional Slack alerts for corrective renames, cache-control fixes,
+static catalog refreshes, README wording, slug/title repairs, or other
+non-material follow-up work. Still verify the changed objects, schema snapshots,
+and catalog state locally/remotely; document the skipped alert explicitly in the
+final response.
 
 ## Completion Criteria
 
@@ -266,5 +271,8 @@ Report:
 - Remote paths changed, including `latest/`, `releases/`, `runs/`, and README
   paths.
 - Object generations for replacements when available.
-- Dataset upload/schema alert commands run or intentionally skipped.
+- Dataset upload/schema alert commands run or intentionally skipped. For a new
+  asset slug or meaningful release, do not report completion after a requested
+  commit unless the dataset upload announcement was sent before the commit or
+  the human explicitly directed a commit without it.
 - Any metadata, source, license, schema, or classification uncertainty.
