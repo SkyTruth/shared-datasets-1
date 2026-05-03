@@ -39,10 +39,12 @@ Start here. Do not add more machinery than the consumer actually needs.
    `fetch_dataset(...)` or `resolve_dataset(...)`. A successful
    `fetch_dataset(...)` returns a `DatasetRef`; use `ref.cache_path` as the
    local file path and `ref.resolved_id` as the durable resolved identity to
-   record when callers request `version="latest"`.
+   record when callers request `version="latest"`. When both bytes and lineage
+   are needed, call `fetch_dataset(...)` once; do not call
+   `resolve_dataset(...)` and `fetch_dataset(...)` separately.
 3. For credentials, prefer runtime identity: Cloud Run, jobs, or CI should run
-   as a reader service account that already has bucket read access. Do not
-   create service account JSON keys.
+   as an established runtime or reader service account that already has bucket
+   read access. Do not create service account JSON keys.
 4. Leave private PMTiles auth out of the consuming repo until the private tier
    is explicitly enabled. Current PMTiles are public-tier assets.
 
@@ -94,8 +96,12 @@ GCS. A final browser request to `storage.googleapis.com` is expected until CDN
 mode replaces the redirector. PMTiles are not private during redirect mode.
 No browser authentication handshake is required for public-tier PMTiles.
 
-For WDPA MPA features, use `site_id` / source `SITE_ID` as the durable feature
-identity. Do not build new UI behavior around `WDPAID`.
+## WDPA MPA Identity
+
+For WDPA MPA features and new shared-dataset joins, use `site_id` / source
+`SITE_ID` as the durable feature identity. Do not build new behavior around
+`WDPAID`. Do not rewrite legacy backfills or tables that only contain `WDPAID`
+unless an explicit alias or backfill plan exists.
 
 ## Backend Data
 
@@ -104,13 +110,28 @@ Use this when backend/server code needs the actual data file, a canonical
 
 If the consuming project has backend/server code and a runtime service account,
 install the SDK with the GCS extra. The package is installed from GitHub for
-now, not PyPI:
+now, not PyPI. `SkyTruth/shared-datasets-1` is public, so unauthenticated public
+HTTPS installs are acceptable:
 
 ```bash
 pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
 ```
 
-For production, pin a tag or commit SHA instead of `main`.
+For production, pin a tag or commit SHA instead of `main`. Before committing a
+GitHub dependency URL, verify the exact install surface can reach it. Docker
+builds and GitHub Actions may use different requirement files and may lack
+`git`, SSH, or cross-repo token access; do not treat a local checkout or local
+editable install as proof the committed requirement works.
+
+Use `git+https` when the install surface has `git`. If the runtime installer
+lacks `git`, a pinned public archive URL is acceptable:
+
+```bash
+pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/<tag-or-sha>.zip#subdirectory=api/python"
+```
+
+Do not use unauthenticated `archive/<sha>.zip` URLs for private repos or future
+private forks unless runtime authentication is explicitly wired.
 
 Then fetch a dataset with one call:
 
@@ -125,6 +146,10 @@ resolved_id = ref.resolved_id
 For AOI joins, job records, lineage tables, or other durable references, record
 `resolved_id` values such as `wdpa-marine@2026-05-02`, not
 `wdpa-marine@latest` and not a value inferred from the cache path.
+
+When both bytes and lineage are needed, call `fetch_dataset(...)` once and use
+`ref.cache_path` plus `ref.resolved_id`; do not call `resolve_dataset(...)` and
+`fetch_dataset(...)` separately.
 
 Or resolve without downloading:
 
@@ -147,8 +172,8 @@ The only required IAM setup is:
 Grant the consuming runtime service account roles/storage.objectViewer on gs://skytruth-shared-datasets-1.
 ```
 
-For common SkyTruth consumer projects, prefer the repo-provisioned reader
-service account:
+Prefer a repo-provisioned reader service account when that is the consuming
+repo's established deployment model:
 
 ```text
 Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
@@ -157,19 +182,21 @@ Monitor:      shared-datasets-reader@skytruth-monitor.iam.gserviceaccount.com
 SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
 ```
 
-Run backend jobs/services as the reader service account for their project, then
-use `fetch_dataset(...)` or `resolve_dataset(...)`. Do not treat
+Otherwise grant the existing runtime service account `roles/storage.objectViewer`
+on the shared bucket. Run backend jobs/services as the chosen runtime identity,
+then use `fetch_dataset(...)` or `resolve_dataset(...)`. Do not treat
 `fetch_dataset(...)` as a path-only helper; it returns the resolved reference
 that also carries the populated cache path.
 
-For Cloud Run, that means the service configuration names the reader service
-account. The Python code stays credential-free:
+For Cloud Run, that means the service configuration names the existing runtime
+service account or the repo-provisioned reader service account. The Python code
+stays credential-free:
 
 ```bash
 gcloud run services update SERVICE_NAME \
   --project=PROJECT_ID \
   --region=REGION \
-  --service-account=shared-datasets-reader@PROJECT_ID.iam.gserviceaccount.com
+  --service-account=RUNTIME_SERVICE_ACCOUNT_EMAIL
 ```
 
 ```python
@@ -201,6 +228,9 @@ map-layer behavior.
 
 ## Minimum Patch Checklist
 
+- Apply only the checklist items for surfaces that exist in the consuming repo.
+  Backend-only adopters should not add PMTiles helpers, frontend env vars, or
+  browser URL changes.
 - Add a configurable PMTiles base URL with default
   `https://tiles.skytruth.org/pmtiles/public`.
 - Replace direct `storage.googleapis.com` PMTiles sources with
@@ -210,8 +240,8 @@ map-layer behavior.
   `fetch_dataset("<slug>", "<format>")`; read the local path from
   `ref.cache_path` and record resolved dataset identity from `ref.resolved_id`
   when lineage matters.
-- If backend code runs in GCP, confirm the runtime uses the project reader
-  service account.
+- If backend code runs in GCP, confirm the runtime identity has
+  `roles/storage.objectViewer` on the shared bucket.
 - Do not expose GCS credentials to browser code.
 
 ## Future Private PMTiles
