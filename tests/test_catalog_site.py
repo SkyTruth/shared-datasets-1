@@ -20,6 +20,12 @@ CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,upda
 example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,CC BY-NC 4.0,Example notes
 """
 
+MIXED_ACCESS_CATALOG = CATALOG + (
+    "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,private,SkyTruth,manual,"
+    "gs://example-bucket/100-geographic-reference/110-boundaries/private-asset/latest/private-asset.fgb,"
+    "fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Private source,Internal terms,Private notes\n"
+)
+
 DOC = """---
 asset_slug: example-asset
 source_url: https://example.test/source
@@ -104,6 +110,33 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["row_count"], 12345)
         self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertIn("Reusable example boundary dataset", asset["description"])
+
+    def test_build_catalog_payload_keeps_public_and_private_assets_visible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), MIXED_ACCESS_CATALOG)
+            (docs_dir / "private-asset.md").write_text(DOC.replace("example-asset", "private-asset"))
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        assets_by_slug = {asset["slug"]: asset for asset in payload["assets"]}
+        self.assertEqual(set(assets_by_slug), {"example-asset", "private-asset"})
+        self.assertEqual(assets_by_slug["example-asset"]["access_tier"], "public")
+        self.assertEqual(assets_by_slug["private-asset"]["access_tier"], "private")
+        self.assertEqual(
+            assets_by_slug["example-asset"]["pmtiles_url"],
+            "https://tiles.skytruth.org/pmtiles/public/example-asset.pmtiles",
+        )
+        self.assertEqual(
+            assets_by_slug["private-asset"]["pmtiles_url"],
+            "https://tiles.skytruth.org/pmtiles/private/private-asset.pmtiles",
+        )
 
     def test_optional_discovery_metadata_validation(self):
         bad_doc = DOC.replace("row_count: 12345", "row_count: many")

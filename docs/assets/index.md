@@ -33,6 +33,8 @@
 | Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|---|
 | [Global Distribution of Coral Reefs](global-coral-reefs.md) | 530-habitat-condition | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/global-coral-reefs.fgb` |
+| [IUCN Red List Mammal Range Maps](iucn-mammal-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | 2026-05-02 | `latest/iucn-mammal-ranges.fgb` |
+| [IUCN Red List Reptile Range Maps](iucn-reptile-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | 2026-05-03 | `latest/iucn-reptile-ranges.fgb` |
 
 ## 600-maritime-ocean
 

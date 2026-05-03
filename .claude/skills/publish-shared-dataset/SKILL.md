@@ -197,13 +197,13 @@ For a new manual asset:
 7. Use `releases/YYYY-MM-DD/` when the asset is cron-updated, multi-project
    critical, difficult to recreate, or needs reproducible snapshots.
 8. Verify remote paths and object metadata.
-9. Run dataset upload/schema alert helpers when applicable. The catalog-update
-   commit is the state marker for dataset upload announcements: until the commit
-   exists, assume the announcement has not been sent; when creating that commit,
-   send the announcement first. Do not rerun Slack upload announcements for
-   corrective renames, cache refreshes, README/catalog metadata repairs, or
-   same-release republishing after the catalog-update commit already exists;
-   report those follow-up fixes in the final response instead.
+9. Run dataset upload/schema alert helpers when applicable. Dataset upload
+   announcements are operational notifications, not Git commit gates. Do not
+   block requested commits to send or verify an announcement, and do not rerun
+   Slack upload announcements for corrective renames, cache refreshes,
+   README/catalog metadata repairs, or same-release republishing unless the
+   human explicitly asks for one. Report whether the announcement was sent,
+   skipped, or uncertain in the final response.
 10. Refresh the catalog UI cache using the steps above.
 
 For an update to an existing versioned asset, prefer `publish-release` when the
@@ -271,8 +271,7 @@ Report:
 - Remote paths changed, including `latest/`, `releases/`, `runs/`, and README
   paths.
 - Object generations for replacements when available.
-- Dataset upload/schema alert commands run or intentionally skipped. For a new
-  asset slug or meaningful release, do not report completion after a requested
-  commit unless the dataset upload announcement was sent before the commit or
-  the human explicitly directed a commit without it.
+- Dataset upload/schema alert commands run or intentionally skipped. Do not
+  block requested commits on dataset upload announcements; report whether the
+  announcement was sent, skipped, or uncertain.
 - Any metadata, source, license, schema, or classification uncertainty.

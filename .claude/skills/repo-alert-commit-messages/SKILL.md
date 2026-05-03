@@ -27,7 +27,8 @@ Use this skill when:
 - The user asks you to amend or generate a commit message.
 - The staged change adds or may add a meaningful new repository capability.
 - The staged change updates catalog metadata for a new asset slug or meaningful
-  dataset release and may require the dataset upload announcement before commit.
+  dataset release and announcement status should be reported without blocking
+  the commit.
 - You need to avoid staging or committing another agent's unrelated work.
 - You need to include Slack-ready alert content in a commit message.
 
@@ -72,27 +73,16 @@ git diff --cached
 
 If the staged diff updates `docs/assets/{asset-slug}.md`,
 `catalog/shared-datasets-catalog.csv`, or `docs/assets/index.md` for a new
-asset slug or meaningful dataset release, enforce the dataset announcement
-state transition before committing:
+asset slug or meaningful dataset release, do not use the commit as a dataset
+announcement state machine. Dataset upload announcements are operational
+notifications, not Git commit gates. Report whether an upload summary was sent,
+skipped, or uncertain, but do not block a requested commit to send or verify an
+announcement. Do not send duplicate dataset upload announcements for corrective
+same-release follow-ups unless explicitly asked.
 
-- Until this catalog-update commit exists, assume the dataset upload
-  announcement has not been sent.
-- If the publish used `scripts/gcs_asset.py publish-release` without
-  `--no-notify` in the same task, its upload-summary notification satisfies
-  the announcement requirement.
-- If the publish used manual `scripts/gcs_asset.py upload` commands, run
-  `UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py
-  upload-summary ...` for the release/update before `git commit`.
-- Do not create the commit until the announcement has been sent, unless the
-  human explicitly directs a commit without the announcement. Record any such
-  skip in the final response.
-- After the commit exists, treat that release/update as announced. Do not send
-  duplicate dataset upload announcements for corrective same-release follow-ups
-  unless explicitly asked.
-
-This dataset upload announcement is separate from any fenced `repo-alert`
-block. Dataset-only catalog updates should normally use the dataset upload
-announcement, not a repo functionality alert.
+Dataset upload announcements are separate from fenced `repo-alert` blocks.
+Dataset-only catalog updates should normally use the dataset upload announcement
+workflow, not a repo functionality alert.
 
 Decide whether the commit adds substantially exciting new repository functionality. Prefer alerting for new capabilities such as SDKs, automation workflows, publishing tools, ingestion frameworks, infrastructure modules, reusable APIs, or major operational improvements.
 
