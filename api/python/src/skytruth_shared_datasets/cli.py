@@ -91,16 +91,15 @@ def main(argv: list[str] | None = None) -> int:
                 ).url
             )
         elif args.command == "fetch":
-            print(
-                catalog.fetch(
-                    args.slug,
-                    args.requested_format,
-                    cache_dir=args.cache_dir,
-                    force=args.force,
-                    access=args.access,
-                    version=args.version,
-                )
+            ref = catalog.fetch(
+                args.slug,
+                args.requested_format,
+                cache_dir=args.cache_dir,
+                force=args.force,
+                access=args.access,
+                version=args.version,
             )
+            print(ref.cache_path)
         elif args.command == "versions":
             _print_versions(catalog.versions(args.slug, access=args.access))
         else:

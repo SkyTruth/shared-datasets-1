@@ -8,7 +8,7 @@ import json
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 from types import MappingProxyType
@@ -158,6 +158,10 @@ class DatasetRef:
     @property
     def filename(self) -> str:
         return self.gs_uri.rstrip("/").rsplit("/", 1)[-1]
+
+    @property
+    def resolved_id(self) -> str:
+        return f"{self.slug}@{self.last_updated}"
 
 
 class Catalog:
@@ -389,7 +393,8 @@ class Catalog:
         access: AccessMode = "public",
         client=None,
         version: str = "latest",
-    ) -> Path:
+    ) -> DatasetRef:
+        """Fetch a dataset into the local cache and return its resolved reference."""
         ref = self.resolve(
             slug,
             format,
@@ -399,8 +404,9 @@ class Catalog:
             timeout=timeout,
         )
         destination = _cache_path(ref, cache_dir)
+        fetched_ref = replace(ref, cache_path=destination)
         if destination.exists() and not force:
-            return destination
+            return fetched_ref
         destination.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
         os.close(fd)
@@ -419,7 +425,7 @@ class Catalog:
             temp_path.unlink(missing_ok=True)
             hint = f" {AUTHENTICATED_GCS_HINT}" if str(access).strip().lower() == "gcs" else ""
             raise FetchError(f"Could not download {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
-        return destination
+        return fetched_ref
 
 
 def resolve_dataset(
@@ -455,8 +461,8 @@ def fetch_dataset(
     timeout: float = 60.0,
     client=None,
     catalog_source: str = DEFAULT_CATALOG_GS_URI,
-) -> Path:
-    """Fetch a dataset through authenticated GCS using ADC/service accounts."""
+) -> DatasetRef:
+    """Fetch a dataset through authenticated GCS and return its resolved reference."""
     catalog = Catalog.load_gcs(catalog_source, client=client, timeout=timeout)
     return catalog.fetch(
         slug,

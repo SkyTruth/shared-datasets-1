@@ -20,6 +20,7 @@ from skytruth_shared_datasets import (  # noqa: E402
     Catalog,
     CatalogLoadError,
     DEFAULT_PMTILES_CDN_BASE_URL,
+    DatasetRef,
     DatasetNotFoundError,
     FetchError,
     UnsupportedFormatError,
@@ -165,6 +166,8 @@ class SharedDatasetSdkTests(unittest.TestCase):
         geojson = catalog.resolve("example-vector", format="geojson")
 
         self.assertEqual(fgb.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb")
+        self.assertIsNone(fgb.cache_path)
+        self.assertEqual(fgb.resolved_id, "example-vector@2026-04-30")
         self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
         self.assertEqual(pmtiles.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
         self.assertEqual(pmtiles.access_tier, "public")
@@ -282,7 +285,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = catalog.fetch(
+            ref = catalog.fetch(
                 "example-vector",
                 format="fgb",
                 version="2026-04-30",
@@ -290,9 +293,13 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 access="gcs",
                 client=client,
             )
+            path = ref.cache_path
+            assert path is not None
             self.assertIn("2026-04-30", path.parts)
             self.assertEqual(path.name, "example-vector.fgb")
             self.assertEqual(path.read_bytes(), b"dated bytes")
+            self.assertEqual(ref.last_updated, "2026-04-30")
+            self.assertEqual(ref.resolved_id, "example-vector@2026-04-30")
 
     def test_fetch_downloads_to_cache_and_reuses_cache(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -307,12 +314,17 @@ class SharedDatasetSdkTests(unittest.TestCase):
             second = catalog.fetch("example-vector", format="fgb", cache_dir=tmp)
             forced = catalog.fetch("example-vector", format="fgb", cache_dir=tmp, force=True)
 
-            self.assertEqual(first, second)
-            self.assertEqual(first, forced)
-            self.assertEqual(first.read_bytes(), b"dataset bytes")
+            self.assertIsInstance(first, DatasetRef)
+            self.assertEqual(first.cache_path, second.cache_path)
+            self.assertEqual(first.cache_path, forced.cache_path)
+            self.assertEqual(first.last_updated, "2026-04-30")
+            self.assertEqual(first.resolved_id, "example-vector@2026-04-30")
+            path = first.cache_path
+            assert path is not None
+            self.assertEqual(path.read_bytes(), b"dataset bytes")
             self.assertEqual(len(calls), 2)
-            self.assertEqual(first.name, "example-vector.fgb")
-            self.assertIn("2026-04-30", first.parts)
+            self.assertEqual(path.name, "example-vector.fgb")
+            self.assertIn("2026-04-30", path.parts)
 
     def test_fetch_downloads_from_mocked_gcs_client(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -322,8 +334,12 @@ class SharedDatasetSdkTests(unittest.TestCase):
         client = FakeGcsClient({(bucket_name, object_name): blob})
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = catalog.fetch("example-vector", format="fgb", cache_dir=tmp, access="gcs", client=client)
+            fetched_ref = catalog.fetch("example-vector", format="fgb", cache_dir=tmp, access="gcs", client=client)
+            path = fetched_ref.cache_path
+            assert path is not None
             self.assertEqual(path.read_bytes(), b"gcs dataset bytes")
+            self.assertEqual(fetched_ref.gs_uri, ref.gs_uri)
+            self.assertEqual(fetched_ref.resolved_id, "example-vector@2026-04-30")
 
         self.assertEqual(client.requests, [(bucket_name, object_name)])
         self.assertEqual(blob.downloads, [("file", 60.0)])
@@ -348,20 +364,25 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 client=client,
                 catalog_source="gs://example-bucket/catalog.csv",
             )
-            path = fetch_dataset(
+            self.assertEqual(client.requests, [("example-bucket", "catalog.csv")])
+            client.requests.clear()
+            fetched_ref = fetch_dataset(
                 "example-vector",
                 "fgb",
                 client=client,
                 catalog_source="gs://example-bucket/catalog.csv",
                 cache_dir=tmp,
             )
+            path = fetched_ref.cache_path
+            assert path is not None
             self.assertEqual(path.read_bytes(), b"magic gcs bytes")
 
         self.assertEqual(ref.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
+        self.assertEqual(fetched_ref.last_updated, "2026-04-30")
+        self.assertEqual(fetched_ref.resolved_id, "example-vector@2026-04-30")
         self.assertEqual(
             client.requests,
             [
-                ("example-bucket", "catalog.csv"),
                 ("example-bucket", "catalog.csv"),
                 (
                     "example-bucket",
@@ -444,6 +465,38 @@ class SharedDatasetCliTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["version"], "2026-04-30")
         self.assertEqual(calls[0][2]["access"], "public")
         self.assertIn("release.pmtiles", stdout.getvalue())
+
+    def test_fetch_command_prints_cache_path(self):
+        calls = []
+        cache_path = Path("/tmp/shared-datasets/example-vector.fgb")
+
+        def fetch(slug, requested_format, **kwargs):
+            calls.append((slug, requested_format, kwargs))
+            return SimpleNamespace(cache_path=cache_path)
+
+        fake_catalog = SimpleNamespace(fetch=fetch)
+
+        with (
+            mock.patch.object(sdk_cli.Catalog, "load", return_value=fake_catalog),
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = sdk_cli.main(
+                [
+                    "fetch",
+                    "example-vector",
+                    "--format",
+                    "fgb",
+                    "--version",
+                    "2026-04-30",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls[0][0], "example-vector")
+        self.assertEqual(calls[0][1], "fgb")
+        self.assertEqual(calls[0][2]["version"], "2026-04-30")
+        self.assertEqual(calls[0][2]["access"], "public")
+        self.assertEqual(stdout.getvalue().strip(), str(cache_path))
 
 
 if __name__ == "__main__":

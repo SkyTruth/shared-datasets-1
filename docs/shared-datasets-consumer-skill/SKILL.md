@@ -1,6 +1,6 @@
 ---
 name: shared-datasets-consumer
-description: Use when driving shared-datasets-1 adoption in downstream SkyTruth repos, especially scanning for hardcoded shared dataset URLs, replacing direct GCS PMTiles links with tiles.skytruth.org or the Python resolver SDK, and opening small focused PRs.
+description: Use when driving shared-datasets-1 adoption in downstream SkyTruth repos, especially scanning for hardcoded shared dataset URLs, replacing direct GCS PMTiles links with tiles.skytruth.org or the Python resolver SDK, preserving resolved dataset identity for backend fetches, and opening small focused PRs.
 ---
 
 # Shared Datasets Consumer Integration
@@ -36,7 +36,10 @@ Start here. Do not add more machinery than the consumer actually needs.
    tiered URL template directly. Do not install the Python SDK.
 2. For backend/server code that needs to download or resolve shared dataset
    files, install the Python SDK with the `gcs` extra and use
-   `fetch_dataset(...)` or `resolve_dataset(...)`.
+   `fetch_dataset(...)` or `resolve_dataset(...)`. A successful
+   `fetch_dataset(...)` returns a `DatasetRef`; use `ref.cache_path` as the
+   local file path and `ref.resolved_id` as the durable resolved identity to
+   record when callers request `version="latest"`.
 3. For credentials, prefer runtime identity: Cloud Run, jobs, or CI should run
    as a reader service account that already has bucket read access. Do not
    create service account JSON keys.
@@ -114,8 +117,14 @@ Then fetch a dataset with one call:
 ```python
 from skytruth_shared_datasets import fetch_dataset
 
-path = fetch_dataset("wdpa-marine", "fgb")
+ref = fetch_dataset("wdpa-marine", "fgb")
+path = ref.cache_path
+resolved_id = ref.resolved_id
 ```
+
+For AOI joins, job records, lineage tables, or other durable references, record
+`resolved_id` values such as `wdpa-marine@2026-05-02`, not
+`wdpa-marine@latest` and not a value inferred from the cache path.
 
 Or resolve without downloading:
 
@@ -125,6 +134,7 @@ from skytruth_shared_datasets import resolve_dataset
 ref = resolve_dataset("wdpa-marine", "pmtiles")
 print(ref.gs_uri)
 print(ref.url)
+print(ref.resolved_id)
 ```
 
 This path uses Application Default Credentials. In Cloud Run, scheduled jobs, or
@@ -148,7 +158,9 @@ SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
 ```
 
 Run backend jobs/services as the reader service account for their project, then
-use `fetch_dataset(...)` or `resolve_dataset(...)`.
+use `fetch_dataset(...)` or `resolve_dataset(...)`. Do not treat
+`fetch_dataset(...)` as a path-only helper; it returns the resolved reference
+that also carries the populated cache path.
 
 For Cloud Run, that means the service configuration names the reader service
 account. The Python code stays credential-free:
@@ -163,7 +175,9 @@ gcloud run services update SERVICE_NAME \
 ```python
 from skytruth_shared_datasets import fetch_dataset
 
-path = fetch_dataset("wdpa-marine", "fgb")
+ref = fetch_dataset("wdpa-marine", "fgb")
+path = ref.cache_path
+resolved_id = ref.resolved_id
 ```
 
 Only pass a custom `google.cloud.storage.Client` if the repo already has a
@@ -193,7 +207,9 @@ map-layer behavior.
   `sharedPmtilesUrl("<slug>")`.
 - Keep PMTiles asset slugs lowercase kebab-case.
 - If backend code downloads shared data, add the SDK dependency and use
-  `fetch_dataset("<slug>", "<format>")`.
+  `fetch_dataset("<slug>", "<format>")`; read the local path from
+  `ref.cache_path` and record resolved dataset identity from `ref.resolved_id`
+  when lineage matters.
 - If backend code runs in GCP, confirm the runtime uses the project reader
   service account.
 - Do not expose GCS credentials to browser code.
@@ -227,6 +243,8 @@ Add focused tests that prove:
 - WDPA MPA selection/join logic uses `site_id`, not `WDPAID`.
 - Backend code that needs data files uses `fetch_dataset(...)` or
   `resolve_dataset(...)` rather than service account keys.
+- Backend code that requests `version="latest"` and records lineage persists
+  `ref.resolved_id`, not `<slug>@latest` and not a cache-path-derived version.
 
 ## Non-Goals
 

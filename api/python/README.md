@@ -34,13 +34,21 @@ Then let the runtime service account do the work:
 ```python
 from skytruth_shared_datasets import fetch_dataset
 
-path = fetch_dataset("wdpa-marine", "fgb")
+ref = fetch_dataset("wdpa-marine", "fgb")
+path = ref.cache_path
+resolved_id = ref.resolved_id
 ```
 
 That loads the catalog from `gs://skytruth-shared-datasets-1/_catalog/` and
-downloads the current object with Application Default Credentials. In Cloud Run,
-Cloud Scheduler jobs, GitHub Actions with Workload Identity Federation, or other
-managed runtimes, there should be no JSON key and no credential code.
+downloads the current object with Application Default Credentials. The returned
+reference includes both the local cached path and the resolved dataset identity,
+such as `wdpa-marine@2026-05-02`. In Cloud Run, Cloud Scheduler jobs, GitHub
+Actions with Workload Identity Federation, or other managed runtimes, there
+should be no JSON key and no credential code.
+
+For lineage, job records, or AOI joins that request `version="latest"`, record
+`ref.resolved_id`, not `wdpa-marine@latest` and not a version inferred from the
+cache path.
 
 The consuming runtime service account needs this IAM grant:
 
@@ -70,6 +78,7 @@ ref = resolve_dataset("wdpa-marine", "pmtiles")
 print(ref.gs_uri)       # canonical object identity
 print(ref.url)          # https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
 print(ref.access_tier)  # public
+print(ref.cache_path)   # None; resolve_dataset does not download bytes
 ```
 
 ## Installation
@@ -116,11 +125,14 @@ for asset in catalog.search(format="pmtiles"):
     print(asset.slug, asset.access_tier)
 
 ref = catalog.resolve("wdpa-marine", "pmtiles")
-path = catalog.fetch("wdpa-marine", "fgb", access="gcs")
+downloaded = catalog.fetch("wdpa-marine", "fgb", access="gcs")
+path = downloaded.cache_path
 ```
 
 `DatasetRef.gs_uri` is the durable object identity. `DatasetRef.url` is a
-browser-facing access URL. PMTiles default to the tiered shared URL:
+browser-facing access URL. `DatasetRef.resolved_id` is the stable value to
+record when a caller requests `version="latest"` and needs the actual published
+date. PMTiles default to the tiered shared URL:
 
 ```python
 pmtiles = catalog.resolve("wdpa-marine", "pmtiles")
