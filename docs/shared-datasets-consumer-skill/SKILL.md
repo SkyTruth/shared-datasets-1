@@ -46,7 +46,8 @@ Start here. Do not add more machinery than the consumer actually needs.
    as an established runtime or reader service account that already has bucket
    read access. Do not create service account JSON keys.
 4. Leave private PMTiles auth out of the consuming repo until the private tier
-   is explicitly enabled. Current PMTiles are public-tier assets.
+   is explicitly enabled. Current PMTiles are public-tier assets, including when
+   they are served through the CDN path.
 
 ## Frontend PMTiles
 
@@ -89,12 +90,19 @@ with:
 sharedPmtilesUrl("wdpa-marine")
 ```
 
-The access tier is part of the stable URL contract.
+The access tier is part of the stable URL contract. Use the same
+`tiles.skytruth.org` URL in redirect mode and CDN mode; do not switch consumers
+back to `storage.googleapis.com` for CDN rollout or fallback behavior.
 
 Today, `public` PMTiles may be served by a temporary `307` redirect to public
 GCS. A final browser request to `storage.googleapis.com` is expected until CDN
 mode replaces the redirector. PMTiles are not private during redirect mode.
 No browser authentication handshake is required for public-tier PMTiles.
+
+In CDN mode, successful PMTiles reads should stay on `tiles.skytruth.org` and
+return normal object or range responses such as `200` or `206`. Public-tier CDN
+access still does not require browser credentials, signed cookies, or service
+account setup in the consuming frontend.
 
 ## WDPA MPA Identity
 
@@ -262,6 +270,13 @@ When private PMTiles are enabled, browser clients should still not receive GCS
 credentials. The consuming backend should issue a Cloud CDN signed cookie only
 for users allowed to access the private tier.
 
+Signed-cookie support belongs in the consuming backend, not in static frontend
+configuration. The backend should sign the allowed tier prefix, such as
+`https://tiles.skytruth.org/pmtiles/private/`, and set `Cloud-CDN-Cookie` with a
+short TTL. When signed cookies are required, browser PMTiles fetches must send
+credentials so the cross-site cookie is included, for example
+`credentials: "include"` in fetch-capable PMTiles client configuration.
+
 ## Tests
 
 Add focused tests that prove:
@@ -270,6 +285,9 @@ Add focused tests that prove:
 - PMTiles layer source configuration does not hardcode
   `storage.googleapis.com`.
 - The PMTiles base URL is configurable by environment.
+- Public-tier PMTiles do not add signed-cookie or service-account auth.
+- Private signed-cookie PMTiles, if implemented, send browser fetch credentials
+  and do not expose GCS credentials.
 - WDPA MPA selection/join logic uses `site_id`, not `WDPAID`.
 - Backend code that needs data files uses `fetch_dataset(...)` or
   `resolve_dataset(...)` rather than service account keys.
