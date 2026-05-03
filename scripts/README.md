@@ -95,7 +95,8 @@ The build sequence is standardized as:
 1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
 2. `ogr2ogr` to temporary GeoJSON in EPSG:4326 for tiling.
 3. `tippecanoe` direct PMTiles output with explicit min/max zoom metadata.
-4. Local validation with `ogrinfo` and `pmtiles verify` when those tools exist.
+4. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
+   property sample when those tools exist.
 
 Use `--tile-simplify` for dense coastline, boundary, or global polygon display
 tiles. This simplification applies only to PMTiles generation; the canonical FGB
@@ -104,6 +105,8 @@ remains unsimplified.
 Run the helper through `uv run python` so repo Python dependencies come from the
 project environment. GDAL, Tippecanoe, and PMTiles are external command-line
 tools resolved from `PATH`; the helper records their versions in the build plan.
+The helper rejects Tippecanoe `--exclude-all` because it creates geometry-only
+display tiles and leaves catalog feature-inspector clicks with no properties.
 
 Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
 explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles

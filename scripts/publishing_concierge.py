@@ -158,8 +158,9 @@ def build_plan(
     canonical_path = f"gs://{bucket}/{asset_root}/{canonical_file}"
     work_dir = f"$TMPDIR/shared-datasets-1/vector-assets/{slug}"
     publish_dir = f"{work_dir}/publish"
+    include_pmtiles = resolved_format == "fgb"
     formats = [resolved_format]
-    if with_pmtiles and resolved_format == "fgb":
+    if include_pmtiles:
         formats.append("pmtiles")
 
     blocking = []
@@ -172,14 +173,11 @@ def build_plan(
         f"UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path {canonical_path}",
     ]
     if resolved_format == "fgb":
-        if source.suffix.lower() == ".fgb" and not with_pmtiles:
-            commands.append(f"mkdir -p {publish_dir} && cp {source} {publish_dir}/{slug}.fgb")
-        else:
-            commands.append(
-                "UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build "
-                f"{source} --asset-slug {slug} --title {json.dumps(dataset_title)} "
-                f"--description {json.dumps(dataset_title + ' vector tiles')}"
-            )
+        commands.append(
+            "UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build "
+            f"{source} --asset-slug {slug} --title {json.dumps(dataset_title)} "
+            f"--description {json.dumps(dataset_title + ' vector tiles')}"
+        )
     elif resolved_format == "cog":
         commands.append(f"UV_CACHE_DIR=.uv-cache uv run python scripts/raster_asset.py validate-cog {source}")
     commands.extend(
@@ -206,8 +204,12 @@ def build_plan(
     ]
     if resolved_format == "csv":
         notes.append("CSV must remain geometry-free under shared-datasets standards.")
-    if with_pmtiles and resolved_format != "fgb":
-        notes.append("--with-pmtiles only adds a PMTiles companion for vector FGB assets.")
+    if include_pmtiles:
+        notes.append("FGB vector assets require a PMTiles companion for catalog map preview.")
+        if with_pmtiles:
+            notes.append("--with-pmtiles is retained for compatibility; PMTiles is automatic for FGB assets.")
+    elif with_pmtiles:
+        notes.append("--with-pmtiles has no effect outside vector FGB assets.")
 
     return ConciergePlan(
         asset_slug=slug,
@@ -349,7 +351,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access-tier", default="public", choices=["public", "private"])
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--release-date", help="Optional intended release date in YYYY-MM-DD form.")
-    parser.add_argument("--with-pmtiles", action="store_true", help="Plan a PMTiles companion for vector FGB assets.")
+    parser.add_argument(
+        "--with-pmtiles",
+        action="store_true",
+        help="Compatibility flag; PMTiles companions are planned automatically for vector FGB assets.",
+    )
     parser.add_argument("--categories", type=Path, default=Path("catalog/categories.yaml"))
     parser.add_argument("--docs-dir", type=Path, default=Path("docs/assets"))
     parser.add_argument("--write-draft-doc", action="store_true", help="Write docs/assets/{asset_slug}.md locally.")

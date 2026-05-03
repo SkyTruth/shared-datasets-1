@@ -41,7 +41,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date="2026-05-01",
-                with_pmtiles=True,
+                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -56,6 +56,8 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertTrue(any("vector_asset.py build" in command for command in plan.suggested_commands))
         self.assertTrue(any("publish-release" in command for command in plan.remote_write_commands))
         self.assertEqual(plan.blocking_questions, [])
+        self.assertFalse(any("PMTiles is automatic" in note for note in plan.notes))
+        self.assertTrue(any("require a PMTiles companion" in note for note in plan.notes))
 
     def test_missing_source_and_license_are_blocking_questions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -86,9 +88,41 @@ class PublishingConciergeTests(unittest.TestCase):
 
         self.assertEqual(plan.asset_slug, "example")
         self.assertEqual(plan.canonical_format, "csv")
+        self.assertEqual(plan.available_formats, ["csv"])
         self.assertIn("Confirm source name or URL.", plan.blocking_questions)
         self.assertIn("Confirm license or terms.", plan.blocking_questions)
         self.assertTrue(any("geometry-free" in note for note in plan.notes))
+
+    def test_existing_fgb_still_uses_vector_build_for_pmtiles_companion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "source.fgb"
+            source.write_text("placeholder")
+
+            plan = publishing_concierge.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                title="Example Asset",
+                category="100-geographic-reference",
+                subcategory="110-boundaries",
+                owner="SkyTruth",
+                source_name="Example source",
+                license_text="Example license",
+                update_cadence="manual",
+                canonical_format=None,
+                access_tier="public",
+                bucket="example-bucket",
+                release_date=None,
+                with_pmtiles=False,
+                categories_path=categories,
+                docs_dir=root / "docs/assets",
+            )
+
+        self.assertEqual(plan.available_formats, ["fgb", "pmtiles"])
+        self.assertTrue(any("vector_asset.py build" in command for command in plan.suggested_commands))
+        self.assertFalse(any(" cp " in command for command in plan.suggested_commands))
 
     def test_write_draft_doc_refuses_existing_without_overwrite(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -74,20 +74,35 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
    - Verify affected assets have expected `available_formats`, `has_pmtiles`, `has_geojson`, `public_url`, `pmtiles_url`, `docs_url`, and `versions`.
 
 4. PMTiles fidelity checks:
-   - For dense point layers, build PMTiles with explicit Tippecanoe retention flags:
+   - The standard `scripts/vector_asset.py build` Tippecanoe path adds
+     `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` by
+     default so low-zoom tiles retain published point features. Do not override
+     those defaults for point assets unless the human explicitly accepts sparse
+     low-zoom display tiles.
+   - PMTiles display artifacts must preserve at least one useful feature
+     property for the catalog inspector. Do not use Tippecanoe `--exclude-all`;
+     `scripts/vector_asset.py` rejects it, and manual multi-layer Tippecanoe
+     builds must use the same standard.
+   - For dense point layers, confirm the effective command includes the
+     retention flags:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb \
-  --asset-slug example-points \
-  --tippecanoe-arg=--no-feature-limit \
-  --tippecanoe-arg=--no-tile-size-limit \
-  --tippecanoe-arg=--drop-rate=1
+  --asset-slug example-points
 ```
 
    - Decode low-zoom tiles before and after when possible:
 
 ```bash
 tippecanoe-decode ./example.pmtiles 0 0 0 | jq '[.features[].features | length] | add'
+```
+
+   - Decode a sample tile and confirm feature properties are present before
+     publishing:
+
+```bash
+tippecanoe-decode ./example.pmtiles 0 0 0 \
+  | jq '[.features[].features[].properties | keys[]] | unique'
 ```
 
    - Record feature counts, tool paths, tool versions, output sizes, and SHA-256 hashes in asset docs/catalog notes when manually publishing PMTiles.

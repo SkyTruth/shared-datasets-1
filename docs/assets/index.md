@@ -23,6 +23,7 @@
 
 | Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|---|
+| [Global Oil & Gas Features Database](gogi.md) | 310-energy | active | public | `fgb;csv;pmtiles` | 2026-05-02 | `latest/gogi-pipelines.fgb` |
 | [PETRODATA Petroleum Fields](petrodata.md) | 310-energy | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/petrodata.fgb` |
 | [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | public | `fgb;pmtiles` | 2026-05-02 | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
 | [Global Fishing Watch SAR Fixed Infrastructure](gfw-fixed-infrastructure.md) | 330-offshore-platforms | active | public | `fgb;pmtiles` | 2026-05-01 | `latest/gfw-fixed-infrastructure.fgb` |

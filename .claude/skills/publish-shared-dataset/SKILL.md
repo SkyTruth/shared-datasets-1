@@ -57,7 +57,6 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py ./source.sh
   --subcategory 110-boundaries \
   --source-name "Example source v1" \
   --license "Example terms" \
-  --with-pmtiles \
   --release-date YYYY-MM-DD
 ```
 
@@ -66,6 +65,8 @@ Use `--write-draft-doc` only when you want the concierge to create a local
 `blocking_questions` item before any remote write. The concierge is a planner:
 it never writes to Cloud Storage, and it does not replace `gcs_asset.py`,
 `publish-release`, catalog checks, or the GCS safety rules.
+For FGB vector assets, the concierge plans both canonical FGB and PMTiles
+display artifacts by default.
 
 Prefer the concierge output over ad hoc path math for:
 
@@ -103,6 +104,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
 - The default vector work directory is
   `$TMPDIR/shared-datasets-1/vector-assets/{asset-slug}/`, with upload
   candidates under `publish/` and intermediates under `build/`.
+- PMTiles display artifacts must preserve compact feature properties for the
+  catalog inspector. Do not use Tippecanoe `--exclude-all`; the repo vector
+  helper rejects it, and manual multi-layer builds must verify decoded feature
+  properties before publication.
 - Set `SHARED_DATASETS_WORKDIR` or pass `--work-dir` only when a different temp
   root is needed.
 - Run repo-owned helpers through `uv run python`.

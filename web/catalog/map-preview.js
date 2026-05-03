@@ -59,6 +59,8 @@ export async function renderMapPreview({
   assets,
   basemap = "map",
   colorField = "",
+  selectedLayer = "",
+  onLayerOptionsChange = () => {},
   onColorFieldsChange = () => {},
   onColorLegendChange = () => {},
   onFeatureSelect = () => {},
@@ -81,6 +83,7 @@ export async function renderMapPreview({
   installProtocol();
 
   const resolvedBasemap = BASEMAPS[basemap] ? basemap : "map";
+  const singleDataset = mapAssets.length === 1;
   status.textContent = "Reading PMTiles metadata...";
   const mapSources = [];
   for (let index = 0; index < mapAssets.length; index += 1) {
@@ -88,10 +91,21 @@ export async function renderMapPreview({
       mapAssets.length === 1
         ? "Reading PMTiles metadata..."
         : `Reading PMTiles metadata ${index + 1} of ${mapAssets.length}...`;
-    mapSources.push(await mapSourceForAsset(mapAssets[index], index, resolvedBasemap));
+    mapSources.push(
+      await mapSourceForAsset(mapAssets[index], index, resolvedBasemap, singleDataset ? selectedLayer : "")
+    );
     if (!renderIsCurrent(renderSerial)) return;
   }
   if (!renderIsCurrent(renderSerial)) return;
+  if (singleDataset) {
+    const source = mapSources[0];
+    onLayerOptionsChange(
+      source.allSourceLayers.map((layer) => layer.sourceLayer),
+      source.selectedLayer
+    );
+  } else {
+    onLayerOptionsChange([], "");
+  }
 
   const mapElement = document.createElement("div");
   mapElement.className = "map-canvas";
@@ -132,7 +146,6 @@ export async function renderMapPreview({
     map.fitBounds(bounds, { padding: 34, duration: 0, maxZoom: 8 });
   }
 
-  const singleDataset = mapSources.length === 1;
   activeColorContext = {
     map,
     mapSources,
@@ -312,12 +325,12 @@ function installProtocol() {
   protocolInstalled = true;
 }
 
-async function mapSourceForAsset(asset, index, basemap) {
+async function mapSourceForAsset(asset, index, basemap, selectedLayer = "") {
   const archive = new window.pmtiles.PMTiles(asset.pmtiles_url);
   const metadata = await withTimeout(archive.getMetadata(), 8000, `${asset.title} PMTiles metadata request timed out.`);
   const header = await withTimeout(archive.getHeader(), 8000, `${asset.title} PMTiles header request timed out.`);
   const color = palette(index, basemap);
-  const sourceLayers = vectorLayerSpecs(metadata, asset).map((spec, layerIndex) => {
+  const allSourceLayers = vectorLayerSpecs(metadata, asset).map((spec, layerIndex) => {
     const baseId = `asset-${index}-${safeId(asset.slug)}-${layerIndex}-${safeId(spec.sourceLayer)}`;
     return {
       sourceLayer: spec.sourceLayer,
@@ -328,12 +341,19 @@ async function mapSourceForAsset(asset, index, basemap) {
       pointId: `${baseId}-point`,
     };
   });
+  const requestedLayer = String(selectedLayer || "");
+  const sourceLayers = requestedLayer
+    ? allSourceLayers.filter((layer) => layer.sourceLayer === requestedLayer)
+    : allSourceLayers;
+  const effectiveSourceLayers = sourceLayers.length ? sourceLayers : allSourceLayers;
   return {
     asset,
     index,
     color,
     sourceId: `dataset-${index}-${safeId(asset.slug)}`,
-    sourceLayers,
+    allSourceLayers,
+    sourceLayers: effectiveSourceLayers,
+    selectedLayer: requestedLayer && sourceLayers.length ? requestedLayer : "",
     bounds: boundsFromHeader(header),
   };
 }

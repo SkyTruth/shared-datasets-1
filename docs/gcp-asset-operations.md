@@ -81,8 +81,9 @@ The standard vector build is:
 2. Write temporary EPSG:4326 GeoJSON for tiling.
 3. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
    description, and min/max zoom.
-4. Validate the FGB with `ogrinfo` and the PMTiles archive with `pmtiles verify`
-   when those tools are installed.
+4. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
+   when available, and a decoded PMTiles sample to confirm feature properties
+   are present for the catalog inspector.
 
 `--tile-simplify` is for dense display tiles only. It is applied to the
 temporary tiling input and does not simplify the canonical FGB.
@@ -92,11 +93,18 @@ Tippecanoe retention flags instead of allowing feature dropping:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.fgb \
-  --asset-slug example-points \
-  --tippecanoe-arg=--no-feature-limit \
-  --tippecanoe-arg=--no-tile-size-limit \
-  --tippecanoe-arg=--drop-rate=1
+  --asset-slug example-points
 ```
+
+The standard Tippecanoe path adds `--no-feature-limit`, `--no-tile-size-limit`,
+and `--drop-rate=1` by default so low-zoom PMTiles previews retain published
+point features.
+
+Do not use Tippecanoe `--exclude-all` for shared-datasets PMTiles. The vector
+helper rejects that flag because it strips feature properties and leaves clicked
+catalog objects with an empty inspector. If a display tile needs fewer
+attributes, use narrower property filters or add compact synthetic properties
+such as `source_layer`.
 
 Use this for point catalogs where users need to see most or all point features
 while zoomed far out. Expect larger low-zoom tiles and validate browser

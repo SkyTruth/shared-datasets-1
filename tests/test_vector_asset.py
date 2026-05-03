@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 from pathlib import Path
 
 from scripts import vector_asset
@@ -75,6 +78,122 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertEqual(plan.commands[1][:3], ["ogr2ogr", "-f", "MBTiles"])
         self.assertEqual(plan.commands[2][1], "convert")
+
+    def test_tippecanoe_defaults_retain_low_zoom_point_features(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work",
+            )
+
+        self.assertEqual(
+            plan.tippecanoe_extra_args,
+            ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
+        )
+        self.assertIn("--no-feature-limit", plan.commands[2])
+        self.assertIn("--no-tile-size-limit", plan.commands[2])
+        self.assertIn("--drop-rate=1", plan.commands[2])
+
+    def test_tippecanoe_rejects_property_stripping_exclude_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "strips all feature properties"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    tippecanoe_extra_args=("--exclude-all",),
+                )
+
+    def test_validation_rejects_pmtiles_features_without_properties(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "features": [
+                                    {
+                                        "properties": {"layer": "example"},
+                                        "features": [{"properties": {}}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(fgb, pmtiles)
+
+        self.assertFalse(result.valid)
+        self.assertIn("no feature properties", result.errors[0])
+
+    def test_validation_accepts_pmtiles_with_inspector_properties(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "features": [
+                                    {
+                                        "properties": {"layer": "example"},
+                                        "features": [{"properties": {"source_layer": "example"}}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(fgb, pmtiles)
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.errors, ())
 
     def test_repo_output_is_rejected_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

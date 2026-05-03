@@ -7,6 +7,8 @@ const state = {
   mapModule: null,
   basemap: "map",
   versionBySlug: {},
+  layerByReference: {},
+  layerOptionsByReference: {},
   colorFieldByReference: {},
   colorFieldsByReference: {},
   docsRequestSerial: 0,
@@ -58,6 +60,8 @@ const elements = {
   basemap: document.querySelector("#basemap-select"),
   colorizeControl: document.querySelector("#colorize-control"),
   colorize: document.querySelector("#colorize-select"),
+  layerControl: document.querySelector("#layer-control"),
+  layer: document.querySelector("#layer-select"),
   copyGs: document.querySelector("#copy-gs"),
   copyUrl: document.querySelector("#copy-url"),
   copyPmtiles: document.querySelector("#copy-pmtiles"),
@@ -138,6 +142,14 @@ function wireEvents() {
     if (state.mapModule?.setColorizeField) {
       state.mapModule.setColorizeField(elements.colorize.value);
     }
+  });
+  elements.layer.addEventListener("change", () => {
+    const asset = selectedLayerAsset();
+    if (!asset) return;
+    state.layerByReference[mapReferenceKey(asset)] = elements.layer.value;
+    clearColorLegend();
+    clearFeatureInspector();
+    renderSelectedPmtiles();
   });
 }
 
@@ -559,6 +571,7 @@ async function renderPmtiles(assets) {
     elements.pmtilesRow.hidden = true;
     elements.mapSection.hidden = true;
     resetColorizeControl();
+    resetLayerControl();
     clearColorLegend();
     clearFeatureInspector();
     return;
@@ -569,6 +582,8 @@ async function renderPmtiles(assets) {
     elements.pmtiles.textContent = rawMapAssets[0].pmtiles_url;
   }
   const mapAssets = rawMapAssets.map(withPmtilesCacheBust);
+  const layerAsset = selectedLayerAsset(rawMapAssets);
+  const selectedLayer = prepareLayerControl(layerAsset);
   const colorizeAsset = selectedColorizeAsset(rawMapAssets);
   const colorField = prepareColorizeControl(colorizeAsset);
   elements.mapSection.hidden = false;
@@ -587,6 +602,8 @@ async function renderPmtiles(assets) {
       assets: mapAssets,
       basemap: state.basemap,
       colorField,
+      selectedLayer,
+      onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
       onColorLegendChange: renderColorLegend,
       onFeatureSelect: renderFeatureInspector,
@@ -602,6 +619,90 @@ function selectedColorizeAsset(assets = selectedReferences()) {
     return null;
   }
   return mapAssets[0];
+}
+
+function selectedLayerAsset(assets = selectedReferences()) {
+  const mapAssets = assets.filter((asset) => asset?.pmtiles_url);
+  if (state.selectedSlugs.length !== 1 || mapAssets.length !== 1) {
+    return null;
+  }
+  return mapAssets[0];
+}
+
+function prepareLayerControl(asset) {
+  if (!asset) {
+    resetLayerControl();
+    return "";
+  }
+
+  const key = mapReferenceKey(asset);
+  const layers = state.layerOptionsByReference[key] || [];
+  elements.layerControl.hidden = false;
+  if (!layers.length) {
+    renderLayerOptions(asset, layers, { loading: true });
+  } else {
+    renderLayerOptions(asset, layers);
+  }
+  return selectedLayerValue(asset, layers);
+}
+
+function resetLayerControl() {
+  elements.layerControl.hidden = true;
+  elements.layer.disabled = true;
+  elements.layer.replaceChildren(new Option("All layers", ""));
+  elements.layer.value = "";
+}
+
+function updateLayerOptions(asset, layers, selectedLayer = "") {
+  if (!asset) return;
+  const values = unique((Array.isArray(layers) ? layers : []).map((layer) => String(layer || "").trim()));
+  const key = mapReferenceKey(asset);
+  state.layerOptionsByReference[key] = values;
+  if (selectedLayer && values.includes(selectedLayer)) {
+    state.layerByReference[key] = selectedLayer;
+  } else if (state.layerByReference[key] && !values.includes(state.layerByReference[key])) {
+    delete state.layerByReference[key];
+  }
+  renderLayerOptions(asset, values);
+}
+
+function renderLayerOptions(asset, layers, options = {}) {
+  if (options.loading && !layers.length) {
+    elements.layerControl.hidden = false;
+    elements.layer.replaceChildren(new Option("Reading layers...", ""));
+    elements.layer.disabled = true;
+    elements.layer.value = "";
+    return;
+  }
+  if (layers.length <= 1) {
+    resetLayerControl();
+    return;
+  }
+  const selected = selectedLayerValue(asset, layers);
+  elements.layerControl.hidden = false;
+  elements.layer.replaceChildren();
+  elements.layer.append(new Option("All layers", ""));
+  for (const layer of layers) {
+    elements.layer.append(new Option(formatLayerLabel(layer), layer));
+  }
+  elements.layer.disabled = false;
+  elements.layer.value = selected;
+}
+
+function selectedLayerValue(asset, layers = state.layerOptionsByReference[mapReferenceKey(asset)] || []) {
+  const saved = state.layerByReference[mapReferenceKey(asset)] || "";
+  if (!saved) {
+    return "";
+  }
+  if (!layers.length || layers.includes(saved)) {
+    return saved;
+  }
+  delete state.layerByReference[mapReferenceKey(asset)];
+  return "";
+}
+
+function formatLayerLabel(layer) {
+  return String(layer || "").replace(/[_-]+/g, " ");
 }
 
 function prepareColorizeControl(asset) {
@@ -666,6 +767,10 @@ function selectedColorField(asset, fields) {
 }
 
 function colorReferenceKey(asset) {
+  return `${mapReferenceKey(asset)}|${selectedLayerValue(asset)}`;
+}
+
+function mapReferenceKey(asset) {
   return `${asset.slug}|${selectedVersionValue(asset)}`;
 }
 
@@ -856,8 +961,17 @@ async function openDocs(asset) {
 function withPmtilesCacheBust(asset) {
   return {
     ...asset,
-    pmtiles_url: cacheBustedUrl(asset.pmtiles_url, pmtilesCacheKey(asset)),
+    pmtiles_url: cacheBustedUrl(pmtilesPreviewUrl(asset), pmtilesCacheKey(asset)),
   };
+}
+
+function pmtilesPreviewUrl(asset) {
+  const path = String(asset?.pmtiles_path || "");
+  const match = path.match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (match) {
+    return `https://storage.googleapis.com/${match[1]}/${match[2]}`;
+  }
+  return asset?.pmtiles_url || "";
 }
 
 function pmtilesCacheKey(asset) {

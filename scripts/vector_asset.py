@@ -22,6 +22,8 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
+PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,17 @@ def slug_to_layer_name(asset_slug: str) -> str:
 def validate_asset_slug(asset_slug: str) -> None:
     if not SLUG_PATTERN.fullmatch(asset_slug):
         raise ValueError(f"asset slug must be lowercase kebab-case: {asset_slug!r}")
+
+
+def validate_tippecanoe_args(args: Sequence[str]) -> None:
+    for arg in args:
+        option = arg.split("=", 1)[0]
+        if option in PROPERTY_STRIPPING_TIPPECANOE_ARGS:
+            raise ValueError(
+                f"{option} strips all feature properties from PMTiles and breaks the catalog "
+                "feature inspector. Use narrower --exclude/--include filters or add compact "
+                "synthetic properties instead."
+            )
 
 
 def path_is_under(path: Path, parent: Path) -> bool:
@@ -158,6 +171,7 @@ def build_plan(
         raise ValueError("pmtiles engine must be 'tippecanoe' or 'gdal-mbtiles'")
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
+    validate_tippecanoe_args(tippecanoe_extra_args)
 
     layer = layer_name or slug_to_layer_name(asset_slug)
     work = work_dir or default_work_dir(asset_slug)
@@ -172,6 +186,7 @@ def build_plan(
     pmtiles_path = output / f"{asset_slug}.pmtiles"
     dataset_title = title or asset_slug.replace("-", " ").title()
     dataset_description = description or f"{dataset_title} vector tiles"
+    effective_tippecanoe_args = tuple(dict.fromkeys([*DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args]))
 
     fgb_command = [
         ogr2ogr_bin,
@@ -219,7 +234,7 @@ def build_plan(
         "-N",
         dataset_description,
     ]
-    tippecanoe_command.extend(tippecanoe_extra_args)
+    tippecanoe_command.extend(effective_tippecanoe_args)
     tippecanoe_command.append(str(tippecanoe_input_path))
 
     mbtiles_command = [
@@ -282,7 +297,7 @@ def build_plan(
         minzoom=minzoom,
         maxzoom=maxzoom,
         tile_simplify=tile_simplify,
-        tippecanoe_extra_args=tuple(tippecanoe_extra_args),
+        tippecanoe_extra_args=effective_tippecanoe_args,
         title=dataset_title,
         description=dataset_description,
         commands=[fgb_command, *pmtiles_commands],
@@ -379,12 +394,61 @@ def validate_outputs(fgb_path: Path, pmtiles_path: Path, *, pmtiles_bin: str = "
         if completed.returncode != 0:
             errors.append(f"pmtiles verify failed: {completed.stderr.strip() or completed.stdout.strip()}")
 
+    decode_summary = decoded_pmtiles_property_summary(pmtiles_path)
+    if decode_summary is not None:
+        feature_count, property_keys = decode_summary
+        if feature_count > 0 and not property_keys:
+            errors.append(
+                "PMTiles features decode with no feature properties at z0/0/0. "
+                "Do not publish geometry-only display tiles; preserve compact source properties "
+                "or add a synthetic property such as source_layer for the catalog inspector."
+            )
+
     return VectorValidationResult(
         fgb_path=str(fgb_path),
         pmtiles_path=str(pmtiles_path),
         valid=not errors,
         errors=tuple(errors),
     )
+
+
+def decoded_pmtiles_property_summary(
+    pmtiles_path: Path,
+    *,
+    decoder_bin: str = "tippecanoe-decode",
+) -> tuple[int, tuple[str, ...]] | None:
+    """Return decoded z0 feature count and property keys when tippecanoe-decode is available."""
+    if not pmtiles_path.exists() or not shutil.which(decoder_bin):
+        return None
+
+    completed = subprocess.run(
+        [decoder_bin, str(pmtiles_path), "0", "0", "0"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        return None
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    feature_count = 0
+    property_keys: set[str] = set()
+    for layer_or_feature in payload.get("features") or []:
+        nested_features = layer_or_feature.get("features")
+        if isinstance(nested_features, list):
+            for feature in nested_features:
+                feature_count += 1
+                property_keys.update((feature.get("properties") or {}).keys())
+        else:
+            feature_count += 1
+            property_keys.update((layer_or_feature.get("properties") or {}).keys())
+
+    return feature_count, tuple(sorted(property_keys))
 
 
 def _cmd_workdir(args: argparse.Namespace) -> int:
@@ -462,9 +526,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         help=(
-            "Additional argument passed through to Tippecanoe. Repeat for multiple flags; "
-            "for dense point layers use flags such as --no-feature-limit, "
-            "--no-tile-size-limit, and --drop-rate=1."
+            "Additional argument passed through to Tippecanoe. Repeat for multiple flags. "
+            "The build already adds --no-feature-limit, --no-tile-size-limit, and --drop-rate=1 "
+            "so low-zoom tiles retain published point features."
         ),
     )
     build_parser.add_argument("--pmtiles-bin", default="pmtiles")

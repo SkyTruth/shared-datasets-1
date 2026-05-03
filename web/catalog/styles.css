@@ -710,30 +710,38 @@ h3 {
   justify-content: start;
 }
 
+.map-actions-middle {
+  justify-content: center;
+}
+
 .map-actions-right {
   justify-content: end;
 }
 
 .basemap-control,
-.colorize-control {
+.colorize-control,
+.layer-control {
   display: grid;
   gap: 5px;
   min-width: 150px;
 }
 
-.colorize-control {
+.colorize-control,
+.layer-control {
   min-width: 210px;
 }
 
 .basemap-control span,
-.colorize-control span {
+.colorize-control span,
+.layer-control span {
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 720;
 }
 
 .basemap-control select,
-.colorize-control select {
+.colorize-control select,
+.layer-control select {
   min-height: 36px;
   background: var(--panel);
 }
@@ -1092,6 +1100,7 @@ h3 {
   .map-actions .quiet-link,
   .basemap-control,
   .colorize-control,
+  .layer-control,
   .docs-actions .quiet-link,
   .docs-actions .icon-button {
     width: 100%;
