@@ -25,9 +25,9 @@ resource "google_compute_global_address" "pmtiles_cdn" {
   depends_on = [google_project_service.required]
 }
 
-resource "google_compute_managed_ssl_certificate" "pmtiles_cdn" {
+resource "google_compute_managed_ssl_certificate" "pmtiles_cdn_20260504" {
   project = var.project_id
-  name    = "shared-datasets-pmtiles-cdn"
+  name    = "shared-datasets-pmtiles-cdn-20260504"
 
   managed {
     domains = [var.pmtiles_cdn_host]
@@ -117,6 +117,10 @@ resource "google_cloud_run_v2_service" "pmtiles_redirector" {
         }
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [scaling]
   }
 
   depends_on = [
@@ -265,10 +269,12 @@ resource "google_compute_url_map" "pmtiles_cdn_http_redirect" {
 }
 
 resource "google_compute_target_https_proxy" "pmtiles_cdn" {
-  project          = var.project_id
-  name             = "shared-datasets-pmtiles-cdn"
-  url_map          = google_compute_url_map.pmtiles_cdn.self_link
-  ssl_certificates = [google_compute_managed_ssl_certificate.pmtiles_cdn.self_link]
+  project = var.project_id
+  name    = "shared-datasets-pmtiles-cdn"
+  url_map = google_compute_url_map.pmtiles_cdn.self_link
+  ssl_certificates = [
+    google_compute_managed_ssl_certificate.pmtiles_cdn_20260504.self_link,
+  ]
 }
 
 resource "google_compute_target_http_proxy" "pmtiles_cdn_http_redirect" {
