@@ -774,6 +774,40 @@ h3 {
   font: inherit;
 }
 
+.map-click-target {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(23, 33, 27, 0.72);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.84),
+    0 2px 9px rgba(23, 33, 27, 0.2);
+  pointer-events: none;
+}
+
+.map-click-target::before,
+.map-click-target::after {
+  position: absolute;
+  content: "";
+  background: rgba(23, 33, 27, 0.74);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.58);
+}
+
+.map-click-target::before {
+  top: 3px;
+  bottom: 3px;
+  left: 50%;
+  width: 1px;
+}
+
+.map-click-target::after {
+  top: 50%;
+  right: 3px;
+  left: 3px;
+  height: 1px;
+}
+
 .color-legend {
   margin-top: 10px;
   padding: 9px 10px;

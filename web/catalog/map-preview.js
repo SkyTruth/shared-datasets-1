@@ -51,6 +51,7 @@ let protocolInstalled = false;
 let activeMap = null;
 let activeRenderSerial = 0;
 let activeColorContext = null;
+let activeFeatureMarker = null;
 
 export async function renderMapPreview({
   container,
@@ -217,7 +218,15 @@ export function toggleLegendFocus(value) {
   notifyColorLegend(context);
 }
 
+export function clearFeatureInspectionIndicator() {
+  if (activeFeatureMarker) {
+    activeFeatureMarker.remove();
+    activeFeatureMarker = null;
+  }
+}
+
 function clearActiveMap() {
+  clearFeatureInspectionIndicator();
   clearActiveColorContext();
   if (activeMap) {
     activeMap.remove();
@@ -837,7 +846,14 @@ function enableFeatureInspection(map, mapSources, onFeatureSelect) {
   const sourcesById = new Map(mapSources.map((source) => [source.sourceId, source]));
   map.on("click", (event) => {
     const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers });
-    onFeatureSelect(serializeFeatures(features, sourcesById));
+    const selectedFeatures = serializeFeatures(features, sourcesById);
+    if (!selectedFeatures.length) {
+      clearFeatureInspectionIndicator();
+      onFeatureSelect([]);
+      return;
+    }
+    renderFeatureInspectionIndicator(map, event.lngLat);
+    onFeatureSelect(selectedFeatures);
   });
   map.on("mousemove", (event) => {
     const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers });
@@ -846,6 +862,14 @@ function enableFeatureInspection(map, mapSources, onFeatureSelect) {
   map.getCanvas().addEventListener("mouseleave", () => {
     map.getCanvas().style.cursor = "";
   });
+}
+
+function renderFeatureInspectionIndicator(map, lngLat) {
+  clearFeatureInspectionIndicator();
+  const element = document.createElement("div");
+  element.className = "map-click-target";
+  element.setAttribute("aria-hidden", "true");
+  activeFeatureMarker = new window.maplibregl.Marker({ element, anchor: "center" }).setLngLat(lngLat).addTo(map);
 }
 
 function layerIdsForSource(source) {

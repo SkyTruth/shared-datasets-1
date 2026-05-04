@@ -119,8 +119,11 @@ function wireEvents() {
     closer.addEventListener("click", closeDocs);
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !elements.docsViewer.hidden) {
-      closeDocs();
+    if (event.key === "Escape") {
+      if (!elements.docsViewer.hidden) {
+        closeDocs();
+      }
+      clearFeatureInspector();
     }
   });
   elements.versionSelect.addEventListener("change", () => {
@@ -777,6 +780,7 @@ function mapReferenceKey(asset) {
 function clearFeatureInspector() {
   elements.featureInspector.hidden = true;
   elements.featureInspector.replaceChildren();
+  state.mapModule?.clearFeatureInspectionIndicator?.();
 }
 
 function clearColorLegend() {
