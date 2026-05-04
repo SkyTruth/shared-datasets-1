@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-05-01'
 source: Global Fishing Watch Anchorages Version 2
 license: Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms
   of Use
@@ -48,7 +47,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-01
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-anchorages.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -16,7 +16,6 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-05-01'
 source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
@@ -53,7 +52,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-01
 - **Update cadence:** manual
 - **Canonical file:** `latest/cerulean-s1-envelope.fgb`
 - **Available formats:** `fgb`, `pmtiles`

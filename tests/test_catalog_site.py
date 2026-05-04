@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,14 +17,14 @@ CATEGORIES = """categories:
       "110-boundaries": "Boundaries."
 """
 
-CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,CC BY-NC 4.0,Example notes
+CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example notes
 """
 
 MIXED_ACCESS_CATALOG = CATALOG + (
     "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,private,SkyTruth,manual,"
     "gs://example-bucket/100-geographic-reference/110-boundaries/private-asset/latest/private-asset.fgb,"
-    "fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Private source,Internal terms,Private notes\n"
+    "fgb,fgb;pmtiles,README.md,true,false,false,Private source,Internal terms,Private notes\n"
 )
 
 DOC = """---
@@ -74,7 +75,53 @@ def write_fixture(root: Path, catalog_text: str = CATALOG) -> tuple[Path, Path, 
     catalog_path.write_text(catalog_text)
     categories_path.write_text(CATEGORIES)
     (docs_dir / "example-asset.md").write_text(DOC)
+    write_release_index(root, "example-asset")
     return catalog_path, categories_path, docs_dir
+
+
+def write_release_index(root: Path, slug: str, *, latest_date: str = "2026-05-02", previous_date: str = "2026-04-30") -> None:
+    release_dir = root / "_catalog/releases"
+    release_dir.mkdir(parents=True, exist_ok=True)
+    root_path = f"gs://example-bucket/100-geographic-reference/110-boundaries/{slug}"
+    releases = []
+    for date in (latest_date, previous_date):
+        releases.append(
+            {
+                "date": date,
+                "release_path": f"{root_path}/releases/{date}/",
+                "run_record_path": f"{root_path}/runs/{date}.json",
+                "source_version": f"source-{date}",
+                "rows": 12345,
+                "files": [
+                    {
+                        "format": "fgb",
+                        "path": f"{root_path}/releases/{date}/{slug}.fgb",
+                        "sha256": "a" * 64,
+                    },
+                    {
+                        "format": "pmtiles",
+                        "path": f"{root_path}/releases/{date}/{slug}.pmtiles",
+                        "sha256": "b" * 64,
+                    },
+                ],
+            }
+        )
+    payload = {
+        "schema_version": 1,
+        "asset_slug": slug,
+        "updated_at": "2026-05-02T12:00:00Z",
+        "latest_release": releases[0],
+        "latest_run": {
+            "date": latest_date,
+            "status": "success",
+            "source_version": f"source-{latest_date}",
+            "release_path": f"{root_path}/releases/{latest_date}/",
+            "run_record_path": f"{root_path}/runs/{latest_date}.json",
+            "rows": 12345,
+        },
+        "releases": releases,
+    }
+    (release_dir / f"{slug}.json").write_text(json.dumps(payload))
 
 
 class CatalogSiteTests(unittest.TestCase):
@@ -100,9 +147,15 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["pmtiles_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.pmtiles")
         self.assertEqual(asset["pmtiles_url"], "https://tiles.skytruth.org/pmtiles/public/example-asset.pmtiles")
         self.assertEqual(asset["docs_url"], "docs/assets/example-asset.md")
-        self.assertEqual(asset["versions"][0]["date"], "2026-04-30")
-        self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-04-30/example-asset.fgb")
-        self.assertEqual(asset["versions"][0]["pmtiles_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-04-30/example-asset.pmtiles")
+        self.assertEqual(asset["release_index_url"], "../releases/example-asset.json")
+        self.assertEqual(asset["last_updated"], "2026-05-02")
+        self.assertEqual(asset["latest_release"]["date"], "2026-05-02")
+        self.assertEqual(asset["latest_run"]["status"], "success")
+        self.assertEqual(asset["pmtiles_sha256"], "b" * 64)
+        self.assertEqual([version["date"] for version in asset["versions"]], ["2026-05-02", "2026-04-30"])
+        self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb")
+        self.assertEqual(asset["versions"][0]["pmtiles_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles")
+        self.assertEqual(asset["versions"][0]["pmtiles_sha256"], "b" * 64)
         self.assertIn("non-commercial", asset["license_flags"])
         self.assertIn("attribution-required", asset["license_flags"])
         self.assertEqual(asset["bounds"], [-10.5, 20.25, 30.75, 40.125])
@@ -263,7 +316,8 @@ class CatalogSiteTests(unittest.TestCase):
             expected_active_assets = sum(1 for row in csv.DictReader(catalog_file) if row["status"] == "active")
         self.assertEqual(len(active_assets), expected_active_assets)
         self.assertTrue(all(asset["canonical_path"].startswith("gs://") for asset in active_assets))
-        self.assertTrue(all(asset["versions"] for asset in active_assets))
+        self.assertTrue(all(asset["release_index_url"].endswith(f"/{asset['slug']}.json") for asset in active_assets))
+        self.assertTrue(any(asset["versions"] for asset in active_assets))
         self.assertTrue(any(asset["pmtiles_url"] for asset in active_assets))
 
 

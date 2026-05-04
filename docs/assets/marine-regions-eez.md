@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-29'
 source: Marine Regions EEZ v12
 license: See Marine Regions terms
 notes: Initial upload from eez-mr_eez_v12.fgb; release 2026-04-29; sha256 b4f1d04cff66a75a4176734a02e2af994b7c55490b7b42cdcf7ba2d5c431f6b7;
@@ -45,7 +44,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-29
 - **Update cadence:** manual
 - **Canonical file:** `latest/marine-regions-eez.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -52,7 +52,6 @@ CATALOG_REQUIRED_COLUMNS = (
     "has_pmtiles",
     "has_geojson",
     "has_csv",
-    "last_updated",
     "source",
     "license",
     "notes",
@@ -71,7 +70,6 @@ SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 README_REQUIRED_SNIPPETS = {
     "status": "**Status:**",
     "owner": "**Owner:**",
-    "last_updated": "**Last updated:**",
     "update_cadence": "**Update cadence:**",
     "canonical_file": "**Canonical file:**",
     "source": "**Source:**",

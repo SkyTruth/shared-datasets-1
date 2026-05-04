@@ -16,12 +16,10 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-05-02'
 source: UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
 license: See Protected Planet WDPA terms
-notes: Scheduled refresh release 2026-05-02; source version May2026; source rows 17657; fgb sha256 0cb5565f5ac7bc7c6f1328b38b0734a98f76921c0eded6ffa7d04fec4816c34e;
-  pmtiles sha256 a317d9e59f77cb12d8cecf9fc403431d4db8da545e6b0273e6c7d2ee3095f6a4; simplified monthly job preserves source
-  fields and publishes FGB plus PMTiles
+notes: Monthly job preserves source fields and publishes FGB plus PMTiles. Release history, source versions, row counts, and
+  file hashes are recorded in the bucket release index and per-run records.
 files:
 - path: latest/wdpa-marine.fgb
   format: fgb
@@ -51,7 +49,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-02
 - **Update cadence:** monthly
 - **Canonical file:** `latest/wdpa-marine.fgb`
 - **Available formats:** `fgb`, `pmtiles`
@@ -101,7 +98,7 @@ source layers have identical fields before publishing.
 ## Update notes
 
 Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
-`wdpa-monthly` Cloud Run Job and scheduled for `0 9 1 * *` UTC.
+`wdpa-monthly` Cloud Run Job and scheduled for `0 9 1-10 * *` UTC.
 
 ## Known caveats
 

@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-05-01'
 source: Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
 license: Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
 notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
@@ -50,7 +49,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-01
 - **Update cadence:** manual
 - **Canonical file:** `latest/gfw-fixed-infrastructure.fgb`
 - **Available formats:** `fgb`, `pmtiles`

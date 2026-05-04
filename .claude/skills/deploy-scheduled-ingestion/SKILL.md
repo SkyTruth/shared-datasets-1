@@ -33,6 +33,10 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Preserve live surfaces unless explicitly approved: Cloud Run job names, scheduler names, service account identities, asset slugs, canonical GCS paths, output formats, schemas, entrypoints, and run-record shape.
 - Any change to `ingestion/common/` must run focused tests for every production job that imports it.
 - Default cron publishing semantics: if the source or generated output is unchanged, write a skipped run record for observability and do not write new release or `latest/` dataset artifacts. Keep this as job behavior, not asset `update_cadence` metadata.
+- For source-availability windows, retries, or polling schedules that target one upstream period, keep the target release date stable for that period and record the actual scheduler attempt date in the skipped run/check-in payload.
+- Every success and meaningful skip must update `_catalog/releases/{asset-slug}.json`; verify both `latest_release` and `latest_run` after deployment.
+- After a publish or deploy canary, inspect custom metadata on `latest/` objects. It must match the bytes now stored at `latest/`, not stale metadata from the previous generation.
+- Normal cron runs must not require Git commits or tracked catalog date edits. Do not update repo asset docs just to advance latest-release, source-version, row-count, or hash fields; those belong in `_catalog/releases/{asset-slug}.json` and run records.
 
 ## Large-source sizing
 
@@ -201,6 +205,19 @@ gcloud run jobs executions describe <execution-name> --region=us-central1 --proj
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/latest/
 gcloud storage ls gs://skytruth-shared-datasets-1/<asset-root>/runs/
 ```
+
+Also inspect:
+
+```bash
+gcloud storage cat gs://skytruth-shared-datasets-1/_catalog/releases/<asset-slug>.json
+gcloud storage objects describe gs://skytruth-shared-datasets-1/<asset-root>/latest/<asset-slug>.fgb
+```
+
+Confirm `latest_release` points at the newest successful release, `latest_run`
+records the most recent success or meaningful skip, and `latest/` object custom
+metadata matches the current release.
+Do not treat a missing repo `last_updated` edit as deployment drift for a cron
+job.
 
 9. Verify alert coverage for the deployed job and future jobs:
    - Read the live Cloud Run and Scheduler failure alert filters.

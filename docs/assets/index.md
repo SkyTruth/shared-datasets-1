@@ -4,40 +4,40 @@
 
 ## 100-geographic-reference
 
-| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
-|---|---|---|---|---|---|---|
-| [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | 2026-05-04 | `latest/natural-earth-10m-land.fgb` |
-| [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/iho-world-seas.fgb` |
-| [Marine Regions Exclusive Economic Zones](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/marine-regions-eez.fgb` |
-| [WDPA Marine Protected and Conserved Areas](wdpa-marine.md) | 130-protected-areas | active | public | `fgb;pmtiles` | 2026-05-02 | `latest/wdpa-marine.fgb` |
-| [WDPA Terrestrial Protected and Conserved Areas](wdpa-terrestrial.md) | 130-protected-areas | active | public | `fgb;pmtiles` | 2026-05-02 | `latest/wdpa-terrestrial.fgb` |
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | `latest/natural-earth-10m-land.fgb` |
+| [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/iho-world-seas.fgb` |
+| [Marine Regions Exclusive Economic Zones](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/marine-regions-eez.fgb` |
+| [WDPA Marine Protected and Conserved Areas](wdpa-marine.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-marine.fgb` |
+| [WDPA Terrestrial Protected and Conserved Areas](wdpa-terrestrial.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-terrestrial.fgb` |
 
 ## 200-imagery-derived
 
-| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
-|---|---|---|---|---|---|---|
-| [Cerulean S1 Envelope](cerulean-s1-envelope.md) | 210-satellite-indexes | active | public | `fgb;pmtiles` | 2026-05-01 | `latest/cerulean-s1-envelope.fgb` |
-| [IMS Sea-Ice Extent](ims-sea-ice-extent.md) | 250-weather-climate | active | public | `fgb;pmtiles` | 2026-05-01 | `latest/ims-sea-ice-extent.fgb` |
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [Cerulean S1 Envelope](cerulean-s1-envelope.md) | 210-satellite-indexes | active | public | `fgb;pmtiles` | `latest/cerulean-s1-envelope.fgb` |
+| [IMS Sea-Ice Extent](ims-sea-ice-extent.md) | 250-weather-climate | active | public | `fgb;pmtiles` | `latest/ims-sea-ice-extent.fgb` |
 
 ## 300-infrastructure-industrial
 
-| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
-|---|---|---|---|---|---|---|
-| [Global Oil & Gas Features Database](gogi.md) | 310-energy | active | public | `fgb;csv;pmtiles` | 2026-05-02 | `latest/gogi-pipelines.fgb` |
-| [PETRODATA Petroleum Fields](petrodata.md) | 310-energy | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/petrodata.fgb` |
-| [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | public | `fgb;pmtiles` | 2026-05-02 | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
-| [Global Fishing Watch SAR Fixed Infrastructure](gfw-fixed-infrastructure.md) | 330-offshore-platforms | active | public | `fgb;pmtiles` | 2026-05-01 | `latest/gfw-fixed-infrastructure.fgb` |
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [Global Oil & Gas Features Database](gogi.md) | 310-energy | active | public | `fgb;csv;pmtiles` | `latest/gogi-pipelines.fgb` |
+| [PETRODATA Petroleum Fields](petrodata.md) | 310-energy | active | public | `fgb;pmtiles` | `latest/petrodata.fgb` |
+| [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | public | `fgb;pmtiles` | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
+| [Global Fishing Watch SAR Fixed Infrastructure](gfw-fixed-infrastructure.md) | 330-offshore-platforms | active | public | `fgb;pmtiles` | `latest/gfw-fixed-infrastructure.fgb` |
 
 ## 500-conservation-ecosystems
 
-| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
-|---|---|---|---|---|---|---|
-| [Global Distribution of Coral Reefs](global-coral-reefs.md) | 530-habitat-condition | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/global-coral-reefs.fgb` |
-| [IUCN Red List Mammal Range Maps](iucn-mammal-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | 2026-05-02 | `latest/iucn-mammal-ranges.fgb` |
-| [IUCN Red List Reptile Range Maps](iucn-reptile-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | 2026-05-03 | `latest/iucn-reptile-ranges.fgb` |
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [Global Distribution of Coral Reefs](global-coral-reefs.md) | 530-habitat-condition | active | public | `fgb;pmtiles` | `latest/global-coral-reefs.fgb` |
+| [IUCN Red List Mammal Range Maps](iucn-mammal-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | `latest/iucn-mammal-ranges.fgb` |
+| [IUCN Red List Reptile Range Maps](iucn-reptile-ranges.md) | 530-habitat-condition | active | private | `fgb;pmtiles` | `latest/iucn-reptile-ranges.fgb` |
 
 ## 600-maritime-ocean
 
-| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
-|---|---|---|---|---|---|---|
-| [Global Fishing Watch Anchorages](gfw-anchorages.md) | 640-ocean-activity | active | public | `fgb;pmtiles` | 2026-05-01 | `latest/gfw-anchorages.fgb` |
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [Global Fishing Watch Anchorages](gfw-anchorages.md) | 640-ocean-activity | active | public | `fgb;pmtiles` | `latest/gfw-anchorages.fgb` |

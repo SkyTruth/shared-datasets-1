@@ -13,7 +13,6 @@ available_formats:
   - "fgb"
 metadata_paths:
   - "README.md"
-last_updated: "YYYY-MM-DD"
 source: "{source-name-or-url}"
 source_url: "{optional-source-homepage-or-api-url}"
 license: "{license-or-terms-summary}"

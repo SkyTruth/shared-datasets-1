@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-29'
 source: PRIO PETRODATA v1.2
 license: No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
 notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles with source_layer; release 2026-04-29; fgb
@@ -45,7 +44,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-29
 - **Update cadence:** manual
 - **Canonical file:** `latest/petrodata.fgb`
 - **Available formats:** `fgb`, `pmtiles`

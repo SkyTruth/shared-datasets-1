@@ -33,6 +33,8 @@ const elements = {
   docs: document.querySelector("#detail-docs"),
   licenseNote: document.querySelector("#detail-license-note"),
   updated: document.querySelector("#detail-updated"),
+  lastRunCard: document.querySelector("#detail-last-run-card"),
+  lastRun: document.querySelector("#detail-last-run"),
   cadenceValue: document.querySelector("#detail-cadence"),
   owner: document.querySelector("#detail-owner"),
   statusValue: document.querySelector("#detail-status"),
@@ -76,6 +78,7 @@ const elements = {
 };
 
 const collator = new Intl.Collator("en", { sensitivity: "base" });
+const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function init() {
   try {
@@ -85,6 +88,7 @@ async function init() {
     }
     state.catalog = await response.json();
     state.assets = Array.isArray(state.catalog.assets) ? state.catalog.assets : [];
+    await hydrateReleaseIndexes();
     state.filtered = state.assets;
     state.basemap = "map";
     elements.basemap.value = state.basemap;
@@ -94,6 +98,132 @@ async function init() {
   } catch (error) {
     renderFatalError(error);
   }
+}
+
+async function hydrateReleaseIndexes() {
+  await Promise.allSettled(state.assets.map((asset) => hydrateReleaseIndex(asset)));
+}
+
+async function hydrateReleaseIndex(asset) {
+  const url = releaseIndexUrl(asset);
+  if (!url) return false;
+  try {
+    const response = await fetch(cacheBustedUrl(url, Date.now()), { cache: "no-store" });
+    if (response.status === 404) return false;
+    if (!response.ok) {
+      throw new Error(`release index returned HTTP ${response.status}`);
+    }
+    return applyReleaseIndex(asset, await response.json());
+  } catch (error) {
+    console.warn(`Could not load release index for ${asset.slug}:`, error);
+    return false;
+  }
+}
+
+function releaseIndexUrl(asset) {
+  return asset.release_index_url || `../releases/${encodeURIComponent(asset.slug)}.json`;
+}
+
+function applyReleaseIndex(asset, releaseIndex) {
+  if (!releaseIndex || releaseIndex.asset_slug !== asset.slug) return false;
+  const versions = versionsFromReleaseIndex(asset, releaseIndex);
+
+  if (versions.length) {
+    asset.versions = versions;
+  }
+  asset.latest_release = releaseIndex.latest_release || versions[0];
+  asset.latest_run = releaseIndex.latest_run || null;
+  asset.release_index_updated_at = releaseIndex.updated_at || "";
+  const latestVersion = versions.find((version) => version.date === asset.latest_release?.date) || versions[0];
+  if (latestVersion) {
+    asset.canonical_sha256 = latestVersion.canonical_sha256 || "";
+    asset.pmtiles_sha256 = latestVersion.pmtiles_sha256 || "";
+  }
+  if (asset.latest_release?.date) {
+    asset.last_updated = asset.latest_release.date;
+  }
+  return Boolean(versions.length || asset.latest_run);
+}
+
+function versionsFromReleaseIndex(asset, releaseIndex) {
+  const releases = Array.isArray(releaseIndex.releases) ? releaseIndex.releases : [];
+  const versions = [];
+  const seenDates = new Set();
+
+  for (const release of releases) {
+    const date = String(release?.date || "").trim();
+    if (!RELEASE_DATE_RE.test(date) || seenDates.has(date)) continue;
+    const files = Array.isArray(release.files) ? release.files : [];
+    const canonicalFile = releaseFileForFormat(files, asset.canonical_format, asset.canonical_path) || files[0];
+    const canonicalPath = releaseFilePath(canonicalFile);
+    if (!canonicalPath) continue;
+
+    const pmtilesFile = releaseFileForFormat(files, "pmtiles", asset.pmtiles_path);
+    const pmtilesPath = releaseFilePath(pmtilesFile);
+    const canonicalSha256 = releaseFileSha256(canonicalFile);
+    const pmtilesSha256 = releaseFileSha256(pmtilesFile);
+
+    seenDates.add(date);
+    versions.push({
+      date,
+      canonical_path: canonicalPath,
+      public_url: gsToHttps(canonicalPath),
+      pmtiles_path: pmtilesPath || null,
+      pmtiles_url: pmtilesPath ? gsToHttps(pmtilesPath) : null,
+      available_formats: releaseFormats(asset, files),
+      source_version: release.source_version || "",
+      rows: release.rows ?? null,
+      release_path: release.release_path || "",
+      run_record_path: release.run_record_path || "",
+      canonical_sha256: canonicalSha256 || "",
+      pmtiles_sha256: pmtilesSha256 || "",
+    });
+  }
+
+  return versions.sort((left, right) => right.date.localeCompare(left.date));
+}
+
+function releaseFileForFormat(files, formatName, preferredPath = "") {
+  const format = String(formatName || "").trim();
+  if (!format) return null;
+  const preferredName = basename(preferredPath);
+  if (preferredName) {
+    const exact = files.find(
+      (file) => String(file?.format || "").trim() === format && releaseFilePath(file).endsWith(`/${preferredName}`)
+    );
+    if (exact) return exact;
+  }
+  return files.find((file) => String(file?.format || "").trim() === format) || null;
+}
+
+function releaseFilePath(file) {
+  const path = String(file?.path || "").trim();
+  return path.startsWith("gs://") ? path : "";
+}
+
+function releaseFileSha256(file) {
+  const value = String(file?.sha256 || "").trim();
+  return /^[a-f0-9]{64}$/i.test(value) ? value : "";
+}
+
+function releaseFormats(asset, files) {
+  const fileFormats = new Set(files.map((file) => String(file?.format || "").trim()).filter(Boolean));
+  const ordered = (Array.isArray(asset.available_formats) ? asset.available_formats : []).filter((format) =>
+    fileFormats.has(format)
+  );
+  if (!ordered.length && asset.canonical_format) {
+    ordered.push(asset.canonical_format);
+  }
+  return ordered;
+}
+
+function basename(path) {
+  return String(path || "").split("/").filter(Boolean).pop() || "";
+}
+
+function gsToHttps(path) {
+  const match = String(path || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
+  return match ? `https://storage.googleapis.com/${match[1]}/${match[2]}` : path;
 }
 
 function wireEvents() {
@@ -232,6 +362,9 @@ function searchableText(asset) {
       asset.source_url,
       asset.license,
       Array.isArray(asset.license_flags) ? asset.license_flags.join(" ") : "",
+      asset.latest_release?.date,
+      asset.latest_run?.date,
+      asset.latest_run?.status,
       asset.notes,
       asset.available_formats.join(" "),
     ].join(" ")
@@ -301,7 +434,7 @@ function renderAssetCard(asset, selectedSet) {
   node.querySelector(".asset-title").textContent = asset.title;
   node.querySelector(".asset-summary").textContent = asset.description || asset.notes || asset.source;
   node.querySelector(".asset-meta").textContent = `${asset.category} / ${asset.subcategory}`;
-  node.querySelector(".asset-date").textContent = asset.last_updated || "No date";
+  node.querySelector(".asset-date").textContent = asset.latest_release?.date || asset.last_updated || "No release";
   const formats = node.querySelector(".asset-formats");
   for (const format of asset.available_formats) {
     const chip = document.createElement("span");
@@ -383,7 +516,8 @@ function renderDetail(asset) {
   elements.title.textContent = asset.title;
   elements.description.textContent = asset.description || asset.notes || "No description is available yet.";
   elements.docs.href = asset.docs_url;
-  elements.updated.textContent = asset.last_updated || "Unknown";
+  elements.updated.textContent = asset.latest_release?.date || asset.last_updated || "Unknown";
+  renderLastRun(asset);
   elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
   elements.owner.textContent = asset.owner || "Unknown";
   elements.statusValue.textContent = asset.status || "Unknown";
@@ -420,6 +554,20 @@ function renderMultiDetail(assets) {
   renderPmtiles(mapAssets);
 }
 
+function renderLastRun(asset) {
+  const value = formatLatestRun(asset.latest_run);
+  elements.lastRunCard.hidden = !value;
+  elements.lastRun.textContent = value || "";
+}
+
+function formatLatestRun(run) {
+  if (!run || typeof run !== "object") return "";
+  const date = String(run.date || "").trim();
+  if (!date) return "";
+  const status = String(run.status || "").trim();
+  return status ? `${date} (${status})` : date;
+}
+
 function selectedReferences(assets = selectedAssets()) {
   return assets.map(selectedReference);
 }
@@ -438,7 +586,8 @@ function renderVersionSelector(asset) {
 
   elements.versionRow.hidden = false;
   elements.versionSelect.replaceChildren();
-  const latestLabel = asset.last_updated ? `Latest (${asset.last_updated})` : "Latest";
+  const latestDate = asset.latest_release?.date || asset.last_updated;
+  const latestLabel = latestDate ? `Latest (${latestDate})` : "Latest";
   elements.versionSelect.append(new Option(latestLabel, "latest"));
   for (const version of versions) {
     elements.versionSelect.append(new Option(version.date, version.date));
@@ -979,6 +1128,9 @@ function pmtilesPreviewUrl(asset) {
 }
 
 function pmtilesCacheKey(asset) {
+  if (asset.pmtiles_sha256) {
+    return asset.pmtiles_sha256;
+  }
   const hash = String(asset.notes || "").match(/\bpmtiles sha256\s+([a-f0-9]{64})\b/i);
   if (hash) {
     return hash[1];

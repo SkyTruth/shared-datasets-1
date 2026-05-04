@@ -775,7 +775,9 @@ def run() -> list[dict[str, Any]]:
 
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
     bucket_name = os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET)
-    run_date = parse_run_date(os.environ.get("RUN_DATE"))
+    raw_run_date = os.environ.get("RUN_DATE")
+    run_date = parse_run_date(raw_run_date)
+    attempt_date = run_date if raw_run_date else dt.datetime.now(dt.UTC).date()
     source_template = os.environ.get("WDPA_SOURCE_URL_TEMPLATE", DEFAULT_SOURCE_URL_TEMPLATE)
     source_url = build_source_url(source_template, run_date)
     source_version = source_version_for(run_date)
@@ -795,14 +797,23 @@ def run() -> list[dict[str, Any]]:
     ]
     if not publish_specs:
         LOGGER.info("all WDPA assets already have successful run records for %s", run_date)
-        return [
-            {
+        records = []
+        for asset in ASSETS:
+            record = {
                 "asset_slug": asset.slug,
-                "run_date": run_date.isoformat(),
+                "run_date": attempt_date.isoformat(),
+                "target_release_date": run_date.isoformat(),
                 "status": "skipped",
+                "reason": "monthly source already published",
+                "source": source_url,
+                "source_version": source_version,
             }
-            for asset in ASSETS
-        ]
+            record["release_index"] = publisher.update_latest_run_index(
+                asset=asset,
+                payload=record,
+            )
+            records.append(record)
+        return records
 
     for asset in publish_specs:
         publisher.assert_no_partial_release(asset, run_date)
@@ -818,7 +829,8 @@ def run() -> list[dict[str, Any]]:
             for asset in publish_specs:
                 record = {
                     "asset_slug": asset.slug,
-                    "run_date": run_date.isoformat(),
+                    "run_date": attempt_date.isoformat(),
+                    "target_release_date": run_date.isoformat(),
                     "status": "skipped",
                     "reason": str(exc),
                     "source": source_url,

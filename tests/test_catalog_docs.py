@@ -34,7 +34,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-30'
 source: Example source
 source_url: https://example.test/source
 license: Example license
@@ -96,7 +95,6 @@ status: active
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
-last_updated: '2026-04-30'
 source: Example source
 license: Example license
 ---
@@ -132,8 +130,8 @@ Manual.
 """
 
 
-CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,last_updated,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,2026-04-30,Example source,Example license,Example notes
+CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example notes
 """
 
 

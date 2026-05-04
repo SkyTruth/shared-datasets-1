@@ -16,13 +16,12 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-05-02'
 source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
-notes: Scheduled refresh release 2026-05-02; source rows 63112; source version fa9c166297d6546b619a32e584c1ffd2c95f068b107cc3dc110ec9fc3ce34375;
-  fgb sha256 23c517e741d86b0e9e676f699ae7f1345118c21dbc728d88edcbf086f0c3af80; pmtiles sha256 bb20a449992556e2a4aaf125f93fe2f418f23841ad5a1034fde8266c114256cc;
-  PMTiles generated with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for low-zoom point fidelity; stale initial
-  GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format
+notes: Monthly job publishes FGB plus PMTiles with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for low-zoom
+  point fidelity. Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index
+  and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active
+  data-plane format.
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
@@ -56,7 +55,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-02
 - **Update cadence:** monthly
 - **Canonical file:** `latest/eamlis-abandoned-mine-land-inventory.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-29'
 source: Marine Regions World Seas IHO v3
 license: See source terms
 notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
@@ -45,7 +44,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-29
 - **Update cadence:** manual
 - **Canonical file:** `latest/iho-world-seas.fgb`
 - **Available formats:** `fgb`, `pmtiles`

@@ -138,7 +138,41 @@ class WdpaMonthlyTests(unittest.TestCase):
             payload = json.loads(bucket.blob(f"_catalog/releases/{asset.slug}.json").text)
             self.assertEqual(payload["latest_run"]["status"], "skipped")
             self.assertEqual(payload["latest_run"]["reason"], "source not ready")
+            self.assertEqual(payload["latest_run"]["date"], "2026-05-01")
             self.assertEqual(payload["releases"], [])
+
+    def test_run_updates_release_indexes_when_month_already_published(self):
+        bucket = FakeBucket()
+        run_date = dt.date(2026, 5, 1)
+        for asset in wdpa.ASSETS:
+            record = bucket.blob(asset.run_record_object(run_date))
+            record.exists = True
+            record.text = json.dumps({"status": "success"})
+
+        with (
+            mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
+            mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
+            mock.patch.object(wdpa, "download_file") as download_file,
+        ):
+            records = wdpa.run()
+
+        download_file.assert_not_called()
+        self.assertEqual(len(records), len(wdpa.ASSETS))
+        self.assertEqual({record["status"] for record in records}, {"skipped"})
+        self.assertEqual(
+            {record["reason"] for record in records},
+            {"monthly source already published"},
+        )
+        for asset in wdpa.ASSETS:
+            payload = json.loads(bucket.blob(f"_catalog/releases/{asset.slug}.json").text)
+            self.assertEqual(payload["latest_run"]["status"], "skipped")
+            self.assertEqual(
+                payload["latest_run"]["reason"],
+                "monthly source already published",
+            )
+            self.assertEqual(payload["latest_run"]["source_version"], "May2026")
+            self.assertEqual(records[0]["target_release_date"], "2026-05-01")
 
     def test_prepare_source_datasets_extracts_nested_zips(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-05-04'
 source: Natural Earth 1:10m physical land polygons v5.1.1
 license: Public domain per Natural Earth Terms of Use
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
@@ -47,7 +46,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-04
 - **Update cadence:** manual
 - **Canonical file:** `latest/natural-earth-10m-land.fgb`
 - **Available formats:** `fgb`, `pmtiles`

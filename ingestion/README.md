@@ -38,6 +38,22 @@ leave release and `latest/` dataset artifacts unchanged. Do not repeat this
 behavior in asset `update_cadence` metadata; use cadence values such as `daily`,
 `weekly`, or `monthly`.
 
+Jobs that poll an upstream source over an availability window should distinguish
+the stable target release date from the scheduler attempt date. For example, an
+early-month monthly source should publish under one month-start release path,
+while later attempts for the same source period should only write a skipped
+run/check-in record for the actual attempt date.
+
+Every success and meaningful skip must refresh the asset release index under
+`_catalog/releases/{asset-slug}.json`. After changing a job, verify both
+`latest_release` and `latest_run`, and inspect the custom metadata on `latest/`
+objects so it matches the current release bytes.
+
+Normal cron runs must not require Git commits or tracked catalog date edits.
+Keep repo asset docs and the CSV catalog focused on static registry metadata;
+the bucket release index is the source of truth for latest release, last
+check-in, source version, row count, and file hashes.
+
 ## Live Job Boundaries
 
 Do not import from one job package into another. For example, a new protected

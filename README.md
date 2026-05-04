@@ -193,8 +193,9 @@ bucket README files under category/subcategory/asset paths without touching GCS.
 
 Optional discovery frontmatter such as `bounds`, `geometry_type`, `row_count`,
 `source_url`, and `license_flags` is preserved by the docs generator and exposed
-in the static catalog JSON/site when present. The CSV catalog remains the
-backward-compatible core metadata table.
+in the static catalog JSON/site when present. The CSV catalog is a static asset
+registry; cron freshness belongs in bucket release indexes, not tracked catalog
+dates.
 
 ### Add a cron or ingestion job
 
@@ -203,6 +204,9 @@ backward-compatible core metadata table.
 3. Add focused tests under `tests/test_<job_slug>.py` and run tests for any job touched by shared helper changes.
 4. Use a distinct Terraform file such as `terraform/envs/prod/<job_slug>.tf` for Cloud Scheduler, Cloud Run, service accounts, IAM, secrets references, and monitoring.
 5. Make the job idempotent, write to a dated release before updating `latest/`, and include a run record using `templates/cron_run.template.json` when applicable. By default, cron jobs should write a skipped run record and leave release and `latest/` dataset artifacts unchanged when the source or generated output has not changed.
+6. For source-availability windows or repeated retries for one upstream period, keep the release date stable for that source period and record the actual attempt date in the skipped run/check-in payload.
+7. Keep `_catalog/releases/{asset-slug}.json` current on every success and meaningful skip. Verify `latest_run`, `latest_release`, and the custom metadata on `latest/` objects after deployment.
+8. Normal cron runs must not require Git commits or tracked catalog date edits. The data browser reads latest-release and last-check-in state from the bucket release index.
 
 ### Change infrastructure
 

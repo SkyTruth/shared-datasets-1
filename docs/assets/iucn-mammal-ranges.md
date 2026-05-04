@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-05-02'
 source: IUCN Red List of Threatened Species spatial data, mammals group, Red List version 2025-2 / metadata v6.3
 license: IUCN Red List Terms and Conditions of Use v3.1; non-commercial conservation, education, scientific analysis, and
   research use only; no reposting or redistribution without prior written permission from IUCN
@@ -59,7 +58,6 @@ files:
 - **Status:** active
 - **Access tier:** private
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-02
 - **Update cadence:** manual
 - **Canonical file:** `latest/iucn-mammal-ranges.fgb`
 - **Available formats:** `fgb`, `pmtiles`

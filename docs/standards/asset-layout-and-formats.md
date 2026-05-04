@@ -157,7 +157,6 @@ Required fields:
 - Title.
 - Status.
 - Owner.
-- Last updated.
 - Update cadence.
 - Canonical file.
 - Source.

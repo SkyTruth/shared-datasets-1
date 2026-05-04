@@ -161,7 +161,7 @@ class DatasetRef:
 
     @property
     def resolved_id(self) -> str:
-        return f"{self.slug}@{self.last_updated}"
+        return f"{self.slug}@{self.last_updated or 'latest'}"
 
 
 class Catalog:

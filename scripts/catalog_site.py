@@ -35,7 +35,6 @@ REQUIRED_FIELDS = [
     "canonical_format",
     "available_formats",
     "metadata_paths",
-    "last_updated",
     "source",
     "license",
 ]
@@ -63,6 +62,12 @@ class CatalogVersion:
     pmtiles_path: str | None
     pmtiles_url: str | None
     available_formats: list[str]
+    source_version: str = ""
+    rows: int | None = None
+    release_path: str = ""
+    run_record_path: str = ""
+    canonical_sha256: str = ""
+    pmtiles_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,9 @@ class CatalogAsset:
     has_geojson: bool
     has_csv: bool
     last_updated: str
+    latest_release: dict[str, Any] | None
+    latest_run: dict[str, Any] | None
+    release_index_updated_at: str
     source: str
     license: str
     notes: str
@@ -93,8 +101,11 @@ class CatalogAsset:
     public_url: str
     pmtiles_path: str | None
     pmtiles_url: str | None
+    canonical_sha256: str
+    pmtiles_sha256: str
     docs_path: str
     docs_url: str
+    release_index_url: str
     description: str
     license_flags: list[str]
     versions: list[CatalogVersion]
@@ -269,7 +280,7 @@ def release_versions(
     slug: str,
     canonical_format: str,
     available_formats: list[str],
-    last_updated: str,
+    last_updated: str = "",
 ) -> list[CatalogVersion]:
     metadata = read_doc_metadata(doc_path)
     files = metadata.get("files") or []
@@ -287,6 +298,8 @@ def release_versions(
         if not match:
             raise CatalogSiteError(f"{doc_path}: release path must be releases/YYYY-MM-DD/object, got {path!r}")
         raw_date = match.group("date")
+        if raw_date == "YYYY-MM-DD" and not last_updated:
+            continue
         date = last_updated if raw_date == "YYYY-MM-DD" else raw_date
         require_iso_date(date, context=f"{doc_path}: release date")
         format_name = str(item.get("format") or "").strip()
@@ -314,6 +327,123 @@ def release_versions(
             )
         )
     return versions
+
+
+def load_release_index(release_index_dir: Path | None, slug: str) -> dict[str, Any] | None:
+    if release_index_dir is None:
+        return None
+    path = release_index_dir / f"{slug}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise CatalogSiteError(f"{path}: invalid release index JSON") from error
+    if not isinstance(payload, dict):
+        raise CatalogSiteError(f"{path}: release index must be a JSON object")
+    if payload.get("asset_slug") not in (None, "", slug):
+        raise CatalogSiteError(f"{path}: release index asset_slug does not match {slug!r}")
+    return payload
+
+
+def release_file_path(file_entry: Any) -> str:
+    if not isinstance(file_entry, dict):
+        return ""
+    path = str(file_entry.get("path") or "").strip()
+    return path if path.startswith("gs://") else ""
+
+
+def release_file_sha256(file_entry: Any) -> str:
+    if not isinstance(file_entry, dict):
+        return ""
+    value = str(file_entry.get("sha256") or "").strip()
+    return value if re.fullmatch(r"[a-fA-F0-9]{64}", value) else ""
+
+
+def basename(path: str) -> str:
+    return next(reversed([part for part in path.split("/") if part]), "")
+
+
+def release_file_for_format(files: list[Any], format_name: str, preferred_path: str = "") -> dict[str, Any] | None:
+    preferred_name = basename(preferred_path)
+    if preferred_name:
+        for file_entry in files:
+            if not isinstance(file_entry, dict):
+                continue
+            if str(file_entry.get("format") or "").strip() == format_name and release_file_path(file_entry).endswith(
+                f"/{preferred_name}"
+            ):
+                return file_entry
+    for file_entry in files:
+        if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip() == format_name:
+            return file_entry
+    return None
+
+
+def release_formats_from_files(available_formats: list[str], files: list[Any], canonical_format: str) -> list[str]:
+    file_formats = {
+        str(file_entry.get("format") or "").strip()
+        for file_entry in files
+        if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip()
+    }
+    formats = [format_name for format_name in available_formats if format_name in file_formats]
+    if not formats and canonical_format:
+        formats.append(canonical_format)
+    return formats
+
+
+def release_versions_from_index(
+    *,
+    release_index: dict[str, Any] | None,
+    canonical_path: str,
+    canonical_format: str,
+    available_formats: list[str],
+    pmtiles_path: str | None,
+) -> list[CatalogVersion]:
+    if not release_index:
+        return []
+    releases = release_index.get("releases") or []
+    if not isinstance(releases, list):
+        raise CatalogSiteError(f"release index for {release_index.get('asset_slug')!r}: releases must be a list")
+
+    versions: list[CatalogVersion] = []
+    seen_dates: set[str] = set()
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        date = str(release.get("date") or "").strip()
+        if not DATE_RE.fullmatch(date) or date in seen_dates:
+            continue
+        files = release.get("files") or []
+        if not isinstance(files, list):
+            continue
+        canonical_file = release_file_for_format(files, canonical_format, canonical_path) or (files[0] if files else None)
+        release_canonical_path = release_file_path(canonical_file)
+        if not release_canonical_path:
+            continue
+        release_pmtiles_file = release_file_for_format(files, "pmtiles", pmtiles_path or "")
+        release_pmtiles_path = release_file_path(release_pmtiles_file)
+        row_count = release.get("rows")
+        if not isinstance(row_count, int):
+            row_count = None
+        seen_dates.add(date)
+        versions.append(
+            CatalogVersion(
+                date=date,
+                canonical_path=release_canonical_path,
+                public_url=gs_to_https(release_canonical_path),
+                pmtiles_path=release_pmtiles_path or None,
+                pmtiles_url=gs_to_https(release_pmtiles_path) if release_pmtiles_path else None,
+                available_formats=release_formats_from_files(available_formats, files, canonical_format),
+                source_version=str(release.get("source_version") or ""),
+                rows=row_count,
+                release_path=str(release.get("release_path") or ""),
+                run_record_path=str(release.get("run_record_path") or ""),
+                canonical_sha256=release_file_sha256(canonical_file),
+                pmtiles_sha256=release_file_sha256(release_pmtiles_file),
+            )
+        )
+    return sorted(versions, key=lambda version: version.date, reverse=True)
 
 
 def read_description(path: Path) -> str:
@@ -405,7 +535,7 @@ def validate_row(
         raise CatalogSiteError(f"{prefix}: unresolved docs link {docs_path}")
 
 
-def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
+def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path | None = None) -> CatalogAsset:
     slug = row["asset_slug"].strip()
     canonical_path = row["canonical_path"].strip()
     canonical_format = row["canonical_format"].strip()
@@ -416,15 +546,34 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
     docs_path = f"docs/assets/{slug}.md"
     doc_path = docs_dir / f"{slug}.md"
     doc_metadata = read_doc_metadata(doc_path)
-    last_updated = row["last_updated"].strip()
-    versions = release_versions(
-        doc_path=doc_path,
+    last_updated = row.get("last_updated", "").strip()
+    release_index = load_release_index(release_index_dir, slug)
+    versions = release_versions_from_index(
+        release_index=release_index,
         canonical_path=canonical_path,
-        slug=slug,
         canonical_format=canonical_format,
         available_formats=formats,
-        last_updated=last_updated,
+        pmtiles_path=pmtiles_path,
     )
+    if not versions:
+        versions = release_versions(
+            doc_path=doc_path,
+            canonical_path=canonical_path,
+            slug=slug,
+            canonical_format=canonical_format,
+            available_formats=formats,
+            last_updated=last_updated,
+        )
+    latest_release = release_index.get("latest_release") if release_index else None
+    latest_run = release_index.get("latest_run") if release_index else None
+    release_index_updated_at = str(release_index.get("updated_at") or "") if release_index else ""
+    latest_release_date = ""
+    if isinstance(latest_release, dict):
+        latest_release_date = str(latest_release.get("date") or "")
+    if not latest_release_date and versions:
+        latest_release_date = versions[0].date
+    effective_last_updated = latest_release_date or last_updated
+    latest_version = next((version for version in versions if version.date == latest_release_date), versions[0] if versions else None)
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -441,7 +590,10 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
         has_pmtiles="pmtiles" in formats,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,
-        last_updated=last_updated,
+        last_updated=effective_last_updated,
+        latest_release=latest_release if isinstance(latest_release, dict) else None,
+        latest_run=latest_run if isinstance(latest_run, dict) else None,
+        release_index_updated_at=release_index_updated_at,
         source=row["source"].strip(),
         license=row["license"].strip(),
         notes=row.get("notes", "").strip(),
@@ -452,12 +604,15 @@ def asset_from_row(row: dict[str, str], docs_dir: Path) -> CatalogAsset:
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,
         pmtiles_url=pmtiles_cdn_url(slug, access_tier) if pmtiles_path else None,
+        canonical_sha256=latest_version.canonical_sha256 if latest_version else "",
+        pmtiles_sha256=latest_version.pmtiles_sha256 if latest_version else "",
         docs_path=docs_path,
         docs_url=docs_path,
+        release_index_url=f"../releases/{quote(slug)}.json",
         description=read_description(doc_path),
         license_flags=merged_license_flags(row["license"].strip(), doc_metadata, doc_path=doc_path),
         versions=versions,
-        sort_key=f"{last_updated}|{slug}",
+        sort_key=f"{effective_last_updated}|{slug}",
     )
 
 
@@ -468,17 +623,21 @@ def build_catalog_payload(
     docs_dir: Path,
     bucket: str,
     site_prefix: str,
+    release_index_dir: Path | None = Path("_catalog/releases"),
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     categories = load_categories(categories_path)
     rows = load_catalog_rows(catalog_path)
+    effective_release_index_dir = release_index_dir
+    if effective_release_index_dir is not None and not effective_release_index_dir.is_absolute():
+        effective_release_index_dir = catalog_path.parent.parent / effective_release_index_dir
     seen: set[str] = set()
     assets: list[CatalogAsset] = []
     for index, row in enumerate(rows, start=2):
         validate_row(row=row, row_number=index, categories=categories, seen=seen, docs_dir=docs_dir)
         seen.add(row["asset_slug"].strip())
-        assets.append(asset_from_row(row, docs_dir))
-    assets.sort(key=lambda asset: (asset.last_updated, asset.slug), reverse=True)
+        assets.append(asset_from_row(row, docs_dir, release_index_dir=effective_release_index_dir))
+    assets.sort(key=lambda asset: asset.sort_key, reverse=True)
     return {
         "schema_version": 1,
         "generated_at": generated_at or dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -524,6 +683,7 @@ def build_site(
     out_dir: Path,
     bucket: str,
     site_prefix: str,
+    release_index_dir: Path | None = Path("_catalog/releases"),
     generated_at: str | None = None,
 ) -> list[Path]:
     payload = build_catalog_payload(
@@ -532,6 +692,7 @@ def build_site(
         docs_dir=docs_dir,
         bucket=bucket,
         site_prefix=site_prefix,
+        release_index_dir=release_index_dir,
         generated_at=generated_at,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -552,6 +713,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", type=Path, required=True, help="Output directory for the static web bundle.")
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--site-prefix", default=DEFAULT_SITE_PREFIX)
+    parser.add_argument(
+        "--release-index-dir",
+        type=Path,
+        default=Path("_catalog/releases"),
+        help="Optional local directory of _catalog/releases/*.json files to merge into catalog.json.",
+    )
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
     return parser.parse_args(argv)
 
@@ -566,6 +733,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         out_dir=args.out,
         bucket=args.bucket,
         site_prefix=args.site_prefix,
+        release_index_dir=args.release_index_dir,
         generated_at=args.generated_at,
     )
     print(json.dumps({"output": str(args.out), "files": [str(path) for path in written]}, indent=2))

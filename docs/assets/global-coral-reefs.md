@@ -15,7 +15,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-29'
 source: UNEP-WCMC, WorldFish Centre, WRI, and TNC Global Distribution of Coral Reefs v4.1
 license: UNEP-WCMC General Data License (excluding WDPA); contextual internal use with citation only; no redistribution without
   permission
@@ -55,7 +54,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-29
 - **Update cadence:** manual
 - **Canonical file:** `latest/global-coral-reefs.fgb`
 - **Available formats:** `fgb`, `pmtiles`

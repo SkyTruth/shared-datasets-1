@@ -121,12 +121,12 @@ class GcsPublisher:
         metadata: dict[str, str],
     ) -> dict[str, Any]:
         blob = self.bucket.blob(object_name)
-        blob.metadata = metadata
         try:
             blob.reload()
             generation_match = int(blob.generation)
         except NotFound:
             generation_match = 0
+        blob.metadata = metadata
         try:
             blob.upload_from_filename(
                 local_path,

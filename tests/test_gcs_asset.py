@@ -73,7 +73,7 @@ class GcsAssetPathValidationTests(unittest.TestCase):
             catalog.write_text(
                 "asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,"
                 "canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,"
-                "last_updated,source,license,notes\n"
+                "source,license,notes\n"
             )
             result = subprocess.run(
                 [

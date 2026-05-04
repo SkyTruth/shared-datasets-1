@@ -16,7 +16,6 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-05-02'
 source: NETL EDX Global Oil & Gas Features Database gogi_v10_3_1shp.zip
 source_url: https://edx.netl.doe.gov/dataset/global-oil-gas-features-database
 license: Creative Commons Attribution and Open Data Commons Attribution License; attribution required
@@ -198,7 +197,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-02
 - **Update cadence:** manual
 - **Canonical file:** `latest/gogi-pipelines.fgb`
 - **Available formats:** `fgb`, `csv`, `pmtiles`

@@ -69,7 +69,7 @@ variable "pmtiles_serving_mode" {
 variable "pmtiles_redirector_image" {
   description = "Container image URI for the temporary PMTiles redirector Cloud Run service. Override with an immutable tag for production deploys."
   type        = string
-  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:latest"
+  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector@sha256:b8d3e905c29a4c8b7b44ed14c95dab4c9faad23f15cfca212a55182eb810c554"
 }
 
 variable "pmtiles_redirector_catalog_ttl_seconds" {

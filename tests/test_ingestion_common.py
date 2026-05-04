@@ -20,6 +20,7 @@ class FakeBlob:
         self.generation = generation
         self.size = 0
         self.metadata = None
+        self.remote_metadata = None
         self.content_type = None
         self.text = ""
         self.uploads = []
@@ -27,6 +28,8 @@ class FakeBlob:
     def reload(self) -> None:
         if not self.exists:
             raise NotFound("not found")
+        if self.remote_metadata is not None:
+            self.metadata = dict(self.remote_metadata)
 
     def download_as_text(self) -> str:
         self.reload()
@@ -38,6 +41,7 @@ class FakeBlob:
         self.generation += 1
         self.content_type = content_type
         self.size = Path(filename).stat().st_size
+        self.remote_metadata = dict(self.metadata or {})
         self.uploads.append(("filename", if_generation_match, content_type))
 
     def upload_from_string(self, data, *, content_type=None, if_generation_match=None):
@@ -47,6 +51,7 @@ class FakeBlob:
         self.content_type = content_type
         self.text = data
         self.size = len(data.encode())
+        self.remote_metadata = dict(self.metadata or {})
         self.uploads.append(("string", if_generation_match, content_type))
 
     def _check_generation(self, if_generation_match):
@@ -133,6 +138,7 @@ class GcsPublisherTests(unittest.TestCase):
         blob = bucket.blob("asset/latest/asset.pmtiles")
         blob.exists = True
         blob.generation = 7
+        blob.remote_metadata = {"run_date": "old"}
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
 
         with tempfile.NamedTemporaryFile(suffix=".pmtiles") as tmp:
@@ -146,6 +152,7 @@ class GcsPublisherTests(unittest.TestCase):
 
         self.assertEqual(blob.uploads[0][1], 7)
         self.assertEqual(blob.content_type, "application/vnd.pmtiles")
+        self.assertEqual(blob.remote_metadata, {"asset_slug": "asset"})
 
     def test_latest_manifest_replace_uses_observed_generation(self):
         bucket = FakeBucket()

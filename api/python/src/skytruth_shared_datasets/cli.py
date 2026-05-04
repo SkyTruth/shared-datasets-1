@@ -111,9 +111,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_assets(assets) -> None:
-    print("asset_slug\ttitle\taccess_tier\tformats\tlast_updated")
+    print("asset_slug\ttitle\taccess_tier\tformats\tupdate_cadence")
     for asset in assets:
-        print(f"{asset.slug}\t{asset.title}\t{asset.access_tier}\t{';'.join(asset.available_formats)}\t{asset.last_updated}")
+        print(f"{asset.slug}\t{asset.title}\t{asset.access_tier}\t{';'.join(asset.available_formats)}\t{asset.update_cadence}")
 
 
 def _print_versions(payload) -> None:

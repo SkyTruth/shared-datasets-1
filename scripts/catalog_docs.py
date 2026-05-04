@@ -39,7 +39,6 @@ CATALOG_COLUMNS = [
     "has_pmtiles",
     "has_geojson",
     "has_csv",
-    "last_updated",
     "source",
     "license",
     "notes",
@@ -59,7 +58,6 @@ FRONTMATTER_KEYS = [
     "canonical_file",
     "available_formats",
     "metadata_paths",
-    "last_updated",
     "source",
     "source_url",
     "license",
@@ -90,7 +88,6 @@ REQUIRED_SCALAR_FIELDS = [
     "update_cadence",
     "canonical_format",
     "canonical_file",
-    "last_updated",
     "source",
     "license",
 ]
@@ -302,7 +299,7 @@ def normalize_metadata(
             value = (catalog_row or {}).get("access_tier") or "public"
         if key == "canonical_file" and not value and allow_legacy:
             value = canonical_file_from_row(catalog_row)
-        if not value and catalog_row and key in {"last_updated", "source", "license"} and allow_legacy:
+        if not value and catalog_row and key in {"source", "license"} and allow_legacy:
             value = catalog_row.get(key)
         metadata[key] = as_text(value).strip()
 
@@ -492,7 +489,6 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "has_pmtiles": str("pmtiles" in formats).lower(),
         "has_geojson": str("geojson" in formats).lower(),
         "has_csv": str("csv" in formats).lower(),
-        "last_updated": metadata["last_updated"],
         "source": metadata["source"],
         "license": metadata["license"],
         "notes": metadata.get("notes", ""),
@@ -532,8 +528,8 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
                 [
                     f"## {current_category}",
                     "",
-                    "| Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |",
-                    "|---|---|---|---|---|---|---|",
+                    "| Asset | Subcategory | Status | Access tier | Formats | Canonical file |",
+                    "|---|---|---|---|---|---|",
                 ]
             )
         formats = ";".join(metadata["available_formats"])
@@ -546,7 +542,6 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
                     metadata["status"],
                     metadata["access_tier"],
                     f"`{formats}`",
-                    metadata["last_updated"],
                     f"`{metadata['canonical_file']}`",
                 ]
             )
@@ -564,7 +559,6 @@ def summary_block(metadata: dict[str, Any]) -> str:
             f"- **Status:** {metadata['status']}",
             f"- **Access tier:** {metadata['access_tier']}",
             f"- **Owner:** {metadata['owner']}",
-            f"- **Last updated:** {metadata['last_updated']}",
             f"- **Update cadence:** {metadata['update_cadence']}",
             f"- **Canonical file:** `{metadata['canonical_file']}`",
             f"- **Available formats:** {formats}",

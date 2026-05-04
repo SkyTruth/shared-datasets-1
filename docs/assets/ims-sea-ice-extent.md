@@ -16,12 +16,10 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-last_updated: '2026-05-01'
 source: NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
 license: Public U.S. government work; cite NSIDC G02156
-notes: Scheduled refresh release 2026-05-01; source version ims2026121_4km_GIS_v1.3.tif.gz; source rows 2781; fgb sha256 a7d09f509dd94cfd94766f12fbf9815ca7cd0a4500e232e534190c3fb127d4c9;
-  pmtiles sha256 79f4c8f51df507783fd7c7761dec754f82c24a1ada401eb3f4136b405ae50ba7; daily job publishes raw IMS class 3 as
-  FGB plus PMTiles
+notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. Release history, source versions, row counts, and file hashes
+  are recorded in the bucket release index and per-run records.
 files:
 - path: latest/ims-sea-ice-extent.fgb
   format: fgb
@@ -51,7 +49,6 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-05-01
 - **Update cadence:** daily
 - **Canonical file:** `latest/ims-sea-ice-extent.fgb`
 - **Available formats:** `fgb`, `pmtiles`

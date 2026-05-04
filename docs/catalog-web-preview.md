@@ -20,6 +20,15 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
   --out /tmp/shared-datasets-1/catalog-web
 ```
 
+When validating a specific release selector locally, download the relevant
+release index JSON files and pass that directory:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
+  --release-index-dir /tmp/shared-datasets-1/release-indexes \
+  --out /tmp/shared-datasets-1/catalog-web
+```
+
 The generated bundle contains:
 
 ```text
@@ -35,9 +44,16 @@ docs/assets/*.md
 Markdown at runtime.
 
 For assets with `releases/YYYY-MM-DD/...` file entries in `docs/assets/*.md`,
-the generator emits a `versions` array. Exact release dates are preserved. For
-templated release paths, the current catalog `last_updated` date becomes the
-selectable dated release for the web preview.
+the generator emits a fallback `versions` array. At runtime, the browser also
+fetches `_catalog/releases/{asset-slug}.json` and replaces that fallback with
+the complete release history from the bucket-side release index. This keeps the
+release selector current after cron jobs run without requiring a Git commit or a
+tracked `last_updated` edit.
+
+The browser-facing freshness labels are `Latest release` for the newest
+successful dataset release and `Last check-in` for the most recent success or
+meaningful skip recorded by the cron job. Both values come from the release
+index when present.
 
 Optional discovery fields in asset-doc frontmatter are emitted when present:
 `bounds` as `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
