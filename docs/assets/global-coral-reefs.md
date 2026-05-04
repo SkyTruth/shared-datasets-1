@@ -20,7 +20,8 @@ license: UNEP-WCMC General Data License (excluding WDPA); contextual internal us
   permission
 notes: Converted local polygon and point shapefiles to FGB plus PMTiles with both layers; release 2026-04-29; polygon fgb
   sha256 387d9999983a2cf9916ce3d7d496c45319ed8196eccfe9b3d2e8622b82756869; point fgb sha256 a81fcf8264e397fe08cd2655ad580cf36da6fea6010e830b97947fb091bb8ccf;
-  pmtiles sha256 02321121660212e551732b658c603be1f3754f1b54abd2056fd11353bf670612
+  pmtiles sha256 2e33c2bbbf0942d0b692e663815177c47f87a008a5206451e0e293f8af82b7b6; PMTiles rebuilt 2026-05-04 at maxzoom 12
+  from the multi-layer FGB profile with polygon detail and point-layer retention
 files:
 - path: latest/global-coral-reefs.fgb
   format: fgb
@@ -119,6 +120,8 @@ The local source package contains 17,504 polygon features and 925 point features
 ## Update notes
 
 Manually converted from `/Users/jonathanraphael/Desktop/14_001_WCMC008_CoralReefs2018_v4_1` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
+
+PMTiles were rebuilt on 2026-05-04 at maxzoom 12 from the published polygon and point FGB layers. The rebuild keeps the `global_coral_reefs` and `global_coral_reefs_points` tile layers, preserves source properties, and retains all 925 point features at zoom 0.
 
 Requested citation:
 

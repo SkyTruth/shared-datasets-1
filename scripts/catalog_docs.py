@@ -66,6 +66,11 @@ FRONTMATTER_KEYS = [
     "bounds",
     "geometry_type",
     "row_count",
+    "source_resolution_meters",
+    "source_scale_denominator",
+    "pmtiles_maxzoom",
+    "pmtiles_maxzoom_reason",
+    "pmtiles_detail_hint",
     "files",
 ]
 
@@ -75,6 +80,11 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "bounds",
     "geometry_type",
     "row_count",
+    "source_resolution_meters",
+    "source_scale_denominator",
+    "pmtiles_maxzoom",
+    "pmtiles_maxzoom_reason",
+    "pmtiles_detail_hint",
 ]
 
 REQUIRED_SCALAR_FIELDS = [
@@ -407,6 +417,32 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be an integer") from error
         if row_count < 0:
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
+    if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):
+        try:
+            resolution = float(metadata["source_resolution_meters"])
+        except (TypeError, ValueError) as error:
+            raise CatalogDocsError(f"{path}: source_resolution_meters must be a number") from error
+        if resolution <= 0:
+            raise CatalogDocsError(f"{path}: source_resolution_meters must be positive")
+    if "source_scale_denominator" in metadata and metadata["source_scale_denominator"] not in (None, ""):
+        try:
+            scale = float(metadata["source_scale_denominator"])
+        except (TypeError, ValueError) as error:
+            raise CatalogDocsError(f"{path}: source_scale_denominator must be a number") from error
+        if scale <= 0:
+            raise CatalogDocsError(f"{path}: source_scale_denominator must be positive")
+    if "pmtiles_maxzoom" in metadata and metadata["pmtiles_maxzoom"] not in (None, ""):
+        try:
+            maxzoom = int(metadata["pmtiles_maxzoom"])
+        except (TypeError, ValueError) as error:
+            raise CatalogDocsError(f"{path}: pmtiles_maxzoom must be an integer") from error
+        if maxzoom < 0:
+            raise CatalogDocsError(f"{path}: pmtiles_maxzoom must be non-negative")
+        if not metadata.get("pmtiles_maxzoom_reason"):
+            raise CatalogDocsError(f"{path}: pmtiles_maxzoom requires pmtiles_maxzoom_reason")
+    if "pmtiles_detail_hint" in metadata and metadata["pmtiles_detail_hint"] not in (None, ""):
+        if str(metadata["pmtiles_detail_hint"]) not in {"coarse", "medium", "detailed"}:
+            raise CatalogDocsError(f"{path}: pmtiles_detail_hint must be coarse, medium, or detailed")
     if "license_flags" in metadata and metadata["license_flags"] not in (None, ""):
         flags = metadata["license_flags"]
         if isinstance(flags, str):

@@ -139,7 +139,8 @@ production job that imports the shared helpers.
 3. For large source files, run a fractional sandbox test before deploying. Mount the downloaded source and repo into the same Linux image that Cloud Run will use, set sample-only environment variables, and build FGB/PMTiles locally without GCS publishing:
 
 ```bash
-export WDPA_LOCAL_DATA_DIR=/tmp/wdpa-monthly-local
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
+export WDPA_LOCAL_DATA_DIR="$WORK_ROOT/downloads/wdpa-monthly-local"
 
 docker run --platform linux/amd64 --rm -i \
   -e TMPDIR=/data/tmp \

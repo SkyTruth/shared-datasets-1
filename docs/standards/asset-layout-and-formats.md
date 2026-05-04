@@ -24,8 +24,12 @@ Rules:
   unless clearly documented as noncanonical source/debug content.
 - `.fgb` is the preferred canonical vector format.
 - `.pmtiles` is a serving/display artifact, not the canonical analytical source.
-- Shared vector `.pmtiles` display artifacts should be built to maxzoom 8 or
-  higher. Lower maxzoom values require a documented exception.
+- Shared vector `.pmtiles` display artifacts should use the repo vector
+  helper's auto maxzoom policy: generate the canonical FGB first, profile the
+  FGB, then choose maxzoom from source scale/resolution metadata and measured
+  geometry detail. The policy biases toward detailed presentation and caps at
+  zoom 12 by default. Lower than zoom 8 requires source/profile evidence or a
+  documented override.
 - `.geojson` should stay small enough to inspect or transfer easily.
 - PNG, JPEG, and WebP files are allowed only under `previews/` or as tile
   encodings inside `.pmtiles`.

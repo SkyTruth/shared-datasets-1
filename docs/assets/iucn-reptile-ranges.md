@@ -33,6 +33,9 @@ bounds:
 - 71.18811
 geometry_type: MultiPolygon
 row_count: 14052
+pmtiles_maxzoom: 6
+pmtiles_maxzoom_reason: Simplified display artifact for coarse global range-map preview; canonical FGB remains the analytical
+  geometry.
 files:
 - path: latest/iucn-reptile-ranges.fgb
   format: fgb

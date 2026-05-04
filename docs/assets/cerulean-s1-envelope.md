@@ -20,9 +20,10 @@ source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
   is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
-  1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 21baa832ee89013c1e04f9b79aaaeefc58b765bf8cad02b93242f8558d61e4a4;
-  PMTiles generated with Tippecanoe zooms 0-8 and no simplification; canonical FGB preserves the source WKT geometry as an
-  envelope only
+  1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
+  PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-6, no simplification, and synthetic source_layer property for catalog
+  inspection; canonical FGB preserves the source WKT geometry as an envelope only
+pmtiles_detail_hint: coarse
 files:
 - path: latest/cerulean-s1-envelope.fgb
   format: fgb
@@ -36,10 +37,10 @@ files:
   format: fgb
   role: release
   purpose: Dated canonical release
-- path: releases/2026-05-01/cerulean-s1-envelope.pmtiles
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles
   format: pmtiles
   role: release
-  purpose: Dated map-tile release
+  purpose: Dated map-tile releases
 - path: runs/2026-05-01.json
   format: json
   role: run-record
@@ -90,7 +91,7 @@ generated from the same geometry for web-map display only.
 | `latest/cerulean-s1-envelope.fgb` | `fgb` | `canonical` | Canonical WGS84 multipolygon envelope dataset |
 | `latest/cerulean-s1-envelope.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same envelope geometry |
 | `releases/2026-05-01/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated canonical release |
-| `releases/2026-05-01/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated map-tile releases |
 | `runs/2026-05-01.json` | `json` | `run-record` | Manual publish record |
 <!-- END GENERATED files-table -->
 
@@ -102,9 +103,9 @@ Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
 `cerulean_s1_envelope`.
 
 The source CSV is not published as a canonical format because shared-datasets
-CSV assets must not contain geometry columns. The PMTiles artifact was generated
+CSV assets must not contain geometry columns. The PMTiles artifact is generated
 with Tippecanoe 2.79.0 from a temporary GeoJSON tiling input, with zooms 0
-through 8 and no display simplification.
+through 6 and no display simplification.
 
 The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
 was an initial name for this dataset before the framing was corrected. It is
@@ -117,7 +118,9 @@ catalog asset and not as the canonical publishing location.
 |---|---|---|
 | `geometry` | MultiPolygon | Cerulean Sentinel-1 analysis envelope geometry in WGS84. |
 
-No non-geometry properties are published.
+The canonical FGB publishes no non-geometry properties. PMTiles display tiles add
+a compact synthetic `source_layer` property so the catalog inspector can identify
+decoded features.
 
 ## Update notes
 
@@ -133,7 +136,9 @@ Output summary:
 - CRS: EPSG:4326
 - Toolchain: GDAL 3.6.2; Tippecanoe 2.79.0; PMTiles CLI unavailable locally
 - FGB SHA-256: `4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11`
-- PMTiles SHA-256: `21baa832ee89013c1e04f9b79aaaeefc58b765bf8cad02b93242f8558d61e4a4`
+- PMTiles maxzoom: 6
+- PMTiles zoom 0 decoded feature properties: `source_layer`
+- PMTiles SHA-256: `33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d`
 
 ## Known caveats
 

@@ -21,6 +21,7 @@ notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1
   fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
   PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-8, no pre-tiling simplification, --no-line-simplification, and --no-tiny-polygon-reduction-at-maximum-zoom
   for higher-zoom display fidelity; canonical FGB preserves source geometry and fields
+source_scale_denominator: 10000000
 files:
 - path: latest/natural-earth-10m-land.fgb
   format: fgb

@@ -40,6 +40,12 @@ export SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1
 Use `uv run` for repo-owned Python commands. Do not create ad hoc pip virtualenvs
 or mamba environments for routine GCS object operations.
 
+Local downloads and edit copies must follow
+`docs/standards/local-temp-workspaces.md`. Use the repo temp root
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}` and a named
+child such as `downloads/{asset-slug}/`; do not scatter files directly under
+`/tmp`.
+
 Local authentication:
 
 ```bash
@@ -91,7 +97,8 @@ Download object:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py download \
-  gs://$SHARED_DATASETS_BUCKET/README.md /tmp/shared-datasets-README.md
+  gs://$SHARED_DATASETS_BUCKET/README.md \
+  "$TMPDIR/shared-datasets-1/downloads/root-README.md"
 ```
 
 Upload a new object without clobbering:
@@ -141,11 +148,13 @@ Use this read-modify-write pattern for remote README or metadata edits:
 
 ```bash
 URI=gs://$SHARED_DATASETS_BUCKET/path/to/README.md
+EDIT_DIR="$TMPDIR/shared-datasets-1/downloads/example-asset"
+mkdir -p "$EDIT_DIR"
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$URI"
-UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py download "$URI" /tmp/asset.README.md
-# edit /tmp/asset.README.md
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py download "$URI" "$EDIT_DIR/README.md"
+# edit "$EDIT_DIR/README.md"
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
-  /tmp/asset.README.md "$URI" --replace-generation <generation-from-stat>
+  "$EDIT_DIR/README.md" "$URI" --replace-generation <generation-from-stat>
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$URI"
 ```
 
@@ -174,7 +183,8 @@ Examples:
 
 ```bash
 gcloud storage ls gs://$SHARED_DATASETS_BUCKET/
-gcloud storage cp gs://$SHARED_DATASETS_BUCKET/README.md /tmp/README.md
+gcloud storage cp gs://$SHARED_DATASETS_BUCKET/README.md \
+  "$TMPDIR/shared-datasets-1/downloads/root-README.md"
 gcloud storage cp ./README.md gs://$SHARED_DATASETS_BUCKET/README.md \
   --if-generation-match=<generation>
 ```

@@ -54,10 +54,12 @@ class PublishingConciergeTests(unittest.TestCase):
             "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
         )
         self.assertTrue(any("vector_asset.py build" in command for command in plan.suggested_commands))
+        self.assertTrue(any("--maxzoom auto" in command for command in plan.suggested_commands))
         self.assertTrue(any("publish-release" in command for command in plan.remote_write_commands))
         self.assertEqual(plan.blocking_questions, [])
         self.assertFalse(any("PMTiles is automatic" in note for note in plan.notes))
         self.assertTrue(any("require a PMTiles companion" in note for note in plan.notes))
+        self.assertTrue(any("resolved after the canonical FGB" in note for note in plan.notes))
 
     def test_missing_source_and_license_are_blocking_questions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,6 +124,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
         self.assertEqual(plan.available_formats, ["fgb", "pmtiles"])
         self.assertTrue(any("vector_asset.py build" in command for command in plan.suggested_commands))
+        self.assertTrue(any("--maxzoom auto" in command for command in plan.suggested_commands))
         self.assertFalse(any(" cp " in command for command in plan.suggested_commands))
 
     def test_write_draft_doc_refuses_existing_without_overwrite(self):
@@ -202,6 +205,50 @@ class PublishingConciergeTests(unittest.TestCase):
         )
         self.assertIn("access_tier: public", text)
         self.assertIn("latest/example-asset.pmtiles", text)
+
+    def test_pmtiles_hints_are_included_in_vector_command_and_draft_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "source.shp"
+            source.write_text("placeholder")
+            plan = publishing_concierge.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                title="Example Asset",
+                category="100-geographic-reference",
+                subcategory="110-boundaries",
+                owner="SkyTruth",
+                source_name="Example source",
+                license_text="Example license",
+                update_cadence="manual",
+                canonical_format=None,
+                access_tier="public",
+                bucket="example-bucket",
+                release_date=None,
+                with_pmtiles=False,
+                source_scale_denominator=10_000_000,
+                pmtiles_detail_hint="medium",
+                categories_path=categories,
+                docs_dir=root / "docs/assets",
+            )
+
+        command = next(command for command in plan.suggested_commands if "vector_asset.py build" in command)
+        self.assertIn("--source-scale-denominator 10000000", command)
+        self.assertIn("--pmtiles-detail-hint medium", command)
+        self.assertTrue(any("source/detail hints" in note for note in plan.notes))
+
+        text = publishing_concierge.draft_asset_doc(
+            plan,
+            owner="SkyTruth",
+            source_name="Example source",
+            license_text="Example license",
+            update_cadence="manual",
+            access_tier="public",
+        )
+        self.assertIn("source_scale_denominator: 10000000", text)
+        self.assertIn("pmtiles_detail_hint: medium", text)
 
 
 if __name__ == "__main__":

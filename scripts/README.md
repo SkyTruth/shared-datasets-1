@@ -45,7 +45,8 @@ The generator refreshes managed asset-doc blocks,
 bucket README files without uploading them:
 
 ```bash
-uv run python scripts/catalog_docs.py export-readmes --output-dir /tmp/shared-dataset-readmes
+uv run python scripts/catalog_docs.py export-readmes \
+  --output-dir "$TMPDIR/shared-datasets-1/readmes"
 ```
 
 Raster validation helpers live in:
@@ -68,15 +69,18 @@ scripts/vector_asset.py
 
 Use `build` before publishing a manual vector asset that needs canonical FGB and
 PMTiles. The helper writes generated files outside the repository by default,
-under the system temp namespace:
+under the repo temp root described in
+`docs/standards/local-temp-workspaces.md`:
 
 ```text
-$TMPDIR/shared-datasets-1/vector-assets/{asset-slug}/
+${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/{asset-slug}/
 ```
 
 Override the temp root with `SHARED_DATASETS_WORKDIR` or pass `--work-dir`.
 Do not write generated datasets into the repo unless they are tiny intentional
-fixtures.
+fixtures. Put ad hoc scratch files under
+`$TMPDIR/shared-datasets-1/_scratch/{task}-{timestamp}/`, not directly under
+`/tmp` or the repository root.
 
 Example:
 
@@ -86,21 +90,40 @@ uv run python scripts/vector_asset.py build ./source.shp \
   --layer-name example_asset \
   --title "Example Asset" \
   --description "Example vector tiles" \
-  --maxzoom 8 \
   --tile-simplify 0.001
 ```
 
 The build sequence is standardized as:
 
 1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
-2. `ogr2ogr` to temporary GeoJSON in EPSG:4326 for tiling.
-3. `tippecanoe` direct PMTiles output with explicit min/max zoom metadata.
-4. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
+2. Profile the generated FGB to choose PMTiles maxzoom from source hints and
+   measured geometry detail.
+3. `ogr2ogr` to temporary GeoJSON in EPSG:4326 for tiling.
+4. `tippecanoe` direct PMTiles output with explicit min/max zoom metadata.
+5. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
    property sample when those tools exist.
 
-Shared PMTiles should be built to maxzoom 8 or higher. The helper rejects lower
-maxzoom values unless `--allow-low-maxzoom` is passed for a documented
-exception.
+`--maxzoom auto` is the default. Auto maxzoom generates the canonical FGB first,
+profiles the FGB, and writes `pmtiles-profile.json` next to the generated
+artifacts with the resolved maxzoom and evidence. The policy biases toward
+detailed presentation and caps at zoom 12 by default. Lower than zoom 8 requires
+source/profile evidence or a documented override; manual `--maxzoom N` requires
+`--maxzoom-reason`, and values above zoom 12 require `--allow-high-maxzoom`.
+
+Use source hints when they are stable properties of the upstream data:
+
+```bash
+uv run python scripts/vector_asset.py build ./source.shp \
+  --asset-slug natural-earth-10m-land \
+  --source-scale-denominator 10000000
+```
+
+For a read-only acceptance check against an existing local FGB, use the same
+profiler without rebuilding artifacts:
+
+```bash
+uv run python scripts/vector_asset.py recommend-maxzoom --fgb ./asset.fgb
+```
 
 Use `--tile-simplify` for dense coastline, boundary, or global polygon display
 tiles. This simplification applies only to PMTiles generation; the canonical FGB
@@ -211,7 +234,8 @@ uv run python scripts/terraform_prod_apply.py
 Static catalog web builds use:
 
 ```bash
-uv run python scripts/catalog_site.py --out /tmp/shared-datasets-1/catalog-web
+uv run python scripts/catalog_site.py \
+  --out "$TMPDIR/shared-datasets-1/catalog-web"
 ```
 
 The generated site reads `catalog.json` at runtime and provides search, metadata

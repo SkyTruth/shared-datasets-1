@@ -33,6 +33,9 @@ bounds:
 - 89.9
 geometry_type: MultiPolygon
 row_count: 13238
+pmtiles_maxzoom: 6
+pmtiles_maxzoom_reason: Simplified display artifact for coarse global range-map preview; canonical FGB remains the analytical
+  geometry.
 files:
 - path: latest/iucn-mammal-ranges.fgb
   format: fgb

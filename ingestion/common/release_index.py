@@ -156,11 +156,11 @@ def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = Non
         "format": format_name,
     }
     if isinstance(value, dict):
-        for key in ("generation", "size", "content_type"):
+        for key in ("generation", "size", "content_type", "sha256"):
             if value.get(key) is not None:
                 entry[key] = value[key]
     sha = (sha256_by_format or {}).get(format_name)
-    if sha:
+    if sha and "sha256" not in entry:
         entry["sha256"] = sha
     return entry
 
@@ -356,12 +356,17 @@ def release_file_entries_from_blobs(bucket_name: str, blobs: list[Any]) -> list[
     entries = []
     for blob in sorted(blobs, key=lambda item: item.name):
         path = f"gs://{bucket_name}/{blob.name}"
+        format_name = infer_format(path)
         entry = {
             "path": path,
-            "format": infer_format(path),
+            "format": format_name,
             "generation": int(blob.generation),
             "size": int(blob.size or 0),
         }
+        metadata = blob.metadata or {}
+        sha256 = metadata.get("sha256") or metadata.get(f"{format_name}_sha256")
+        if sha256:
+            entry["sha256"] = str(sha256)
         entries.append(entry)
     return entries
 
@@ -437,7 +442,7 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             release_entry_by_path = {entry["path"]: entry for entry in release_entries}
             if record.get("release_paths"):
                 record["release_paths"] = [
-                    {**release_entry_by_path.get(file_entry["path"], {}), **file_entry}
+                    {**file_entry, **release_entry_by_path.get(file_entry["path"], {})}
                     for file_entry in files_from_run_record(record)
                     if file_entry.get("path")
                 ]

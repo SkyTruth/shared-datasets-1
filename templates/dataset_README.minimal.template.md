@@ -22,6 +22,11 @@ notes: "{short catalog note}"
 bounds: ["{min_lon}", "{min_lat}", "{max_lon}", "{max_lat}"] # optional WGS84 extent
 geometry_type: "{optional geometry type}"
 row_count: "{optional integer row count}"
+source_resolution_meters: "{optional source resolution for PMTiles auto maxzoom}"
+source_scale_denominator: "{optional source scale denominator for PMTiles auto maxzoom}"
+pmtiles_maxzoom: "{optional explicit PMTiles maxzoom}"
+pmtiles_maxzoom_reason: "{required if pmtiles_maxzoom is set}"
+pmtiles_detail_hint: "{optional coarse | medium | detailed}"
 files:
   - path: "latest/{asset-slug}.{ext}"
     format: "{format}"

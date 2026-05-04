@@ -18,7 +18,8 @@ metadata_paths:
 source: Marine Regions EEZ v12
 license: See Marine Regions terms
 notes: Initial upload from eez-mr_eez_v12.fgb; release 2026-04-29; sha256 b4f1d04cff66a75a4176734a02e2af994b7c55490b7b42cdcf7ba2d5c431f6b7;
-  PMTiles sha256 34345c1e24ef99fe5c9be0b8a4f5b38b26a5e4b7411c6735002133e17105fea2
+  PMTiles sha256 071b081c7a64d8fedd53c07a9be6cce85bb234afeb3216f7449e2b8ee42fc225; PMTiles rebuilt 2026-05-04 at maxzoom 11
+  from sampled FGB geometry detail with local tile and browser QA
 files:
 - path: latest/marine-regions-eez.fgb
   format: fgb
@@ -92,6 +93,11 @@ confirmation. Use the source documentation for authoritative field definitions.
 
 Manually converted from `eez-mr_eez_v12.fgb` and published as a 2026-04-29
 release.
+
+PMTiles were rebuilt on 2026-05-04 from the published FGB using auto maxzoom
+selection. The sampled FGB profile resolved to maxzoom 11 from representative
+segment lengths and feature dimensions. The rebuilt PMTiles SHA-256 is
+`071b081c7a64d8fedd53c07a9be6cce85bb234afeb3216f7449e2b8ee42fc225`.
 
 ## Known caveats
 

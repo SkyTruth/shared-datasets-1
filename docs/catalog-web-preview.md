@@ -16,17 +16,19 @@ https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/web/index.htm
 ## Build locally
 
 ```bash
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
-  --out /tmp/shared-datasets-1/catalog-web
+  --out "$WORK_ROOT/catalog-web"
 ```
 
 When validating a specific release selector locally, download the relevant
 release index JSON files and pass that directory:
 
 ```bash
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
-  --release-index-dir /tmp/shared-datasets-1/release-indexes \
-  --out /tmp/shared-datasets-1/catalog-web
+  --release-index-dir "$WORK_ROOT/release-indexes" \
+  --out "$WORK_ROOT/catalog-web"
 ```
 
 The generated bundle contains:
@@ -64,10 +66,11 @@ them.
 ## Validate
 
 ```bash
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 UV_CACHE_DIR=.uv-cache uv run pytest tests/test_catalog_site.py
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
-  --out /tmp/shared-datasets-1/catalog-web
-python3 -m http.server 4173 --directory /tmp/shared-datasets-1/catalog-web
+  --out "$WORK_ROOT/catalog-web"
+python3 -m http.server 4173 --directory "$WORK_ROOT/catalog-web"
 ```
 
 Then open:
@@ -112,7 +115,8 @@ replaced only after reading the current generation.
 Initial upload example:
 
 ```bash
-OUT=/tmp/shared-datasets-1/catalog-web
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
+OUT="$WORK_ROOT/catalog-web"
 DEST=gs://skytruth-shared-datasets-1/_catalog/web
 
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload "$OUT/index.html" "$DEST/index.html"

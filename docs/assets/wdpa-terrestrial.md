@@ -19,7 +19,8 @@ metadata_paths:
 source: UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
 license: See Protected Planet WDPA terms
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. Release history, source versions, row counts, and
-  file hashes are recorded in the bucket release index and per-run records.
+  file hashes are recorded in the bucket release index and per-run records. The 2026-05-04 PMTiles were rebuilt at maxzoom
+  12 from the published FGB profile; pmtiles sha256 02591002e5ef5c0e50829972de6ae037b41d8bcb5b8fa49ae5a0dd6a7f6c53d2
 files:
 - path: latest/wdpa-terrestrial.fgb
   format: fgb
@@ -99,6 +100,11 @@ source layers have identical fields before publishing.
 
 Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
 `wdpa-monthly` Cloud Run Job and scheduled for `0 9 1-10 * *` UTC.
+
+The 2026-05-04 PMTiles artifact was rebuilt from the published FGB using auto
+maxzoom selection. The mixed point/vector FGB profile resolved to maxzoom 12
+with point retention. The rebuilt PMTiles SHA-256 is
+`02591002e5ef5c0e50829972de6ae037b41d8bcb5b8fa49ae5a0dd6a7f6c53d2`.
 
 ## Known caveats
 

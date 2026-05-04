@@ -24,8 +24,9 @@ license_flags:
 notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip sha256 2621f210dde27f068ea2987e0cf0135b20c2641e94e6b4e3692ac9ee4263ad07;
   17 source shapefile layers converted to WGS84 FGB plus 2 combined CSV catalog tables; retained 1,623,469 vector features
   after omitting 394 well points that could not be reprojected; Well.dbf is truncated in the source shapefile resource, so
-  wells are published as geometry only; pmtiles sha256 6a1a2184598925e6225306b5ec103929035d1c5eeef9882b9a4740740ced7f0c; PMTiles
-  generated as multi-layer display tiles with compact feature properties, Tippecanoe v2.79.0, and low-zoom point retention
+  wells are published as geometry only; pmtiles sha256 9fe9a4705b06ae08327e59b769b06ffe16d1d7f6932b0b318bbe92055be8ab31; PMTiles
+  rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties, Tippecanoe v2.79.0, and low-zoom
+  point retention
 geometry_type: mixed
 row_count: 1623469
 files:
@@ -272,7 +273,7 @@ The `Well.dbf` file in `gogi_v10_3_1shp.zip` is truncated: its DBF header advert
 
 The source `Data_Catalog_*.csv` tables were combined into `gogi-data-catalog.csv` with a `source_table` column. `Data_Catalog_Validation.csv` was published separately as `gogi-data-catalog-validation.csv`, also with `source_table`.
 
-The `gogi.pmtiles` artifact is a multi-layer display artifact built from the 17 published FGB vector layers. It preserves named vector layers for map preview and includes a compact set of source properties for feature inspection. Analytical use should still rely on the FGB and CSV files. The `well_geometry` tile layer has only `source_layer` and `property_note` properties because the source `Well.dbf` is truncated and well attributes are intentionally not published.
+The `gogi.pmtiles` artifact is a multi-layer display artifact built from the 17 published FGB vector layers. It preserves named vector layers for map preview and includes a compact set of source properties for feature inspection. Analytical use should still rely on the FGB and CSV files. The `well_geometry` tile layer has only `source_layer` and `property_note` properties because the source `Well.dbf` is truncated and well attributes are intentionally not published. PMTiles were rebuilt on 2026-05-04 at maxzoom 12, with decoded zoom 0 checks confirming full point-layer retention including all 736,082 well geometry points.
 
 Layer feature counts:
 

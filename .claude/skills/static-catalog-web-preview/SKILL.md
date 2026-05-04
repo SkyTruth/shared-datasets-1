@@ -66,18 +66,21 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
 3. Build and inspect the static bundle:
 
 ```bash
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
-  --out /tmp/shared-datasets-1/catalog-web
+  --out "$WORK_ROOT/catalog-web"
 ```
 
    - Inspect generated `catalog.json` with `jq`.
    - Verify affected assets have expected `available_formats`, `has_pmtiles`, `has_geojson`, `public_url`, `pmtiles_url`, `docs_url`, and `versions`.
 
 4. PMTiles fidelity checks:
-   - Shared vector PMTiles display artifacts should be built to maxzoom 8 or
-     higher. `scripts/vector_asset.py build` defaults to maxzoom 8 and rejects
-     lower maxzoom values unless `--allow-low-maxzoom` is passed for a
-     documented exception.
+   - Shared vector PMTiles display artifacts should use
+     `scripts/vector_asset.py build` auto maxzoom. The helper generates the FGB,
+     profiles it, then chooses maxzoom from source scale/resolution hints and
+     measured geometry detail. It biases toward detailed presentation and caps
+     at zoom 12 by default. Lower than zoom 8 requires source/profile evidence
+     or a documented override.
    - The standard `scripts/vector_asset.py build` Tippecanoe path adds
      `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` by
      default so low-zoom tiles retain published point features. Do not override
@@ -109,13 +112,21 @@ tippecanoe-decode ./example.pmtiles 0 0 0 \
   | jq '[.features[].features[].properties | keys[]] | unique'
 ```
 
-   - Record feature counts, tool paths, tool versions, output sizes, and SHA-256 hashes in asset docs/catalog notes when manually publishing PMTiles.
+   - Record feature counts, resolved maxzoom evidence from
+     `pmtiles-profile.json`, tool paths, tool versions, output sizes, and
+     SHA-256 hashes in asset docs/catalog notes when manually publishing
+     PMTiles.
+   - For read-only acceptance checks against existing local FGBs, run
+     `UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py
+     recommend-maxzoom --fgb ./asset.fgb` and review the recommendation
+     evidence before rebuilding PMTiles.
 
 5. Local browser QA:
    - Serve the generated bundle from the output directory:
 
 ```bash
-python3 -m http.server 4173 --bind 127.0.0.1 --directory /tmp/shared-datasets-1/catalog-web
+python3 -m http.server 4173 --bind 127.0.0.1 \
+  --directory "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/catalog-web"
 ```
 
    - Check search, filters, selected detail view, docs modal, copy buttons, map preview, feature inspector, version selector, and mobile/narrow layout.

@@ -29,7 +29,8 @@ Remote dataset files need safe, repeatable object mutations. GCS generation prec
 ```bash
 uv run python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/
 uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/object
-uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/path/to/object /tmp/object
+uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/path/to/object \
+  "$TMPDIR/shared-datasets-1/downloads/object"
 uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/new-object
 uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/existing-object --replace-generation <generation>
 ```
@@ -51,16 +52,20 @@ For dataset roots, create or update the adjacent `README.md` with enough schema 
 
 ## Local generated files
 
-Do not create publishable data artifacts in the repository tree. Build generated
-files under the system temp namespace by default:
+Follow `docs/standards/local-temp-workspaces.md` for local downloads, scratch
+files, generated artifacts, and cleanup. Do not create publishable data
+artifacts in the repository tree. Build generated files under the repo temp root
+by default:
 
 ```text
-$TMPDIR/shared-datasets-1/vector-assets/{asset-slug}/
+${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}
 ```
 
-The environment variable `SHARED_DATASETS_WORKDIR` may override the temp root
-for large local builds. Keep final upload candidates in the work directory's
-`publish/` subdirectory and intermediates in `build/`.
+Use named children such as `vector-assets/{asset-slug}/`, `downloads/{asset}/`,
+`catalog-web/`, `readmes/`, or `_scratch/{task}-{timestamp}/`. The environment
+variable `SHARED_DATASETS_WORKDIR` may override the temp root for large local
+builds. Keep final upload candidates in the work directory's `publish/`
+subdirectory and intermediates in `build/`.
 
 For manual vector assets, use the repo-owned vector helper:
 
@@ -70,7 +75,6 @@ uv run python scripts/vector_asset.py build ./source.shp \
   --layer-name example_asset \
   --title "Example Asset" \
   --description "Example vector tiles" \
-  --maxzoom 8 \
   --tile-simplify 0.001
 ```
 
@@ -78,17 +82,28 @@ The standard vector build is:
 
 1. Write canonical `.fgb` with `ogr2ogr -f FlatGeobuf`, `PROMOTE_TO_MULTI`, and
    `SPATIAL_INDEX=YES`.
-2. Write temporary EPSG:4326 GeoJSON for tiling.
-3. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
-   description, and min/max zoom. Shared PMTiles should be built to maxzoom 8
-   or higher; the vector helper rejects lower maxzoom values unless
-   `--allow-low-maxzoom` documents an exception.
-4. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
+2. Profile the generated FGB and resolve PMTiles maxzoom from source
+   scale/resolution hints plus measured geometry detail. Auto maxzoom is the
+   default, biases toward detailed presentation, and caps at zoom 12 unless a
+   documented high-zoom override is passed.
+3. Write temporary EPSG:4326 GeoJSON for tiling.
+4. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
+   description, and min/max zoom. Lower than zoom 8 requires source/profile
+   evidence or a documented override.
+5. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
 
 `--tile-simplify` is for dense display tiles only. It is applied to the
 temporary tiling input and does not simplify the canonical FGB.
+
+To run a read-only maxzoom acceptance check against an existing canonical FGB,
+download the object with `scripts/gcs_asset.py download` and profile the local
+copy:
+
+```bash
+uv run python scripts/vector_asset.py recommend-maxzoom --fgb ./asset.fgb
+```
 
 For dense point layers where low-zoom completeness matters, pass explicit
 Tippecanoe retention flags instead of allowing feature dropping:
@@ -108,9 +123,9 @@ catalog objects with an empty inspector. If a display tile needs fewer
 attributes, use narrower property filters or add compact synthetic properties
 such as `source_layer`.
 
-Use this for point catalogs where users need to see most or all point features
-while zoomed far out. Expect larger low-zoom tiles and validate browser
-performance before publishing.
+Use this for point catalogs because shared point PMTiles should keep all point
+features at all generated zoom levels. Expect larger low-zoom tiles and validate
+browser performance before publishing.
 Run the helper through `uv run python` so repo Python dependencies come from the
 project environment. GDAL, Tippecanoe, and PMTiles are external command-line
 tools resolved from `PATH`; the helper records their versions in the build plan.

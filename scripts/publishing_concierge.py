@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -62,6 +63,11 @@ class ConciergePlan:
     suggested_commands: list[str]
     remote_write_commands: list[str]
     notes: list[str]
+    source_resolution_meters: float | None = None
+    source_scale_denominator: float | None = None
+    pmtiles_maxzoom: int | None = None
+    pmtiles_maxzoom_reason: str | None = None
+    pmtiles_detail_hint: str | None = None
 
 
 def load_categories(path: Path) -> dict[str, set[str]]:
@@ -129,6 +135,11 @@ def build_plan(
     bucket: str,
     release_date: str | None,
     with_pmtiles: bool,
+    source_resolution_meters: float | None = None,
+    source_scale_denominator: float | None = None,
+    pmtiles_maxzoom: int | None = None,
+    pmtiles_maxzoom_reason: str | None = None,
+    pmtiles_detail_hint: str | None = None,
     categories_path: Path,
     docs_dir: Path,
 ) -> ConciergePlan:
@@ -143,6 +154,14 @@ def build_plan(
     resolved_format = infer_format(source, canonical_format)
     if access_tier not in {"public", "private"}:
         raise ConciergeError("access tier must be public or private")
+    if source_resolution_meters is not None and source_resolution_meters <= 0:
+        raise ConciergeError("source resolution must be positive")
+    if source_scale_denominator is not None and source_scale_denominator <= 0:
+        raise ConciergeError("source scale denominator must be positive")
+    if pmtiles_maxzoom is not None and not pmtiles_maxzoom_reason:
+        raise ConciergeError("pmtiles maxzoom requires a reason")
+    if pmtiles_detail_hint is not None and pmtiles_detail_hint not in {"coarse", "medium", "detailed"}:
+        raise ConciergeError("pmtiles detail hint must be coarse, medium, or detailed")
     if release_date:
         try:
             parsed = dt.date.fromisoformat(release_date)
@@ -173,11 +192,33 @@ def build_plan(
         f"UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path {canonical_path}",
     ]
     if resolved_format == "fgb":
-        commands.append(
-            "UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build "
-            f"{source} --asset-slug {slug} --title {json.dumps(dataset_title)} "
-            f"--description {json.dumps(dataset_title + ' vector tiles')}"
-        )
+        command_parts = [
+            "UV_CACHE_DIR=.uv-cache",
+            "uv",
+            "run",
+            "python",
+            "scripts/vector_asset.py",
+            "build",
+            str(source),
+            "--asset-slug",
+            slug,
+            "--title",
+            dataset_title,
+            "--description",
+            dataset_title + " vector tiles",
+            "--maxzoom",
+            "auto",
+        ]
+        if source_resolution_meters is not None:
+            command_parts.extend(["--source-resolution-meters", str(source_resolution_meters)])
+        if source_scale_denominator is not None:
+            command_parts.extend(["--source-scale-denominator", str(source_scale_denominator)])
+        if pmtiles_maxzoom is not None:
+            command_parts.extend(["--pmtiles-maxzoom", str(pmtiles_maxzoom)])
+            command_parts.extend(["--pmtiles-maxzoom-reason", pmtiles_maxzoom_reason or ""])
+        if pmtiles_detail_hint:
+            command_parts.extend(["--pmtiles-detail-hint", pmtiles_detail_hint])
+        commands.append(shell_join(command_parts))
     elif resolved_format == "cog":
         commands.append(f"UV_CACHE_DIR=.uv-cache uv run python scripts/raster_asset.py validate-cog {source}")
     commands.extend(
@@ -206,8 +247,22 @@ def build_plan(
         notes.append("CSV must remain geometry-free under shared-datasets standards.")
     if include_pmtiles:
         notes.append("FGB vector assets require a PMTiles companion for catalog map preview.")
+        notes.append(
+            "PMTiles maxzoom is resolved after the canonical FGB is generated and profiled; "
+            "the concierge does not assume a fallback zoom."
+        )
         if with_pmtiles:
             notes.append("--with-pmtiles is retained for compatibility; PMTiles is automatic for FGB assets.")
+        if any(
+            value is not None
+            for value in (
+                source_resolution_meters,
+                source_scale_denominator,
+                pmtiles_maxzoom,
+                pmtiles_detail_hint,
+            )
+        ):
+            notes.append("PMTiles source/detail hints were included in the vector build command.")
     elif with_pmtiles:
         notes.append("--with-pmtiles has no effect outside vector FGB assets.")
 
@@ -228,7 +283,18 @@ def build_plan(
         suggested_commands=commands,
         remote_write_commands=remote_commands,
         notes=notes,
+        source_resolution_meters=source_resolution_meters,
+        source_scale_denominator=source_scale_denominator,
+        pmtiles_maxzoom=pmtiles_maxzoom,
+        pmtiles_maxzoom_reason=pmtiles_maxzoom_reason,
+        pmtiles_detail_hint=pmtiles_detail_hint,
     )
+
+
+def shell_join(parts: Sequence[str]) -> str:
+    if parts and "=" in parts[0]:
+        return parts[0] + " " + shlex.join(parts[1:])
+    return shlex.join(parts)
 
 
 def draft_asset_doc(
@@ -277,6 +343,15 @@ def draft_asset_doc(
         "notes": "Draft generated by scripts/publishing_concierge.py; review before publishing.",
         "files": files,
     }
+    if plan.source_resolution_meters is not None:
+        metadata["source_resolution_meters"] = plan.source_resolution_meters
+    if plan.source_scale_denominator is not None:
+        metadata["source_scale_denominator"] = plan.source_scale_denominator
+    if plan.pmtiles_maxzoom is not None:
+        metadata["pmtiles_maxzoom"] = plan.pmtiles_maxzoom
+        metadata["pmtiles_maxzoom_reason"] = plan.pmtiles_maxzoom_reason
+    if plan.pmtiles_detail_hint is not None:
+        metadata["pmtiles_detail_hint"] = plan.pmtiles_detail_hint
     body = f"""# {plan.title}
 
 <!-- BEGIN GENERATED asset-summary -->
@@ -355,6 +430,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Compatibility flag; PMTiles companions are planned automatically for vector FGB assets.",
     )
+    parser.add_argument("--source-resolution-meters", type=float, help="Optional source resolution hint for PMTiles auto maxzoom.")
+    parser.add_argument("--source-scale-denominator", type=float, help="Optional source scale denominator hint for PMTiles auto maxzoom.")
+    parser.add_argument("--pmtiles-maxzoom", type=int, help="Optional explicit PMTiles maxzoom hint.")
+    parser.add_argument("--pmtiles-maxzoom-reason", help="Required with --pmtiles-maxzoom.")
+    parser.add_argument(
+        "--pmtiles-detail-hint",
+        choices=["coarse", "medium", "detailed"],
+        help="Optional semantic display-detail hint for PMTiles auto maxzoom.",
+    )
     parser.add_argument("--categories", type=Path, default=Path("catalog/categories.yaml"))
     parser.add_argument("--docs-dir", type=Path, default=Path("docs/assets"))
     parser.add_argument("--write-draft-doc", action="store_true", help="Write docs/assets/{asset_slug}.md locally.")
@@ -382,6 +466,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             bucket=args.bucket,
             release_date=args.release_date,
             with_pmtiles=args.with_pmtiles,
+            source_resolution_meters=args.source_resolution_meters,
+            source_scale_denominator=args.source_scale_denominator,
+            pmtiles_maxzoom=args.pmtiles_maxzoom,
+            pmtiles_maxzoom_reason=args.pmtiles_maxzoom_reason,
+            pmtiles_detail_hint=args.pmtiles_detail_hint,
             categories_path=args.categories,
             docs_dir=args.docs_dir,
         )

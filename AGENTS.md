@@ -117,6 +117,28 @@ virtualenvs or mamba environments for routine repo tooling.
 If the actual bucket name differs, update `README.md`, this file, the relevant
 skills/docs, scripts, and templates that mention the bucket.
 
+## Temporary Local Workspaces
+
+Temporary local file hygiene is a repo-wide rule, not a standalone skill. Follow
+`docs/standards/local-temp-workspaces.md` before creating downloads, generated
+artifacts, scratch scripts, exported READMEs, catalog builds, or audit outputs.
+
+Use the repo temp root by default:
+
+```text
+${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}
+```
+
+Keep task files in a named child directory such as `vector-assets/{asset-slug}/`,
+`catalog-web/`, `readmes/`, `downloads/{asset-slug}/`, or
+`_scratch/{task-slug}-{YYYYMMDDTHHMMSSZ}/`. Do not scatter files directly under
+`/tmp`, the repo root, `Downloads`, or `Desktop`.
+
+At the end of work, report any retained local work directories that may matter.
+Do not delete stale directories from prior tasks without explicit action-time
+confirmation; when cleanup is appropriate, identify exact paths, size/age, and
+why they are safe to remove. Never broad-delete the shared temp root.
+
 ## Source Map
 
 | Concern | Source |
@@ -126,6 +148,7 @@ skills/docs, scripts, and templates that mention the bucket.
 | Dataset category data | `catalog/categories.yaml` |
 | Dataset taxonomy guidance | `docs/standards/dataset-taxonomy.md` |
 | Asset layout, formats, naming, README requirements | `docs/standards/asset-layout-and-formats.md` |
+| Temporary local file/workspace hygiene | `docs/standards/local-temp-workspaces.md` |
 | Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |

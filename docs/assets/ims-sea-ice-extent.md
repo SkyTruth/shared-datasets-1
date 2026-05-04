@@ -18,8 +18,10 @@ metadata_paths:
 - runs/YYYY-MM-DD.json
 source: NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
 license: Public U.S. government work; cite NSIDC G02156
-notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. Release history, source versions, row counts, and file hashes
-  are recorded in the bucket release index and per-run records.
+notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 8 from the 4000-meter
+  source-resolution hint; pmtiles sha256 66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d. Release history,
+  source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+source_resolution_meters: 4000
 files:
 - path: latest/ims-sea-ice-extent.fgb
   format: fgb
@@ -88,6 +90,8 @@ record preserves that documented valid date.
 
 The job derives a minimal schema from the source raster class and filename date.
 
+The PMTiles artifact is generated from the same vectorized output. Auto maxzoom selection uses the stable `source_resolution_meters: 4000` hint, resolving to zooms 0 through 8.
+
 ## Properties / columns
 
 | Name | Type | Description |
@@ -99,6 +103,8 @@ The job derives a minimal schema from the source raster class and filename date.
 
 Updated by `python -m ingestion.sea_ice_daily.run`, deployed as the
 `sea-ice-daily` Cloud Run Job and scheduled for `0 15 * * *` UTC.
+
+The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The 4000-meter source-resolution hint resolves to maxzoom 8. The rebuilt PMTiles SHA-256 is `66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d`.
 
 ## Known caveats
 

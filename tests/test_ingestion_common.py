@@ -322,6 +322,56 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_run"]["status"], "success")
         self.assertNotIn("run_record_path", index["latest_run"])
 
+    def test_rebuild_index_prefers_live_release_blob_metadata_over_stale_run_record(self):
+        bucket = FakeBucket()
+        fgb = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        fgb.exists = True
+        fgb.generation = 8
+        fgb.size = 13
+        pmtiles = bucket.blob("asset/releases/2026-05-01/asset.pmtiles")
+        pmtiles.exists = True
+        pmtiles.generation = 42
+        pmtiles.size = 99
+        pmtiles.metadata = {"pmtiles_sha256": "newpmtiles"}
+        run_record = bucket.blob("asset/runs/2026-05-01.json")
+        run_record.exists = True
+        run_record.text = json.dumps(
+            {
+                "asset_slug": "test-asset",
+                "run_date": "2026-05-01",
+                "status": "success",
+                "release_path": "gs://test-bucket/asset/releases/2026-05-01/",
+                "release_paths": [
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-05-01/asset.fgb",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-05-01/asset.pmtiles",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                ],
+                "sha256": {"fgb": "fgbsha", "pmtiles": "oldpmtiles"},
+            }
+        )
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        files = {entry["format"]: entry for entry in index["latest_release"]["files"]}
+        self.assertEqual(files["fgb"]["generation"], 8)
+        self.assertEqual(files["fgb"]["sha256"], "fgbsha")
+        self.assertEqual(files["pmtiles"]["generation"], 42)
+        self.assertEqual(files["pmtiles"]["size"], 99)
+        self.assertEqual(files["pmtiles"]["sha256"], "newpmtiles")
+
 
 if __name__ == "__main__":
     unittest.main()

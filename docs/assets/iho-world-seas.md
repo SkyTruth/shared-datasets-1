@@ -18,7 +18,8 @@ metadata_paths:
 source: Marine Regions World Seas IHO v3
 license: See source terms
 notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
-  PMTiles sha256 918f23c7e31977b411654fde409df0ab8adb76830d4abbc4c1d4083c328e90b0
+  PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
+  from sampled FGB geometry detail with local tile and browser QA
 files:
 - path: latest/iho-world-seas.fgb
   format: fgb
@@ -93,6 +94,11 @@ definitions.
 
 Manually converted from `iho-mr_World_Seas_IHO_v3.fgb` and published as a
 2026-04-29 release.
+
+PMTiles were rebuilt on 2026-05-04 from the published FGB using auto maxzoom
+selection. The sampled FGB profile resolved to maxzoom 12 from representative
+segment lengths. The rebuilt PMTiles SHA-256 is
+`0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b`.
 
 ## Known caveats
 

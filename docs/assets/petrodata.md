@@ -18,7 +18,8 @@ metadata_paths:
 source: PRIO PETRODATA v1.2
 license: No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
 notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles with source_layer; release 2026-04-29; fgb
-  sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 2d45f6cc17553e62c39c4b76bce76f1f7dda594a3f8f16fe7075c8bdbcbb0044
+  sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7;
+  PMTiles rebuilt 2026-05-04 at maxzoom 9 from sampled FGB geometry detail
 files:
 - path: latest/petrodata.fgb
   format: fgb
@@ -80,6 +81,8 @@ This is a format conversion from `Petrodata_Onshore_V1.2.shp` and `Petrodata_off
 
 The local v1.2 files contain 1,273 total features: 891 onshore and 382 offshore. The PRIO codebook describes PETRODATA's variables and notes that polygons may represent one or several fields, with polygon size determined by source point distribution rather than the number of fields inside.
 
+The PMTiles artifact is generated from the same combined polygons, with zooms 0 through 9. Auto maxzoom selection used sampled FGB geometry detail rather than a fixed fallback.
+
 ## Properties / columns
 
 | Name | Type | Description |
@@ -109,6 +112,8 @@ The local v1.2 files contain 1,273 total features: 891 onshore and 382 offshore.
 ## Update notes
 
 Manually converted from `/Users/jonathanraphael/Desktop/Petrodata v12 Data (1)` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
+
+The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The sampled FGB profile resolved to maxzoom 9 from representative segment lengths and feature dimensions. The rebuilt PMTiles SHA-256 is `798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7`.
 
 ## Known caveats
 

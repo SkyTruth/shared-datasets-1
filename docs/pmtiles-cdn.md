@@ -99,19 +99,24 @@ backend bucket key set, then store the same key bytes as a Secret Manager secret
 version for authorized Cerulean cookie-signing runtimes:
 
 ```bash
-head -c 16 /dev/urandom | base64 | tr +/ -_ > /tmp/pmtiles-cdn-key.txt
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
+KEY_FILE="$WORK_ROOT/_scratch/pmtiles-cdn-key-$(date -u +%Y%m%dT%H%M%SZ).txt"
+mkdir -p "$(dirname "$KEY_FILE")"
+head -c 16 /dev/urandom | base64 | tr +/ -_ > "$KEY_FILE"
 
 gcloud compute backend-buckets add-signed-url-key shared-datasets-pmtiles-cdn \
   --key-name=shared-datasets-pmtiles-v1 \
-  --key-file=/tmp/pmtiles-cdn-key.txt \
+  --key-file="$KEY_FILE" \
   --project=shared-datasets-1
 
 gcloud secrets versions add pmtiles-cdn-signed-request-key \
-  --data-file=/tmp/pmtiles-cdn-key.txt \
+  --data-file="$KEY_FILE" \
   --project=shared-datasets-1
 ```
 
-Delete `/tmp/pmtiles-cdn-key.txt` after the key has been installed and verified.
+Delete `$KEY_FILE` after the key has been installed and verified. Because this
+is a local sensitive file, agents must ask for action-time confirmation before
+deleting it.
 
 After adding the key, confirm that the Google-managed Cloud CDN fill service
 account exists:
