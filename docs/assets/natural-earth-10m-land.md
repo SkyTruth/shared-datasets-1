@@ -15,13 +15,13 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-last_updated: '2026-04-30'
+last_updated: '2026-05-04'
 source: Natural Earth 1:10m physical land polygons v5.1.1
 license: Public domain per Natural Earth Terms of Use
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
-  fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 e395193e936fca420fcdc4139dcfedf3a4945ed5f7128a5194b16fdc5b936fcf;
-  toolchain GDAL 3.6.2, Tippecanoe 2.79.0, PMTiles CLI 1.30.2 for validation; PMTiles generated with Tippecanoe zooms 0-6
-  and tile-simplify 0.01 for display; canonical FGB preserves source geometry and fields
+  fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
+  PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-8, no pre-tiling simplification, --no-line-simplification, and --no-tiny-polygon-reduction-at-maximum-zoom
+  for higher-zoom display fidelity; canonical FGB preserves source geometry and fields
 files:
 - path: latest/natural-earth-10m-land.fgb
   format: fgb
@@ -47,7 +47,7 @@ files:
 - **Status:** active
 - **Access tier:** public
 - **Owner:** SkyTruth
-- **Last updated:** 2026-04-30
+- **Last updated:** 2026-05-04
 - **Update cadence:** manual
 - **Canonical file:** `latest/natural-earth-10m-land.fgb`
 - **Available formats:** `fgb`, `pmtiles`
@@ -93,10 +93,11 @@ Geometry is WGS84 multipolygon geometry. The source shapefile reports 11 polygon
 features with extent `(-180, -90) - (180, 83.634101)`. The published FlatGeobuf
 promotes geometries to multipolygon and keeps the source fields unchanged.
 
-The PMTiles artifact was generated with Tippecanoe 2.79.0 from a temporary
-GeoJSON tiling input, with zooms 0 through 6 and `--tile-simplify 0.01`. That
-simplification applies only to display tiles; the canonical FlatGeobuf remains
-unsimplified.
+The PMTiles artifact was rebuilt on 2026-05-04 with Tippecanoe 2.79.0 from a
+temporary GeoJSON tiling input, with zooms 0 through 8, no pre-tiling
+simplification, `--no-line-simplification`, and
+`--no-tiny-polygon-reduction-at-maximum-zoom`. The canonical FlatGeobuf remains
+the analytical source and preserves the original source geometry.
 
 ## Properties / columns
 
@@ -116,9 +117,9 @@ Output summary:
 - Source version: 5.1.1
 - Published features: 11
 - CRS: EPSG:4326
-- Toolchain: GDAL 3.6.2; Tippecanoe 2.79.0; PMTiles CLI 1.30.2 for validation
+- Toolchain: GDAL 3.6.2; Tippecanoe 2.79.0; PMTiles CLI unavailable locally, so validation used successful Tippecanoe generation plus `tippecanoe-decode`
 - FGB SHA-256: `5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`
-- PMTiles SHA-256: `e395193e936fca420fcdc4139dcfedf3a4945ed5f7128a5194b16fdc5b936fcf`
+- PMTiles SHA-256: `52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be`
 
 ## Known caveats
 

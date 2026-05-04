@@ -6,7 +6,7 @@
 
 | Asset | Subcategory | Status | Access tier | Formats | Last updated | Canonical file |
 |---|---|---|---|---|---|---|
-| [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | 2026-04-30 | `latest/natural-earth-10m-land.fgb` |
+| [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | 2026-05-04 | `latest/natural-earth-10m-land.fgb` |
 | [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/iho-world-seas.fgb` |
 | [Marine Regions Exclusive Economic Zones](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | 2026-04-29 | `latest/marine-regions-eez.fgb` |
 | [WDPA Marine Protected and Conserved Areas](wdpa-marine.md) | 130-protected-areas | active | public | `fgb;pmtiles` | 2026-05-02 | `latest/wdpa-marine.fgb` |

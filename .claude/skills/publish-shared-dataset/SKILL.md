@@ -108,6 +108,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   catalog inspector. Do not use Tippecanoe `--exclude-all`; the repo vector
   helper rejects it, and manual multi-layer builds must verify decoded feature
   properties before publication.
+- Shared vector PMTiles display artifacts should be built to maxzoom 8 or
+  higher. `scripts/vector_asset.py build` defaults to maxzoom 8 and rejects
+  lower maxzoom values unless `--allow-low-maxzoom` is passed for a documented
+  exception.
 - Set `SHARED_DATASETS_WORKDIR` or pass `--work-dir` only when a different temp
   root is needed.
 - Run repo-owned helpers through `uv run python`.

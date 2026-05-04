@@ -74,6 +74,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
    - Verify affected assets have expected `available_formats`, `has_pmtiles`, `has_geojson`, `public_url`, `pmtiles_url`, `docs_url`, and `versions`.
 
 4. PMTiles fidelity checks:
+   - Shared vector PMTiles display artifacts should be built to maxzoom 8 or
+     higher. `scripts/vector_asset.py build` defaults to maxzoom 8 and rejects
+     lower maxzoom values unless `--allow-low-maxzoom` is passed for a
+     documented exception.
    - The standard `scripts/vector_asset.py build` Tippecanoe path adds
      `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` by
      default so low-zoom tiles retain published point features. Do not override

@@ -24,6 +24,7 @@ WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
+STANDARD_PMTILES_MAXZOOM = 8
 
 
 @dataclass(frozen=True)
@@ -151,7 +152,7 @@ def build_plan(
     work_dir: Path | None = None,
     output_dir: Path | None = None,
     minzoom: int = 0,
-    maxzoom: int = 8,
+    maxzoom: int = STANDARD_PMTILES_MAXZOOM,
     tile_simplify: float | None = None,
     title: str | None = None,
     description: str | None = None,
@@ -161,10 +162,16 @@ def build_plan(
     pmtiles_engine: str = "tippecanoe",
     tippecanoe_extra_args: Sequence[str] = (),
     allow_repo_output: bool = False,
+    allow_low_maxzoom: bool = False,
 ) -> VectorBuildPlan:
     validate_asset_slug(asset_slug)
     if minzoom < 0 or maxzoom < 0 or maxzoom < minzoom:
         raise ValueError("zoom range must satisfy 0 <= minzoom <= maxzoom")
+    if maxzoom < STANDARD_PMTILES_MAXZOOM and not allow_low_maxzoom:
+        raise ValueError(
+            f"PMTiles maxzoom must be at least {STANDARD_PMTILES_MAXZOOM}; "
+            "pass --allow-low-maxzoom only for a documented exception"
+        )
     if tile_simplify is not None and tile_simplify <= 0:
         raise ValueError("tile simplification tolerance must be positive")
     if pmtiles_engine not in {"tippecanoe", "gdal-mbtiles"}:
@@ -476,6 +483,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         pmtiles_engine=args.pmtiles_engine,
         tippecanoe_extra_args=args.tippecanoe_arg,
         allow_repo_output=args.allow_repo_output,
+        allow_low_maxzoom=args.allow_low_maxzoom,
     )
     if args.dry_run:
         print(json.dumps(asdict(plan), indent=2, sort_keys=True))
@@ -508,7 +516,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--work-dir", help="Work directory for intermediates and default publish output.")
     build_parser.add_argument("--output-dir", help="Directory where final .fgb and .pmtiles files are written.")
     build_parser.add_argument("--minzoom", type=int, default=0)
-    build_parser.add_argument("--maxzoom", type=int, default=8)
+    build_parser.add_argument("--maxzoom", type=int, default=STANDARD_PMTILES_MAXZOOM)
     build_parser.add_argument(
         "--tile-simplify",
         type=float,
@@ -541,6 +549,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--overwrite", action="store_true", help="Replace existing generated local outputs.")
     build_parser.add_argument("--keep-mbtiles", action="store_true", help="Keep the intermediate MBTiles file.")
     build_parser.add_argument("--allow-repo-output", action="store_true", help="Allow generated outputs under repo root.")
+    build_parser.add_argument(
+        "--allow-low-maxzoom",
+        action="store_true",
+        help=f"Allow PMTiles maxzoom below the shared standard of {STANDARD_PMTILES_MAXZOOM} for a documented exception.",
+    )
     build_parser.add_argument("--dry-run", action="store_true", help="Print the plan without running GDAL or PMTiles.")
     build_parser.set_defaults(func=_cmd_build)
 

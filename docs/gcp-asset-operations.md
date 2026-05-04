@@ -80,7 +80,9 @@ The standard vector build is:
    `SPATIAL_INDEX=YES`.
 2. Write temporary EPSG:4326 GeoJSON for tiling.
 3. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
-   description, and min/max zoom.
+   description, and min/max zoom. Shared PMTiles should be built to maxzoom 8
+   or higher; the vector helper rejects lower maxzoom values unless
+   `--allow-low-maxzoom` documents an exception.
 4. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.

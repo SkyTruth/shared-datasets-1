@@ -403,6 +403,9 @@ By default, outputs go under
 MBTiles intermediates go under `build/`. Set `SHARED_DATASETS_WORKDIR` or pass
 `--work-dir` for a different temp root. Use `--tile-simplify` only for dense
 display tiles; the canonical FGB is still generated without simplification.
+Shared PMTiles should be built to maxzoom 8 or higher. The vector helper rejects
+lower maxzoom values unless `--allow-low-maxzoom` is passed for a documented
+exception.
 
 ## Catalog web preview
 

@@ -31,7 +31,7 @@ class VectorAssetTests(unittest.TestCase):
                 layer_name="land",
                 work_dir=work_dir,
                 minzoom=0,
-                maxzoom=6,
+                maxzoom=8,
                 tile_simplify=0.01,
                 tippecanoe_extra_args=("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
                 title="Natural Earth 10m Land",
@@ -57,6 +57,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn("0.01", plan.commands[1])
         self.assertEqual(plan.commands[2][0], "tippecanoe")
         self.assertIn("--maximum-zoom", plan.commands[2])
+        self.assertEqual(plan.maxzoom, 8)
         self.assertEqual(
             plan.tippecanoe_extra_args,
             ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
@@ -97,6 +98,29 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn("--no-feature-limit", plan.commands[2])
         self.assertIn("--no-tile-size-limit", plan.commands[2])
         self.assertIn("--drop-rate=1", plan.commands[2])
+
+    def test_low_maxzoom_requires_documented_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "maxzoom must be at least 8"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    maxzoom=7,
+                )
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work",
+                maxzoom=7,
+                allow_low_maxzoom=True,
+            )
+
+        self.assertEqual(plan.maxzoom, 7)
 
     def test_tippecanoe_rejects_property_stripping_exclude_all(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -352,7 +352,7 @@ def build_pmtiles(geojsonseq: Path, output: Path) -> None:
     remove_if_exists(output)
     mbtiles = output.with_suffix(".mbtiles")
     remove_if_exists(mbtiles)
-    zoom_args = shlex.split(os.environ.get("TIPPECANOE_ZOOM_ARGS", "-Z0 -z7"))
+    zoom_args = shlex.split(os.environ.get("TIPPECANOE_ZOOM_ARGS", "-Z0 -z8"))
     extra_args = shlex.split(os.environ.get("TIPPECANOE_EXTRA_ARGS", ""))
     default_args = [
         "--drop-densest-as-needed",

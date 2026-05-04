@@ -98,6 +98,10 @@ The build sequence is standardized as:
 4. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
    property sample when those tools exist.
 
+Shared PMTiles should be built to maxzoom 8 or higher. The helper rejects lower
+maxzoom values unless `--allow-low-maxzoom` is passed for a documented
+exception.
+
 Use `--tile-simplify` for dense coastline, boundary, or global polygon display
 tiles. This simplification applies only to PMTiles generation; the canonical FGB
 remains unsimplified.
