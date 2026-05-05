@@ -89,6 +89,10 @@ Source field names and values are preserved in the FlatGeobuf output.
 Definitions are inherited from the Marine Regions EEZ v12 source and need source
 confirmation. Use the source documentation for authoritative field definitions.
 
+| Name | Type | Description |
+|---|---|---|
+| Source fields | varies | Source fields are preserved from the Marine Regions EEZ v12 layer. Refer to the upstream source documentation for authoritative field names, types, and definitions. |
+
 ## Update notes
 
 Manually converted from `eez-mr_eez_v12.fgb` and published as a 2026-04-29

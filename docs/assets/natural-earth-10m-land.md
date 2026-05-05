@@ -15,7 +15,7 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
-source: Natural Earth 1:10m physical land polygons v5.1.1
+source: Natural Earth 1:10,000,000 physical land polygons v5.1.1
 license: Public domain per Natural Earth Terms of Use
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
   fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
@@ -50,7 +50,7 @@ files:
 - **Update cadence:** manual
 - **Canonical file:** `latest/natural-earth-10m-land.fgb`
 - **Available formats:** `fgb`, `pmtiles`
-- **Source:** Natural Earth 1:10m physical land polygons v5.1.1
+- **Source:** Natural Earth 1:10,000,000 physical land polygons v5.1.1
 - **License / terms:** Public domain per Natural Earth Terms of Use
 <!-- END GENERATED asset-summary -->
 
@@ -60,6 +60,10 @@ This asset contains the Natural Earth 1:10m land polygon layer, including major
 islands. Natural Earth describes the layer as derived from the 10m coastline, with
 continental polygons split into smaller contiguous pieces to improve processing
 performance in some software.
+
+In Natural Earth naming, `10m` means 1:10,000,000 map scale; it is not
+10-meter ground resolution. The PMTiles maxzoom 8 display choice follows that
+source scale and is expected to look coarse at street or city zooms.
 
 The canonical file preserves the source attributes and promotes polygon geometry
 to multipolygon for consistent analytical handling. The PMTiles artifact is for
@@ -96,7 +100,9 @@ The PMTiles artifact was rebuilt on 2026-05-04 with Tippecanoe 2.79.0 from a
 temporary GeoJSON tiling input, with zooms 0 through 8, no pre-tiling
 simplification, `--no-line-simplification`, and
 `--no-tiny-polygon-reduction-at-maximum-zoom`. The canonical FlatGeobuf remains
-the analytical source and preserves the original source geometry.
+the analytical source and preserves the original source geometry. The maxzoom
+comes from the stable `source_scale_denominator: 10000000` hint, not from a
+meter-resolution interpretation of the Natural Earth `10m` label.
 
 ## Properties / columns
 

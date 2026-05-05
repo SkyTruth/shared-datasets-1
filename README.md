@@ -398,7 +398,6 @@ uv run python scripts/vector_asset.py build ./source.shp \
   --layer-name example_asset \
   --title "Example Asset" \
   --description "Example vector tiles" \
-  --maxzoom 8 \
   --tile-simplify 0.001
 ```
 
@@ -407,9 +406,10 @@ By default, outputs go under
 MBTiles intermediates go under `build/`. Set `SHARED_DATASETS_WORKDIR` or pass
 `--work-dir` for a different temp root. Use `--tile-simplify` only for dense
 display tiles; the canonical FGB is still generated without simplification.
-Shared PMTiles should be built to maxzoom 8 or higher. The vector helper rejects
-lower maxzoom values unless `--allow-low-maxzoom` is passed for a documented
-exception.
+Shared PMTiles should use auto maxzoom from FGB profiling and source metadata.
+The policy biases toward detailed display, caps at zoom 12 by default, and only
+uses zooms below 8 when source/profile evidence or a documented override proves
+the asset is intentionally coarse.
 
 ## Catalog web preview
 

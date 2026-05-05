@@ -152,6 +152,12 @@ gcloud storage objects update \
 When replacing same-path PMTiles display artifacts, also set no-cache metadata on
 the replaced PMTiles objects after the generation-preconditioned upload:
 
+Corrective PMTiles rebuilds should replace both `latest/*.pmtiles` and the
+matching dated release PMTiles object for the canonical dataset release. Do not
+create PMTiles-only dated release directories for display repairs unless
+PMTiles is the asset's canonical format; release indexes and catalog versions
+should represent release dates that include the canonical format.
+
 ```bash
 gcloud storage objects update \
   --cache-control='no-cache, max-age=0, must-revalidate' \

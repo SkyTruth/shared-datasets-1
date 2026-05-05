@@ -152,7 +152,8 @@ gcloud storage objects update \
   gs://skytruth-shared-datasets-1/_catalog/web/catalog.json
 ```
 
-   - After same-path PMTiles replacement, set no-cache metadata on the replaced PMTiles objects:
+   - After same-path PMTiles replacement, set no-cache metadata on the replaced PMTiles objects.
+   - Corrective PMTiles-only rebuilds should replace the PMTiles object under the matching canonical release date, not create a new PMTiles-only dated release directory unless PMTiles is the canonical format.
 
 ```bash
 gcloud storage objects update \

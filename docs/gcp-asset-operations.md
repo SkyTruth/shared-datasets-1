@@ -94,6 +94,13 @@ The standard vector build is:
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
 
+For corrective PMTiles-only rebuilds on a versioned asset, replace the
+`latest/*.pmtiles` object and the PMTiles object under the matching canonical
+`releases/YYYY-MM-DD/` directory with generation preconditions. Do not create a
+new dated release directory that contains only PMTiles unless PMTiles is the
+canonical format; release-index dates should correspond to releases that include
+the canonical asset file.
+
 `--tile-simplify` is for dense display tiles only. It is applied to the
 temporary tiling input and does not simplify the canonical FGB.
 

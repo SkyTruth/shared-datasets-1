@@ -90,6 +90,10 @@ Definitions are inherited from the Marine Regions World Seas IHO v3 source and
 need source confirmation. Use the source documentation for authoritative field
 definitions.
 
+| Name | Type | Description |
+|---|---|---|
+| Source fields | varies | Source fields are preserved from the Marine Regions World Seas IHO v3 layer. Refer to the upstream source documentation for authoritative field names, types, and definitions. |
+
 ## Update notes
 
 Manually converted from `iho-mr_World_Seas_IHO_v3.fgb` and published as a

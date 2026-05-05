@@ -196,8 +196,11 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
 
 If the dataset publish replaced same-path PMTiles display artifacts, also set
 no-cache metadata on the affected `latest/*.pmtiles` and
-`releases/YYYY-MM-DD/*.pmtiles` objects. If static UI files changed, follow the
-full deployment and verification flow in `static-catalog-web-preview`.
+`releases/YYYY-MM-DD/*.pmtiles` objects. For corrective PMTiles-only rebuilds,
+replace the PMTiles object under the matching canonical release date; do not
+create a PMTiles-only dated release directory unless PMTiles is the asset's
+canonical format. If static UI files changed, follow the full deployment and
+verification flow in `static-catalog-web-preview`.
 
 ## Publication Workflow
 
