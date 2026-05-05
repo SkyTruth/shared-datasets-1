@@ -303,7 +303,7 @@ class GcsPublisherTests(unittest.TestCase):
         first.exists = True
         first.generation = 8
         first.size = 13
-        second = bucket.blob("asset/releases/2026-04-01/asset.pmtiles")
+        second = bucket.blob("asset/releases/2026-04-01/asset.fgb")
         second.exists = True
         second.generation = 6
         second.size = 21
@@ -321,6 +321,30 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_release"]["files"][0]["generation"], 8)
         self.assertEqual(index["latest_run"]["status"], "success")
         self.assertNotIn("run_record_path", index["latest_run"])
+
+    def test_rebuild_index_ignores_display_only_release_blobs_without_canonical_format(self):
+        bucket = FakeBucket()
+        canonical = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        canonical.exists = True
+        canonical.generation = 8
+        canonical.size = 13
+        display_only = bucket.blob("asset/releases/2026-05-04/asset.pmtiles")
+        display_only.exists = True
+        display_only.generation = 42
+        display_only.size = 99
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_format": "fgb",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        self.assertEqual([item["date"] for item in index["releases"]], ["2026-05-01"])
+        self.assertEqual(index["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(index["latest_release"]["files"][0]["format"], "fgb")
 
     def test_rebuild_index_prefers_live_release_blob_metadata_over_stale_run_record(self):
         bucket = FakeBucket()

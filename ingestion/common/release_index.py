@@ -411,11 +411,20 @@ def asset_root_from_catalog_row(row: dict[str, str]) -> tuple[str, str]:
     return bucket_name, object_name.split("/latest/", 1)[0]
 
 
+def canonical_format_from_catalog_row(row: dict[str, str]) -> str:
+    return str(row.get("canonical_format") or infer_format(row.get("canonical_path", "")))
+
+
+def has_canonical_release_file(entries: list[dict[str, Any]], canonical_format: str) -> bool:
+    return any(str(entry.get("format") or "") == canonical_format for entry in entries)
+
+
 def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any]:
     asset_slug = row["asset_slug"]
     bucket_name, asset_root = asset_root_from_catalog_row(row)
     if bucket_name != bucket.name:
         raise ReleaseIndexError(f"catalog bucket {bucket_name!r} does not match client bucket {bucket.name!r}")
+    canonical_format = canonical_format_from_catalog_row(row)
 
     releases_by_date: dict[str, list[Any]] = {}
     for blob in bucket.list_blobs(prefix=f"{asset_root}/releases/"):
@@ -461,13 +470,16 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
     for release_date, blobs in releases_by_date.items():
         if release_date in successful_run_dates:
             continue
+        release_entries = release_file_entries_from_blobs(bucket.name, blobs)
+        if canonical_format and not has_canonical_release_file(release_entries, canonical_format):
+            continue
         records.append(
             (
                 {
                     "run_date": release_date,
                     "status": "success",
                     "release_path": f"gs://{bucket.name}/{asset_root}/releases/{release_date}/",
-                    "release_paths": release_file_entries_from_blobs(bucket.name, blobs),
+                    "release_paths": release_entries,
                 },
                 None,
             )
