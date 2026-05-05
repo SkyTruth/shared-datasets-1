@@ -93,6 +93,55 @@ class PmtilesRedirectorTests(unittest.TestCase):
         self.assertEqual(response.status, 204)
         self.assertEqual(response.headers["Access-Control-Allow-Headers"], "Range")
         self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://cerulean.skytruth.org")
+        self.assertEqual(response.headers["Access-Control-Allow-Credentials"], "true")
+
+    def test_options_allows_skytruth_subdomains_by_regex(self):
+        cache = CatalogCache(loader=lambda: FakeCatalog({}))
+
+        for origin in (
+            "https://feature-three.cerulean.skytruth.org",
+            "https://cerulean.skytruth.org",
+        ):
+            with self.subTest(origin=origin):
+                response = handle_request(
+                    "OPTIONS",
+                    "/pmtiles/public/wdpa-marine.pmtiles",
+                    {"Origin": origin},
+                    catalog_cache=cache,
+                )
+
+                self.assertEqual(response.status, 204)
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], origin)
+                self.assertEqual(response.headers["Access-Control-Allow-Credentials"], "true")
+
+    def test_options_allows_localhost_by_exact_origin(self):
+        cache = CatalogCache(loader=lambda: FakeCatalog({}))
+
+        response = handle_request(
+            "OPTIONS",
+            "/pmtiles/public/wdpa-marine.pmtiles",
+            {"Origin": "http://localhost:3000"},
+            catalog_cache=cache,
+        )
+
+        self.assertEqual(response.status, 204)
+        self.assertEqual(response.headers["Access-Control-Allow-Origin"], "http://localhost:3000")
+        self.assertEqual(response.headers["Access-Control-Allow-Credentials"], "true")
+
+    def test_options_rejects_non_subdomain_skytruth_origins(self):
+        cache = CatalogCache(loader=lambda: FakeCatalog({}))
+
+        for origin in ("https://skytruth.org", "https://evilskytruth.org"):
+            with self.subTest(origin=origin):
+                response = handle_request(
+                    "OPTIONS",
+                    "/pmtiles/public/wdpa-marine.pmtiles",
+                    {"Origin": origin},
+                    catalog_cache=cache,
+                )
+
+                self.assertEqual(response.status, 403)
+                self.assertNotIn("Access-Control-Allow-Origin", response.headers)
 
     def test_catalog_load_failure_returns_503_without_cached_catalog(self):
         cache = CatalogCache(loader=lambda: (_ for _ in ()).throw(RuntimeError("offline")))

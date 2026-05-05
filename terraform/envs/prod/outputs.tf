@@ -30,6 +30,14 @@ output "pmtiles_cdn_signing_key_secret_id" {
   value = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
 }
 
+output "shared_bucket_public_managed_folders" {
+  value = sort(tolist(local.shared_bucket_public_managed_folder_names))
+}
+
+output "shared_bucket_public_object_viewer_enabled" {
+  value = var.shared_bucket_public_object_viewer_enabled
+}
+
 output "shared_dataset_consumer_service_accounts" {
   value = {
     for name, service_account in google_service_account.shared_dataset_consumers :

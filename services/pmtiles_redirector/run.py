@@ -20,11 +20,11 @@ from skytruth_shared_datasets import (
 
 
 DEFAULT_ALLOWED_ORIGINS = (
-    "https://cerulean.skytruth.org",
-    "https://develop.cerulean.skytruth.org",
-    "https://test.cerulean.skytruth.org",
     "http://localhost:3000",
     "https://localhost:3000",
+)
+DEFAULT_ALLOWED_ORIGIN_REGEXES = (
+    r"^https://(?:[A-Za-z0-9-]+\.)+skytruth\.org$",
 )
 DEFAULT_CATALOG_TTL_SECONDS = 300.0
 PMTILES_PATH_RE = re.compile(
@@ -84,6 +84,13 @@ def allowed_origins_from_env() -> tuple[str, ...]:
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def allowed_origin_regexes_from_env() -> tuple[str, ...]:
+    raw = os.environ.get("PMTILES_ALLOWED_ORIGIN_REGEXES")
+    if not raw:
+        return DEFAULT_ALLOWED_ORIGIN_REGEXES
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def ttl_from_env() -> float:
     raw = os.environ.get("PMTILES_CATALOG_TTL_SECONDS")
     if not raw:
@@ -101,10 +108,11 @@ def handle_request(
     *,
     catalog_cache: CatalogCache,
     allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS,
+    allowed_origin_regexes: tuple[str, ...] = DEFAULT_ALLOWED_ORIGIN_REGEXES,
 ) -> Response:
     method = method.upper()
     origin = _header(headers, "Origin")
-    cors_headers = cors_headers_for_origin(origin, allowed_origins)
+    cors_headers = cors_headers_for_origin(origin, allowed_origins, allowed_origin_regexes)
     request_path = urlsplit(path).path
 
     if method not in {"GET", "HEAD", "OPTIONS"}:
@@ -143,7 +151,11 @@ def handle_request(
     return Response(HTTPStatus.TEMPORARY_REDIRECT, response_headers, body)
 
 
-def cors_headers_for_origin(origin: str | None, allowed_origins: tuple[str, ...]) -> dict[str, str]:
+def cors_headers_for_origin(
+    origin: str | None,
+    allowed_origins: tuple[str, ...],
+    allowed_origin_regexes: tuple[str, ...],
+) -> dict[str, str]:
     base = {
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
         "Access-Control-Allow-Headers": "Range",
@@ -152,8 +164,13 @@ def cors_headers_for_origin(origin: str | None, allowed_origins: tuple[str, ...]
     }
     if "*" in allowed_origins:
         return {"Access-Control-Allow-Origin": "*", **base}
-    if origin and origin in allowed_origins:
-        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin", **base}
+    if origin and (origin in allowed_origins or _matches_origin_regex(origin, allowed_origin_regexes)):
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+            **base,
+        }
     if origin:
         return {}
     return {"Access-Control-Allow-Origin": "*", **base}
@@ -171,19 +188,58 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
     return None
 
 
-def make_handler(catalog_cache: CatalogCache, allowed_origins: tuple[str, ...]):
+def _matches_origin_regex(origin: str, allowed_origin_regexes: tuple[str, ...]) -> bool:
+    for pattern in allowed_origin_regexes:
+        try:
+            if re.fullmatch(pattern, origin):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def make_handler(
+    catalog_cache: CatalogCache,
+    allowed_origins: tuple[str, ...],
+    allowed_origin_regexes: tuple[str, ...],
+):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            self._send(handle_request("GET", self.path, self.headers, catalog_cache=catalog_cache, allowed_origins=allowed_origins))
+            self._send(
+                handle_request(
+                    "GET",
+                    self.path,
+                    self.headers,
+                    catalog_cache=catalog_cache,
+                    allowed_origins=allowed_origins,
+                    allowed_origin_regexes=allowed_origin_regexes,
+                )
+            )
 
         def do_HEAD(self) -> None:
             self._send(
-                handle_request("HEAD", self.path, self.headers, catalog_cache=catalog_cache, allowed_origins=allowed_origins),
+                handle_request(
+                    "HEAD",
+                    self.path,
+                    self.headers,
+                    catalog_cache=catalog_cache,
+                    allowed_origins=allowed_origins,
+                    allowed_origin_regexes=allowed_origin_regexes,
+                ),
                 include_body=False,
             )
 
         def do_OPTIONS(self) -> None:
-            self._send(handle_request("OPTIONS", self.path, self.headers, catalog_cache=catalog_cache, allowed_origins=allowed_origins))
+            self._send(
+                handle_request(
+                    "OPTIONS",
+                    self.path,
+                    self.headers,
+                    catalog_cache=catalog_cache,
+                    allowed_origins=allowed_origins,
+                    allowed_origin_regexes=allowed_origin_regexes,
+                )
+            )
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
             self.send_response(response.status)
@@ -199,7 +255,7 @@ def make_handler(catalog_cache: CatalogCache, allowed_origins: tuple[str, ...]):
 def main() -> None:
     port = int(os.environ.get("PORT", "8080"))
     cache = CatalogCache(ttl_seconds=ttl_from_env())
-    handler = make_handler(cache, allowed_origins_from_env())
+    handler = make_handler(cache, allowed_origins_from_env(), allowed_origin_regexes_from_env())
     server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     server.serve_forever()
 

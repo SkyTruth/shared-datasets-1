@@ -16,6 +16,12 @@ variable "bucket_name" {
   default     = "skytruth-shared-datasets-1"
 }
 
+variable "shared_bucket_public_object_viewer_enabled" {
+  description = "Keep the temporary bucket-wide allUsers objectViewer grant in place. Set false only after public managed-folder grants are applied and verified."
+  type        = bool
+  default     = true
+}
+
 variable "shared_dataset_consumer_projects" {
   description = "Consumer GCP projects that get a shared-datasets-reader service account and read access to the shared datasets bucket."
   type = map(object({
@@ -79,14 +85,25 @@ variable "pmtiles_redirector_catalog_ttl_seconds" {
 }
 
 variable "pmtiles_cdn_allowed_origins" {
-  description = "Browser origins allowed to make credentialed PMTiles range requests through the CDN."
+  description = "Exact browser origins allowed to make credentialed PMTiles range requests through the Cloud CDN backend bucket. External Cloud CDN URL-map CORS does not support regex origins."
   type        = list(string)
   default = [
-    "https://cerulean.skytruth.org",
-    "https://develop.cerulean.skytruth.org",
-    "https://test.cerulean.skytruth.org",
     "http://localhost:3000",
     "https://localhost:3000",
+    "https://feature-three.cerulean.skytruth.org",
+    "https://test.cerulean.skytruth.org",
+    "https://develop.cerulean.skytruth.org",
+    "https://cerulean.skytruth.org",
+    "https://30x30.skytruth.org",
+    "https://monitor.skytruth.org",
+  ]
+}
+
+variable "pmtiles_cdn_allowed_origin_regexes" {
+  description = "Regular expressions for browser origins allowed by the temporary PMTiles redirector. Cloud CDN backend-bucket CORS cannot use these regexes."
+  type        = list(string)
+  default = [
+    "^https://(?:[A-Za-z0-9-]+\\.)+skytruth\\.org$",
   ]
 }
 

@@ -3,8 +3,10 @@ data "google_project" "current" {
 }
 
 locals {
-  pmtiles_catalog_rows       = csvdecode(file("${path.module}/../../../catalog/shared-datasets-catalog.csv"))
+  shared_catalog_rows        = csvdecode(file("${path.module}/../../../catalog/shared-datasets-catalog.csv"))
+  pmtiles_catalog_rows       = local.shared_catalog_rows
   pmtiles_redirector_enabled = var.pmtiles_serving_mode == "redirect"
+  pmtiles_redirector_count   = 1
 
   pmtiles_cdn_object_paths = {
     for row in local.pmtiles_catalog_rows :
@@ -65,7 +67,7 @@ resource "google_compute_backend_bucket" "pmtiles_cdn" {
 }
 
 module "pmtiles_redirector_service_account" {
-  count = local.pmtiles_redirector_enabled ? 1 : 0
+  count = local.pmtiles_redirector_count
 
   source = "../../modules/service_account"
 
@@ -77,7 +79,7 @@ module "pmtiles_redirector_service_account" {
 }
 
 resource "google_cloud_run_v2_service" "pmtiles_redirector" {
-  count = local.pmtiles_redirector_enabled ? 1 : 0
+  count = local.pmtiles_redirector_count
 
   project             = var.project_id
   location            = var.region
@@ -106,6 +108,11 @@ resource "google_cloud_run_v2_service" "pmtiles_redirector" {
       }
 
       env {
+        name  = "PMTILES_ALLOWED_ORIGIN_REGEXES"
+        value = join(",", var.pmtiles_cdn_allowed_origin_regexes)
+      }
+
+      env {
         name  = "PMTILES_CATALOG_TTL_SECONDS"
         value = tostring(var.pmtiles_redirector_catalog_ttl_seconds)
       }
@@ -130,7 +137,7 @@ resource "google_cloud_run_v2_service" "pmtiles_redirector" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "pmtiles_redirector_public_invoker" {
-  count = local.pmtiles_redirector_enabled ? 1 : 0
+  count = local.pmtiles_redirector_count
 
   project  = var.project_id
   location = var.region
@@ -140,7 +147,7 @@ resource "google_cloud_run_v2_service_iam_member" "pmtiles_redirector_public_inv
 }
 
 resource "google_compute_region_network_endpoint_group" "pmtiles_redirector" {
-  count = local.pmtiles_redirector_enabled ? 1 : 0
+  count = local.pmtiles_redirector_count
 
   project               = var.project_id
   name                  = "shared-datasets-pmtiles-redirector"
@@ -157,7 +164,7 @@ resource "google_compute_region_network_endpoint_group" "pmtiles_redirector" {
 }
 
 resource "google_compute_backend_service" "pmtiles_redirector" {
-  count = local.pmtiles_redirector_enabled ? 1 : 0
+  count = local.pmtiles_redirector_count
 
   project               = var.project_id
   name                  = "shared-datasets-pmtiles-redirector"
