@@ -59,9 +59,9 @@ files:
 
 ## What this is
 
-This asset contains the monthly WDPA/WDOECM source rows whose `MARINE` value is
-`0`. It is a direct format conversion and split from the upstream source. Fields
-are preserved from the source dataset.
+This asset contains the monthly WDPA/WDOECM source rows selected for the
+terrestrial realm. It is a direct format conversion and split from the upstream
+source. Fields are preserved from the source dataset.
 
 ## When to use it
 
@@ -94,7 +94,39 @@ source layers have identical fields before publishing.
 
 | Name | Type | Description |
 |---|---|---|
-| Source fields | varies | All fields are preserved from the Protected Planet WDPA/WDOECM source. Refer to the upstream user manual and source metadata for authoritative field names, types, and definitions for each monthly release. |
+| `SITE_ID` | integer | Source numeric site identifier. |
+| `SITE_PID` | string | Source persistent site identifier. |
+| `SITE_TYPE` | string | WDPA/WDOECM source site type. |
+| `NAME_ENG` | string | Protected or conserved area name in English. |
+| `NAME` | string | Protected or conserved area name as supplied by the source. |
+| `DESIG` | string | Source designation text. |
+| `DESIG_ENG` | string | Designation text in English. |
+| `DESIG_TYPE` | string | Designation type or authority class. |
+| `IUCN_CAT` | string | IUCN protected-area management category. |
+| `INT_CRIT` | string | International criteria field, where supplied by the source. |
+| `REALM` | string | Source realm value used for the marine/coastal versus terrestrial split. |
+| `REP_M_AREA` | real | Source-reported marine area in square kilometers. |
+| `REP_AREA` | real | Source-reported total area in square kilometers. |
+| `NO_TAKE` | string | Source no-take status. |
+| `NO_TK_AREA` | real | Source-reported no-take area in square kilometers. |
+| `STATUS` | string | Source status for the protected or conserved area. |
+| `STATUS_YR` | integer | Year associated with the source status. |
+| `GOV_TYPE` | string | Governance type. |
+| `GOVSUBTYPE` | string | Governance subtype. |
+| `OWN_TYPE` | string | Ownership type. |
+| `OWNSUBTYPE` | string | Ownership subtype. |
+| `MANG_AUTH` | string | Management authority. |
+| `MANG_PLAN` | string | Management-plan status or reference. |
+| `VERIF` | string | Source verification status. |
+| `METADATAID` | integer | Source metadata record identifier. |
+| `PRNT_ISO3` | string | Parent country or territory ISO3 code. |
+| `ISO3` | string | Country or territory ISO3 code associated with the feature. |
+| `SUPP_INFO` | string | Supplementary information status or flag. |
+| `CONS_OBJ` | string | Conservation-objective field from the source. |
+| `INLND_WTRS` | string | Inland-waters classification or flag. |
+| `OECM_ASMT` | string | OECM assessment status. |
+| `GIS_M_AREA` | real | GIS-calculated marine area in square kilometers; null for point rows where not supplied. |
+| `GIS_AREA` | real | GIS-calculated total area in square kilometers; null for point rows where not supplied. |
 
 ## Update notes
 

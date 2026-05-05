@@ -66,6 +66,7 @@ UPLOADER_METADATA_KEYS = ("uploaded_by", "uploader", "created_by", "creator", "o
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_MODES = {"report": "INFO", "warn": "WARN", "enforce": "ERROR"}
 SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
+GENERIC_PROPERTIES_ROW_RE = re.compile(r"(?mi)^\|\s*Source fields\s*\|\s*varies\s*\|")
 
 README_REQUIRED_SNIPPETS = {
     "status": "**Status:**",
@@ -563,6 +564,17 @@ def validate_readme(
                 "README has a properties/columns section but not the standard table header.",
                 uploader_hint(readme_blob),
                 "Offer to normalize the properties table.",
+            )
+        )
+    if GENERIC_PROPERTIES_ROW_RE.search(text):
+        findings.append(
+            Finding(
+                "WARN",
+                readme_blob.name,
+                "readme-properties-placeholder",
+                "README uses a generic `Source fields | varies` row instead of listing field names and types.",
+                uploader_hint(readme_blob),
+                "List field names and types; use source-confirmation notes for definitions that are not known.",
             )
         )
     if "## Raster metadata" in text and "| Field | Value |" not in text:

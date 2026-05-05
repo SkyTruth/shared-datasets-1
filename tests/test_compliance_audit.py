@@ -112,6 +112,46 @@ class LocalComplianceAuditTests(unittest.TestCase):
         self.assertIn("catalog-format", checks)
         self.assertIn("catalog-available-formats", checks)
 
+    def test_readme_validation_flags_generic_properties_placeholder(self):
+        readme = blob_info("100-geographic-reference/110-boundaries/example-asset/README.md")
+        text = """# Example Asset
+
+**Status:** active
+**Owner:** SkyTruth
+**Update cadence:** manual
+**Canonical file:** `latest/example-asset.fgb`
+**Source:** Example source
+**License / terms:** Example terms
+
+## What this is
+
+Example.
+
+## Files
+
+| File | Format | Role | Purpose |
+|---|---|---|---|
+| `latest/example-asset.fgb` | `fgb` | `canonical` | Example file |
+
+## Schema notes
+
+Source fields are preserved.
+
+## Properties / columns
+
+| Name | Type | Description |
+|---|---|---|
+| Source fields | varies | Source fields are preserved from the upstream layer. |
+
+## Update notes
+
+Initial upload.
+"""
+
+        findings = audit.validate_readme("100-geographic-reference/110-boundaries/example-asset", readme, text)
+
+        self.assertIn("readme-properties-placeholder", {finding.check for finding in findings})
+
     def test_release_integrity_flags_missing_index_for_versioned_asset(self):
         row = catalog_row(update_cadence="monthly")
         release_blob = blob_info(

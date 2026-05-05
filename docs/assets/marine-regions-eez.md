@@ -91,7 +91,37 @@ confirmation. Use the source documentation for authoritative field definitions.
 
 | Name | Type | Description |
 |---|---|---|
-| Source fields | varies | Source fields are preserved from the Marine Regions EEZ v12 layer. Refer to the upstream source documentation for authoritative field names, types, and definitions. |
+| `MRGID` | integer64 | Marine Regions Gazetteer identifier for the feature. |
+| `GEONAME` | string | Source EEZ or maritime zone name. |
+| `MRGID_TER1` | real | Marine Regions identifier for the first listed territory; nullable where not applicable. |
+| `POL_TYPE` | string | Source polygon or zone type. |
+| `MRGID_SOV1` | integer64 | Marine Regions identifier for the first listed sovereign entity. |
+| `TERRITORY1` | string | First listed territory name. |
+| `ISO_TER1` | string | ISO code for the first listed territory. |
+| `SOVEREIGN1` | string | First listed sovereign entity name. |
+| `MRGID_TER2` | real | Marine Regions identifier for the second listed territory, where present. |
+| `MRGID_SOV2` | real | Marine Regions identifier for the second listed sovereign entity, where present. |
+| `TERRITORY2` | string | Second listed territory name, where present. |
+| `ISO_TER2` | string | ISO code for the second listed territory, where present. |
+| `SOVEREIGN2` | string | Second listed sovereign entity name, where present. |
+| `MRGID_TER3` | real | Marine Regions identifier for the third listed territory, where present. |
+| `MRGID_SOV3` | real | Marine Regions identifier for the third listed sovereign entity, where present. |
+| `TERRITORY3` | string | Third listed territory name, where present. |
+| `ISO_TER3` | string | ISO code for the third listed territory, where present. |
+| `SOVEREIGN3` | string | Third listed sovereign entity name, where present. |
+| `X_1` | real | Source-provided representative longitude in decimal degrees. |
+| `Y_1` | real | Source-provided representative latitude in decimal degrees. |
+| `MRGID_EEZ` | integer64 | Marine Regions identifier for the EEZ or maritime zone record. |
+| `AREA_KM2` | integer64 | Source-provided area in square kilometers. |
+| `ISO_SOV1` | string | ISO code for the first listed sovereign entity. |
+| `ISO_SOV2` | string | ISO code for the second listed sovereign entity, where present. |
+| `ISO_SOV3` | string | ISO code for the third listed sovereign entity, where present. |
+| `UN_SOV1` | integer64 | United Nations code for the first listed sovereign entity. |
+| `UN_SOV2` | real | United Nations code for the second listed sovereign entity, where present. |
+| `UN_SOV3` | real | United Nations code for the third listed sovereign entity, where present. |
+| `UN_TER1` | real | United Nations code for the first listed territory, where present. |
+| `UN_TER2` | real | United Nations code for the second listed territory, where present. |
+| `UN_TER3` | real | United Nations code for the third listed territory, where present. |
 
 ## Update notes
 

@@ -92,7 +92,16 @@ definitions.
 
 | Name | Type | Description |
 |---|---|---|
-| Source fields | varies | Source fields are preserved from the Marine Regions World Seas IHO v3 layer. Refer to the upstream source documentation for authoritative field names, types, and definitions. |
+| `NAME` | string | Source sea or ocean name. |
+| `ID` | string | Source identifier for the named sea feature; exact code semantics need source confirmation. |
+| `Longitude` | real | Source-provided representative longitude in decimal degrees. |
+| `Latitude` | real | Source-provided representative latitude in decimal degrees. |
+| `min_X` | real | Source-provided minimum longitude for the feature envelope. |
+| `min_Y` | real | Source-provided minimum latitude for the feature envelope. |
+| `max_X` | real | Source-provided maximum longitude for the feature envelope. |
+| `max_Y` | real | Source-provided maximum latitude for the feature envelope. |
+| `area` | integer64 | Source-provided area value; units need source confirmation. |
+| `MRGID` | integer64 | Marine Regions Gazetteer identifier for the feature. |
 
 ## Update notes
 
