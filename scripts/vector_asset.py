@@ -333,6 +333,7 @@ def build_plan(
         ogr2ogr_bin,
         "-f",
         "FlatGeobuf",
+        "-makevalid",
         "-nln",
         layer,
         "-nlt",
@@ -610,6 +611,7 @@ def validate_outputs(
     decoded_z0_feature_count: int | None = None
     decoded_z0_property_keys: tuple[str, ...] = ()
     point_retention_valid: bool | None = None
+    fgb_layer_name: str | None = None
     for label, path in (("FGB", fgb_path), ("PMTiles", pmtiles_path)):
         if not path.exists():
             errors.append(f"{label} file does not exist: {path}")
@@ -638,6 +640,8 @@ def validate_outputs(
                 errors.append("FGB layer has no features.")
             elif "Feature Count:" not in fallback.stdout:
                 errors.append("Could not confirm FGB feature count with ogrinfo.")
+            else:
+                fgb_layer_name = parse_ogrinfo_layer_name(fallback.stdout)
         else:
             try:
                 payload = json.loads(completed.stdout)
@@ -649,6 +653,25 @@ def validate_outputs(
                     errors.append("FGB has no vector layers.")
                 elif int(layers[0].get("featureCount") or 0) <= 0:
                     errors.append("FGB layer has no features.")
+                else:
+                    fgb_layer_name = layers[0].get("name")
+
+        if fgb_layer_name:
+            geometry_result = validate_fgb_geometry_validity(fgb_path, fgb_layer_name)
+            if geometry_result.returncode != 0:
+                errors.append(
+                    "Could not validate FGB geometry validity with ogrinfo SQLite/GEOS: "
+                    f"{geometry_result.stderr.strip() or geometry_result.stdout.strip()}"
+                )
+            else:
+                invalid_count = parse_invalid_geometry_count(geometry_result.stdout)
+                if invalid_count is None:
+                    errors.append("Could not parse FGB invalid geometry count from ogrinfo output.")
+                elif invalid_count > 0:
+                    errors.append(
+                        f"FGB layer has {invalid_count} invalid geometries after build. "
+                        "Repair source geometries with GDAL -makevalid before publishing."
+                    )
 
     if pmtiles_path.exists() and shutil.which(pmtiles_bin):
         completed = subprocess.run(
@@ -698,6 +721,31 @@ def validate_outputs(
         profile=asdict(profile) if profile else None,
         recommendation=asdict(recommendation) if recommendation else None,
     )
+
+
+def parse_ogrinfo_layer_name(output: str) -> str | None:
+    match = re.search(r"^Layer name:\s*(.+?)\s*$", output, flags=re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def validate_fgb_geometry_validity(fgb_path: Path, layer_name: str) -> subprocess.CompletedProcess[str]:
+    sql = (
+        "SELECT COUNT(*) AS invalid_geometry_count "
+        f"FROM {sql_identifier(layer_name)} "
+        "WHERE geometry IS NOT NULL AND NOT ST_IsValid(geometry)"
+    )
+    return subprocess.run(
+        ["ogrinfo", "-ro", "-q", "-dialect", "SQLite", "-sql", sql, str(fgb_path)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def parse_invalid_geometry_count(output: str) -> int | None:
+    match = re.search(r"invalid_geometry_count\s*\([^)]+\)\s*=\s*(\d+)", output)
+    return int(match.group(1)) if match else None
 
 
 def decoded_pmtiles_property_summary(

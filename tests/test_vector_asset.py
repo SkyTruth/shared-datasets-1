@@ -54,6 +54,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn("tippecanoe", plan.tool_versions)
         self.assertIn("pmtiles", plan.tool_versions)
         self.assertEqual(plan.commands[0][:3], ["ogr2ogr", "-f", "FlatGeobuf"])
+        self.assertIn("-makevalid", plan.commands[0])
         self.assertIn("SPATIAL_INDEX=YES", plan.commands[0])
         self.assertEqual(plan.commands[1][:3], ["ogr2ogr", "-f", "GeoJSON"])
         self.assertIn("-simplify", plan.commands[1])
@@ -310,6 +311,45 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertTrue(result.valid)
         self.assertEqual(result.errors, ())
+
+    def test_validation_rejects_invalid_fgb_geometries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name == "ogrinfo":
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(returncode=1, stdout="", stderr="no json support")
+                if command[:4] == ["ogrinfo", "-ro", "-al", "-so"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="Layer name: example\nFeature Count: 3\n",
+                        stderr="",
+                    )
+                if command[:5] == ["ogrinfo", "-ro", "-q", "-dialect", "SQLite"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="Layer name: SELECT\nOGRFeature(SELECT):0\n  invalid_geometry_count (Integer) = 2\n",
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(fgb, pmtiles)
+
+        self.assertFalse(result.valid)
+        self.assertIn("2 invalid geometries", result.errors[0])
 
     def test_repo_output_is_rejected_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

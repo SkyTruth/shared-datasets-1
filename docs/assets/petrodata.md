@@ -19,7 +19,11 @@ source: PRIO PETRODATA v1.2
 license: No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
 notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles with source_layer; release 2026-04-29; fgb
   sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7;
-  PMTiles rebuilt 2026-05-04 at maxzoom 9 from sampled FGB geometry detail
+  corrective release 2026-05-06 repaired geometry with GDAL -makevalid while preserving duplicate source PRIMKEY rows; fgb
+  sha256 b2a19482a325dc7eae3f91f1ededcf586531dcee04272239c4ca210d23fa358b; pmtiles sha256 e3fb9bf85f023e316438ba1ef3a8ca78182b541d37b23eeede69346272e1af22;
+  PMTiles maxzoom 9 from sampled FGB geometry detail
+geometry_type: MultiPolygon
+row_count: 1273
 files:
 - path: latest/petrodata.fgb
   format: fgb
@@ -79,7 +83,7 @@ The source dataset represents generalized petroleum field locations as polygons,
 
 This is a format conversion from `Petrodata_Onshore_V1.2.shp` and `Petrodata_offshore_V1.2.shp` to FlatGeobuf and PMTiles. Source field names and values are preserved, and `source_layer` was added with values `onshore` and `offshore`. Geometry was promoted to multipolygon during conversion for consistent output typing.
 
-The local v1.2 files contain 1,273 total features: 891 onshore and 382 offshore. The PRIO codebook describes PETRODATA's variables and notes that polygons may represent one or several fields, with polygon size determined by source point distribution rather than the number of fields inside.
+The local v1.2 files contain 1,273 source features: 891 onshore and 382 offshore. The canonical 2026-05-06 release keeps all 1,273 source features, repairs one invalid geometry, and preserves the three duplicate `PRIMKEY` pairs present in the source. The PRIO codebook describes PETRODATA's variables and notes that polygons may represent one or several fields, with polygon size determined by source point distribution rather than the number of fields inside.
 
 The PMTiles artifact is generated from the same combined polygons, with zooms 0 through 9. Auto maxzoom selection used sampled FGB geometry detail rather than a fixed fallback.
 
@@ -88,7 +92,7 @@ The PMTiles artifact is generated from the same combined polygons, with zooms 0 
 | Name | Type | Description |
 |---|---|---|
 | `source_layer` | string | Source split: `onshore` or `offshore`. Added during conversion. |
-| `PRIMKEY` | string | Unique polygon identifier. Onshore keys combine FIPS country code, site number, and `PET`; offshore keys combine `OF`, a running number, and `PET`. |
+| `PRIMKEY` | string | Source polygon identifier. Onshore keys combine FIPS country code, site number, and `PET`; offshore keys combine `OF`, a running number, and `PET`. Three duplicate onshore key pairs are preserved from the source. |
 | `COUNTRY` | string | Country assigned to the polygon. |
 | `FIPSCODE` | string | FIPS country code. |
 | `COWCODE` | integer | Correlates of War country code; `-9999` where no code exists. |
@@ -114,6 +118,8 @@ The PMTiles artifact is generated from the same combined polygons, with zooms 0 
 Manually converted from `/Users/jonathanraphael/Desktop/Petrodata v12 Data (1)` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
 
 The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The sampled FGB profile resolved to maxzoom 9 from representative segment lengths and feature dimensions. The rebuilt PMTiles SHA-256 is `798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7`.
+
+The corrective 2026-05-06 release repairs one invalid Bangladesh polygon with GDAL `-makevalid` while preserving all source rows, including the duplicate `AL001PET`, `TU006PET`, and `TU009PET` pairs. The rebuilt FGB has 1,273 features, 1,270 distinct `PRIMKEY` values, and zero invalid geometries. The rebuilt FGB SHA-256 is `b2a19482a325dc7eae3f91f1ededcf586531dcee04272239c4ca210d23fa358b`; the rebuilt PMTiles SHA-256 is `e3fb9bf85f023e316438ba1ef3a8ca78182b541d37b23eeede69346272e1af22`.
 
 ## Known caveats
 
