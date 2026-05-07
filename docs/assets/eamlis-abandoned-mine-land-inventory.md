@@ -18,6 +18,8 @@ metadata_paths:
 - runs/YYYY-MM-DD.json
 source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
+citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
+  Inventory System (e-AMLIS). https://amlis.osmre.gov/.
 notes: Monthly job publishes FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 12 from the point-only FGB profile
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for all-point retention; pmtiles sha256 09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4.
   Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records.
@@ -60,6 +62,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** U.S. Department of the Interior OSMRE e-AMLIS
 - **License / terms:** Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
+- **Citation:** U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land Inventory System (e-AMLIS). https://amlis.osmre.gov/.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

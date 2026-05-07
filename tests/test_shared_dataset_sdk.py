@@ -33,9 +33,9 @@ from skytruth_shared_datasets import (  # noqa: E402
 from skytruth_shared_datasets import cli as sdk_cli  # noqa: E402
 
 
-FIXTURE_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,notes
-example-vector,Example Vector,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,true,true,false,Example source,Example license,Example notes
-example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,public,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,false,false,true,Example table source,Example license,Deprecated table
+FIXTURE_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-vector,Example Vector,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,true,true,false,Example source,Example license,Example citation,Example notes
+example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,public,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,false,false,true,Example table source,Example license,Example table citation,Deprecated table
 """
 
 
@@ -88,6 +88,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
             catalog = Catalog.load(source=path)
 
         self.assertEqual(catalog.get("example-vector").title, "Example Vector")
+        self.assertEqual(catalog.get("example-vector").citation, "Example citation")
         self.assertEqual(catalog.source, str(path))
 
     def test_loads_catalog_from_mocked_public_url(self):

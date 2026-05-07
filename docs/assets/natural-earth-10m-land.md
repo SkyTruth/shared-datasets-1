@@ -17,6 +17,7 @@ metadata_paths:
 - README.md
 source: Natural Earth 1:10,000,000 physical land polygons v5.1.1
 license: Public domain per Natural Earth Terms of Use
+citation: Made with Natural Earth. Free vector and raster map data at naturalearthdata.com; land polygons version 5.1.1.
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
   fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
   PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-8, no pre-tiling simplification, --no-line-simplification, and --no-tiny-polygon-reduction-at-maximum-zoom
@@ -52,6 +53,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** Natural Earth 1:10,000,000 physical land polygons v5.1.1
 - **License / terms:** Public domain per Natural Earth Terms of Use
+- **Citation:** Made with Natural Earth. Free vector and raster map data at naturalearthdata.com; land polygons version 5.1.1.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

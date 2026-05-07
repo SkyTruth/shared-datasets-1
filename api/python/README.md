@@ -122,7 +122,7 @@ from skytruth_shared_datasets import Catalog
 catalog = Catalog.load_gcs()
 
 for asset in catalog.search(format="pmtiles"):
-    print(asset.slug, asset.access_tier)
+    print(asset.slug, asset.access_tier, asset.citation)
 
 ref = catalog.resolve("wdpa-marine", "pmtiles")
 downloaded = catalog.fetch("wdpa-marine", "fgb", access="gcs")

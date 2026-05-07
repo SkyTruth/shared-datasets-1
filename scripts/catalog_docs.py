@@ -41,6 +41,7 @@ CATALOG_COLUMNS = [
     "has_csv",
     "source",
     "license",
+    "citation",
     "notes",
 ]
 
@@ -61,6 +62,7 @@ FRONTMATTER_KEYS = [
     "source",
     "source_url",
     "license",
+    "citation",
     "license_flags",
     "notes",
     "bounds",
@@ -100,6 +102,7 @@ REQUIRED_SCALAR_FIELDS = [
     "canonical_file",
     "source",
     "license",
+    "citation",
 ]
 
 REQUIRED_SECTIONS = [
@@ -309,7 +312,7 @@ def normalize_metadata(
             value = (catalog_row or {}).get("access_tier") or "public"
         if key == "canonical_file" and not value and allow_legacy:
             value = canonical_file_from_row(catalog_row)
-        if not value and catalog_row and key in {"source", "license"} and allow_legacy:
+        if not value and catalog_row and key in {"source", "license", "citation"} and allow_legacy:
             value = catalog_row.get(key)
         metadata[key] = as_text(value).strip()
 
@@ -527,6 +530,7 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "has_csv": str("csv" in formats).lower(),
         "source": metadata["source"],
         "license": metadata["license"],
+        "citation": metadata["citation"],
         "notes": metadata.get("notes", ""),
     }
 
@@ -600,6 +604,7 @@ def summary_block(metadata: dict[str, Any]) -> str:
             f"- **Available formats:** {formats}",
             f"- **Source:** {metadata['source']}",
             f"- **License / terms:** {metadata['license']}",
+            f"- **Citation:** {metadata['citation']}",
             "<!-- END GENERATED asset-summary -->",
         ]
     )

@@ -36,6 +36,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 owner="SkyTruth",
                 source_name="Example source",
                 license_text="Example license",
+                citation="Example citation",
                 update_cadence="manual",
                 canonical_format=None,
                 access_tier="public",
@@ -78,6 +79,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 owner="SkyTruth",
                 source_name=None,
                 license_text=None,
+                citation=None,
                 update_cadence="manual",
                 canonical_format=None,
                 access_tier="public",
@@ -93,6 +95,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(plan.available_formats, ["csv"])
         self.assertIn("Confirm source name or URL.", plan.blocking_questions)
         self.assertIn("Confirm license or terms.", plan.blocking_questions)
+        self.assertIn("Confirm citation for the original source publication.", plan.blocking_questions)
         self.assertTrue(any("geometry-free" in note for note in plan.notes))
 
     def test_existing_fgb_still_uses_vector_build_for_pmtiles_companion(self):
@@ -112,6 +115,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 owner="SkyTruth",
                 source_name="Example source",
                 license_text="Example license",
+                citation="Example citation",
                 update_cadence="manual",
                 canonical_format=None,
                 access_tier="public",
@@ -157,6 +161,8 @@ class PublishingConciergeTests(unittest.TestCase):
                     "Example source",
                     "--license",
                     "Example license",
+                    "--citation",
+                    "Example citation",
                     "--categories",
                     str(categories),
                     "--docs-dir",
@@ -185,6 +191,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 owner="SkyTruth",
                 source_name="Example source",
                 license_text="Example license",
+                citation="Example citation",
                 update_cadence="manual",
                 canonical_format=None,
                 access_tier="public",
@@ -200,10 +207,12 @@ class PublishingConciergeTests(unittest.TestCase):
             owner="SkyTruth",
             source_name="Example source",
             license_text="Example license",
+            citation="Example citation",
             update_cadence="manual",
             access_tier="public",
         )
         self.assertIn("access_tier: public", text)
+        self.assertIn("citation: Example citation", text)
         self.assertIn("latest/example-asset.pmtiles", text)
 
     def test_pmtiles_hints_are_included_in_vector_command_and_draft_doc(self):
@@ -222,6 +231,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 owner="SkyTruth",
                 source_name="Example source",
                 license_text="Example license",
+                citation="Example citation",
                 update_cadence="manual",
                 canonical_format=None,
                 access_tier="public",
@@ -244,6 +254,7 @@ class PublishingConciergeTests(unittest.TestCase):
             owner="SkyTruth",
             source_name="Example source",
             license_text="Example license",
+            citation="Example citation",
             update_cadence="manual",
             access_tier="public",
         )

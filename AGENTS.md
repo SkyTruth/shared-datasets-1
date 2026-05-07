@@ -177,7 +177,8 @@ Remote GCS objects:
 Dataset metadata and local files:
 
 - `docs/assets/{asset-slug}.md` is the local metadata source for asset catalog
-  rows and bucket README content.
+  rows and bucket README content, including the required citation for the
+  original source publication or authoritative dataset release.
 - Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
   metadata changes; update the asset doc and regenerate catalog outputs.
 - Dataset upload announcements are operational notifications, not Git commit

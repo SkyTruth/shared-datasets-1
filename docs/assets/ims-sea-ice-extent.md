@@ -18,6 +18,8 @@ metadata_paths:
 - runs/YYYY-MM-DD.json
 source: NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
 license: Public U.S. government work; cite NSIDC G02156
+citation: 'U.S. National Ice Center (2008). IMS Daily Northern Hemisphere Snow and Ice Analysis at 1 km, 4 km, and 24 km Resolutions,
+  Version 1. Boulder, Colorado USA: National Snow and Ice Data Center. https://doi.org/10.7265/N52R3PMC. Accessed 2026-05-07.'
 notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 8 from the 4000-meter
   source-resolution hint; pmtiles sha256 66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d. Release history,
   source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
@@ -56,6 +58,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
 - **License / terms:** Public U.S. government work; cite NSIDC G02156
+- **Citation:** U.S. National Ice Center (2008). IMS Daily Northern Hemisphere Snow and Ice Analysis at 1 km, 4 km, and 24 km Resolutions, Version 1. Boulder, Colorado USA: National Snow and Ice Data Center. https://doi.org/10.7265/N52R3PMC. Accessed 2026-05-07.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

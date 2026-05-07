@@ -37,6 +37,7 @@ REQUIRED_FIELDS = [
     "metadata_paths",
     "source",
     "license",
+    "citation",
 ]
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n?(.*)\Z", re.DOTALL)
@@ -93,6 +94,7 @@ class CatalogAsset:
     release_index_updated_at: str
     source: str
     license: str
+    citation: str
     notes: str
     bounds: list[float] | None
     geometry_type: str | None
@@ -596,6 +598,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         release_index_updated_at=release_index_updated_at,
         source=row["source"].strip(),
         license=row["license"].strip(),
+        citation=row["citation"].strip(),
         notes=row.get("notes", "").strip(),
         bounds=optional_bounds(doc_metadata, doc_path=doc_path),
         geometry_type=optional_text(doc_metadata, "geometry_type", doc_path=doc_path),

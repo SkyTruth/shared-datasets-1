@@ -16,6 +16,7 @@ metadata_paths:
 source: "{source-name-or-url}"
 source_url: "{optional-source-homepage-or-api-url}"
 license: "{license-or-terms-summary}"
+citation: "{preferred citation for the original source publication}"
 license_flags:
   - "{optional-discovery-flag}"
 notes: "{short catalog note}"

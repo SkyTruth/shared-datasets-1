@@ -165,6 +165,8 @@ Required fields:
 - Canonical file.
 - Source.
 - License / terms.
+- Citation for the original source publication or authoritative dataset
+  release.
 - Short explanation of what the asset is.
 - File table.
 - Schema notes or field notes.

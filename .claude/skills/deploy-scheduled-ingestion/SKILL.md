@@ -36,7 +36,7 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - For source-availability windows, retries, or polling schedules that target one upstream period, keep the target release date stable for that period and record the actual scheduler attempt date in the skipped run/check-in payload.
 - Every success and meaningful skip must update `_catalog/releases/{asset-slug}.json`; verify both `latest_release` and `latest_run` after deployment.
 - After a publish or deploy canary, inspect custom metadata on `latest/` objects. It must match the bytes now stored at `latest/`, not stale metadata from the previous generation.
-- Normal cron runs must not require Git commits or tracked catalog date edits. Do not update repo asset docs just to advance latest-release, source-version, row-count, or hash fields; those belong in `_catalog/releases/{asset-slug}.json` and run records.
+- Normal cron runs must not require Git commits or tracked catalog date edits. Do not update repo asset docs just to advance latest-release, source-version, row-count, or hash fields; those belong in `_catalog/releases/{asset-slug}.json` and run records. Stable source identity, license, or citation changes still belong in asset docs and generated catalog outputs.
 
 ## Large-source sizing
 

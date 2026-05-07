@@ -17,6 +17,8 @@ metadata_paths:
 - README.md
 source: PRIO PETRODATA v1.2
 license: No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
+citation: 'Lujala, Paivi, Jan Ketil Rod, and Nadja Thieme (2007). Fighting over Oil: Introducing a New Dataset. Conflict Management
+  and Peace Science 24(3): 239-256. https://doi.org/10.1080/07388940701468526.'
 notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles with source_layer; release 2026-04-29; fgb
   sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7;
   corrective release 2026-05-06 repaired geometry with GDAL -makevalid while preserving duplicate source PRIMKEY rows; fgb
@@ -54,6 +56,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** PRIO PETRODATA v1.2
 - **License / terms:** No explicit license found on the PRIO dataset page; cite Lujala, Rod, and Thieme 2007 and follow source terms
+- **Citation:** Lujala, Paivi, Jan Ketil Rod, and Nadja Thieme (2007). Fighting over Oil: Introducing a New Dataset. Conflict Management and Peace Science 24(3): 239-256. https://doi.org/10.1080/07388940701468526.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

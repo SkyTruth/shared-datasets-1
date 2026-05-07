@@ -54,6 +54,7 @@ CATALOG_REQUIRED_COLUMNS = (
     "has_csv",
     "source",
     "license",
+    "citation",
     "notes",
 )
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated"}

@@ -18,6 +18,9 @@ metadata_paths:
 source: UNEP-WCMC, WorldFish Centre, WRI, and TNC Global Distribution of Coral Reefs v4.1
 license: UNEP-WCMC General Data License (excluding WDPA); contextual internal use with citation only; no redistribution without
   permission
+citation: 'UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources
+  including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Cambridge (UK): UN Environment Programme
+  World Conservation Monitoring Centre. https://doi.org/10.34892/t2wk-5t34.'
 notes: Converted local polygon and point shapefiles to FGB plus PMTiles with both layers; release 2026-04-29; polygon fgb
   sha256 387d9999983a2cf9916ce3d7d496c45319ed8196eccfe9b3d2e8622b82756869; point fgb sha256 a81fcf8264e397fe08cd2655ad580cf36da6fea6010e830b97947fb091bb8ccf;
   pmtiles sha256 2e33c2bbbf0942d0b692e663815177c47f87a008a5206451e0e293f8af82b7b6; PMTiles rebuilt 2026-05-04 at maxzoom 12
@@ -60,6 +63,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** UNEP-WCMC, WorldFish Centre, WRI, and TNC Global Distribution of Coral Reefs v4.1
 - **License / terms:** UNEP-WCMC General Data License (excluding WDPA); contextual internal use with citation only; no redistribution without permission
+- **Citation:** UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Cambridge (UK): UN Environment Programme World Conservation Monitoring Centre. https://doi.org/10.34892/t2wk-5t34.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

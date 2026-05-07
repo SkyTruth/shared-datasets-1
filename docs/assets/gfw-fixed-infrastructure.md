@@ -17,6 +17,9 @@ metadata_paths:
 - README.md
 source: Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
 license: Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
+citation: 'Global Fishing Watch (2026). Fixed infrastructure detections from Sentinel-1 and Sentinel-2, public-fixed-infrastructure-filtered:latest;
+  derived from Paolo, F.S. et al. (2024). Satellite mapping reveals extensive industrial activity at sea. Nature 625: 85-91.
+  https://doi.org/10.1038/s41586-023-06825-8.'
 notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
   pmtiles sha256 c2a3c96f98ef38a8ac1db217b8d42008d0c4c874581947e84a6c59521839ff1e; PMTiles rebuilt 2026-05-04 at maxzoom 12
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 57681 points; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
@@ -54,6 +57,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** Global Fishing Watch Datasets API public-fixed-infrastructure-filtered:latest
 - **License / terms:** Global Fishing Watch API non-commercial use only and subject to Global Fishing Watch Terms of Use
+- **Citation:** Global Fishing Watch (2026). Fixed infrastructure detections from Sentinel-1 and Sentinel-2, public-fixed-infrastructure-filtered:latest; derived from Paolo, F.S. et al. (2024). Satellite mapping reveals extensive industrial activity at sea. Nature 625: 85-91. https://doi.org/10.1038/s41586-023-06825-8.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

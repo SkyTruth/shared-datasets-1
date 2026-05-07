@@ -18,6 +18,9 @@ metadata_paths:
 - runs/YYYY-MM-DD.json
 source: UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
 license: See Protected Planet WDPA terms
+citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Protected Areas (WDPA) and World Database on
+  Other Effective Area-based Conservation Measures (WD-OECM) [Online], May 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available
+  at: www.protectedplanet.net.'
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. Release history, source versions, row counts, and
   file hashes are recorded in the bucket release index and per-run records. The 2026-05-04 PMTiles were rebuilt at maxzoom
   12 from the published FGB profile; pmtiles sha256 02591002e5ef5c0e50829972de6ae037b41d8bcb5b8fa49ae5a0dd6a7f6c53d2
@@ -55,6 +58,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** UNEP-WCMC and IUCN Protected Planet WDPA/WDOECM
 - **License / terms:** See Protected Planet WDPA terms
+- **Citation:** UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Protected Areas (WDPA) and World Database on Other Effective Area-based Conservation Measures (WD-OECM) [Online], May 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available at: www.protectedplanet.net.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

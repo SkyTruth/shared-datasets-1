@@ -87,6 +87,7 @@ class CatalogAsset:
     last_updated: str
     source: str
     license: str
+    citation: str
     notes: str
     raw: Mapping[str, str | None] = field(repr=False)
 
@@ -114,6 +115,7 @@ class CatalogAsset:
             last_updated=row.get("last_updated", ""),
             source=row.get("source", ""),
             license=row.get("license", ""),
+            citation=row.get("citation", ""),
             notes=row.get("notes", ""),
             raw=MappingProxyType(dict(row)),
         )

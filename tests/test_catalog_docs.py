@@ -37,6 +37,7 @@ metadata_paths:
 source: Example source
 source_url: https://example.test/source
 license: Example license
+citation: Example citation
 license_flags:
 - attribution-required
 notes: Example notes
@@ -97,6 +98,7 @@ update_cadence: manual
 canonical_format: fgb
 source: Example source
 license: Example license
+citation: Example citation
 ---
 
 # Example Asset
@@ -130,8 +132,8 @@ Manual.
 """
 
 
-CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example notes
+CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example citation,Example notes
 """
 
 
@@ -166,9 +168,11 @@ class CatalogDocsTests(unittest.TestCase):
         rendered = catalog_docs.render_asset_doc(docs[0])
         self.assertEqual(row["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
         self.assertEqual(row["access_tier"], "public")
+        self.assertEqual(row["citation"], "Example citation")
         self.assertEqual(row["has_pmtiles"], "true")
         self.assertIn("<!-- BEGIN GENERATED asset-summary -->", rendered)
         self.assertIn("- **Access tier:** public", rendered)
+        self.assertIn("- **Citation:** Example citation", rendered)
         self.assertIn("source_url: https://example.test/source", rendered)
         self.assertIn("geometry_type: Polygon", rendered)
         self.assertIn("row_count: 12345", rendered)

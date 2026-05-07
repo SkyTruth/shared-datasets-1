@@ -106,7 +106,8 @@ back to `storage.googleapis.com` for CDN rollout or fallback behavior.
 Do not assume every PMTiles asset is public. The catalog can include private
 PMTiles; as of the cookie-mediated CDN rollout, `iucn-mammal-ranges` and
 `iucn-reptile-ranges` are private-tier PMTiles. If a consumer derives layers
-from the catalog, parse `access_tier` and emit:
+from the catalog, preserve `citation` in service-facing metadata and parse
+`access_tier` to emit:
 
 ```ts
 `${SHARED_PMTILES_BASE_URL}/${accessTier}/${assetSlug}.pmtiles`

@@ -57,8 +57,11 @@ successful dataset release and `Last check-in` for the most recent success or
 meaningful skip recorded by the cron job. Both values come from the release
 index when present.
 
-Optional discovery fields in asset-doc frontmatter are emitted when present:
-`bounds` as `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
+The runtime `catalog.json` includes the CSV catalog fields, including
+`citation`, so browser and service consumers can cite the original source
+publication or authoritative dataset release. Optional discovery fields in
+asset-doc frontmatter are emitted when present: `bounds` as
+`[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
 `source_url`, and frontmatter `license_flags` merged with license-text-derived
 flags. These fields are additive so existing CSV and JSON consumers can ignore
 them.

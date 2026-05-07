@@ -42,13 +42,19 @@ uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUC
 3. Make local changes.
 4. Upload with `--replace-generation`.
 5. Verify with `stat`.
-6. Update README/catalog when relevant.
+6. Update README/catalog when relevant, including `citation` when source
+   publication metadata changes.
 
 ## New object pattern
 
 By default, `upload` uses no-clobber behavior and fails if a live object already exists.
 
-For dataset roots, create or update the adjacent `README.md` with enough schema detail for a consumer to inspect the asset without opening the full data file. Where possible, include a properties/columns table with field names, types, and short explanations. If field meanings are not available, list names/types and mark definitions as needing source confirmation.
+For dataset roots, create or update the adjacent `README.md` with enough schema
+detail for a consumer to inspect the asset without opening the full data file.
+Include the source citation when preparing catalog-backed metadata. Where
+possible, include a properties/columns table with field names, types, and short
+explanations. If field meanings are not available, list names/types and mark
+definitions as needing source confirmation.
 
 ## Local generated files
 

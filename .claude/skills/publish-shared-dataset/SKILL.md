@@ -149,8 +149,8 @@ For normal asset metadata changes:
    machine-readable catalog metadata and human-readable bucket README content.
 2. Use the template structure from `templates/dataset_README.template.md` or
    `templates/dataset_README.minimal.template.md`.
-3. Include owner, source, license/terms, update cadence, canonical path, file
-   table, update notes, and schema/property notes.
+3. Include owner, source, license/terms, citation, update cadence, canonical
+   path, file table, update notes, and schema/property notes.
 4. For fields/properties, list names, types, and short explanations when they
    can be derived. If meanings are unknown, list names/types and say definitions
    need source confirmation.

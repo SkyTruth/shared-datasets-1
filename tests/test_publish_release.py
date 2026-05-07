@@ -17,7 +17,7 @@ from scripts.gcs_asset import app
 CATALOG_HEADER = (
     "asset_slug,title,category,subcategory,status,owner,update_cadence,canonical_path,"
     "canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,"
-    "source,license,notes\n"
+    "source,license,citation,notes\n"
 )
 
 
@@ -94,8 +94,8 @@ def write_catalog(tmp_path: Path, *, canonical_format: str = "fgb", available_fo
             "example-asset,Example Asset,100-geographic-reference,110-boundaries,active,"
             "SkyTruth,manual,gs://test-bucket/100-geographic-reference/110-boundaries/"
             f"example-asset/latest/example-asset.{ 'tif' if canonical_format == 'cog' else canonical_format },"
-            f"{canonical_format},{available_formats},README.md,true,false,false,2026-05-01,"
-            "Example source,Example license,Example notes\n"
+            f"{canonical_format},{available_formats},README.md,true,false,false,"
+            "Example source,Example license,Example citation,Example notes\n"
         )
     )
     return path

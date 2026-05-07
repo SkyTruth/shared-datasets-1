@@ -18,6 +18,8 @@ metadata_paths:
 - runs/YYYY-MM-DD.json
 source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
+citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
+  confirmation.
 notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
   is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
@@ -58,6 +60,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 - **License / terms:** SkyTruth internal use; upstream source and redistribution terms need confirmation
+- **Citation:** SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs confirmation.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

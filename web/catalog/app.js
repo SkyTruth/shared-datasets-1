@@ -55,6 +55,7 @@ const elements = {
   sourceUrlRow: document.querySelector("#detail-source-url-row"),
   sourceUrl: document.querySelector("#detail-source-url"),
   licenseText: document.querySelector("#detail-license-text"),
+  citation: document.querySelector("#detail-citation"),
   mapSection: document.querySelector("#map-section"),
   mapStatus: document.querySelector("#map-status"),
   colorLegend: document.querySelector("#color-legend"),
@@ -361,6 +362,7 @@ function searchableText(asset) {
       asset.source,
       asset.source_url,
       asset.license,
+      asset.citation,
       Array.isArray(asset.license_flags) ? asset.license_flags.join(" ") : "",
       asset.latest_release?.date,
       asset.latest_run?.date,
@@ -524,6 +526,7 @@ function renderDetail(asset) {
   elements.accessTierValue.textContent = asset.access_tier || "Unknown";
   elements.source.textContent = asset.source || "Unknown";
   elements.licenseText.textContent = asset.license || "Unknown";
+  elements.citation.textContent = asset.citation || "Unknown";
   renderDiscoveryMetadata(asset);
   renderSourceUrl(asset);
   renderVersionSelector(asset);

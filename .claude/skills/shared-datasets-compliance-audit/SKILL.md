@@ -35,7 +35,7 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 5. Offer a concrete fix plan grouped by:
    - documentation/catalog fixes that are safe to make after approval,
    - asset moves/renames requiring human conversation first,
-   - source/license/schema questions requiring owner confirmation.
+   - source/license/citation/schema questions requiring owner confirmation.
 
 ## Script Notes
 

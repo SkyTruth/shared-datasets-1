@@ -17,6 +17,8 @@ metadata_paths:
 - README.md
 source: Marine Regions World Seas IHO v3
 license: See source terms
+citation: Flanders Marine Institute (2018). IHO Sea Areas, version 3. Available online at https://www.marineregions.org/.
+  https://doi.org/10.14284/323.
 notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
   PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
   from sampled FGB geometry detail with local tile and browser QA
@@ -50,6 +52,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** Marine Regions World Seas IHO v3
 - **License / terms:** See source terms
+- **Citation:** Flanders Marine Institute (2018). IHO Sea Areas, version 3. Available online at https://www.marineregions.org/. https://doi.org/10.14284/323.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

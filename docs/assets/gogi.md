@@ -19,6 +19,8 @@ metadata_paths:
 source: NETL EDX Global Oil & Gas Features Database gogi_v10_3_1shp.zip
 source_url: https://edx.netl.doe.gov/dataset/global-oil-gas-features-database
 license: Creative Commons Attribution and Open Data Commons Attribution License; attribution required
+citation: Sabbatino, M., Romeo, L., Baker, V., Bauer, J., Barkhurst, A., Bean, A., DiGiulio, J., Jones, K., Jones, T.J., Justman,
+  D., Miller III, R., Rose, K., and Tong, A. Global Oil & Gas Features Database. Energy Data eXchange, 2017-12-12. https://doi.org/10.18141/1427300.
 license_flags:
 - attribution-required
 notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip sha256 2621f210dde27f068ea2987e0cf0135b20c2641e94e6b4e3692ac9ee4263ad07;
@@ -203,6 +205,7 @@ files:
 - **Available formats:** `fgb`, `csv`, `pmtiles`
 - **Source:** NETL EDX Global Oil & Gas Features Database gogi_v10_3_1shp.zip
 - **License / terms:** Creative Commons Attribution and Open Data Commons Attribution License; attribution required
+- **Citation:** Sabbatino, M., Romeo, L., Baker, V., Bauer, J., Barkhurst, A., Bean, A., DiGiulio, J., Jones, K., Jones, T.J., Justman, D., Miller III, R., Rose, K., and Tong, A. Global Oil & Gas Features Database. Energy Data eXchange, 2017-12-12. https://doi.org/10.18141/1427300.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

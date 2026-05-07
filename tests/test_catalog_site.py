@@ -17,14 +17,14 @@ CATEGORIES = """categories:
       "110-boundaries": "Boundaries."
 """
 
-CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example notes
+CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example citation,Example notes
 """
 
 MIXED_ACCESS_CATALOG = CATALOG + (
     "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,private,SkyTruth,manual,"
     "gs://example-bucket/100-geographic-reference/110-boundaries/private-asset/latest/private-asset.fgb,"
-    "fgb,fgb;pmtiles,README.md,true,false,false,Private source,Internal terms,Private notes\n"
+    "fgb,fgb;pmtiles,README.md,true,false,false,Private source,Internal terms,Private citation,Private notes\n"
 )
 
 DOC = """---
@@ -162,6 +162,7 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["geometry_type"], "Polygon")
         self.assertEqual(asset["row_count"], 12345)
         self.assertEqual(asset["source_url"], "https://example.test/source")
+        self.assertEqual(asset["citation"], "Example citation")
         self.assertIn("Reusable example boundary dataset", asset["description"])
 
     def test_build_catalog_payload_keeps_public_and_private_assets_visible(self):

@@ -72,7 +72,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 ```
 
    - Inspect generated `catalog.json` with `jq`.
-   - Verify affected assets have expected `available_formats`, `has_pmtiles`, `has_geojson`, `public_url`, `pmtiles_url`, `docs_url`, and `versions`.
+   - Verify affected assets have expected `available_formats`, `has_pmtiles`, `has_geojson`, `citation`, `public_url`, `pmtiles_url`, `docs_url`, and `versions`.
 
 4. PMTiles fidelity checks:
    - Shared vector PMTiles display artifacts should use

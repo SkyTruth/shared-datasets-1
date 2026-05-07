@@ -18,6 +18,8 @@ metadata_paths:
 source: IUCN Red List of Threatened Species spatial data, mammals group, Red List version 2025-2 / metadata v6.3
 license: IUCN Red List Terms and Conditions of Use v3.1; non-commercial conservation, education, scientific analysis, and
   research use only; no reposting or redistribution without prior written permission from IUCN
+citation: IUCN (2025). The IUCN Red List of Threatened Species. Version 2025-2. https://www.iucnredlist.org. Accessed 2026-05-02.
+  For species-level map use, cite the source feature-level citation values.
 license_flags:
 - non-commercial-only
 - no-redistribution-without-permission
@@ -66,6 +68,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** IUCN Red List of Threatened Species spatial data, mammals group, Red List version 2025-2 / metadata v6.3
 - **License / terms:** IUCN Red List Terms and Conditions of Use v3.1; non-commercial conservation, education, scientific analysis, and research use only; no reposting or redistribution without prior written permission from IUCN
+- **Citation:** IUCN (2025). The IUCN Red List of Threatened Species. Version 2025-2. https://www.iucnredlist.org. Accessed 2026-05-02. For species-level map use, cite the source feature-level citation values.
 <!-- END GENERATED asset-summary -->
 
 ## What this is

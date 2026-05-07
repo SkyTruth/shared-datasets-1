@@ -191,7 +191,9 @@ asset doc, refreshes the CSV catalog, and refreshes `docs/assets/index.md`.
 `check` is the CI-safe drift detector. `export-readmes` writes upload-ready
 bucket README files under category/subcategory/asset paths without touching GCS.
 
-Optional discovery frontmatter such as `bounds`, `geometry_type`, `row_count`,
+Asset docs must include `citation` so CSV and JSON catalog consumers can cite
+the original source publication or authoritative dataset release. Optional
+discovery frontmatter such as `bounds`, `geometry_type`, `row_count`,
 `source_url`, and `license_flags` is preserved by the docs generator and exposed
 in the static catalog JSON/site when present. The CSV catalog is a static asset
 registry; cron freshness belongs in bucket release indexes, not tracked catalog

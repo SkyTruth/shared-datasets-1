@@ -33,7 +33,9 @@ Catalog and asset README generation lives in:
 scripts/catalog_docs.py
 ```
 
-Edit `docs/assets/{asset_slug}.md`, then regenerate local derived files:
+Edit `docs/assets/{asset_slug}.md`, including the required `citation` for the
+original source publication or authoritative dataset release, then regenerate
+local derived files:
 
 ```bash
 uv run python scripts/catalog_docs.py generate

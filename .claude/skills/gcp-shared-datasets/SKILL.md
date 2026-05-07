@@ -158,8 +158,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$URI"
 ```
 
-If the edit changes owner, source, license, cadence, canonical path, available
-formats, schema, or update notes, update `docs/assets/{asset-slug}.md` and run:
+If the edit changes owner, source, license, citation, cadence, canonical path,
+available formats, schema, or update notes, update
+`docs/assets/{asset-slug}.md` and run:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate

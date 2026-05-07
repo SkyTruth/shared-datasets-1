@@ -18,6 +18,7 @@ metadata_paths:
 source: Global Fishing Watch Anchorages Version 2
 license: Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms
   of Use
+citation: Global Fishing Watch (2026). Global Anchorages dataset, Version 2. https://globalfishingwatch.org/datasets-and-code-anchorages/.
 notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-02-02; source rows 166497; published rows
   166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
   pmtiles sha256 54d8a622cf6f426aa78dc9cbffae89a57212f5c428e6fd2218e414718f8e8cdd; PMTiles rebuilt 2026-05-04 at maxzoom 12
@@ -52,6 +53,7 @@ files:
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** Global Fishing Watch Anchorages Version 2
 - **License / terms:** Copyright Global Fishing Watch; non-commercial use only under CC BY-NC 4.0 and subject to Global Fishing Watch Terms of Use
+- **Citation:** Global Fishing Watch (2026). Global Anchorages dataset, Version 2. https://globalfishingwatch.org/datasets-and-code-anchorages/.
 <!-- END GENERATED asset-summary -->
 
 ## What this is
