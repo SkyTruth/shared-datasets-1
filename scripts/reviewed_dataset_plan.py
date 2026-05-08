@@ -17,6 +17,8 @@ MAX_MUTATIONS = 50
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WILDCARD_CHARS = set("*?[]{}")
+SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
+WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
 
 
 class PlanValidationError(ValueError):
@@ -92,6 +94,40 @@ def normalize_numeric_generation(value: Any, *, label: str, required: bool) -> s
     return generation
 
 
+def normalize_compatibility_waiver(raw: Any, *, asset_slug: str, label: str) -> dict[str, Any] | None:
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, dict):
+        raise PlanValidationError(f"{label} must be an object")
+    if raw.get("asset_slug") != asset_slug:
+        raise PlanValidationError(f"{label}.asset_slug must match the publish plan asset_slug")
+
+    normalized: dict[str, Any] = {"asset_slug": asset_slug}
+    for key in WAIVER_REQUIRED_TEXT_FIELDS:
+        value = str(raw.get(key, "")).strip()
+        if not value:
+            raise PlanValidationError(f"{label}.{key} is required")
+        normalized[key] = value
+
+    blocked_changes = raw.get("blocked_changes")
+    if not isinstance(blocked_changes, list) or not blocked_changes:
+        raise PlanValidationError(f"{label}.blocked_changes must be a nonempty list")
+    normalized_changes: list[dict[str, str]] = []
+    for index, change in enumerate(blocked_changes, start=1):
+        if not isinstance(change, dict):
+            raise PlanValidationError(f"{label}.blocked_changes[{index}] must be an object")
+        kind = str(change.get("kind", "")).strip()
+        field = str(change.get("field", "")).strip()
+        if kind not in SCHEMA_COMPATIBILITY_BLOCKING_KINDS:
+            raise PlanValidationError(f"{label}.blocked_changes[{index}].kind is not a blocking schema change kind")
+        if not field:
+            raise PlanValidationError(f"{label}.blocked_changes[{index}].field is required")
+        normalized_changes.append({"kind": kind, "field": field})
+
+    normalized["blocked_changes"] = normalized_changes
+    return normalized
+
+
 def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET) -> dict[str, Any]:
     asset_slug, proposal_id = require_slug_and_proposal(plan)
     promotions = plan.get("promotions")
@@ -137,6 +173,11 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
             raise PlanValidationError(f"promotions[{index}].content_type is too long")
         if len(cache_control) > 500:
             raise PlanValidationError(f"promotions[{index}].cache_control is too long")
+        compatibility_waiver = normalize_compatibility_waiver(
+            raw.get("compatibility_waiver"),
+            asset_slug=asset_slug,
+            label=f"promotions[{index}].compatibility_waiver",
+        )
 
         normalized["promotions"].append(
             {
@@ -146,6 +187,7 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
                 "destination_generation": destination_generation,
                 "content_type": content_type,
                 "cache_control": cache_control,
+                "compatibility_waiver": compatibility_waiver,
             }
         )
 

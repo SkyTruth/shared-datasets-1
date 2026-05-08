@@ -467,6 +467,13 @@ def publish_release(
         "--skip-schema-snapshot",
         help="Do not update the schema snapshot after publish.",
     ),
+    compatibility_waiver: Optional[Path] = typer.Option(
+        None,
+        "--compatibility-waiver",
+        exists=True,
+        dir_okay=False,
+        help="Reviewed waiver JSON for otherwise blocked schema compatibility changes.",
+    ),
 ) -> None:
     """Publish prepared local artifacts as an immutable release and latest update."""
     from scripts import publish_release as publish_release_core
@@ -482,6 +489,7 @@ def publish_release(
             client=client,
             readme_path=readme_path,
             remote_catalog_path=remote_catalog_path,
+            compatibility_waiver_path=compatibility_waiver,
         )
         if dry_run:
             sys.stdout.write(json.dumps(publish_release_core.plan_to_dict(plan), indent=2, sort_keys=True) + "\n")

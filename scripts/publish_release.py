@@ -81,6 +81,8 @@ class PublishPlan:
     metadata_uploads: tuple[MetadataUpload, ...]
     remote_generations: dict[str, int | None]
     checks: tuple[str, ...]
+    schema_compatibility: dict[str, Any] | None = None
+    compatibility_waiver: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,9 @@ def build_publish_plan(
     readme_path: Path | None = None,
     remote_catalog_path: Path | None = None,
     schema_reader: Callable[[Path], list[dict[str, str]]] | None = None,
+    schema_compatibility_checker: Callable[..., Any] | None = None,
+    compatibility_waiver_path: Path | None = None,
+    compatibility_waiver: dict[str, Any] | None = None,
     cog_validator: Callable[[Path], Any] | None = None,
 ) -> PublishPlan:
     release = parse_release_date(release_date)
@@ -188,6 +193,9 @@ def build_publish_plan(
     latest_generations: dict[str, int | None] = {}
     bucket = client.bucket(bucket_name)
     schema_probe = schema_reader or default_schema_reader
+    schema_compatibility_check = schema_compatibility_checker or default_schema_compatibility_checker
+    compatibility_waiver_payload = load_compatibility_waiver(compatibility_waiver_path, compatibility_waiver)
+    schema_compatibility: dict[str, Any] | None = None
     validate_cog_fn = cog_validator or validate_cog
 
     for format_name in available_formats:
@@ -210,6 +218,17 @@ def build_publish_plan(
             except Exception as exc:  # noqa: BLE001 - normalize validator failures for CLI callers
                 raise PublishReleaseError(f"could not sample canonical schema for {local_path}: {exc}") from exc
             checks.append(f"sampled canonical schema fields: {len(schema)}")
+            schema_compatibility = run_schema_compatibility_check(
+                checker=schema_compatibility_check,
+                asset_slug=asset_slug,
+                dataset_path=local_path,
+                fields=schema,
+                compatibility_waiver=compatibility_waiver_payload,
+            )
+            if schema_compatibility is not None:
+                blocked = len(schema_compatibility.get("blocked_diffs", ()))
+                warnings = len(schema_compatibility.get("warning_diffs", ()))
+                checks.append(f"schema compatibility checked: blocked={blocked}, warnings={warnings}")
 
         release_uri = f"{release_path}{asset_slug}{FORMAT_EXTENSIONS[format_name]}"
         latest_uri = (
@@ -257,6 +276,8 @@ def build_publish_plan(
         metadata_uploads=metadata_uploads,
         remote_generations=latest_generations,
         checks=tuple(checks),
+        schema_compatibility=schema_compatibility,
+        compatibility_waiver=compatibility_waiver_payload,
     )
 
 
@@ -270,6 +291,8 @@ def execute_publish_plan(
     notify: bool = True,
     update_schema_snapshot: bool = True,
     schema_updater: Callable[[str, Path], None] | None = None,
+    schema_reader: Callable[[Path], list[dict[str, str]]] | None = None,
+    schema_compatibility_checker: Callable[..., Any] | None = None,
     notifier: Callable[[PublishPlan, int | None], None] | None = None,
 ) -> PublishResult:
     bucket = client.bucket(plan.bucket)
@@ -285,6 +308,21 @@ def execute_publish_plan(
     }
     if source_version:
         metadata["source_version"] = source_version
+
+    canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
+    if plan.schema_compatibility and canonical_artifact and canonical_artifact.format in SCHEMA_FORMATS:
+        schema_probe = schema_reader or default_schema_reader
+        try:
+            fields = schema_probe(Path(canonical_artifact.local_path))
+        except Exception as exc:  # noqa: BLE001 - normalize validator failures before remote writes
+            raise PublishReleaseError(f"could not resample canonical schema for {canonical_artifact.local_path}: {exc}") from exc
+        run_schema_compatibility_check(
+            checker=schema_compatibility_checker or default_schema_compatibility_checker,
+            asset_slug=plan.asset_slug,
+            dataset_path=Path(canonical_artifact.local_path),
+            fields=fields,
+            compatibility_waiver=plan.compatibility_waiver,
+        )
 
     for artifact in plan.artifacts:
         blob = bucket.blob(object_name_from_uri(artifact.release_uri))
@@ -354,7 +392,6 @@ def execute_publish_plan(
     except Exception as exc:  # noqa: BLE001 - data was already published; report metadata repair separately
         warnings.append(f"release index update failed: {exc}")
 
-    canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
     if update_schema_snapshot and canonical_artifact and canonical_artifact.format in SCHEMA_FORMATS:
         try:
             updater = schema_updater or default_schema_updater
@@ -597,10 +634,62 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def load_compatibility_waiver(
+    compatibility_waiver_path: Path | None,
+    compatibility_waiver: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if compatibility_waiver_path is not None and compatibility_waiver is not None:
+        raise PublishReleaseError("use either --compatibility-waiver or compatibility_waiver, not both")
+    if compatibility_waiver_path is None:
+        return compatibility_waiver
+    try:
+        from scripts.dataset_alerts import load_compatibility_waiver as load_schema_waiver
+
+        return load_schema_waiver(compatibility_waiver_path)
+    except Exception as exc:  # noqa: BLE001 - normalize waiver failures for CLI callers
+        raise PublishReleaseError(f"could not load schema compatibility waiver: {exc}") from exc
+
+
+def schema_compatibility_to_dict(result: Any) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    if hasattr(result, "to_dict"):
+        return result.to_dict()
+    if isinstance(result, dict):
+        return result
+    return {"result": str(result)}
+
+
+def run_schema_compatibility_check(
+    *,
+    checker: Callable[..., Any],
+    asset_slug: str,
+    dataset_path: Path,
+    fields: list[dict[str, str]],
+    compatibility_waiver: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    try:
+        result = checker(
+            asset_slug=asset_slug,
+            dataset_path=dataset_path,
+            fields=fields,
+            compatibility_waiver=compatibility_waiver,
+        )
+    except Exception as exc:  # noqa: BLE001 - normalize validator failures for CLI callers
+        raise PublishReleaseError(f"schema compatibility check failed: {exc}") from exc
+    return schema_compatibility_to_dict(result)
+
+
 def default_schema_reader(path: Path) -> list[dict[str, str]]:
     from scripts.dataset_alerts import schema_for_path
 
     return schema_for_path(path)
+
+
+def default_schema_compatibility_checker(**kwargs: Any) -> Any:
+    from scripts.dataset_alerts import check_schema_compatibility
+
+    return check_schema_compatibility(**kwargs)
 
 
 def default_schema_updater(asset_slug: str, dataset_path: Path) -> None:

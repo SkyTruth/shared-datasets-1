@@ -32,6 +32,98 @@ class DatasetAlertsTests(unittest.TestCase):
         renamed = dataset_alerts.diff_schemas(old, [{"name": "renamed_a", "type": "Integer"}, {"name": "b", "type": "String"}])
         self.assertEqual(renamed[0]["kind"], "renamed")
 
+    def test_schema_compatibility_allows_additions_and_warns_on_reorder(self):
+        old = [
+            {"name": "a", "type": "Integer"},
+            {"name": "b", "type": "String"},
+        ]
+        added = dataset_alerts.check_schema_compatibility(
+            asset_slug="asset",
+            dataset_path=Path("asset.fgb"),
+            fields=old + [{"name": "c", "type": "Real"}],
+            snapshot_loader=lambda _uri: ({"fields": old}, 10),
+        )
+        reordered = dataset_alerts.check_schema_compatibility(
+            asset_slug="asset",
+            dataset_path=Path("asset.fgb"),
+            fields=[old[1], old[0]],
+            snapshot_loader=lambda _uri: ({"fields": old}, 10),
+        )
+
+        self.assertEqual(added.blocked_diffs, [])
+        self.assertEqual(added.warning_diffs, [])
+        self.assertEqual(reordered.blocked_diffs, [])
+        self.assertEqual(reordered.warning_diffs[0]["kind"], "reordered")
+
+    def test_schema_compatibility_blocks_removed_renamed_and_type_changed(self):
+        old = [
+            {"name": "a", "type": "Integer"},
+            {"name": "b", "type": "String"},
+        ]
+        cases = [
+            [{"name": "a", "type": "Integer"}],
+            [{"name": "renamed_a", "type": "Integer"}, {"name": "b", "type": "String"}],
+            [{"name": "a", "type": "Real"}, {"name": "b", "type": "String"}],
+        ]
+
+        for fields in cases:
+            with self.subTest(fields=fields):
+                with self.assertRaisesRegex(dataset_alerts.SchemaCompatibilityError, "blocked incompatible"):
+                    dataset_alerts.check_schema_compatibility(
+                        asset_slug="asset",
+                        dataset_path=Path("asset.fgb"),
+                        fields=fields,
+                        snapshot_loader=lambda _uri: ({"fields": old}, 10),
+                    )
+
+    def test_schema_compatibility_accepts_exact_reviewed_waiver(self):
+        old = [
+            {"name": "a", "type": "Integer"},
+            {"name": "b", "type": "String"},
+        ]
+        waiver = {
+            "asset_slug": "asset",
+            "blocked_changes": [{"kind": "removed", "field": "b"}],
+            "rationale": "Source removed a retired field and reviewer approved the contract break.",
+            "consumer_impact": "Known consumers use field a only.",
+            "reviewer": "jonaraphael",
+            "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+            "migration_path": "Consumers that need b should pin the prior dated release.",
+        }
+
+        result = dataset_alerts.check_schema_compatibility(
+            asset_slug="asset",
+            dataset_path=Path("asset.fgb"),
+            fields=[{"name": "a", "type": "Integer"}],
+            compatibility_waiver=waiver,
+            snapshot_loader=lambda _uri: ({"fields": old}, 10),
+        )
+
+        self.assertEqual(result.blocked_diffs[0]["kind"], "removed")
+        self.assertEqual(result.waiver["reviewer"], "jonaraphael")
+
+    def test_schema_compatibility_rejects_incomplete_waiver(self):
+        old = [
+            {"name": "a", "type": "Integer"},
+            {"name": "b", "type": "String"},
+        ]
+
+        with self.assertRaisesRegex(dataset_alerts.SchemaCompatibilityError, "consumer_impact"):
+            dataset_alerts.check_schema_compatibility(
+                asset_slug="asset",
+                dataset_path=Path("asset.fgb"),
+                fields=[{"name": "a", "type": "Integer"}],
+                compatibility_waiver={
+                    "asset_slug": "asset",
+                    "blocked_changes": [{"kind": "removed", "field": "b"}],
+                    "rationale": "Approved break.",
+                    "reviewer": "jonaraphael",
+                    "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                    "migration_path": "Pin the prior release.",
+                },
+                snapshot_loader=lambda _uri: ({"fields": old}, 10),
+            )
+
     def test_csv_schema_infers_basic_types(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "asset.csv"

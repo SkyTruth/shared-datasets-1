@@ -146,6 +146,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
+      - name: Install schema inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdal-bin
+
       - name: Validate destination layout
         run: uv run python scripts/gcs_asset.py validate-path "${DESTINATION_URI}"
 
@@ -154,6 +159,93 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Check manual schema compatibility
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
+          bucket = os.environ["SHARED_DATASETS_BUCKET"]
+          asset_slug = os.environ["ASSET_SLUG"]
+          source_uri = os.environ["SOURCE_URI"]
+          destination_uri = os.environ["DESTINATION_URI"]
+          source_generation = os.environ["SOURCE_GENERATION"]
+
+          def catalog_row(slug):
+              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+                  for row in csv.DictReader(file_obj):
+                      if row.get("asset_slug") == slug:
+                          return row
+              return None
+
+          def is_schema_target(slug, uri):
+              prefix = f"gs://{bucket}/"
+              if not uri.startswith(prefix):
+                  return False
+              destination_name = uri.removeprefix(prefix)
+              filename = destination_name.rsplit("/", 1)[-1]
+              suffix = pathlib.Path(filename).suffix.lower()
+              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
+                  return False
+              row = catalog_row(slug)
+              if row:
+                  canonical_path = row.get("canonical_path", "")
+                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
+                  if uri == canonical_path:
+                      return True
+                  if "/latest/" in canonical_path:
+                      asset_root = canonical_path.split("/latest/", 1)[0]
+                      if uri.startswith(f"{asset_root}/releases/") and filename in {
+                          canonical_filename,
+                          f"{slug}{suffix}",
+                      }:
+                          return True
+                  return False
+              return pathlib.Path(filename).stem == slug
+
+          prefix = f"gs://{bucket}/"
+          filename = destination_uri.removeprefix(prefix).rsplit("/", 1)[-1]
+          if not is_schema_target(asset_slug, destination_uri):
+              print(f"Skipping schema compatibility check for noncanonical schema target: {destination_uri}")
+              raise SystemExit(0)
+
+          with tempfile.TemporaryDirectory() as tmp:
+              dataset_path = pathlib.Path(tmp) / filename
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "python",
+                      "scripts/gcs_asset.py",
+                      "download",
+                      source_uri,
+                      str(dataset_path),
+                      "--generation",
+                      source_generation,
+                  ],
+                  check=True,
+              )
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "python",
+                      "scripts/dataset_alerts.py",
+                      "check-schema-compatibility",
+                      "--asset-slug",
+                      asset_slug,
+                      "--dataset-path",
+                      str(dataset_path),
+                  ],
+                  check=True,
+              )
+          PY
 
       - name: Promote staged object
         run: |
@@ -261,6 +353,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
+      - name: Install schema inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gdal-bin
+
       - name: Validate publish destination layouts
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |
@@ -298,6 +395,97 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Check approved schema compatibility
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
+          bucket = os.environ["SHARED_DATASETS_BUCKET"]
+
+          def catalog_row(asset_slug):
+              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+                  for row in csv.DictReader(file_obj):
+                      if row.get("asset_slug") == asset_slug:
+                          return row
+              return None
+
+          def is_schema_target(asset_slug, destination_uri):
+              prefix = f"gs://{bucket}/"
+              if not destination_uri.startswith(prefix):
+                  return False
+              destination_name = destination_uri.removeprefix(prefix)
+              filename = destination_name.rsplit("/", 1)[-1]
+              suffix = pathlib.Path(filename).suffix.lower()
+              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
+                  return False
+              row = catalog_row(asset_slug)
+              if row:
+                  canonical_path = row.get("canonical_path", "")
+                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
+                  if destination_uri == canonical_path:
+                      return True
+                  if "/latest/" in canonical_path:
+                      asset_root = canonical_path.split("/latest/", 1)[0]
+                      if destination_uri.startswith(f"{asset_root}/releases/") and filename in {
+                          canonical_filename,
+                          f"{asset_slug}{suffix}",
+                      }:
+                          return True
+                  return False
+              return pathlib.Path(filename).stem == asset_slug
+
+          plan = json.load(open("publish-plan.json"))
+          asset_slug = plan["asset_slug"]
+          for index, promotion in enumerate(plan["promotions"], start=1):
+              destination_uri = promotion["destination_uri"]
+              if not is_schema_target(asset_slug, destination_uri):
+                  print(f"Skipping schema compatibility check for promotion {index}: {destination_uri}")
+                  continue
+              filename = destination_uri.rsplit("/", 1)[-1]
+              with tempfile.TemporaryDirectory() as tmp:
+                  tmp_path = pathlib.Path(tmp)
+                  dataset_path = tmp_path / filename
+                  subprocess.run(
+                      [
+                          "uv",
+                          "run",
+                          "python",
+                          "scripts/gcs_asset.py",
+                          "download",
+                          promotion["source_uri"],
+                          str(dataset_path),
+                          "--generation",
+                          promotion["source_generation"],
+                      ],
+                      check=True,
+                  )
+                  args = [
+                      "uv",
+                      "run",
+                      "python",
+                      "scripts/dataset_alerts.py",
+                      "check-schema-compatibility",
+                      "--asset-slug",
+                      asset_slug,
+                      "--dataset-path",
+                      str(dataset_path),
+                  ]
+                  waiver = promotion.get("compatibility_waiver")
+                  if waiver:
+                      waiver_path = tmp_path / "compatibility-waiver.json"
+                      waiver_path.write_text(json.dumps(waiver, indent=2, sort_keys=True) + "\n")
+                      args.extend(["--compatibility-waiver", str(waiver_path)])
+                  subprocess.run(args, check=True)
+          PY
 
       - name: Promote approved staged objects
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}

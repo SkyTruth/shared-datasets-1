@@ -54,6 +54,15 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                         "destination_generation": "",
                         "content_type": "application/octet-stream",
                         "cache_control": None,
+                        "compatibility_waiver": {
+                            "asset_slug": "example-asset",
+                            "blocked_changes": [{"kind": "removed", "field": "retired"}],
+                            "rationale": "Source retired the field and reviewer approved the break.",
+                            "consumer_impact": "Known consumers do not use the retired field.",
+                            "reviewer": "jonaraphael",
+                            "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                            "migration_path": "Consumers that need the field should pin the prior release.",
+                        },
                     }
                 ],
             }
@@ -62,6 +71,37 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         promotion = normalized["promotions"][0]
         self.assertEqual(promotion["source_generation"], "123")
         self.assertEqual(promotion["cache_control"], "")
+        self.assertEqual(promotion["compatibility_waiver"]["blocked_changes"][0]["field"], "retired")
+
+    def test_normalize_publish_plan_rejects_malformed_compatibility_waiver(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "consumer_impact"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "promotions": [
+                        {
+                            "source_uri": (
+                                f"gs://{BUCKET}/_scratch/pending-publishes/"
+                                "example-asset/pr-123/example-asset.fgb"
+                            ),
+                            "source_generation": "123",
+                            "destination_uri": (
+                                f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                                "example-asset/latest/example-asset.fgb"
+                            ),
+                            "compatibility_waiver": {
+                                "asset_slug": "example-asset",
+                                "blocked_changes": [{"kind": "removed", "field": "retired"}],
+                                "rationale": "Approved break.",
+                                "reviewer": "jonaraphael",
+                                "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                                "migration_path": "Pin the prior release.",
+                            },
+                        }
+                    ],
+                }
+            )
 
     def test_normalize_publish_plan_rejects_source_outside_pending_publish_prefix(self):
         with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "source_uri must start"):

@@ -107,6 +107,10 @@ def write_artifact(tmp_path: Path, name: str, data: bytes = b"dataset bytes") ->
     return path
 
 
+def skip_schema_compatibility(**_kwargs):
+    return None
+
+
 class PublishReleaseTests(unittest.TestCase):
     def test_plan_derives_release_and_latest_paths_from_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,6 +131,7 @@ class PublishReleaseTests(unittest.TestCase):
                 catalog_path=catalog,
                 client=FakeClient(bucket),
                 schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
+                schema_compatibility_checker=skip_schema_compatibility,
             )
 
         self.assertEqual(plan.asset_root, "100-geographic-reference/110-boundaries/example-asset")
@@ -154,6 +159,7 @@ class PublishReleaseTests(unittest.TestCase):
                     catalog_path=catalog,
                     client=FakeClient(FakeBucket()),
                     schema_reader=lambda _path: [],
+                    schema_compatibility_checker=skip_schema_compatibility,
                 )
 
     def test_partial_release_blocks_publish_before_latest_uploads(self):
@@ -173,9 +179,13 @@ class PublishReleaseTests(unittest.TestCase):
                     catalog_path=catalog,
                     client=FakeClient(bucket),
                     schema_reader=lambda _path: [],
+                    schema_compatibility_checker=skip_schema_compatibility,
                 )
 
     def test_execute_uploads_release_then_latest_with_generation_and_writes_run_record(self):
+        def pass_schema_compatibility(**_kwargs):
+            return {"blocked_diffs": [], "warning_diffs": []}
+
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
@@ -192,6 +202,7 @@ class PublishReleaseTests(unittest.TestCase):
                 catalog_path=catalog,
                 client=FakeClient(bucket),
                 schema_reader=lambda _path: [],
+                schema_compatibility_checker=pass_schema_compatibility,
             )
             schema_updates = []
             notifications = []
@@ -202,6 +213,8 @@ class PublishReleaseTests(unittest.TestCase):
                 source_version="source-v1",
                 row_count=3,
                 notes="published in test",
+                schema_reader=lambda _path: [],
+                schema_compatibility_checker=pass_schema_compatibility,
                 schema_updater=lambda slug, path: schema_updates.append((slug, path.name)),
                 notifier=lambda publish_plan, count: notifications.append((publish_plan.asset_slug, count)),
             )
@@ -245,6 +258,7 @@ class PublishReleaseTests(unittest.TestCase):
                 client=FakeClient(bucket),
                 readme_path=readme,
                 schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
             )
             remote_readme.generation = 6
 
@@ -261,6 +275,71 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(release.uploads[0][1], 0)
         self.assertFalse(run_record.exists)
         self.assertEqual(run_record.uploads, [])
+
+    def test_schema_compatibility_blocks_plan_before_uploads(self):
+        def fail_schema_compatibility(**_kwargs):
+            raise RuntimeError("blocked incompatible schema change")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            bucket = FakeBucket()
+
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "schema compatibility check failed"):
+                publish_release.build_publish_plan(
+                    asset_slug="example-asset",
+                    release_date="2026-05-01",
+                    publish_dir=None,
+                    artifact_overrides={"fgb": artifact},
+                    catalog_path=catalog,
+                    client=FakeClient(bucket),
+                    schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
+                    schema_compatibility_checker=fail_schema_compatibility,
+                )
+
+        release = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb")
+        latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
+        self.assertEqual(release.uploads, [])
+        self.assertEqual(latest.uploads, [])
+
+    def test_schema_compatibility_recheck_blocks_execute_before_uploads(self):
+        def pass_schema_compatibility(**_kwargs):
+            return {"blocked_diffs": [], "warning_diffs": []}
+
+        def fail_schema_compatibility(**_kwargs):
+            raise RuntimeError("snapshot changed before publish")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            bucket = FakeBucket()
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=None,
+                artifact_overrides={"fgb": artifact},
+                catalog_path=catalog,
+                client=FakeClient(bucket),
+                schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
+                schema_compatibility_checker=pass_schema_compatibility,
+            )
+
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "schema compatibility check failed"):
+                publish_release.execute_publish_plan(
+                    plan,
+                    client=FakeClient(bucket),
+                    schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
+                    schema_compatibility_checker=fail_schema_compatibility,
+                    schema_updater=lambda _slug, _path: None,
+                    notifier=lambda _plan, _count: None,
+                )
+
+        release = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb")
+        latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
+        self.assertEqual(release.uploads, [])
+        self.assertEqual(latest.uploads, [])
 
     def test_cog_validation_failure_blocks_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,6 +366,7 @@ class PublishReleaseTests(unittest.TestCase):
             with (
                 mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)),
                 mock.patch("scripts.publish_release.default_schema_reader", return_value=[]),
+                mock.patch("scripts.publish_release.default_schema_compatibility_checker", return_value=None),
             ):
                 result = runner.invoke(
                     app,

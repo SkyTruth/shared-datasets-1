@@ -12,7 +12,8 @@ It is the default interface for safe Cloud Storage object operations.
 
 Use `publish-release` when local artifacts are ready for an existing catalog
 asset. It builds a JSON plan, rejects existing release objects, uploads
-`releases/YYYY-MM-DD/` with no-clobber preconditions, replaces `latest/` with
+`releases/YYYY-MM-DD/` with no-clobber preconditions, blocks incompatible
+canonical schema changes before any remote write, replaces `latest/` with
 observed generations, writes a run record, and emits schema/upload alerts:
 
 ```bash
@@ -219,16 +220,18 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./example-asset.fgb
 ```
 
-For canonical vector/table assets, compare and update the schema snapshot:
+For canonical vector/table assets, enforce schema compatibility before publish:
 
 ```bash
-uv run python scripts/dataset_alerts.py check-schema \
+uv run python scripts/dataset_alerts.py check-schema-compatibility \
   --asset-slug example-asset \
   --dataset-path ./example-asset.fgb
 ```
 
-Schema deltas are emitted as structured Cloud Logging warnings and delivered
-through the Cloud Monitoring Slack alert channel.
+Additive fields pass. Removed fields, renamed fields, and type changes fail
+unless a reviewed compatibility waiver is supplied. After a successful
+compatible or waived publish, `check-schema` can still emit structured Cloud
+Logging warnings and update the snapshot for monitoring.
 
 Production Terraform applies should use:
 

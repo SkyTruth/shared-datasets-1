@@ -552,13 +552,18 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./example-asset.fgb
 ```
 
-For canonical vector/table assets, compare and update the schema snapshot:
+For canonical vector/table assets, enforce schema compatibility before publish:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py check-schema \
+UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py check-schema-compatibility \
   --asset-slug example-asset \
   --dataset-path ./example-asset.fgb
 ```
+
+Additive fields pass. Removed fields, renamed fields, and type changes fail
+unless a reviewed compatibility waiver is supplied. After a successful
+compatible or waived publish, `check-schema` remains available for diagnostic
+warnings and schema snapshot updates.
 
 Alert once per meaningful release. If a Slack upload alert already went out for
 the dataset release, or if the catalog-update commit for that release already

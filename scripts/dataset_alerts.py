@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -29,6 +30,9 @@ DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 SCHEMA_SNAPSHOT_PREFIX = "_catalog/schema-snapshots"
 SCHEMA_ALERT_LOG_NAME = "shared-datasets-alerts"
 SAMPLE_COLUMN_LIMIT = 5
+SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
+SCHEMA_COMPATIBILITY_WARNING_KINDS = {"reordered"}
+WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
 OGRINFO_FIELD_RE = re.compile(r"^([^:]+):\s+([A-Za-z][A-Za-z0-9_]*)\b")
 OGRINFO_NON_FIELD_NAMES = {
     "INFO",
@@ -42,6 +46,28 @@ OGRINFO_NON_FIELD_NAMES = {
 }
 
 app = typer.Typer(no_args_is_help=True)
+
+
+class SchemaCompatibilityError(RuntimeError):
+    """Raised when a proposed canonical schema is incompatible."""
+
+
+@dataclass(frozen=True)
+class SchemaCompatibilityResult:
+    asset_slug: str
+    snapshot_uri: str
+    snapshot_generation: int | None
+    source_path: str
+    fields: list[dict[str, str]]
+    diffs: list[dict[str, str]]
+    blocked_diffs: list[dict[str, str]]
+    warning_diffs: list[dict[str, str]]
+    waiver: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["compatible"] = not self.blocked_diffs or self.waiver is not None
+        return payload
 
 
 def load_catalog(path: Path = Path("catalog/shared-datasets-catalog.csv")) -> dict[str, dict[str, str]]:
@@ -250,6 +276,133 @@ def diff_schemas(
     return diffs
 
 
+def blocking_schema_diffs(diffs: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [diff for diff in diffs if diff.get("kind") in SCHEMA_COMPATIBILITY_BLOCKING_KINDS]
+
+
+def warning_schema_diffs(diffs: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [diff for diff in diffs if diff.get("kind") in SCHEMA_COMPATIBILITY_WARNING_KINDS]
+
+
+def compact_diff(diff: dict[str, str]) -> dict[str, str]:
+    return {"kind": str(diff.get("kind", "")), "field": str(diff.get("field", ""))}
+
+
+def load_compatibility_waiver(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise SchemaCompatibilityError(f"schema compatibility waiver JSON is invalid: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SchemaCompatibilityError("schema compatibility waiver must be a JSON object")
+    return payload
+
+
+def validate_compatibility_waiver(
+    waiver: dict[str, Any],
+    *,
+    asset_slug: str,
+    blocked_diffs: list[dict[str, str]],
+) -> dict[str, Any]:
+    if not blocked_diffs:
+        raise SchemaCompatibilityError("schema compatibility waiver was supplied, but no blocked schema changes exist")
+    if not isinstance(waiver, dict):
+        raise SchemaCompatibilityError("schema compatibility waiver must be a JSON object")
+    if waiver.get("asset_slug") != asset_slug:
+        raise SchemaCompatibilityError("schema compatibility waiver asset_slug does not match the published asset")
+
+    normalized: dict[str, Any] = {"asset_slug": asset_slug}
+    for key in WAIVER_REQUIRED_TEXT_FIELDS:
+        value = str(waiver.get(key, "")).strip()
+        if not value:
+            raise SchemaCompatibilityError(f"schema compatibility waiver is missing required field {key!r}")
+        normalized[key] = value
+
+    raw_changes = waiver.get("blocked_changes")
+    if not isinstance(raw_changes, list) or not raw_changes:
+        raise SchemaCompatibilityError("schema compatibility waiver must include nonempty blocked_changes")
+
+    normalized_changes: list[dict[str, str]] = []
+    for index, raw_change in enumerate(raw_changes, start=1):
+        if not isinstance(raw_change, dict):
+            raise SchemaCompatibilityError(f"schema compatibility waiver blocked_changes[{index}] must be an object")
+        kind = str(raw_change.get("kind", "")).strip()
+        field = str(raw_change.get("field", "")).strip()
+        if kind not in SCHEMA_COMPATIBILITY_BLOCKING_KINDS:
+            raise SchemaCompatibilityError(
+                f"schema compatibility waiver blocked_changes[{index}].kind is not a blocking kind"
+            )
+        if not field:
+            raise SchemaCompatibilityError(f"schema compatibility waiver blocked_changes[{index}].field is required")
+        normalized_changes.append({"kind": kind, "field": field})
+
+    expected = {(compact_diff(diff)["kind"], compact_diff(diff)["field"]) for diff in blocked_diffs}
+    approved = {(change["kind"], change["field"]) for change in normalized_changes}
+    if expected != approved:
+        raise SchemaCompatibilityError(
+            "schema compatibility waiver blocked_changes must exactly match blocked schema changes: "
+            + format_schema_diffs(blocked_diffs)
+        )
+
+    normalized["blocked_changes"] = normalized_changes
+    return normalized
+
+
+def check_schema_compatibility(
+    *,
+    asset_slug: str,
+    dataset_path: Path,
+    snapshot_uri: str | None = None,
+    fields: list[dict[str, str]] | None = None,
+    compatibility_waiver: dict[str, Any] | None = None,
+    compatibility_waiver_path: Path | None = None,
+    snapshot_loader: Any = None,
+    schema_reader: Any = None,
+) -> SchemaCompatibilityResult:
+    """Enforce append-compatible canonical vector/table schemas before publish."""
+
+    schema_probe = schema_reader or schema_for_path
+    proposed_fields = fields if fields is not None else schema_probe(dataset_path)
+    uri = snapshot_uri or snapshot_uri_for(asset_slug, os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET))
+    load_snapshot_fn = snapshot_loader or load_snapshot
+    previous, generation = load_snapshot_fn(uri)
+    diffs = diff_schemas(previous.get("fields", []), proposed_fields) if previous else []
+    blocked = blocking_schema_diffs(diffs)
+    warnings = warning_schema_diffs(diffs)
+
+    waiver_payload = compatibility_waiver
+    if compatibility_waiver_path is not None:
+        if compatibility_waiver is not None:
+            raise SchemaCompatibilityError("provide either compatibility_waiver or compatibility_waiver_path, not both")
+        waiver_payload = load_compatibility_waiver(compatibility_waiver_path)
+
+    normalized_waiver = None
+    if waiver_payload is not None:
+        normalized_waiver = validate_compatibility_waiver(
+            waiver_payload,
+            asset_slug=asset_slug,
+            blocked_diffs=blocked,
+        )
+    elif blocked:
+        raise SchemaCompatibilityError(
+            "blocked incompatible schema change(s): " + format_schema_diffs(blocked)
+        )
+
+    return SchemaCompatibilityResult(
+        asset_slug=asset_slug,
+        snapshot_uri=uri,
+        snapshot_generation=generation,
+        source_path=str(dataset_path),
+        fields=proposed_fields,
+        diffs=diffs,
+        blocked_diffs=blocked,
+        warning_diffs=warnings,
+        waiver=normalized_waiver,
+    )
+
+
 def format_schema_diffs(diffs: list[dict[str, str]]) -> str:
     return "\n".join(
         f"- `{diff['kind']}` `{diff['field']}`: `{diff.get('old', '')}` -> `{diff.get('new', '')}`"
@@ -402,6 +555,34 @@ def check_schema(
             )
     if not skip_snapshot_upload and not dry_run:
         write_snapshot(uri, payload, generation=generation)
+
+
+@app.command("check-schema-compatibility")
+def check_schema_compatibility_cli(
+    asset_slug: str = typer.Option(..., help="Catalog asset slug."),
+    dataset_path: Path = typer.Option(..., exists=True, dir_okay=False, help="Local canonical dataset file."),
+    snapshot_uri: Optional[str] = typer.Option(None, help="Override remote schema snapshot URI."),
+    compatibility_waiver: Optional[Path] = typer.Option(
+        None,
+        "--compatibility-waiver",
+        exists=True,
+        dir_okay=False,
+        help="Reviewed waiver JSON for otherwise blocked schema changes.",
+    ),
+) -> None:
+    """Fail unless a proposed canonical schema is append-compatible or waived."""
+
+    try:
+        result = check_schema_compatibility(
+            asset_slug=asset_slug,
+            dataset_path=dataset_path,
+            snapshot_uri=snapshot_uri,
+            compatibility_waiver_path=compatibility_waiver,
+        )
+    except SchemaCompatibilityError as exc:
+        print(f"[red]schema compatibility failed:[/red] {exc}", file=sys.stderr)
+        raise typer.Exit(2) from exc
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

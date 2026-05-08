@@ -423,19 +423,23 @@ treat the release as announced and do not send duplicate summaries for
 same-release cache refreshes, README wording fixes, PMTiles repairs, or other
 corrective follow-ups unless explicitly requested.
 
-For canonical vector/table assets, compare fields against the last stored schema
-snapshot after a successful publish:
+For canonical vector/table assets, `publish-release` and the approved GitHub
+promotion workflow enforce schema compatibility before canonical objects are
+written. Added fields are allowed. Removed fields, renamed fields, and type
+changes fail unless the reviewed publish includes an explicit compatibility
+waiver. Reordered fields are reported as warnings.
 
 ```bash
-uv run python scripts/dataset_alerts.py check-schema \
+uv run python scripts/dataset_alerts.py check-schema-compatibility \
   --asset-slug gfw-fixed-infrastructure \
   --dataset-path ./gfw-fixed-infrastructure.fgb
 ```
 
 Schema snapshots are stored under
-`gs://skytruth-shared-datasets-1/_catalog/schema-snapshots/`. Any field delta is
-written as a structured Cloud Logging warning so the Cloud Monitoring schema
-alert can notify Slack, then the snapshot is updated.
+`gs://skytruth-shared-datasets-1/_catalog/schema-snapshots/`. After a successful
+compatible or waived publish, `check-schema` remains available to emit the
+structured Cloud Logging warning and update the snapshot for diagnostics and
+monitoring.
 
 FYI Slack summaries use the Secret Manager secret
 `shared-datasets-slack-webhook-url` by default. To set or rotate the webhook:
@@ -584,7 +588,10 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
 - Staged `_scratch/pending-publishes/` source URIs and source generations.
 - Intended canonical destination URIs and destination-generation expectations.
 - A fenced `shared-datasets-publish-plan` JSON block if approval should trigger
-  automatic promotion.
+  automatic promotion. For blocked schema compatibility changes, include
+  `compatibility_waiver` on the affected promotion with `asset_slug`,
+  `blocked_changes`, `rationale`, `consumer_impact`, `reviewer`, `pr_reference`,
+  and `migration_path`.
 - A fenced `shared-datasets-delete-plan` JSON block if approval should trigger
   reviewed deletion; every deletion must include exact URI, generation, and
   reason.
