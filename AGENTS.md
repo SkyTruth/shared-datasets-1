@@ -188,6 +188,14 @@ Dataset metadata and local files:
 - `docs/assets/{asset-slug}.md` is the local metadata source for asset catalog
   rows and bucket README content, including the required citation for the
   original source publication or authoritative dataset release.
+- New canonical datasets and new ingestion pipelines require admission evidence
+  in the PR. A single-consumer asset is allowed, but multi-project reuse is
+  preferred. The PR must identify source/license/citation status, a named
+  steward, update expectations, intended consumers, shared-datasets rationale,
+  alternatives considered, and deprecation or exit policy.
+- Proposed published footprints of 10 GB or more require an explicit large-data
+  exception in the PR explaining why shared-datasets is a better home than
+  project storage, scratch storage, or direct upstream access.
 - Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
   metadata changes; update the asset doc and regenerate catalog outputs.
 - Dataset upload announcements are operational notifications, not Git commit
@@ -226,6 +234,9 @@ Infrastructure and security:
 Git and history:
 
 - Treat the Git index and commit history as user-owned state.
+- `.github/CODEOWNERS` routes all repository changes to `@jonaraphael` as the
+  sole owner. This is only enforceable when GitHub branch protection or rulesets
+  require CODEOWNER review before merge.
 - Never stage, unstage, commit, amend, reset, restore, or otherwise mutate the
   Git index/history unless the user explicitly asks for that exact Git
   operation.

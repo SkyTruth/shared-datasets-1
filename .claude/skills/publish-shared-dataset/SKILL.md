@@ -167,6 +167,27 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check
 Do not edit `catalog/shared-datasets-catalog.csv` directly for normal asset
 metadata changes.
 
+## Dataset Admission
+
+New canonical assets and new ingestion pipelines need admission evidence in the
+PR before reviewed publish promotion. A single-consumer asset is allowed, but
+multi-project reuse is preferred. Every admitted asset must have a citable
+source, confirmed license or terms, preferred citation, named steward, and clear
+update expectations.
+
+For new assets, include the Dataset Admission PR-template answers: intended
+consumer(s), shared-datasets rationale, source/license/citation status, named
+steward, update expectations, estimated published footprint, alternatives
+considered, and deprecation or exit policy. If the proposed published footprint
+is **>= 10 GB**, including canonical files, companion artifacts, and expected
+release copies, include an explicit large-data exception explaining why project
+storage, scratch storage, or direct upstream access is not the better answer.
+
+Use the optional `admission` frontmatter block in
+`docs/assets/{asset-slug}.md` when preserving the admission decision beside the
+catalog metadata is useful. Existing assets are grandfathered unless a PR
+changes their dataset contract.
+
 ## Catalog UI Cache Refresh
 
 Every manual dataset edit or upload must refresh the live catalog UI cache after

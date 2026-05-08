@@ -159,6 +159,26 @@ See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README
 
 ## Quick start for contributors
 
+### Dataset admission
+
+New canonical datasets and new ingestion pipelines need admission evidence in
+the PR before reviewed publish promotion. A single-consumer asset is allowed,
+but multi-project reuse is preferred. Every admitted asset must have a citable
+source, confirmed license or terms, preferred citation, named steward, and clear
+update expectations.
+
+The PR should explain the intended consumer(s), why shared-datasets is the right
+home, alternatives considered, expected maintenance path, and deprecation or
+exit policy. If the proposed published footprint is **>= 10 GB**, including
+canonical files, companion artifacts, and expected release copies, the PR must
+include an explicit large-data exception explaining why project storage, scratch
+storage, or direct upstream access is not the better answer.
+
+The optional `admission` frontmatter block in dataset asset docs can preserve
+this decision record beside the catalog metadata, but the PR discussion remains
+the public review record. Existing assets are grandfathered unless a PR changes
+their dataset contract.
+
 ### Add or update a dataset
 
 1. Read `AGENTS.md`.
@@ -251,6 +271,10 @@ Humans and general-purpose agents can prepare artifacts, update metadata, and
 stage bytes under `_scratch/pending-publishes/`, but `latest/`, `releases/`,
 dataset README, and `_catalog/` mutations must use the approved publisher
 identity behind the `shared-datasets-production` GitHub environment.
+
+`.github/CODEOWNERS` routes all repository changes to `@jonaraphael` as the
+sole owner. That routing becomes an enforced review gate only when GitHub branch
+protection or rulesets require CODEOWNER review before merge.
 
 Terraform grants Workload Identity access only to the OIDC subject for this
 repository and environment. PR approval by `jonaraphael` is the normal human
@@ -554,6 +578,8 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
 - What asset or path is affected.
 - Request review from `jonaraphael`.
 - Whether the change is docs-only, infrastructure, ingestion code, API/access protocol, or remote data mutation.
+- For new canonical datasets or ingestion pipelines, the Dataset Admission
+  section from the PR template.
 - Whether `latest/` or `releases/` paths are changed.
 - Staged `_scratch/pending-publishes/` source URIs and source generations.
 - Intended canonical destination URIs and destination-generation expectations.

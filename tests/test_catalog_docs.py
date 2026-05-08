@@ -41,6 +41,16 @@ citation: Example citation
 license_flags:
 - attribution-required
 notes: Example notes
+admission:
+  intended_consumers:
+  - Monitor
+  shared_rationale: Shared reference layer for repeatable analysis.
+  steward: SkyTruth data team
+  update_expectations: Manual refresh when the source publishes a material update.
+  estimated_published_size_gb: 1.5
+  large_data_exception: ""
+  alternatives_considered: Project bucket and direct upstream access.
+  deprecation_policy: Keep existing releases and point users to any successor asset.
 bounds:
 - -10.5
 - 20.25
@@ -170,9 +180,13 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(row["access_tier"], "public")
         self.assertEqual(row["citation"], "Example citation")
         self.assertEqual(row["has_pmtiles"], "true")
+        self.assertNotIn("admission", row)
+        self.assertEqual(docs[0].metadata["admission"]["steward"], "SkyTruth data team")
         self.assertIn("<!-- BEGIN GENERATED asset-summary -->", rendered)
         self.assertIn("- **Access tier:** public", rendered)
         self.assertIn("- **Citation:** Example citation", rendered)
+        self.assertIn("admission:", rendered)
+        self.assertIn("shared_rationale: Shared reference layer for repeatable analysis.", rendered)
         self.assertIn("source_url: https://example.test/source", rendered)
         self.assertIn("geometry_type: Polygon", rendered)
         self.assertIn("row_count: 12345", rendered)

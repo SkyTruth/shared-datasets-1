@@ -20,6 +20,16 @@ citation: "{preferred citation for the original source publication}"
 license_flags:
   - "{optional-discovery-flag}"
 notes: "{short catalog note}"
+admission:
+  intended_consumers:
+    - "{project-or-user}"
+  shared_rationale: "{why this belongs in shared-datasets}"
+  steward: "{person-or-team}"
+  update_expectations: "{manual/static/scheduled expectation and freshness notes}"
+  estimated_published_size_gb: "{number or unknown}"
+  large_data_exception: "{required when estimated footprint is >= 10 GB}"
+  alternatives_considered: "{project bucket, scratch, upstream access, etc.}"
+  deprecation_policy: "{how consumers will be handled if stale or superseded}"
 bounds: ["{min_lon}", "{min_lat}", "{max_lon}", "{max_lat}"] # optional WGS84 extent
 geometry_type: "{optional Point | LineString | Polygon | MultiPolygon | mixed | none}"
 row_count: "{optional integer row count}"

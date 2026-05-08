@@ -65,6 +65,7 @@ FRONTMATTER_KEYS = [
     "citation",
     "license_flags",
     "notes",
+    "admission",
     "bounds",
     "geometry_type",
     "row_count",
@@ -320,6 +321,9 @@ def normalize_metadata(
     if notes is None and catalog_row and allow_legacy:
         notes = catalog_row.get("notes", "")
     metadata["notes"] = as_text(notes).strip()
+
+    if "admission" in raw:
+        metadata["admission"] = raw["admission"]
 
     for key in OPTIONAL_DISCOVERY_FIELDS:
         if key in raw:
