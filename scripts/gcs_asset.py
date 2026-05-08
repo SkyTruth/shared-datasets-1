@@ -42,6 +42,7 @@ ROOT_ALLOWED_DOCS = {"README.md"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
 PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
+ALLOW_CANONICAL_MUTATION_ENV = "SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"
 
 
 def parse_gs_uri(uri: str) -> Tuple[str, str]:
@@ -66,6 +67,24 @@ def get_blob(uri: str) -> storage.Blob:
     if not name:
         raise typer.BadParameter(f"Expected object URI, got bucket root: {uri}")
     return get_client().bucket(bucket_name).blob(name)
+
+
+def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool = False) -> None:
+    """Refuse non-scratch mutations unless an approved runtime explicitly opts in."""
+    _bucket_name, name = parse_gs_uri(uri)
+    if not name:
+        raise typer.BadParameter(f"{operation} requires an object URI, not a bucket root")
+    is_scratch = name.startswith("_scratch/")
+    if unsafe_overwrite and not is_scratch:
+        raise typer.BadParameter("--unsafe-overwrite is only allowed for _scratch/ objects")
+    if is_scratch:
+        return
+    if os.environ.get(ALLOW_CANONICAL_MUTATION_ENV) == "1":
+        return
+    raise typer.BadParameter(
+        f"{operation} to non-scratch objects requires {ALLOW_CANONICAL_MUTATION_ENV}=1 "
+        "from the approved publisher workflow, scheduled job, or documented break-glass path"
+    )
 
 
 def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
@@ -269,6 +288,7 @@ def upload(
     Use --replace-generation for safe replacement of an existing object.
     Use --unsafe-overwrite only when explicitly approved.
     """
+    require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite)
     blob = get_blob(uri)
     if cache_control:
         blob.cache_control = cache_control
@@ -323,6 +343,7 @@ def delete(
     """Delete one object using a generation precondition."""
     if confirm != "DELETE":
         raise typer.BadParameter("Pass --confirm DELETE to confirm the destructive delete.")
+    require_mutation_allowed(uri, operation="delete")
     blob = get_blob(uri)
     try:
         blob.delete(if_generation_match=generation)
@@ -363,6 +384,7 @@ def copy_object(
     dst_bucket_name, dst_name = parse_gs_uri(dst_uri)
     if not src_name or not dst_name:
         raise typer.BadParameter("copy requires object URIs, not bucket roots")
+    require_mutation_allowed(dst_uri, operation="copy", unsafe_overwrite=unsafe_overwrite)
 
     client = get_client()
     src_bucket = client.bucket(src_bucket_name)
@@ -494,6 +516,7 @@ def publish_release(
         if dry_run:
             sys.stdout.write(json.dumps(publish_release_core.plan_to_dict(plan), indent=2, sort_keys=True) + "\n")
             return
+        require_mutation_allowed(plan.run_record_uri, operation="publish-release")
         result = publish_release_core.execute_publish_plan(
             plan,
             client=client,
@@ -555,6 +578,7 @@ def rebuild_release_index(
             return
 
         loaded = release_index_core.load_release_index(bucket, asset_slug)
+        require_mutation_allowed(index_uri, operation="release-index rebuild")
         write_info = release_index_core.write_release_index(
             bucket,
             asset_slug,

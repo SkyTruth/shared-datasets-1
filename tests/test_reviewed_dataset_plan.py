@@ -122,6 +122,73 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                 }
             )
 
+    def test_normalize_publish_plan_requires_no_cache_for_pmtiles(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "cache_control"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "promotions": [
+                        {
+                            "source_uri": (
+                                f"gs://{BUCKET}/_scratch/pending-publishes/"
+                                "example-asset/pr-123/example-asset.pmtiles"
+                            ),
+                            "source_generation": "123",
+                            "destination_uri": (
+                                f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                                "example-asset/latest/example-asset.pmtiles"
+                            ),
+                        }
+                    ],
+                }
+            )
+
+    def test_normalize_publish_plan_accepts_pmtiles_no_cache_metadata(self):
+        normalized = reviewed_dataset_plan.normalize_publish_plan(
+            {
+                "asset_slug": "example-asset",
+                "proposal_id": "pr-123",
+                "promotions": [
+                    {
+                        "source_uri": (
+                            f"gs://{BUCKET}/_scratch/pending-publishes/"
+                            "example-asset/pr-123/example-asset.pmtiles"
+                        ),
+                        "source_generation": "123",
+                        "destination_uri": (
+                            f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                            "example-asset/latest/example-asset.pmtiles"
+                        ),
+                        "content_type": "application/vnd.pmtiles",
+                        "cache_control": reviewed_dataset_plan.NO_CACHE_CONTROL,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(normalized["promotions"][0]["cache_control"], reviewed_dataset_plan.NO_CACHE_CONTROL)
+
+    def test_normalize_publish_plan_requires_no_cache_for_web_catalog(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "catalog.json"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    "asset_slug": "catalog-web",
+                    "proposal_id": "pr-123",
+                    "promotions": [
+                        {
+                            "source_uri": (
+                                f"gs://{BUCKET}/_scratch/pending-publishes/"
+                                "catalog-web/pr-123/catalog.json"
+                            ),
+                            "source_generation": "123",
+                            "destination_uri": f"gs://{BUCKET}/_catalog/web/catalog.json",
+                            "content_type": "application/json",
+                        }
+                    ],
+                }
+            )
+
     def test_normalize_delete_plan_accepts_exact_canonical_object_generation(self):
         normalized = reviewed_dataset_plan.normalize_delete_plan(
             {

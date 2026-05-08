@@ -19,6 +19,7 @@ PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WILDCARD_CHARS = set("*?[]{}")
 SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
 WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
+NO_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"
 
 
 class PlanValidationError(ValueError):
@@ -128,6 +129,25 @@ def normalize_compatibility_waiver(raw: Any, *, asset_slug: str, label: str) -> 
     return normalized
 
 
+def require_cache_sensitive_metadata(
+    *,
+    destination_name: str,
+    content_type: str,
+    cache_control: str,
+    label: str,
+) -> None:
+    if destination_name.endswith(".pmtiles"):
+        if cache_control != NO_CACHE_CONTROL:
+            raise PlanValidationError(f"{label}.cache_control must be {NO_CACHE_CONTROL!r} for PMTiles objects")
+        if content_type and content_type != "application/vnd.pmtiles":
+            raise PlanValidationError(f"{label}.content_type must be 'application/vnd.pmtiles' for PMTiles objects")
+    if destination_name == "_catalog/web/catalog.json":
+        if cache_control != NO_CACHE_CONTROL:
+            raise PlanValidationError(f"{label}.cache_control must be {NO_CACHE_CONTROL!r} for _catalog/web/catalog.json")
+        if content_type and content_type != "application/json":
+            raise PlanValidationError(f"{label}.content_type must be 'application/json' for _catalog/web/catalog.json")
+
+
 def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET) -> dict[str, Any]:
     asset_slug, proposal_id = require_slug_and_proposal(plan)
     promotions = plan.get("promotions")
@@ -173,6 +193,12 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
             raise PlanValidationError(f"promotions[{index}].content_type is too long")
         if len(cache_control) > 500:
             raise PlanValidationError(f"promotions[{index}].cache_control is too long")
+        require_cache_sensitive_metadata(
+            destination_name=destination_name,
+            content_type=content_type,
+            cache_control=cache_control,
+            label=f"promotions[{index}]",
+        )
         compatibility_waiver = normalize_compatibility_waiver(
             raw.get("compatibility_waiver"),
             asset_slug=asset_slug,

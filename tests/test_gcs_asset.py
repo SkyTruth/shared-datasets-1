@@ -139,6 +139,7 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         bucket = FakeBucket()
         with (
             mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)),
+            mock.patch.dict(gcs_asset.os.environ, {gcs_asset.ALLOW_CANONICAL_MUTATION_ENV: "1"}),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             gcs_asset.copy_object(
@@ -157,6 +158,28 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         self.assertEqual(copied.content_type, "application/json")
         self.assertEqual(copied.cache_control, "no-cache, max-age=0, must-revalidate")
         self.assertEqual(copied.patch_calls, [10])
+
+    def test_non_scratch_mutation_requires_explicit_publisher_runtime(self):
+        with self.assertRaisesRegex(Exception, gcs_asset.ALLOW_CANONICAL_MUTATION_ENV):
+            gcs_asset.require_mutation_allowed(
+                "gs://test-bucket/100-geographic-reference/130-protected-areas/example/latest/example.fgb",
+                operation="upload",
+            )
+
+    def test_scratch_mutation_is_allowed_without_publisher_runtime(self):
+        gcs_asset.require_mutation_allowed(
+            "gs://test-bucket/_scratch/pending-publishes/example/pr-1/example.fgb",
+            operation="upload",
+        )
+
+    def test_unsafe_overwrite_is_rejected_outside_scratch_even_with_publisher_runtime(self):
+        with mock.patch.dict(gcs_asset.os.environ, {gcs_asset.ALLOW_CANONICAL_MUTATION_ENV: "1"}):
+            with self.assertRaisesRegex(Exception, "only allowed for _scratch"):
+                gcs_asset.require_mutation_allowed(
+                    "gs://test-bucket/100-geographic-reference/130-protected-areas/example/latest/example.fgb",
+                    operation="upload",
+                    unsafe_overwrite=True,
+                )
 
 
 if __name__ == "__main__":

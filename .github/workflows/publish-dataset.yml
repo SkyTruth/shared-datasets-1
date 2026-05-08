@@ -51,6 +51,7 @@ env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
   PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
