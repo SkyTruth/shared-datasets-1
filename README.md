@@ -168,8 +168,121 @@ See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README
 5. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
 6. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
 7. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
-8. Use `.claude/skills/gcp-shared-datasets/SKILL.md` and `scripts/gcs_asset.py` for any approved remote GCS operations.
-9. Open a PR describing the remote asset paths changed.
+8. Stage any manual publish bytes under
+   `_scratch/pending-publishes/{asset-slug}/{proposal-id}/`; use an issue/PR
+   number when available, otherwise use a stable branch or timestamped proposal
+   ID and record it in the PR.
+9. Open a PR that requests review from `jonaraphael`. Include staged source
+   URIs/generations, intended canonical destination URIs, destination-generation
+   expectations, validation commands, and any needed `content_type` or
+   `cache_control` workflow inputs. Include a fenced
+   `shared-datasets-publish-plan` JSON block so approval can trigger automatic
+   promotion.
+10. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+    `Approved dataset mutation` GitHub workflow promotes the listed staged
+    objects under the `shared-datasets-production` environment. Manual workflow
+    dispatch is restricted to `jonaraphael` and should be used only as a fallback.
+
+### Upload a new version of an existing dataset
+
+1. Read `AGENTS.md`, load `.claude/skills/publish-shared-dataset/SKILL.md`, and
+   load `.claude/skills/gcp-shared-datasets/SKILL.md`.
+2. Identify the existing `asset-slug`; open `docs/assets/{asset-slug}.md`, the
+   generated catalog row, and current bucket layout before choosing any paths.
+3. Preserve the existing slug, taxonomy, canonical path, and approved formats
+   unless the request explicitly asks for a reviewed asset-contract change.
+4. Check whether a scheduled ingestion job owns the asset. If it does, use the
+   scheduled-ingestion path unless the user explicitly requests a corrective
+   manual publish.
+5. Inspect current remote state read-only: existing `releases/`, `latest/`
+   generations, run records, and `_catalog/releases/{asset-slug}.json` when
+   present.
+6. Build replacement artifacts outside the repo tree, matching catalog-listed
+   formats. For supported single-object assets, validate the plan with
+   `uv run python scripts/gcs_asset.py publish-release --dry-run ...`.
+7. Update `docs/assets/{asset-slug}.md` only for durable contract changes such
+   as source/license/citation, schema, file table, format, cadence, or consumer
+   notes. Do not hand-edit `catalog/shared-datasets-catalog.csv`.
+8. Run `uv run python scripts/catalog_docs.py generate`, `check`, and
+   `export-readmes`. Rebuild catalog web output when public catalog metadata or
+   previews must change.
+9. Stage the new artifacts, changed README, catalog web files, and any reviewed
+   metadata-repair JSON under
+   `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with no-clobber
+   uploads. Record every staged source URI and generation.
+10. Stat canonical destinations. Dated release objects should be absent;
+    replacements such as `latest/`, README, catalog web, and release-index
+    objects need current destination generations.
+11. Open a focused PR requesting review from `jonaraphael`. Include release
+    date/source version, staged source URIs/generations, intended canonical
+    destination URIs, destination-generation expectations, validation commands,
+    stale companion formats if any, consumer impact, and a fenced
+    `shared-datasets-publish-plan` JSON block.
+12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+    `Approved dataset mutation` GitHub workflow promotes the listed staged
+    objects. Order the plan so dated release objects come before `latest/`, and
+    write run records and `_catalog/releases/{asset-slug}.json` only from actual
+    promoted object metadata.
+
+### Delete canonical dataset objects
+
+1. Require an explicit deletion request and reason. Do not infer deletion from
+   vague cleanup language, and prefer deprecation, catalog removal, or replacement
+   when bytes can safely remain.
+2. Enumerate exact object URIs. Prefix deletes, wildcards, and generation-less
+   deletes are not valid.
+3. Read current generations with `uv run python scripts/gcs_asset.py stat ...`
+   and confirm the catalog, README, release index, run records, and consumer
+   references will not point at deleted objects.
+4. If deletion is part of a replacement, stage and approve the replacement
+   objects first. In a combined PR plan, publish actions run before deletes.
+5. Open a focused PR requesting review from `jonaraphael`. Include consumer
+   impact, replacement/deprecation state, exact object URIs, generations, and a
+   fenced `shared-datasets-delete-plan` JSON block.
+6. When `jonaraphael` approves a same-repo PR with a valid delete plan, the
+   `Approved dataset mutation` workflow deletes the listed objects with
+   generation preconditions under the publisher identity, then verifies the live
+   object is absent.
+
+### Controlled canonical publishing
+
+Canonical shared-dataset writes are intentionally not a local-terminal workflow.
+Humans and general-purpose agents can prepare artifacts, update metadata, and
+stage bytes under `_scratch/pending-publishes/`, but `latest/`, `releases/`,
+dataset README, and `_catalog/` mutations must use the approved publisher
+identity behind the `shared-datasets-production` GitHub environment.
+
+Terraform grants Workload Identity access only to the OIDC subject for this
+repository and environment. PR approval by `jonaraphael` is the normal human
+approval gate for automatic promotion. Manual workflow dispatch is restricted to
+`jonaraphael` for fallback operations. If the GitHub environment is also
+configured with required deployment reviewers, GitHub will pause the publish job
+for that separate environment approval instead of completing from PR approval
+alone. The workflow must use source and destination generation preconditions.
+After applying the Workload Identity resources, set the GitHub environment
+variable `GCP_WORKLOAD_IDENTITY_PROVIDER` to the Terraform output
+`github_workload_identity_provider`.
+The publisher also has read-only access to `_scratch/pending-publishes/` so the
+approved workflow can copy reviewed staged bytes into canonical prefixes.
+The Terraform `scratch_writer_members` variable preserves the current
+scratch-only writer and should be overridden with the approved scratch-only
+group or service account when that identity is ready, before removing any
+remaining broad human write grants.
+The project-level IAM deny policy is declared in Terraform as optional
+hardening, but it is disabled by default because creating or updating IAM deny
+policies requires `roles/iam.denyAdmin` at the organization scope. A project
+owner alone cannot grant or use that role. The standing project-scope control is
+therefore conditional IAM plus alerting: remove broad writer grants, grant
+canonical writes only to publisher and scheduled-job identities, keep `_scratch/`
+separate, and alert on unexpected canonical writes or deletes. An approved
+organization-level IAM administrator or controlled IaC identity can enable the
+extra deny backstop with `canonical_mutation_deny_policy_enabled=true`.
+
+`_scratch/` is noncanonical. Do not cite scratch objects as durable shared
+dataset paths, and do not treat scratch staging as approval to publish. Emergency
+break-glass mutation is reserved for
+`shared-datasets-breakglass@skytruth.org` and must record changed paths,
+generations, and rationale.
 
 ### Generated catalog and asset docs
 
@@ -368,7 +481,7 @@ This repo includes a small Python CLI intended for AI agents and maintainers:
 uv run python scripts/gcs_asset.py list gs://skytruth-shared-datasets-1/100-geographic-reference/
 uv run python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/README.md
 uv run python scripts/gcs_asset.py download gs://skytruth-shared-datasets-1/README.md /tmp/README.md
-uv run python scripts/gcs_asset.py upload ./README.md gs://skytruth-shared-datasets-1/README.md --replace-generation 123456789
+uv run python scripts/gcs_asset.py upload ./asset.fgb gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/123/asset.fgb
 ```
 
 For prepared release artifacts belonging to an existing catalog asset, prefer
@@ -386,7 +499,11 @@ uv run python scripts/gcs_asset.py publish-release \
   --dry-run
 ```
 
-Read `.claude/skills/gcp-shared-datasets/SKILL.md` before using it for write operations. For manual dataset add/update work, read `.claude/skills/publish-shared-dataset/SKILL.md` first.
+Run canonical publish commands only under the approved publisher identity, not
+from a local human or agent terminal. Read
+`.claude/skills/gcp-shared-datasets/SKILL.md` before using the CLI for any
+remote operation. For manual dataset add/update work, read
+`.claude/skills/publish-shared-dataset/SKILL.md` first.
 
 ## Vector artifact builds
 
@@ -435,8 +552,16 @@ See `docs/catalog-web-preview.md` for deployment and verification steps.
 A PR that changes remote asset organization, ingestion jobs, or access behavior should state:
 
 - What asset or path is affected.
+- Request review from `jonaraphael`.
 - Whether the change is docs-only, infrastructure, ingestion code, API/access protocol, or remote data mutation.
 - Whether `latest/` or `releases/` paths are changed.
+- Staged `_scratch/pending-publishes/` source URIs and source generations.
+- Intended canonical destination URIs and destination-generation expectations.
+- A fenced `shared-datasets-publish-plan` JSON block if approval should trigger
+  automatic promotion.
+- A fenced `shared-datasets-delete-plan` JSON block if approval should trigger
+  reviewed deletion; every deletion must include exact URI, generation, and
+  reason.
 - How the change was validated.
 - Any consumer impact.
 

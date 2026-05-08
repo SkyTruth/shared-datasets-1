@@ -15,7 +15,9 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Build Cloud Run images for `linux/amd64`; make multi-stage Dockerfiles use `$BUILDPLATFORM`/`$TARGETOS`/`$TARGETARCH` for compiled helper binaries.
 - Apply or verify the Artifact Registry repository before pushing a new image.
 - Push the image before applying the Cloud Run Job that references it.
-- Keep runtime service accounts narrow: only the job account should write dataset objects; scheduler gets only `roles/run.invoker`.
+- Keep runtime service accounts narrow: only the job account should write its
+  owned asset root and release-index object; scheduler gets only
+  `roles/run.invoker`.
 - Size Cloud Run Job CPU, memory, timeout, and local-temp cleanup for the full upstream source, not just test fixtures.
 - Before redeploying after source-schema or format bugs, run a production-source fractional sandbox test locally. The sample must use the same conversion chain as production and must not publish sampled data unless explicitly guarded.
 - Run one manual Cloud Run Job execution after deployment. Wait for short jobs; use async execution for known multi-hour jobs.

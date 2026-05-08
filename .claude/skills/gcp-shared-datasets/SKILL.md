@@ -17,11 +17,14 @@ dataset object operations.
 
 Use Terraform for infrastructure.
 
-Use `gcloud storage` only for human diagnostics and emergency one-off
-operations.
+Use `gcloud storage` only for human diagnostics, emergency downloads, and
+documented break-glass operations.
 
 Do not use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical
-dataset uploads/edits.
+dataset uploads/edits. Do not perform canonical writes from a local human or
+agent terminal; stage manual publish bytes under `_scratch/pending-publishes/`
+and promote approved objects through the GitHub `Approved dataset mutation`
+workflow under the `shared-datasets-production` environment.
 
 ## Required Environment
 
@@ -75,7 +78,12 @@ For new objects, use `if_generation_match=0`, exposed by the CLI's default
 no-clobber upload behavior.
 
 Never perform a blind overwrite unless the user explicitly asks for an unsafe
-overwrite or you are operating in `_scratch/`.
+overwrite and you are operating in `_scratch/`.
+
+Canonical `latest/`, `releases/`, dataset README, and `_catalog/` writes must
+use the approved publisher identity or a scheduled ingestion service account
+scoped to its owned asset root. `_scratch/` is noncanonical staging space and
+must not be cited as a stable shared dataset contract.
 
 ## Core Commands
 
@@ -105,7 +113,7 @@ Upload a new object without clobbering:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
-  ./asset.fgb gs://$SHARED_DATASETS_BUCKET/path/to/latest/asset.fgb
+  ./asset.fgb gs://$SHARED_DATASETS_BUCKET/_scratch/pending-publishes/example-asset/123/asset.fgb
 ```
 
 Replace an existing object safely:
@@ -117,6 +125,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
   ./README.md gs://$SHARED_DATASETS_BUCKET/path/to/README.md \
   --replace-generation 123456789
 ```
+
+The replacement example is for the approved publisher identity or documented
+break-glass use. Local agents should stage under `_scratch/pending-publishes/`
+instead.
 
 Copy a remote object without clobbering the destination:
 
@@ -134,7 +146,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
   --unsafe-overwrite
 ```
 
-Delete only with an explicit generation and confirmation:
+Delete only with an explicit generation and confirmation. For canonical objects,
+the normal path is a reviewed PR with a fenced `shared-datasets-delete-plan`;
+the command below is for the approved workflow, approved publisher identity, or
+documented break-glass use:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py delete \
@@ -144,7 +159,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py delete \
 
 ## Editing Remote Text Files
 
-Use this read-modify-write pattern for remote README or metadata edits:
+Use this read-modify-write pattern for remote README or metadata edits only
+under the approved publisher identity or documented break-glass path. Local
+agents should download/read for inspection, stage edited bytes under
+`_scratch/pending-publishes/`, and promote through GitHub approval:
 
 ```bash
 URI=gs://$SHARED_DATASETS_BUCKET/path/to/README.md
@@ -176,7 +194,7 @@ metadata changes.
 
 - Quick listing.
 - Manual inspection.
-- Emergency copy/download.
+- Emergency download.
 - Debugging authentication.
 - Comparing behavior with the Python CLI.
 
@@ -186,12 +204,14 @@ Examples:
 gcloud storage ls gs://$SHARED_DATASETS_BUCKET/
 gcloud storage cp gs://$SHARED_DATASETS_BUCKET/README.md \
   "$TMPDIR/shared-datasets-1/downloads/root-README.md"
-gcloud storage cp ./README.md gs://$SHARED_DATASETS_BUCKET/README.md \
-  --if-generation-match=<generation>
 ```
 
 Do not use ad hoc `gcloud storage cp` commands as hidden production automation
-when a repo script/job should exist.
+when a repo script/job should exist. Do not use local `gcloud storage cp` for
+canonical writes; stage manual bytes under `_scratch/pending-publishes/` and
+promote them through the approved publisher workflow. For documented
+break-glass or approved publisher-identity work, prefer `scripts/gcs_asset.py`
+so generation preconditions and metadata are explicit.
 
 ## Cloud Storage FUSE
 

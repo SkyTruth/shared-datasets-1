@@ -7,7 +7,10 @@ For the shared datasets project:
 - **Terraform** manages infrastructure.
 - **A repo-owned Python CLI/library using `google-cloud-storage`** manages dataset objects.
 - **`uv`** manages local Python dependencies and runs the repo CLI.
-- **`gcloud storage`** is allowed for human diagnostics and emergency one-off operations.
+- **`gcloud storage`** is allowed for human diagnostics, emergency downloads,
+  and documented break-glass operations. Manual canonical writes should still
+  stage under `_scratch/pending-publishes/` and promote through the approved
+  publisher workflow.
 - **Cloud Storage FUSE** is allowed only for read-heavy exploration, not canonical writes.
 - **Terraform/Pulumi should not manage frequently changing dataset objects.**
 
@@ -21,7 +24,7 @@ The repo controls both cloud automation and the organization of a shared data bu
 |---|---|---|---|
 | Terraform | Excellent for infrastructure, plans, review, IAM, schedulers | Bad fit for frequently changing data objects; creates noisy state churn | Use for infra only |
 | Pulumi | Programmable IaC | Adds another runtime/framework; same data-object state issue | Do not adopt unless team standard changes |
-| `gcloud storage` | Official CLI, good for humans, supports preconditions | Easy to use inconsistently; shell scripts can become fragile | Allow for diagnostics and emergency use |
+| `gcloud storage` | Official CLI, good for humans, supports preconditions | Easy to use inconsistently; shell scripts can become fragile | Allow for diagnostics, emergency downloads, and documented break-glass use |
 | Cloud Storage FUSE | Convenient filesystem interface | Not POSIX; metadata/concurrency limitations; unsafe mental model for canonical writes | Read-heavy exploration only |
 | Python `google-cloud-storage` CLI | Testable, scriptable, supports preconditions, works locally/CI/Cloud Run, can enforce SkyTruth conventions | Requires small amount of maintained code | Preferred for data objects |
 | `uv` for local Python tooling | Fast, reproducible project dependency management; avoids ad hoc pip/venv/mamba setup | Requires `uv` to be installed locally | Preferred runner for repo Python commands |
@@ -32,7 +35,9 @@ The repo controls both cloud automation and the organization of a shared data bu
 - Cron jobs can share upload/list/stat behavior.
 - We can make no-clobber and generation preconditions the default.
 - Terraform remains clean and focused on infrastructure.
-- Ad hoc object edits become easier to audit because they flow through documented commands.
+- Manual object edits become easier to audit because they stage under
+  `_scratch/pending-publishes/` and promote through the approved publisher
+  workflow; exceptional break-glass edits must be documented.
 
 ## Implementation
 

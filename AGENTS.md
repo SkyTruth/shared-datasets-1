@@ -163,6 +163,12 @@ why they are safe to remove. Never broad-delete the shared temp root.
 
 Remote GCS objects:
 
+- Canonical writes to shared dataset prefixes must go through the approved
+  publisher identity, normally the GitHub Actions
+  `shared-datasets-production` environment. Humans and general-purpose agents
+  may stage reviewed bytes under `_scratch/pending-publishes/`, but must not
+  mutate canonical `latest/`, `releases/`, `_catalog/`, or dataset README
+  objects directly from a local terminal.
 - Never overwrite a canonical remote object unless you know the current
   generation or the operation is explicitly marked as an unsafe overwrite.
 - Prefer generation-preconditioned replacements and no-clobber uploads through
@@ -173,6 +179,9 @@ Remote GCS objects:
   run record and do not write new release or `latest/` dataset artifacts.
 - Do not use Cloud Storage FUSE for canonical writes.
 - Record remote paths changed in the PR description or final response.
+- `_scratch/` is noncanonical staging space. Do not cite `_scratch/` objects as
+  shared dataset contracts, and do not treat their existence as approval to
+  publish.
 
 Dataset metadata and local files:
 
@@ -209,6 +218,10 @@ Infrastructure and security:
   CI/runtime.
 - Do not make data public without explicit approval.
 - Do not add object ACL-based workflows.
+- Break-glass canonical object mutation is reserved for
+  `shared-datasets-breakglass@skytruth.org` or an explicitly approved emergency
+  identity. Any break-glass use must be called out with changed remote paths,
+  generations, and rationale.
 
 Git and history:
 
@@ -216,6 +229,13 @@ Git and history:
 - Never stage, unstage, commit, amend, reset, restore, or otherwise mutate the
   Git index/history unless the user explicitly asks for that exact Git
   operation.
+- For manual dataset add/update/upload/publish/delete requests, the requested
+  reviewed mutation workflow includes creating a focused branch, staging only
+  related repo metadata and workflow files, committing, pushing, and opening a
+  PR that requests review from `jonaraphael`, unless the user asks to stop
+  before PR. This exception does not permit staging unrelated files, amending
+  history, applying Terraform, or mutating canonical GCS objects from a local
+  terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
 
@@ -251,5 +271,15 @@ A task is complete when:
   functionality, the committing agent generated and appended any warranted
   fenced `repo-alert` block without asking the human to decide.
 - The PR or final response lists changed files and remote paths.
+- Any opened dataset publish PR requests review from `jonaraphael` and includes
+  the staged `_scratch/pending-publishes/` source URIs, source generations,
+  intended canonical destination URIs, destination-generation expectations, and
+  validation performed. If the PR is expected to promote data after approval, it
+  must include a fenced `shared-datasets-publish-plan` JSON block matching the
+  staged objects and generation preconditions.
+- Any opened dataset deletion PR requests review from `jonaraphael` and includes
+  exact target object URIs, current generations, rationale, consumer impact,
+  replacement/deprecation state, and a fenced `shared-datasets-delete-plan` JSON
+  block. Prefix, wildcard, and generation-less deletes are not valid.
 - Commands run or validation performed are stated.
 - Any uncertainty is explicitly called out.

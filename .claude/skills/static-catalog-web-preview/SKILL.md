@@ -133,34 +133,19 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
    - For PMTiles regressions, test at zoomed-out levels where feature dropping is most visible.
 
 6. Safe GCS deployment:
-   - Use `scripts/gcs_asset.py` for object writes.
-   - Stat existing objects before replacement.
-   - Upload replacements with `--replace-generation`.
-   - Use no-clobber uploads for new objects.
+   - Stage manual deployment files under `_scratch/pending-publishes/catalog-web/{proposal-id}/`.
+   - Promote approved objects through the GitHub `Approved dataset mutation` workflow.
+   - Stat existing objects before replacement and use the returned generation as the workflow destination precondition.
+   - Pass the workflow `cache_control` input for `catalog.json`, PMTiles, and other cache-sensitive replacements when no-cache metadata is required.
+   - Use no-clobber promotion for new objects.
    - Do not use unsafe overwrites.
 
 7. Cache control and live-site freshness:
-   - After deploying web shell/runtime objects, set no-cache metadata:
-
-```bash
-gcloud storage objects update \
-  --cache-control='no-cache, max-age=0, must-revalidate' \
-  gs://skytruth-shared-datasets-1/_catalog/web/index.html \
-  gs://skytruth-shared-datasets-1/_catalog/web/styles.css \
-  gs://skytruth-shared-datasets-1/_catalog/web/app.js \
-  gs://skytruth-shared-datasets-1/_catalog/web/map-preview.js \
-  gs://skytruth-shared-datasets-1/_catalog/web/catalog.json
-```
-
-   - After same-path PMTiles replacement, set no-cache metadata on the replaced PMTiles objects.
+   - When promoting web shell/runtime objects, pass the workflow
+     `cache_control` input with `no-cache, max-age=0, must-revalidate`.
+   - After same-path PMTiles replacement, make sure the approved workflow
+     promotion also sets no-cache metadata on the replaced PMTiles objects.
    - Corrective PMTiles-only rebuilds should replace the PMTiles object under the matching canonical release date, not create a new PMTiles-only dated release directory unless PMTiles is the canonical format.
-
-```bash
-gcloud storage objects update \
-  --cache-control='no-cache, max-age=0, must-revalidate' \
-  gs://skytruth-shared-datasets-1/path/to/asset/latest/asset.pmtiles \
-  gs://skytruth-shared-datasets-1/path/to/asset/releases/YYYY-MM-DD/asset.pmtiles
-```
 
    - The frontend should also cache-bust `catalog.json`, docs Markdown, and PMTiles URLs.
    - Do not assume `fetch(..., { cache: "no-store" })` alone bypasses all GCS/browser stale-content cases.

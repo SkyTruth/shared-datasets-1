@@ -14,11 +14,20 @@ Use `uv` for local Python dependency management and command execution.
 
 Use Terraform for GCP infrastructure.
 
-Use `gcloud storage` only for manual diagnostics or emergency one-off operations.
+Use `gcloud storage` only for manual diagnostics, emergency downloads, and
+documented break-glass operations.
 
 Do not use Terraform or Pulumi to manage frequently changing dataset files.
 
 Do not use Cloud Storage FUSE for canonical writes.
+
+Canonical writes are controlled. Humans and general-purpose agents should stage
+manual publish bytes under `_scratch/pending-publishes/` and promote approved
+objects through the GitHub `Approved dataset mutation` workflow under the
+`shared-datasets-production` environment.
+Direct local writes to `latest/`, `releases/`, dataset README files, or
+`_catalog/` are reserved for the approved publisher identity or documented
+break-glass response.
 
 ## Why
 
@@ -31,8 +40,8 @@ uv run python scripts/gcs_asset.py list gs://$SHARED_DATASETS_BUCKET/
 uv run python scripts/gcs_asset.py stat gs://$SHARED_DATASETS_BUCKET/path/to/object
 uv run python scripts/gcs_asset.py download gs://$SHARED_DATASETS_BUCKET/path/to/object \
   "$TMPDIR/shared-datasets-1/downloads/object"
-uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/new-object
-uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUCKET/path/to/existing-object --replace-generation <generation>
+uv run python scripts/gcs_asset.py upload ./local-file \
+  gs://$SHARED_DATASETS_BUCKET/_scratch/pending-publishes/example-asset/123/local-file
 ```
 
 ## Safe update pattern
@@ -40,8 +49,9 @@ uv run python scripts/gcs_asset.py upload ./local-file gs://$SHARED_DATASETS_BUC
 1. `stat` destination object.
 2. Download it if editing.
 3. Make local changes.
-4. Upload with `--replace-generation`.
-5. Verify with `stat`.
+4. Stage the edited file under `_scratch/pending-publishes/`.
+5. Promote through the approved publisher workflow, passing the destination
+   generation as the workflow `destination_generation` precondition.
 6. Update README/catalog when relevant, including `citation` when source
    publication metadata changes.
 
@@ -148,6 +158,20 @@ converts them with `pmtiles convert`.
 
 Upload the resulting files with `scripts/gcs_asset.py`; the vector helper never
 mutates Cloud Storage.
+
+## Delete pattern
+
+Only use `delete` with an explicit object generation. Canonical deletions should
+flow through a reviewed PR containing a fenced `shared-datasets-delete-plan` so
+the approved workflow can delete with generation preconditions under the
+publisher identity. Prefix deletes, wildcards, and generation-less deletes are
+invalid.
+
+```bash
+uv run python scripts/gcs_asset.py delete gs://$SHARED_DATASETS_BUCKET/path/to/object \
+  --generation 123456789 \
+  --confirm DELETE
+```
 
 ## Unsafe overwrites
 

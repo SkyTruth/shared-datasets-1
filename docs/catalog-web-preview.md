@@ -112,10 +112,15 @@ if fully offline/self-contained hosting becomes a requirement.
 ## Deploy
 
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
-explicit. New files should use no-clobber uploads. Existing files should be
-replaced only after reading the current generation.
+explicit. Manual catalog web deployments should stage files under
+`_scratch/pending-publishes/catalog-web/{proposal-id}/` and promote approved
+objects through the `Approved dataset mutation` GitHub workflow. New files should
+use no-clobber promotion. Existing files should be replaced only after reading
+the current generation. Pass the workflow `cache_control` input for
+`catalog.json` and any other cache-sensitive replacement that needs no-cache
+metadata.
 
-Initial upload example:
+Publisher-identity CLI reference only:
 
 ```bash
 WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
@@ -129,44 +134,31 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload "$OUT/map-previ
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload "$OUT/catalog.json" "$DEST/catalog.json"
 ```
 
-For replacements, stat each object first and pass the returned generation:
+Humans and agents should stage these files under `_scratch/pending-publishes/`
+and use the approved workflow instead of running the publisher-identity commands
+locally. For replacements, stat each object first and use the returned
+generation as the workflow `destination_generation` precondition:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$DEST/catalog.json"
-UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
-  "$OUT/catalog.json" "$DEST/catalog.json" --replace-generation <generation>
 ```
 
 Repeat for changed static files and copied docs. Do not use unsafe overwrites for
 catalog deployment.
 
-After upload, keep the live web shell and runtime contract revalidating on every
-request. The catalog app also appends cache-busting query strings to
-`catalog.json`, docs Markdown, and PMTiles URLs, but the object metadata should
-not invite a browser or CDN to hold stale catalog or tile bytes after a same-path
-replacement:
-
-```bash
-gcloud storage objects update \
-  --cache-control='no-cache, max-age=0, must-revalidate' \
-  "$DEST/index.html" "$DEST/styles.css" "$DEST/app.js" "$DEST/map-preview.js" "$DEST/catalog.json"
-```
-
-When replacing same-path PMTiles display artifacts, also set no-cache metadata on
-the replaced PMTiles objects after the generation-preconditioned upload:
+Keep the live web shell and runtime contract revalidating on every request. The
+catalog app also appends cache-busting query strings to `catalog.json`, docs
+Markdown, and PMTiles URLs, but the object metadata should not invite a browser
+or CDN to hold stale catalog or tile bytes after a same-path replacement. Pass
+the workflow `cache_control` input with
+`no-cache, max-age=0, must-revalidate` for `catalog.json`, web shell/runtime
+objects, and same-path PMTiles replacements that need no-cache metadata.
 
 Corrective PMTiles rebuilds should replace both `latest/*.pmtiles` and the
 matching dated release PMTiles object for the canonical dataset release. Do not
 create PMTiles-only dated release directories for display repairs unless
 PMTiles is the asset's canonical format; release indexes and catalog versions
 should represent release dates that include the canonical format.
-
-```bash
-gcloud storage objects update \
-  --cache-control='no-cache, max-age=0, must-revalidate' \
-  gs://skytruth-shared-datasets-1/path/to/asset/latest/asset.pmtiles \
-  gs://skytruth-shared-datasets-1/path/to/asset/releases/YYYY-MM-DD/asset.pmtiles
-```
 
 ## CORS
 
