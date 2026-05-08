@@ -60,9 +60,57 @@ class GcsPublisher:
             return None
         return json.loads(blob.download_as_text())
 
+    def load_successful_run_record(
+        self,
+        asset: ReleaseAsset,
+        run_date: dt.date,
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        object_name = asset.run_record_object(run_date)
+        blob = self.bucket.blob(object_name)
+        try:
+            blob.reload()
+        except NotFound:
+            return None
+        record = json.loads(blob.download_as_text())
+        if record.get("status") != "success":
+            return None
+        return (
+            record,
+            {
+                "path": f"gs://{self.bucket.name}/{object_name}",
+                "generation": int(blob.generation),
+                "size": int(blob.size or 0),
+            },
+        )
+
     def successful_run_record(self, asset: ReleaseAsset, run_date: dt.date) -> bool:
-        record = self.load_json(asset.run_record_object(run_date))
-        return bool(record and record.get("status") == "success")
+        return self.load_successful_run_record(asset, run_date) is not None
+
+    def record_existing_successful_release(
+        self,
+        asset: ReleaseAsset,
+        run_date: dt.date,
+    ) -> dict[str, Any] | None:
+        loaded = self.load_successful_run_record(asset, run_date)
+        if loaded is None:
+            return None
+        record, run_record_info = loaded
+        try:
+            return release_index.record_successful_release(
+                self.bucket,
+                asset.slug,
+                record,
+                run_record_info=run_record_info,
+            )
+        except release_index.ReleaseIndexError as exc:
+            self.logger.warning(
+                "could not refresh release index from existing successful run record "
+                "for %s %s: %s",
+                asset.slug,
+                run_date.isoformat(),
+                exc,
+            )
+            return None
 
     def assert_no_partial_release(
         self,
@@ -144,6 +192,61 @@ class GcsPublisher:
             "generation": int(blob.generation),
             "size": int(blob.size or 0),
         }
+
+    def replace_latest_metadata_from_run_record(
+        self,
+        asset: ReleaseAsset,
+        run_date: dt.date,
+        metadata: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        loaded = self.load_successful_run_record(asset, run_date)
+        if loaded is None:
+            return []
+        record, _run_record_info = loaded
+        refreshed = []
+        for value in record.get("latest_paths") or []:
+            path = release_index.path_from_info(value)
+            if not path:
+                continue
+            bucket_name, object_name = release_index.split_gs_uri(path)
+            if bucket_name != self.bucket.name:
+                raise RuntimeError(
+                    f"Latest object bucket does not match publisher bucket: {path}"
+                )
+            expected_generation = value.get("generation") if isinstance(value, dict) else None
+            blob = self.bucket.blob(object_name)
+            try:
+                blob.reload()
+            except NotFound:
+                self.logger.warning("latest object is missing: %s", path)
+                continue
+            if expected_generation is not None and int(blob.generation) != int(expected_generation):
+                self.logger.warning(
+                    "latest object generation changed before metadata refresh: %s",
+                    path,
+                )
+                continue
+            metageneration_match = int(getattr(blob, "metageneration", 0) or 0) or None
+            blob.metadata = metadata
+            patch_kwargs = {}
+            if metageneration_match is not None:
+                patch_kwargs["if_metageneration_match"] = metageneration_match
+            try:
+                blob.patch(**patch_kwargs)
+            except PreconditionFailed as exc:
+                raise RuntimeError(
+                    f"Latest object metadata changed before patch: {path}"
+                ) from exc
+            blob.reload()
+            refreshed.append(
+                {
+                    "path": path,
+                    "generation": int(blob.generation),
+                    "metageneration": int(getattr(blob, "metageneration", 0) or 0),
+                    "size": int(blob.size or 0),
+                }
+            )
+        return refreshed
 
     def write_run_record(
         self,

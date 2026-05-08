@@ -28,7 +28,9 @@ resource "google_storage_bucket_iam_member" "eamlis_job_object_user" {
     description = "Restrict eAMLIS monthly job writes to its asset root and release index."
     expression = join(" || ", [
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')",
       "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/eamlis-abandoned-mine-land-inventory.json'",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')",
     ])
   }
 

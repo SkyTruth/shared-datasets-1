@@ -493,24 +493,24 @@ def publish_outputs(
     source: DownloadedSource | AvailableSource,
 ) -> dict[str, Any]:
     run_date = source.filename_date
+    metadata = metadata_for_source(asset=asset, source=source)
     if publisher.successful_run_record(asset, run_date):
         LOGGER.info("%s already has a successful run record for %s", asset.slug, run_date)
+        release_index_info = publisher.record_existing_successful_release(asset, run_date)
+        latest_metadata = publisher.replace_latest_metadata_from_run_record(
+            asset,
+            run_date,
+            metadata,
+        )
         return {
             "asset_slug": asset.slug,
             "run_date": run_date.isoformat(),
             "status": "skipped",
+            "release_index": release_index_info,
+            "latest_metadata": latest_metadata,
         }
 
     publisher.assert_no_partial_release(asset, run_date)
-
-    metadata = {
-        "asset_slug": asset.slug,
-        "run_date": run_date.isoformat(),
-        "source_filename_date": source.filename_date.isoformat(),
-        "documented_valid_date": source.documented_valid_date.isoformat(),
-        "source_filename": source.source_filename,
-        "source_url": source.source_url,
-    }
 
     release_fgb = publisher.upload_new_object(
         local_path=outputs.fgb,
@@ -565,6 +565,21 @@ def publish_outputs(
     return record
 
 
+def metadata_for_source(
+    *,
+    asset: AssetSpec,
+    source: DownloadedSource | AvailableSource,
+) -> dict[str, str]:
+    return {
+        "asset_slug": asset.slug,
+        "run_date": source.filename_date.isoformat(),
+        "source_filename_date": source.filename_date.isoformat(),
+        "documented_valid_date": source.documented_valid_date.isoformat(),
+        "source_filename": source.source_filename,
+        "source_url": source.source_url,
+    }
+
+
 def run() -> dict[str, Any]:
     configure_logging()
     for binary in (
@@ -617,6 +632,15 @@ def run() -> dict[str, Any]:
             ASSET.slug,
             available_source.filename_date,
         )
+        successful_release_index = publisher.record_existing_successful_release(
+            ASSET,
+            available_source.filename_date,
+        )
+        latest_metadata = publisher.replace_latest_metadata_from_run_record(
+            ASSET,
+            available_source.filename_date,
+            metadata_for_source(asset=ASSET, source=available_source),
+        )
         record = {
             "asset_slug": ASSET.slug,
             "run_date": anchor_day.isoformat(),
@@ -629,6 +653,10 @@ def run() -> dict[str, Any]:
             "documented_valid_date": available_source.documented_valid_date.isoformat(),
             "source_version": available_source.source_filename,
         }
+        if successful_release_index:
+            record["successful_release_index"] = successful_release_index
+        if latest_metadata:
+            record["latest_metadata"] = latest_metadata
         record["release_index"] = publisher.update_latest_run_index(
             asset=ASSET,
             payload=record,

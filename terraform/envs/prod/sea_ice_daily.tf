@@ -28,7 +28,9 @@ resource "google_storage_bucket_iam_member" "sea_ice_job_object_user" {
     description = "Restrict sea ice daily job writes to its asset root and release index."
     expression = join(" || ", [
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}200-imagery-derived/250-weather-climate/ims-sea-ice-extent/')",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}200-imagery-derived/250-weather-climate/ims-sea-ice-extent/')",
       "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/ims-sea-ice-extent.json'",
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/releases/')",
     ])
   }
 

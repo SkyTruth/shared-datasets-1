@@ -1,5 +1,6 @@
 locals {
   shared_bucket_object_resource_prefix = "projects/_/buckets/${var.bucket_name}/objects/"
+  shared_bucket_folder_resource_prefix = "projects/_/buckets/${var.bucket_name}/folders/"
 
   canonical_dataset_top_level_prefixes = sort([
     for name, _config in yamldecode(file("${path.module}/../../../catalog/categories.yaml")).categories :
@@ -18,8 +19,24 @@ locals {
     ],
   ))
 
-  scratch_writer_condition         = "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/')"
-  pending_publish_source_condition = "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')"
+  canonical_mutation_publisher_folder_condition = join(" || ", concat(
+    [
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_catalog/')",
+    ],
+    [
+      for prefix in local.canonical_dataset_top_level_prefixes :
+      "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}${prefix}')"
+    ],
+  ))
+
+  scratch_writer_condition = join(" || ", [
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/')",
+    "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/')",
+  ])
+  pending_publish_source_condition = join(" || ", [
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')",
+    "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/')",
+  ])
 
   shared_datasets_publisher_principal = "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
 
@@ -110,6 +127,20 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_object_us
     title       = "canonical_publish_prefixes"
     description = "Allow approved publisher writes to canonical shared-datasets objects, excluding _scratch/."
     expression  = local.canonical_mutation_publisher_condition
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
+resource "google_storage_bucket_iam_member" "shared_datasets_publisher_folder_user" {
+  bucket = var.bucket_name
+  role   = "roles/storage.objectUser"
+  member = module.shared_datasets_publisher_service_account.member
+
+  condition {
+    title       = "canonical_publish_folders"
+    description = "Allow approved publisher folder operations under canonical shared-datasets prefixes."
+    expression  = local.canonical_mutation_publisher_folder_condition
   }
 
   depends_on = [google_storage_bucket.shared_bucket]

@@ -18,6 +18,7 @@ class FakeBlob:
         self.name = name
         self.exists = exists
         self.generation = generation
+        self.metageneration = 1
         self.size = 0
         self.metadata = None
         self.remote_metadata = None
@@ -53,6 +54,19 @@ class FakeBlob:
         self.size = len(data.encode())
         self.remote_metadata = dict(self.metadata or {})
         self.uploads.append(("string", if_generation_match, content_type))
+
+    def patch(self, **kwargs):
+        if_metageneration_match = kwargs.get("if_metageneration_match")
+        if not self.exists:
+            raise NotFound("not found")
+        if (
+            if_metageneration_match is not None
+            and if_metageneration_match != self.metageneration
+        ):
+            raise PreconditionFailed("metageneration mismatch")
+        self.metageneration += 1
+        self.remote_metadata = dict(self.metadata or {})
+        self.uploads.append(("patch", if_metageneration_match, None))
 
     def _check_generation(self, if_generation_match):
         if if_generation_match == 0 and self.exists:
@@ -202,6 +216,92 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(blob.uploads, [])
         index = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)
         self.assertEqual(index["latest_release"]["date"], "2026-04-29")
+
+    def test_record_existing_successful_release_refreshes_index(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+        run_record = bucket.blob(asset.run_record_object(run_date))
+        run_record.exists = True
+        run_record.generation = 12
+        run_record.text = json.dumps(
+            {
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "status": "success",
+                "source_version": "source-v1",
+                "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                "release_paths": [
+                    {
+                        "path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb",
+                        "generation": 3,
+                    },
+                ],
+                "rows": 10,
+            }
+        )
+        stale_index = bucket.blob("_catalog/releases/test-asset.json")
+        stale_index.exists = True
+        stale_index.generation = 4
+        stale_index.text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": asset.slug,
+                "updated_at": "2026-04-01T00:00:00+00:00",
+                "latest_release": None,
+                "latest_run": None,
+                "releases": [],
+            }
+        )
+
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        info = publisher.record_existing_successful_release(asset, run_date)
+
+        self.assertEqual(info["generation"], stale_index.generation)
+        index = json.loads(stale_index.text)
+        self.assertEqual(index["latest_release"]["date"], "2026-05-01")
+        self.assertEqual(index["latest_release"]["run_record_path"], "gs://test-bucket/asset/runs/2026-05-01.json")
+        self.assertEqual(index["latest_run"]["status"], "success")
+
+    def test_replace_latest_metadata_from_run_record_uses_metageneration(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+        latest = bucket.blob(asset.latest_object(".fgb"))
+        latest.exists = True
+        latest.generation = 9
+        latest.metageneration = 3
+        latest.size = 27
+        latest.remote_metadata = {"run_date": "old"}
+        run_record = bucket.blob(asset.run_record_object(run_date))
+        run_record.exists = True
+        run_record.text = json.dumps(
+            {
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "status": "success",
+                "latest_paths": [
+                    {
+                        "path": f"gs://{bucket.name}/{latest.name}",
+                        "generation": 9,
+                    },
+                ],
+            }
+        )
+
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        refreshed = publisher.replace_latest_metadata_from_run_record(
+            asset,
+            run_date,
+            {"asset_slug": asset.slug, "run_date": run_date.isoformat()},
+        )
+
+        self.assertEqual(refreshed[0]["metageneration"], 4)
+        self.assertEqual(latest.uploads, [("patch", 3, None)])
+        self.assertEqual(
+            latest.remote_metadata,
+            {"asset_slug": asset.slug, "run_date": "2026-05-01"},
+        )
 
     def test_partial_release_blocks_publish_for_configured_suffixes(self):
         bucket = FakeBucket()

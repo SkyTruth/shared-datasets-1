@@ -711,17 +711,26 @@ def publish_asset(
     source_version: str,
     source_fields: tuple[FieldSpec, ...],
 ) -> dict[str, Any]:
+    metadata = metadata_for_asset(
+        asset=asset,
+        run_date=run_date,
+        source_version=source_version,
+    )
     if publisher.successful_run_record(asset, run_date):
         LOGGER.info("%s already has a successful run record; skipping", asset.slug)
-        return {"asset_slug": asset.slug, "status": "skipped"}
+        return {
+            "asset_slug": asset.slug,
+            "status": "skipped",
+            "release_index": publisher.record_existing_successful_release(asset, run_date),
+            "latest_metadata": publisher.replace_latest_metadata_from_run_record(
+                asset,
+                run_date,
+                metadata,
+            ),
+        }
 
     publisher.assert_no_partial_release(asset, run_date)
 
-    metadata = {
-        "asset_slug": asset.slug,
-        "run_date": run_date.isoformat(),
-        "source_version": source_version,
-    }
     release_fgb = publisher.upload_new_object(
         local_path=outputs.fgb,
         object_name=asset.release_object(run_date, ".fgb"),
@@ -768,6 +777,19 @@ def publish_asset(
     return record
 
 
+def metadata_for_asset(
+    *,
+    asset: AssetSpec,
+    run_date: dt.date,
+    source_version: str,
+) -> dict[str, str]:
+    return {
+        "asset_slug": asset.slug,
+        "run_date": run_date.isoformat(),
+        "source_version": source_version,
+    }
+
+
 def run() -> list[dict[str, Any]]:
     configure_logging()
     for binary in ("ogrinfo", "ogr2ogr", "tippecanoe", "pmtiles"):
@@ -799,6 +821,19 @@ def run() -> list[dict[str, Any]]:
         LOGGER.info("all WDPA assets already have successful run records for %s", run_date)
         records = []
         for asset in ASSETS:
+            successful_release_index = publisher.record_existing_successful_release(
+                asset,
+                run_date,
+            )
+            latest_metadata = publisher.replace_latest_metadata_from_run_record(
+                asset,
+                run_date,
+                metadata_for_asset(
+                    asset=asset,
+                    run_date=run_date,
+                    source_version=source_version,
+                ),
+            )
             record = {
                 "asset_slug": asset.slug,
                 "run_date": attempt_date.isoformat(),
@@ -808,6 +843,10 @@ def run() -> list[dict[str, Any]]:
                 "source": source_url,
                 "source_version": source_version,
             }
+            if successful_release_index:
+                record["successful_release_index"] = successful_release_index
+            if latest_metadata:
+                record["latest_metadata"] = latest_metadata
             record["release_index"] = publisher.update_latest_run_index(
                 asset=asset,
                 payload=record,
@@ -851,13 +890,29 @@ def run() -> list[dict[str, Any]]:
         final_publish_asset = publish_specs[-1]
         for asset in ASSETS:
             if asset not in publish_specs:
-                records.append(
-                    {
-                        "asset_slug": asset.slug,
-                        "run_date": run_date.isoformat(),
-                        "status": "skipped",
-                    }
+                record = {
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "status": "skipped",
+                }
+                release_index_info = publisher.record_existing_successful_release(
+                    asset,
+                    run_date,
                 )
+                if release_index_info:
+                    record["release_index"] = release_index_info
+                latest_metadata = publisher.replace_latest_metadata_from_run_record(
+                    asset,
+                    run_date,
+                    metadata_for_asset(
+                        asset=asset,
+                        run_date=run_date,
+                        source_version=source_version,
+                    ),
+                )
+                if latest_metadata:
+                    record["latest_metadata"] = latest_metadata
+                records.append(record)
                 continue
             where = sampled_where_clause(asset_where_clause(asset, split_field), sample_spec)
             outputs = build_asset_outputs(

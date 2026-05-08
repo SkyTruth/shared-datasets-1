@@ -134,7 +134,7 @@ EOT
   }
 
   alert_strategy {
-    auto_close           = "604800s"
+    auto_close           = "3600s"
     notification_prompts = ["OPENED"]
 
     notification_rate_limit {
@@ -191,7 +191,7 @@ EOT
   }
 
   alert_strategy {
-    auto_close           = "604800s"
+    auto_close           = "3600s"
     notification_prompts = ["OPENED"]
 
     notification_rate_limit {

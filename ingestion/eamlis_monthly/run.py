@@ -626,11 +626,7 @@ def publish_changed_asset(
     source: SourceState,
     output: AssetOutput,
 ) -> dict[str, Any]:
-    metadata = {
-        "asset_slug": ASSET.slug,
-        "run_date": run_date.isoformat(),
-        "source_fingerprint_hash": source.fingerprint_hash,
-    }
+    metadata = metadata_for_source(run_date=run_date, source=source)
     release_fgb = publisher.upload_new_object(
         local_path=output.fgb,
         object_name=ASSET.release_object(run_date, ".fgb"),
@@ -678,6 +674,14 @@ def publish_changed_asset(
     record["run_record"] = run_record
     LOGGER.info("published %s", ASSET.slug)
     return record
+
+
+def metadata_for_source(*, run_date: dt.date, source: SourceState) -> dict[str, str]:
+    return {
+        "asset_slug": ASSET.slug,
+        "run_date": run_date.isoformat(),
+        "source_fingerprint_hash": source.fingerprint_hash,
+    }
 
 
 def assert_current_record_allows_run(
@@ -731,6 +735,21 @@ def run() -> list[dict[str, Any]]:
         source=source,
     )
     if existing_record:
+        if existing_record.get("status") == "success":
+            existing_record = dict(existing_record)
+            release_index_info = publisher.record_existing_successful_release(
+                ASSET,
+                run_date,
+            )
+            if release_index_info:
+                existing_record["release_index"] = release_index_info
+            latest_metadata = publisher.replace_latest_metadata_from_run_record(
+                ASSET,
+                run_date,
+                metadata_for_source(run_date=run_date, source=source),
+            )
+            if latest_metadata:
+                existing_record["latest_metadata"] = latest_metadata
         return [existing_record]
 
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
