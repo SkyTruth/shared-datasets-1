@@ -53,6 +53,21 @@ def event_body(event_path: str | os.PathLike[str]) -> str:
     return event.get("pull_request", {}).get("body") or ""
 
 
+def pr_api_payload_to_event(pr: dict[str, Any], *, repository: str, default_branch: str) -> dict[str, Any]:
+    errors = []
+    if pr.get("state") != "open":
+        errors.append("PR must be open")
+    if pr.get("head", {}).get("repo", {}).get("full_name") != repository:
+        errors.append("PR head repository must match this repository")
+    if pr.get("base", {}).get("repo", {}).get("full_name") != repository:
+        errors.append("PR base repository must match this repository")
+    if pr.get("base", {}).get("ref") != default_branch:
+        errors.append(f"PR base branch must be {default_branch}")
+    if errors:
+        raise PlanValidationError("; ".join(errors))
+    return {"pull_request": pr}
+
+
 def object_name_from_uri(uri: str, *, bucket: str, label: str) -> str:
     prefix = f"gs://{bucket}/"
     if not uri.startswith(prefix):
@@ -294,6 +309,18 @@ def command_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_event_from_pr(args: argparse.Namespace) -> int:
+    pr = json.loads(pathlib.Path(args.pr_json).read_text())
+    if not isinstance(pr, dict):
+        raise PlanValidationError("PR API payload must be a JSON object")
+    event = pr_api_payload_to_event(pr, repository=args.repository, default_branch=args.default_branch)
+    payload = json.dumps(event, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        pathlib.Path(args.output).write_text(payload)
+    print(payload, end="")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -309,6 +336,16 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--bucket", default=DEFAULT_BUCKET, help="Expected shared datasets bucket.")
     extract.add_argument("--output", help="Optional path for normalized plan JSON.")
     extract.set_defaults(func=command_extract)
+
+    event_from_pr = subparsers.add_parser(
+        "event-from-pr",
+        help="Validate a same-repo PR API payload and wrap it like a pull_request event.",
+    )
+    event_from_pr.add_argument("--pr-json", required=True, help="Path to a GitHub REST pulls/{number} response.")
+    event_from_pr.add_argument("--repository", required=True, help="Expected owner/name repository.")
+    event_from_pr.add_argument("--default-branch", required=True, help="Expected base branch.")
+    event_from_pr.add_argument("--output", help="Optional path for wrapped event JSON.")
+    event_from_pr.set_defaults(func=command_event_from_pr)
 
     return parser
 

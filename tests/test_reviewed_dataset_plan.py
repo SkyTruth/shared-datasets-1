@@ -291,6 +291,32 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
 
+    def test_pr_api_payload_to_event_accepts_open_same_repo_default_branch_pr(self):
+        event = reviewed_dataset_plan.pr_api_payload_to_event(
+            {
+                "state": "open",
+                "body": "reviewed plan",
+                "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
+                "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
+            },
+            repository="SkyTruth/shared-datasets-1",
+            default_branch="main",
+        )
+
+        self.assertEqual(event["pull_request"]["body"], "reviewed plan")
+
+    def test_pr_api_payload_to_event_rejects_fork_pr(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "head repository"):
+            reviewed_dataset_plan.pr_api_payload_to_event(
+                {
+                    "state": "open",
+                    "head": {"repo": {"full_name": "other/shared-datasets-1"}},
+                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
+                },
+                repository="SkyTruth/shared-datasets-1",
+                default_branch="main",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

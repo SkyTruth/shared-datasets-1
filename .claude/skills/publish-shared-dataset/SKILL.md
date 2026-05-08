@@ -312,15 +312,18 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     expected destination generation, or record that the destination must be
     absent for no-clobber promotion.
 12. Create a focused branch, stage only related repo changes, commit, push, and
-    open a PR requesting review from `jonaraphael`. The PR body must include the
-    asset slug, changed repo files, staged source URIs and generations, intended
-    canonical destination URIs, destination-generation expectations, needed
-    `content_type` or `cache_control` workflow inputs, validation commands, and
-    any unresolved assumptions. If using the GitHub CLI, pass
-    `--reviewer jonaraphael` to `gh pr create`; if using a GitHub connector,
-    set `jonaraphael` as the requested reviewer. Include a fenced
-    `shared-datasets-publish-plan` JSON block so approval can trigger automatic
-    promotion:
+    open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+    the PR author and GitHub blocks the reviewer request. The PR body must
+    include the asset slug, changed repo files, staged source URIs and
+    generations, intended canonical destination URIs, destination-generation
+    expectations, needed `content_type` or `cache_control` workflow inputs,
+    validation commands, and any unresolved assumptions. If using the GitHub CLI,
+    pass `--reviewer jonaraphael` to `gh pr create` when `jonaraphael` is not the
+    PR author; if using a GitHub connector, set `jonaraphael` as requested
+    reviewer when allowed. If GitHub refuses because `jonaraphael` authored the
+    PR, record that note in the PR body. Include a fenced
+    `shared-datasets-publish-plan` JSON block so approval or restricted
+    self-approval dispatch can trigger promotion:
 
 ````markdown
 ```shared-datasets-publish-plan
@@ -344,9 +347,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 13. Do not promote canonical objects from the local terminal. When `jonaraphael`
     approves a same-repo PR that contains the publish-plan block, the GitHub
     `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. Manual workflow dispatch is
-    restricted to `jonaraphael`; use it only as a fallback for off-repo PRs,
-    failed automatic promotion, or explicit human direction.
+    the `shared-datasets-production` environment. If GitHub blocks self-review
+    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
+    workflow with the PR number; this self-approval path is also valid for
+    fallback promotion and applies the same plan validation.
 14. Verify promoted remote objects, metadata, catalog UI freshness, and release
     index behavior where applicable. Report changed remote paths, generations,
     alert state, and any residual uncertainty in the PR or final response.
@@ -438,24 +442,27 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     catalog web, or release-index replacements, record the current destination
     generation that the approved workflow must use.
 14. Create a focused branch, stage only related repo changes, commit, push, and
-    open a PR requesting review from `jonaraphael`. The PR body must include the
-    asset slug, release date/source version, changed repo files, staged source
-    URIs and generations, intended canonical destination URIs,
+    open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+    the PR author and GitHub blocks the reviewer request. The PR body must
+    include the asset slug, release date/source version, changed repo files,
+    staged source URIs and generations, intended canonical destination URIs,
     destination-generation expectations, whether `publish-release --dry-run`
     passed, any stale companion formats, validation commands, and consumer
     impact. If using the GitHub CLI, pass `--reviewer jonaraphael` to
-    `gh pr create`; if using a GitHub connector, set `jonaraphael` as the
-    requested reviewer. Include a fenced `shared-datasets-publish-plan` JSON
-    block whose `promotions` are ordered exactly as they should be copied.
+    `gh pr create` when `jonaraphael` is not the PR author; if using a GitHub
+    connector, set `jonaraphael` as requested reviewer when allowed. If GitHub
+    refuses because `jonaraphael` authored the PR, record that note in the PR
+    body. Include a fenced `shared-datasets-publish-plan` JSON block whose
+    `promotions` are ordered exactly as they should be copied.
 15. Do not promote canonical objects from the local terminal. When `jonaraphael`
     approves a same-repo PR that contains the publish-plan block, the GitHub
     `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. Order the publish plan so dated
-    release objects come before `latest/` replacements, and run records and
+    the `shared-datasets-production` environment. If GitHub blocks self-review
+    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
+    workflow with the PR number. Order the publish plan so dated release objects
+    come before `latest/` replacements, and run records and
     `_catalog/releases/{asset-slug}.json` come only after the object metadata
-    they describe has been promoted. Manual workflow dispatch is restricted to
-    `jonaraphael`; use it only as a fallback for off-repo PRs, failed automatic
-    promotion, or explicit human direction.
+    they describe has been promoted.
 16. Verify the new version: release objects exist, `latest/` points to or
     contains the intended bytes, generations match the approved operations, the
     release index reports the newest successful release and latest run, catalog
@@ -490,7 +497,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    the same PR and order the publish plan before the delete plan. The approved
    workflow promotes listed publish objects before it deletes listed objects.
 7. Create a focused branch, stage only related repo changes, commit, push, and
-   open a PR requesting review from `jonaraphael`. The PR body must include
+   open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+   the PR author and GitHub blocks the reviewer request. The PR body must include
    exact target URIs, current generations, deletion rationale, consumer impact,
    replacement/deprecation state, validation commands, and a fenced
    `shared-datasets-delete-plan` JSON block:
@@ -514,7 +522,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
 8. Do not delete canonical objects from the local terminal. When `jonaraphael`
    approves a same-repo PR that contains the delete-plan block, the GitHub
    `Approved dataset mutation` workflow deletes the listed objects under the
-   publisher identity using exact generation preconditions.
+   publisher identity using exact generation preconditions. If GitHub blocks
+   self-review because `jonaraphael` authored the PR, `jonaraphael` may dispatch
+   that workflow with the PR number.
 9. Verify the deletion: the live object is absent, no unintended objects were
    touched, catalog/release-index references no longer point at deleted paths,
    delete alerts/logs show the publisher identity, and any residual uncertainty

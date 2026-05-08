@@ -261,10 +261,13 @@ Git and history:
 - For manual dataset add/update/upload/publish/delete requests, the requested
   reviewed mutation workflow includes creating a focused branch, staging only
   related repo metadata and workflow files, committing, pushing, and opening a
-  PR that requests review from `jonaraphael`, unless the user asks to stop
-  before PR. This exception does not permit staging unrelated files, amending
-  history, applying Terraform, or mutating canonical GCS objects from a local
-  terminal.
+  PR that requests review from `jonaraphael`, unless `jonaraphael` is also the
+  PR author or the user asks to stop before PR. If GitHub blocks the reviewer
+  request because `jonaraphael` authored the PR, record that in the PR and use
+  the `Approved dataset mutation` workflow's `workflow_dispatch` `pr_number`
+  path; that self-approval path is restricted to `jonaraphael`. This exception
+  does not permit staging unrelated files, amending history, applying Terraform,
+  or mutating canonical GCS objects from a local terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
 
@@ -304,13 +307,15 @@ A task is complete when:
   functionality, the committing agent generated and appended any warranted
   fenced `repo-alert` block without asking the human to decide.
 - The PR or final response lists changed files and remote paths.
-- Any opened dataset publish PR requests review from `jonaraphael` and includes
-  the staged `_scratch/pending-publishes/` source URIs, source generations,
-  intended canonical destination URIs, destination-generation expectations, and
-  validation performed. If the PR is expected to promote data after approval, it
-  must include a fenced `shared-datasets-publish-plan` JSON block matching the
-  staged objects and generation preconditions.
-- Any opened dataset deletion PR requests review from `jonaraphael` and includes
+- Any opened dataset publish PR requests review from `jonaraphael`, or records
+  the GitHub self-review block when `jonaraphael` is the author, and includes the
+  staged `_scratch/pending-publishes/` source URIs, source generations, intended
+  canonical destination URIs, destination-generation expectations, and validation
+  performed. If the PR is expected to promote data after approval, it must
+  include a fenced `shared-datasets-publish-plan` JSON block matching the staged
+  objects and generation preconditions.
+- Any opened dataset deletion PR requests review from `jonaraphael`, or records
+  the GitHub self-review block when `jonaraphael` is the author, and includes
   exact target object URIs, current generations, rationale, consumer impact,
   replacement/deprecation state, and a fenced `shared-datasets-delete-plan` JSON
   block. Prefix, wildcard, and generation-less deletes are not valid.
