@@ -5,6 +5,10 @@ title: "{Dataset title}"
 category: "{top-level-category}"
 subcategory: "{subcategory}"
 status: "active"
+# For deprecated, superseded, or retired assets, add lifecycle_reason,
+# lifecycle_date, and consumer_guidance. Superseded assets also require
+# successor_asset_slug.
+access_tier: "public"
 owner: "{person-or-team}"
 update_cadence: "manual"
 canonical_format: "{format}"

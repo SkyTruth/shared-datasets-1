@@ -77,6 +77,10 @@ class CatalogAsset:
     category: str
     subcategory: str
     status: str
+    lifecycle_reason: str
+    lifecycle_date: str
+    successor_asset_slug: str
+    consumer_guidance: str
     access_tier: AccessTier
     owner: str
     update_cadence: str
@@ -105,6 +109,10 @@ class CatalogAsset:
             category=row.get("category", ""),
             subcategory=row.get("subcategory", ""),
             status=row.get("status", ""),
+            lifecycle_reason=row.get("lifecycle_reason", ""),
+            lifecycle_date=row.get("lifecycle_date", ""),
+            successor_asset_slug=row.get("successor_asset_slug", ""),
+            consumer_guidance=row.get("consumer_guidance", ""),
             access_tier=_normalize_access_tier(row.get("access_tier") or "public"),
             owner=row.get("owner", ""),
             update_cadence=row.get("update_cadence", ""),

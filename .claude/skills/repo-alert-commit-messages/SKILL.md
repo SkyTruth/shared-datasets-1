@@ -88,16 +88,16 @@ Decide whether the commit adds substantially exciting new repository functionali
 
 3. If no alert is warranted, write a normal concise commit message.
 
-4. If alert-worthy, inspect the last 20 commit messages before choosing an
+4. If alert-worthy, inspect the last 30 commit messages before choosing an
    emoji:
 
 ```bash
-git log -20 --format=%B
+git log -30 --format=%B
 ```
 
 Collect any `emoji:` values from recent fenced `repo-alert` blocks, including
 the current `HEAD` message when amending. Do not reuse any of those emojis. If
-the most obvious emoji is already present in those 20 messages, choose a fresh
+the most obvious emoji is already present in those 30 messages, choose a fresh
 association that still fits the staged functionality.
 
 5. Append one or more fenced blocks exactly like:
@@ -116,7 +116,7 @@ Fields:
 - `emoji`: one visual emoji that nods to the functionality.
   Do not use map or globe emojis, including `🗺️`, `🌍`, `🌎`, `🌏`, or `🌐`;
   these are overused in this repository and are not valid repo-alert choices.
-  Do not use any emoji found in `repo-alert` blocks from the last 20 commit
+  Do not use any emoji found in `repo-alert` blocks from the last 30 commit
   messages.
 - `headline`: short, clear, announcement-style title.
 - `summary`: one brief sentence describing what changed.

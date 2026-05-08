@@ -179,6 +179,21 @@ this decision record beside the catalog metadata, but the PR discussion remains
 the public review record. Existing assets are grandfathered unless a PR changes
 their dataset contract.
 
+### Dataset lifecycle states
+
+Catalog `status` values are a consumer contract, not a deletion pathway:
+
+- `active`: recommended for new use and maintained according to the documented cadence.
+- `deprecated`: still readable and citable, but discouraged for new work.
+- `superseded`: still readable and citable, with a required successor asset.
+- `retired`: historical only, with no expected updates or endorsement for new analysis.
+
+Non-active assets must keep their catalog row, README, citation, and existing
+release paths. They also need `lifecycle_reason`, `lifecycle_date`, and
+`consumer_guidance`; `superseded` assets additionally need
+`successor_asset_slug`. Use lifecycle metadata to steer consumers without
+breaking existing paths.
+
 ### Add or update a dataset
 
 1. Read `AGENTS.md`.

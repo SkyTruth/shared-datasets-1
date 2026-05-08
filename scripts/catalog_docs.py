@@ -29,6 +29,10 @@ CATALOG_COLUMNS = [
     "category",
     "subcategory",
     "status",
+    "lifecycle_reason",
+    "lifecycle_date",
+    "successor_asset_slug",
+    "consumer_guidance",
     "access_tier",
     "owner",
     "update_cadence",
@@ -52,6 +56,10 @@ FRONTMATTER_KEYS = [
     "category",
     "subcategory",
     "status",
+    "lifecycle_reason",
+    "lifecycle_date",
+    "successor_asset_slug",
+    "consumer_guidance",
     "access_tier",
     "owner",
     "update_cadence",
@@ -89,6 +97,16 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "pmtiles_maxzoom_reason",
     "pmtiles_detail_hint",
 ]
+
+LIFECYCLE_FIELDS = [
+    "lifecycle_reason",
+    "lifecycle_date",
+    "successor_asset_slug",
+    "consumer_guidance",
+]
+LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
+NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS = ["lifecycle_reason", "lifecycle_date", "consumer_guidance"]
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 REQUIRED_SCALAR_FIELDS = [
     "asset_slug",
@@ -322,6 +340,15 @@ def normalize_metadata(
         notes = catalog_row.get("notes", "")
     metadata["notes"] = as_text(notes).strip()
 
+    for key in LIFECYCLE_FIELDS:
+        value = raw.get(key)
+        if value is None and catalog_row and allow_legacy and catalog_row.get(key):
+            value = catalog_row.get(key)
+        if value is not None:
+            text = as_text(value).strip()
+            if text:
+                metadata[key] = text
+
     if "admission" in raw:
         metadata["admission"] = raw["admission"]
 
@@ -363,6 +390,7 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
         raise CatalogDocsError(f"{path}: schema_version must be {SCHEMA_VERSION}")
     if metadata.get("access_tier") not in ACCESS_TIERS:
         raise CatalogDocsError(f"{path}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
+    validate_lifecycle_metadata(path, metadata)
     if DISALLOWED_CADENCE_DETAIL_RE.search(metadata["update_cadence"]):
         raise CatalogDocsError(
             f"{path}: update_cadence must describe schedule only; unchanged-source skip behavior is the default for cron jobs"
@@ -402,6 +430,32 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
             f"{path}: available_formats {metadata['available_formats']} must match latest canonical/companion file formats {latest_formats}"
         )
     validate_optional_discovery_metadata(path, metadata)
+
+
+def validate_lifecycle_metadata(path: Path, metadata: dict[str, Any]) -> None:
+    status = metadata["status"]
+    if status not in LIFECYCLE_STATUSES:
+        allowed = ", ".join(sorted(LIFECYCLE_STATUSES))
+        raise CatalogDocsError(f"{path}: status must be one of: {allowed}")
+
+    lifecycle_date = metadata.get("lifecycle_date", "")
+    if lifecycle_date and not DATE_RE.fullmatch(lifecycle_date):
+        raise CatalogDocsError(f"{path}: lifecycle_date must be YYYY-MM-DD")
+
+    successor = metadata.get("successor_asset_slug", "")
+    if successor and not SLUG_RE.fullmatch(successor):
+        raise CatalogDocsError(f"{path}: successor_asset_slug must be lowercase kebab-case")
+    if successor == metadata["asset_slug"]:
+        raise CatalogDocsError(f"{path}: successor_asset_slug must not match asset_slug")
+
+    if status == "active":
+        return
+
+    missing = [key for key in NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS if not metadata.get(key)]
+    if missing:
+        raise CatalogDocsError(f"{path}: non-active assets require {', '.join(missing)}")
+    if status == "superseded" and not successor:
+        raise CatalogDocsError(f"{path}: superseded assets require successor_asset_slug")
 
 
 def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -> None:
@@ -522,6 +576,10 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "category": metadata["category"],
         "subcategory": metadata["subcategory"],
         "status": metadata["status"],
+        "lifecycle_reason": metadata.get("lifecycle_reason", ""),
+        "lifecycle_date": metadata.get("lifecycle_date", ""),
+        "successor_asset_slug": metadata.get("successor_asset_slug", ""),
+        "consumer_guidance": metadata.get("consumer_guidance", ""),
         "access_tier": metadata["access_tier"],
         "owner": metadata["owner"],
         "update_cadence": metadata["update_cadence"],
@@ -597,10 +655,22 @@ def render_index(docs: Sequence[AssetDoc]) -> str:
 
 def summary_block(metadata: dict[str, Any]) -> str:
     formats = ", ".join(f"`{format_name}`" for format_name in metadata["available_formats"])
-    return "\n".join(
+    lines = [
+        "<!-- BEGIN GENERATED asset-summary -->",
+        f"- **Status:** {metadata['status']}",
+    ]
+    if metadata["status"] != "active":
+        lines.extend(
+            [
+                f"- **Lifecycle date:** {metadata.get('lifecycle_date', '')}",
+                f"- **Lifecycle reason:** {metadata.get('lifecycle_reason', '')}",
+                f"- **Consumer guidance:** {metadata.get('consumer_guidance', '')}",
+            ]
+        )
+        if metadata.get("successor_asset_slug"):
+            lines.append(f"- **Successor asset:** `{metadata['successor_asset_slug']}`")
+    lines.extend(
         [
-            "<!-- BEGIN GENERATED asset-summary -->",
-            f"- **Status:** {metadata['status']}",
             f"- **Access tier:** {metadata['access_tier']}",
             f"- **Owner:** {metadata['owner']}",
             f"- **Update cadence:** {metadata['update_cadence']}",
@@ -612,6 +682,7 @@ def summary_block(metadata: dict[str, Any]) -> str:
             "<!-- END GENERATED asset-summary -->",
         ]
     )
+    return "\n".join(lines)
 
 
 def files_table_block(metadata: dict[str, Any]) -> str:

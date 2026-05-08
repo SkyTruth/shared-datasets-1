@@ -56,6 +56,14 @@ const elements = {
   sourceUrl: document.querySelector("#detail-source-url"),
   licenseText: document.querySelector("#detail-license-text"),
   citation: document.querySelector("#detail-citation"),
+  lifecycleReasonRow: document.querySelector("#detail-lifecycle-reason-row"),
+  lifecycleReason: document.querySelector("#detail-lifecycle-reason"),
+  lifecycleDateRow: document.querySelector("#detail-lifecycle-date-row"),
+  lifecycleDate: document.querySelector("#detail-lifecycle-date"),
+  successorRow: document.querySelector("#detail-successor-row"),
+  successor: document.querySelector("#detail-successor"),
+  consumerGuidanceRow: document.querySelector("#detail-consumer-guidance-row"),
+  consumerGuidance: document.querySelector("#detail-consumer-guidance"),
   mapSection: document.querySelector("#map-section"),
   mapStatus: document.querySelector("#map-status"),
   colorLegend: document.querySelector("#color-legend"),
@@ -363,6 +371,10 @@ function searchableText(asset) {
       asset.source_url,
       asset.license,
       asset.citation,
+      asset.lifecycle_reason,
+      asset.lifecycle_date,
+      asset.successor_asset_slug,
+      asset.consumer_guidance,
       Array.isArray(asset.license_flags) ? asset.license_flags.join(" ") : "",
       asset.latest_release?.date,
       asset.latest_run?.date,
@@ -527,6 +539,7 @@ function renderDetail(asset) {
   elements.source.textContent = asset.source || "Unknown";
   elements.licenseText.textContent = asset.license || "Unknown";
   elements.citation.textContent = asset.citation || "Unknown";
+  renderLifecycle(asset);
   renderDiscoveryMetadata(asset);
   renderSourceUrl(asset);
   renderVersionSelector(asset);
@@ -561,6 +574,20 @@ function renderLastRun(asset) {
   const value = formatLatestRun(asset.latest_run);
   elements.lastRunCard.hidden = !value;
   elements.lastRun.textContent = value || "";
+}
+
+function renderLifecycle(asset) {
+  const isActive = (asset.status || "") === "active";
+  setLifecycleRow(elements.lifecycleReasonRow, elements.lifecycleReason, isActive ? "" : asset.lifecycle_reason);
+  setLifecycleRow(elements.lifecycleDateRow, elements.lifecycleDate, isActive ? "" : asset.lifecycle_date);
+  setLifecycleRow(elements.successorRow, elements.successor, isActive ? "" : asset.successor_asset_slug);
+  setLifecycleRow(elements.consumerGuidanceRow, elements.consumerGuidance, isActive ? "" : asset.consumer_guidance);
+}
+
+function setLifecycleRow(row, valueNode, value) {
+  const text = String(value || "").trim();
+  row.hidden = !text;
+  valueNode.textContent = text;
 }
 
 function formatLatestRun(run) {

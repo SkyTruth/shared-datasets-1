@@ -17,12 +17,12 @@ CATEGORIES = """categories:
       "110-boundaries": "Boundaries."
 """
 
-CATALOG = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example citation,Example notes
+CATALOG = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example citation,Example notes
 """
 
 MIXED_ACCESS_CATALOG = CATALOG + (
-    "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,private,SkyTruth,manual,"
+    "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,,,,,private,SkyTruth,manual,"
     "gs://example-bucket/100-geographic-reference/110-boundaries/private-asset/latest/private-asset.fgb,"
     "fgb,fgb;pmtiles,README.md,true,false,false,Private source,Internal terms,Private citation,Private notes\n"
 )
@@ -152,6 +152,8 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["latest_release"]["date"], "2026-05-02")
         self.assertEqual(asset["latest_run"]["status"], "success")
         self.assertEqual(asset["pmtiles_sha256"], "b" * 64)
+        self.assertEqual(asset["lifecycle_reason"], "")
+        self.assertEqual(asset["successor_asset_slug"], "")
         self.assertEqual([version["date"] for version in asset["versions"]], ["2026-05-02", "2026-04-30"])
         self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb")
         self.assertEqual(asset["versions"][0]["pmtiles_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles")
@@ -191,6 +193,33 @@ class CatalogSiteTests(unittest.TestCase):
             assets_by_slug["private-asset"]["pmtiles_url"],
             "https://tiles.skytruth.org/pmtiles/private/private-asset.pmtiles",
         )
+
+    def test_build_catalog_payload_includes_non_active_lifecycle_guidance(self):
+        catalog = CATALOG + (
+            "old-asset,Old Asset,100-geographic-reference,110-boundaries,superseded,"
+            "Replaced by normalized source,2026-05-08,example-asset,Use example-asset for new work,"
+            "public,SkyTruth,manual,"
+            "gs://example-bucket/100-geographic-reference/110-boundaries/old-asset/latest/old-asset.fgb,"
+            "fgb,fgb,README.md,false,false,false,Old source,Old terms,Old citation,Old notes\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), catalog)
+            (docs_dir / "old-asset.md").write_text(DOC.replace("example-asset", "old-asset"))
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        old_asset = next(asset for asset in payload["assets"] if asset["slug"] == "old-asset")
+        self.assertEqual(old_asset["status"], "superseded")
+        self.assertEqual(old_asset["lifecycle_date"], "2026-05-08")
+        self.assertEqual(old_asset["successor_asset_slug"], "example-asset")
+        self.assertEqual(old_asset["consumer_guidance"], "Use example-asset for new work")
 
     def test_optional_discovery_metadata_validation(self):
         bad_doc = DOC.replace("row_count: 12345", "row_count: many")

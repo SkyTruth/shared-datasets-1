@@ -4,7 +4,11 @@ asset_slug: "{asset-slug}"
 title: "{Dataset title}"
 category: "{top-level-category}"
 subcategory: "{subcategory}"
-status: "active" # active | deprecated | retired | scratch
+status: "active" # active | deprecated | superseded | retired
+# For deprecated, superseded, or retired assets, add lifecycle_reason,
+# lifecycle_date, and consumer_guidance. Superseded assets also require
+# successor_asset_slug.
+access_tier: "public" # public | private
 owner: "{person-or-team}"
 update_cadence: "static" # static | manual | daily | weekly | monthly | ad hoc
 canonical_format: "fgb" # fgb | cog | zarr | pmtiles | geojson | ndgeojson | csv

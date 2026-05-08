@@ -22,6 +22,7 @@ DEFAULT_SITE_PREFIX = "_catalog/web"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 ACCESS_TIERS = {"public", "private"}
+LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 REQUIRED_FIELDS = [
     "asset_slug",
     "title",
@@ -78,6 +79,10 @@ class CatalogAsset:
     category: str
     subcategory: str
     status: str
+    lifecycle_reason: str
+    lifecycle_date: str
+    successor_asset_slug: str
+    consumer_guidance: str
     access_tier: str
     owner: str
     update_cadence: str
@@ -508,6 +513,22 @@ def validate_row(
         raise CatalogSiteError(f"{prefix}: duplicate asset_slug {slug!r}")
     if not SLUG_RE.fullmatch(slug):
         raise CatalogSiteError(f"{prefix}: asset_slug must be lowercase kebab-case")
+    status = row["status"].strip()
+    if status not in LIFECYCLE_STATUSES:
+        allowed = ", ".join(sorted(LIFECYCLE_STATUSES))
+        raise CatalogSiteError(f"{prefix}: status must be one of: {allowed}")
+    if status != "active":
+        for field in ("lifecycle_reason", "lifecycle_date", "consumer_guidance"):
+            if not (row.get(field) or "").strip():
+                raise CatalogSiteError(f"{prefix}: non-active assets require {field!r}")
+        lifecycle_date = (row.get("lifecycle_date") or "").strip()
+        if not DATE_RE.fullmatch(lifecycle_date):
+            raise CatalogSiteError(f"{prefix}: lifecycle_date must be YYYY-MM-DD")
+    successor = (row.get("successor_asset_slug") or "").strip()
+    if status == "superseded" and not successor:
+        raise CatalogSiteError(f"{prefix}: superseded assets require successor_asset_slug")
+    if successor and (not SLUG_RE.fullmatch(successor) or successor == slug):
+        raise CatalogSiteError(f"{prefix}: successor_asset_slug must be a different lowercase kebab-case asset slug")
     access_tier = row["access_tier"].strip()
     if access_tier not in ACCESS_TIERS:
         raise CatalogSiteError(f"{prefix}: access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
@@ -582,6 +603,10 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         category=row["category"].strip(),
         subcategory=row["subcategory"].strip(),
         status=row["status"].strip(),
+        lifecycle_reason=row.get("lifecycle_reason", "").strip(),
+        lifecycle_date=row.get("lifecycle_date", "").strip(),
+        successor_asset_slug=row.get("successor_asset_slug", "").strip(),
+        consumer_guidance=row.get("consumer_guidance", "").strip(),
         access_tier=access_tier,
         owner=row["owner"].strip(),
         update_cadence=row["update_cadence"].strip(),

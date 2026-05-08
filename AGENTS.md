@@ -193,6 +193,12 @@ Dataset metadata and local files:
   preferred. The PR must identify source/license/citation status, a named
   steward, update expectations, intended consumers, shared-datasets rationale,
   alternatives considered, and deprecation or exit policy.
+- Asset `status` must be one of `active`, `deprecated`, `superseded`, or
+  `retired`. These are consumer-guidance states, not deletion states. Deprecated,
+  superseded, and retired assets remain readable and citable, keep their README,
+  catalog row, and releases, and must document `lifecycle_reason`,
+  `lifecycle_date`, and `consumer_guidance`. Superseded assets must also name a
+  `successor_asset_slug`.
 - Proposed published footprints of 10 GB or more require an explicit large-data
   exception in the PR explaining why shared-datasets is a better home than
   project storage, scratch storage, or direct upstream access.

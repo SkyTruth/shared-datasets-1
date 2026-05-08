@@ -142,8 +142,8 @@ Manual.
 """
 
 
-CATALOG_CSV = """asset_slug,title,category,subcategory,status,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example citation,Example notes
+CATALOG_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example citation,Example notes
 """
 
 
@@ -179,6 +179,7 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(row["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
         self.assertEqual(row["access_tier"], "public")
         self.assertEqual(row["citation"], "Example citation")
+        self.assertEqual(row["lifecycle_reason"], "")
         self.assertEqual(row["has_pmtiles"], "true")
         self.assertNotIn("admission", row)
         self.assertEqual(docs[0].metadata["admission"]["steward"], "SkyTruth data team")
@@ -211,6 +212,121 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(metadata["canonical_file"], "latest/example-asset.fgb")
         self.assertEqual(metadata["available_formats"], ["fgb", "pmtiles"])
         self.assertEqual(metadata["files"][1]["role"], "companion")
+
+    def test_accepts_deprecated_asset_with_lifecycle_guidance(self):
+        doc_text = STRICT_DOC.replace("status: active\n", "status: deprecated\n").replace(
+            "notes: Example notes\n",
+            (
+                "notes: Example notes\n"
+                "lifecycle_reason: Source is no longer maintained.\n"
+                "lifecycle_date: 2026-05-08\n"
+                "consumer_guidance: Prefer a maintained replacement for new work.\n"
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            docs = catalog_docs.read_asset_docs(
+                docs_dir=docs_dir,
+                categories=categories,
+                catalog_rows=rows,
+                allow_legacy=False,
+            )
+
+        row = catalog_docs.catalog_row(docs[0].metadata, "example-bucket")
+        rendered = catalog_docs.render_asset_doc(docs[0])
+        self.assertEqual(row["status"], "deprecated")
+        self.assertEqual(row["lifecycle_date"], "2026-05-08")
+        self.assertIn("- **Lifecycle reason:** Source is no longer maintained.", rendered)
+
+    def test_accepts_all_lifecycle_statuses(self):
+        lifecycle_fields = (
+            "lifecycle_reason: Governance status changed.\n"
+            "lifecycle_date: 2026-05-08\n"
+            "consumer_guidance: Check status before new use.\n"
+        )
+        cases = {
+            "active": "",
+            "deprecated": lifecycle_fields,
+            "retired": lifecycle_fields,
+            "superseded": lifecycle_fields + "successor_asset_slug: replacement-asset\n",
+        }
+        for status, extra_fields in cases.items():
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                doc_text = STRICT_DOC.replace("status: active\n", f"status: {status}\n")
+                if extra_fields:
+                    doc_text = doc_text.replace("notes: Example notes\n", "notes: Example notes\n" + extra_fields)
+                docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
+                categories = catalog_docs.load_categories(categories_path)
+                rows = catalog_docs.load_catalog_rows(catalog_path)
+
+                docs = catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+                self.assertEqual(docs[0].metadata["status"], status)
+
+    def test_rejects_unknown_lifecycle_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(
+                Path(tmp),
+                STRICT_DOC.replace("status: active\n", "status: scratch\n"),
+            )
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "status must be one of"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+    def test_non_active_assets_require_lifecycle_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(
+                Path(tmp),
+                STRICT_DOC.replace("status: active\n", "status: retired\n"),
+            )
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "non-active assets require"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
+    def test_superseded_assets_require_successor_slug(self):
+        doc_text = STRICT_DOC.replace("status: active\n", "status: superseded\n").replace(
+            "notes: Example notes\n",
+            (
+                "notes: Example notes\n"
+                "lifecycle_reason: Replaced by normalized successor.\n"
+                "lifecycle_date: 2026-05-08\n"
+                "consumer_guidance: Use the successor for new work.\n"
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "successor_asset_slug"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
 
     def test_check_detects_stale_generated_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
