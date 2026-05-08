@@ -22,6 +22,17 @@ resource "google_storage_bucket_iam_member" "eamlis_job_object_user" {
   bucket = var.bucket_name
   role   = "roles/storage.objectUser"
   member = module.eamlis_job_service_account.member
+
+  condition {
+    title       = "eamlis_owned_dataset_objects"
+    description = "Restrict eAMLIS monthly job writes to its asset root and release index."
+    expression = join(" || ", [
+      "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/')",
+      "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/eamlis-abandoned-mine-land-inventory.json'",
+    ])
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 module "eamlis_monthly_job" {

@@ -44,3 +44,15 @@ output "shared_dataset_consumer_service_accounts" {
     name => service_account.email
   }
 }
+
+output "shared_datasets_publisher_service_account" {
+  value = module.shared_datasets_publisher_service_account.email
+}
+
+output "github_workload_identity_provider" {
+  value = google_iam_workload_identity_pool_provider.github.name
+}
+
+output "canonical_destructive_action_deny_policy" {
+  value = try(google_iam_deny_policy.canonical_destructive_actions[0].id, null)
+}

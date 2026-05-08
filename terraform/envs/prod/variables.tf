@@ -130,3 +130,61 @@ variable "cerulean_pmtiles_cookie_signer_service_accounts" {
   type        = set(string)
   default     = []
 }
+
+variable "github_repository" {
+  description = "GitHub repository allowed to impersonate the approved publisher service account."
+  type        = string
+  default     = "SkyTruth/shared-datasets-1"
+}
+
+variable "github_publish_environment" {
+  description = "GitHub environment whose approved workflow runs can impersonate the publisher service account."
+  type        = string
+  default     = "shared-datasets-production"
+}
+
+variable "github_workload_identity_pool_id" {
+  description = "Workload Identity Pool ID used by GitHub Actions for this repository. Override if the existing pool is not named github."
+  type        = string
+  default     = "github"
+}
+
+variable "github_workload_identity_pool_provider_id" {
+  description = "Workload Identity Pool provider ID for GitHub Actions OIDC tokens."
+  type        = string
+  default     = "github-actions"
+}
+
+variable "shared_datasets_breakglass_group_email" {
+  description = "Emergency-only Google group exempted from optional canonical destructive-action deny rules."
+  type        = string
+  default     = "shared-datasets-breakglass@skytruth.org"
+}
+
+variable "scratch_writer_members" {
+  description = "IAM members allowed to write only noncanonical staging objects under _scratch/."
+  type        = set(string)
+  default = [
+    "user:jona@skytruth.org",
+  ]
+}
+
+variable "canonical_mutation_deny_policy_enabled" {
+  description = "Whether to create the optional project-level deny policy for canonical object delete/move and managed-folder deletion. Requires roles/iam.denyAdmin at the organization scope, so the default project-scope apply leaves this disabled."
+  type        = bool
+  default     = false
+}
+
+variable "canonical_mutation_denied_principals" {
+  description = "Optional deny-policy principals blocked from destructive canonical storage actions when canonical_mutation_deny_policy_enabled is true. The default covers all principals, with explicit exceptions in canonical_mutation_iam.tf."
+  type        = list(string)
+  default = [
+    "principalSet://goog/public:all",
+  ]
+}
+
+variable "extra_canonical_mutation_deny_exception_principals" {
+  description = "Additional optional deny-policy exception principals for tightly controlled IaC or incident-response identities."
+  type        = set(string)
+  default     = []
+}

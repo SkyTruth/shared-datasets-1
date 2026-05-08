@@ -46,6 +46,12 @@ variable "dataset_delete_alerts_enabled" {
   default     = true
 }
 
+variable "dataset_write_alerts_enabled" {
+  description = "Whether canonical object write alerting for unapproved principals should be enabled."
+  type        = bool
+  default     = true
+}
+
 variable "dataset_schema_alerts_enabled" {
   description = "Whether shared dataset schema change alerting should be enabled."
   type        = bool

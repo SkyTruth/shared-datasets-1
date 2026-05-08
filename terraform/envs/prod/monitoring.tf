@@ -14,6 +14,21 @@ locals {
     for prefix in var.dataset_delete_alert_excluded_prefixes :
     "NOT protoPayload.resourceName=~\"/objects/${replace(prefix, "/", "\\/")}\""
   ])
+
+  dataset_write_allowed_principal_filter = join(" AND ", [
+    for email in local.canonical_write_allowed_principal_emails :
+    "protoPayload.authenticationInfo.principalEmail!=\"${email}\""
+  ])
+
+  dataset_write_method_filter = <<-EOT
+(
+  protoPayload.methodName="storage.objects.create" OR
+  protoPayload.methodName="storage.objects.copy" OR
+  protoPayload.methodName="storage.objects.rewrite" OR
+  protoPayload.methodName="storage.objects.update" OR
+  protoPayload.methodName="storage.objects.move"
+)
+EOT
 }
 
 resource "google_monitoring_notification_channel" "cron_alert_slack" {
@@ -41,7 +56,7 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
   lifecycle {
     precondition {
-      condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_schema_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
+      condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled && !var.dataset_schema_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
       error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
     }
   }
@@ -236,6 +251,75 @@ Review the matching audit log entry:
 
 ```bash
 gcloud logging read 'resource.type="gcs_bucket" AND resource.labels.bucket_name="${var.bucket_name}" AND protoPayload.methodName="storage.objects.delete"' --project=${var.project_id} --limit=20
+```
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "604800s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  user_labels = {
+    component = "dataset-objects"
+    service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_project_iam_audit_config.storage_data_write,
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "dataset_object_written_by_unapproved_principal" {
+  project      = var.project_id
+  display_name = "Shared dataset object written by unapproved principal"
+  combiner     = "OR"
+  enabled      = var.dataset_write_alerts_enabled
+  severity     = "ERROR"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "Canonical GCS object write outside approved publisher and ingestion identities"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="gcs_bucket"
+resource.labels.bucket_name="${var.bucket_name}"
+protoPayload.serviceName="storage.googleapis.com"
+${local.dataset_write_method_filter}
+${local.dataset_delete_excluded_prefix_filter}
+${local.dataset_write_allowed_principal_filter}
+EOT
+
+      label_extractors = {
+        object_resource = "EXTRACT(protoPayload.resourceName)"
+        principal_email = "EXTRACT(protoPayload.authenticationInfo.principalEmail)"
+        method_name     = "EXTRACT(protoPayload.methodName)"
+      }
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Shared dataset object written by unapproved principal"
+    content   = <<-EOT
+A shared dataset object was written outside the approved publisher and scheduled-ingestion identities.
+
+Method: $${log.extracted_label.method_name}
+Object resource: $${log.extracted_label.object_resource}
+Principal: $${log.extracted_label.principal_email}
+
+Review the matching audit log entry:
+
+```bash
+gcloud logging read 'resource.type="gcs_bucket" AND resource.labels.bucket_name="${var.bucket_name}" AND protoPayload.serviceName="storage.googleapis.com"' --project=${var.project_id} --limit=20
 ```
 EOT
   }

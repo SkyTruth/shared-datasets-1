@@ -22,6 +22,17 @@ resource "google_storage_bucket_iam_member" "sea_ice_job_object_user" {
   bucket = var.bucket_name
   role   = "roles/storage.objectUser"
   member = module.sea_ice_job_service_account.member
+
+  condition {
+    title       = "sea_ice_owned_dataset_objects"
+    description = "Restrict sea ice daily job writes to its asset root and release index."
+    expression = join(" || ", [
+      "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}200-imagery-derived/250-weather-climate/ims-sea-ice-extent/')",
+      "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/ims-sea-ice-extent.json'",
+    ])
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 module "sea_ice_daily_job" {

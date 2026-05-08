@@ -22,6 +22,19 @@ resource "google_storage_bucket_iam_member" "wdpa_job_object_user" {
   bucket = var.bucket_name
   role   = "roles/storage.objectUser"
   member = module.wdpa_job_service_account.member
+
+  condition {
+    title       = "wdpa_owned_dataset_objects"
+    description = "Restrict WDPA monthly job writes to its asset roots and release indexes."
+    expression = join(" || ", [
+      "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-marine/')",
+      "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}100-geographic-reference/130-protected-areas/wdpa-terrestrial/')",
+      "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/wdpa-marine.json'",
+      "resource.name == '${local.shared_bucket_object_resource_prefix}_catalog/releases/wdpa-terrestrial.json'",
+    ])
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 module "wdpa_monthly_job" {

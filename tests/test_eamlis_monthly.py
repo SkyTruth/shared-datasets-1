@@ -180,11 +180,23 @@ class EamlisMonthlyTests(unittest.TestCase):
         previous.exists = True
         previous.text = json.dumps(
             {
+                "run_date": "2026-04-02",
                 "status": "success",
                 "source_fingerprint_hash": "same",
                 "release_path": "gs://test-bucket/release/",
                 "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
                 "sha256": {"fgb": "old-sha"},
+            }
+        )
+        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
+        release_index.exists = True
+        release_index.text = json.dumps(
+            {
+                "asset_slug": eamlis.ASSET.slug,
+                "latest_release": {
+                    "date": "2026-04-02",
+                    "run_record_path": f"gs://test-bucket/{previous.name}",
+                },
             }
         )
         source = sample_source_state(fingerprint_hash="same")
@@ -281,11 +293,23 @@ class EamlisMonthlyTests(unittest.TestCase):
         previous.exists = True
         previous.text = json.dumps(
             {
+                "run_date": "2026-04-02",
                 "status": "success",
                 "source_fingerprint_hash": "old",
                 "release_path": "gs://test-bucket/release/",
                 "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
                 "sha256": {"fgb": "same-sha"},
+            }
+        )
+        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
+        release_index.exists = True
+        release_index.text = json.dumps(
+            {
+                "asset_slug": eamlis.ASSET.slug,
+                "latest_release": {
+                    "date": "2026-04-02",
+                    "run_record_path": f"gs://test-bucket/{previous.name}",
+                },
             }
         )
         source = sample_source_state(fingerprint_hash="new")

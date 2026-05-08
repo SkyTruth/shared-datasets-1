@@ -20,6 +20,7 @@ from typing import Any, Iterable
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
+from ingestion.common import release_index
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.runtime import (
     configure_logging,
@@ -501,21 +502,32 @@ def latest_success_record(
     *,
     exclude_run_date: dt.date | None = None,
 ) -> dict[str, Any] | None:
-    blobs = sorted(
-        publisher.bucket.list_blobs(prefix=asset.runs_prefix),
-        key=lambda blob: blob.name,
-        reverse=True,
-    )
+    index = publisher.load_json(release_index.release_index_object(asset.slug)) or {}
+    latest_release = index.get("latest_release")
+    if not isinstance(latest_release, dict):
+        return None
+
+    latest_run = index.get("latest_run")
+    run_record_path = latest_release.get("run_record_path")
+    if not run_record_path and isinstance(latest_run, dict) and latest_run.get("date") == latest_release.get("date"):
+        run_record_path = latest_run.get("run_record_path")
+    if not run_record_path:
+        return None
+
+    try:
+        bucket_name, object_name = release_index.split_gs_uri(str(run_record_path))
+    except release_index.ReleaseIndexError:
+        return None
+    if bucket_name != publisher.bucket.name:
+        return None
+
     excluded_name = asset.run_record_object(exclude_run_date) if exclude_run_date else None
-    for blob in blobs:
-        if excluded_name and blob.name == excluded_name:
-            continue
-        try:
-            record = json.loads(blob.download_as_text())
-        except (json.JSONDecodeError, NotFound):
-            continue
-        if record.get("status") == "success":
-            return record
+    if excluded_name and object_name == excluded_name:
+        return None
+
+    record = publisher.load_json(object_name)
+    if record and record.get("status") == "success":
+        return record
     return None
 
 
