@@ -140,6 +140,22 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                 )
                 self.assertIn('auto_close           = "3600s"', block)
 
+    def test_github_readonly_identity_is_bucket_viewer_only(self):
+        readonly_tf = (PROD_TF_DIR / "github_readonly_iam.tf").read_text()
+        outputs_tf = (PROD_TF_DIR / "outputs.tf").read_text()
+        variables_tf = (PROD_TF_DIR / "variables.tf").read_text()
+
+        self.assertIn('resource "google_iam_workload_identity_pool_provider" "github_readonly"', readonly_tf)
+        self.assertIn("assertion.workflow == 'Catalog drift guard'", readonly_tf)
+        self.assertIn("assertion.workflow == 'Bucket hygiene audit'", readonly_tf)
+        self.assertIn('account_id   = "shared-datasets-gh-readonly"', readonly_tf)
+        self.assertIn('role               = "roles/iam.workloadIdentityUser"', readonly_tf)
+        self.assertIn('role   = "roles/storage.objectViewer"', readonly_tf)
+        self.assertNotIn('roles/storage.objectUser', readonly_tf)
+        self.assertIn("github_readonly_workload_identity_provider", outputs_tf)
+        self.assertIn("github_readonly_service_account", outputs_tf)
+        self.assertIn('variable "github_readonly_workload_identity_pool_provider_id"', variables_tf)
+
 
 if __name__ == "__main__":
     unittest.main()

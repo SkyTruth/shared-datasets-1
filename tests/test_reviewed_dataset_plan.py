@@ -295,6 +295,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         event = reviewed_dataset_plan.pr_api_payload_to_event(
             {
                 "state": "open",
+                "merged": False,
                 "body": "reviewed plan",
                 "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
                 "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
@@ -304,6 +305,69 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(event["pull_request"]["body"], "reviewed plan")
+
+    def test_pr_api_payload_to_event_accepts_merged_pr_when_allowed(self):
+        event = reviewed_dataset_plan.pr_api_payload_to_event(
+            {
+                "state": "closed",
+                "merged": True,
+                "body": "reviewed plan",
+                "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
+                "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
+            },
+            repository="SkyTruth/shared-datasets-1",
+            default_branch="main",
+            allow_merged=True,
+        )
+
+        self.assertEqual(event["pull_request"]["body"], "reviewed plan")
+
+    def test_pr_api_payload_to_event_rejects_closed_unmerged_pr_when_allowing_merged(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "open or merged"):
+            reviewed_dataset_plan.pr_api_payload_to_event(
+                {
+                    "state": "closed",
+                    "merged": False,
+                    "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
+                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
+                },
+                repository="SkyTruth/shared-datasets-1",
+                default_branch="main",
+                allow_merged=True,
+            )
+
+    def test_event_from_pr_cli_allows_merged_pr_with_flag(self):
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        with tmp:
+            json.dump(
+                {
+                    "state": "closed",
+                    "merged": True,
+                    "body": "reviewed plan",
+                    "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
+                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
+                },
+                tmp,
+            )
+        path = Path(tmp.name)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = reviewed_dataset_plan.main(
+                    [
+                        "event-from-pr",
+                        "--pr-json",
+                        str(path),
+                        "--repository",
+                        "SkyTruth/shared-datasets-1",
+                        "--default-branch",
+                        "main",
+                        "--allow-merged",
+                    ]
+                )
+        finally:
+            path.unlink()
+
+        self.assertEqual(code, 0)
 
     def test_pr_api_payload_to_event_rejects_fork_pr(self):
         with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "head repository"):

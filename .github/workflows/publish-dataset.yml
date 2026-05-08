@@ -1,6 +1,10 @@
 name: Approved dataset mutation
 
 on:
+  pull_request:
+    branches:
+      - main
+    types: [closed]
   pull_request_review:
     types: [submitted]
   workflow_dispatch:
@@ -373,6 +377,15 @@ jobs:
             github.event.pull_request.base.ref == github.event.repository.default_branch
           ) ||
           (
+            github.event_name == 'pull_request' &&
+            github.event.action == 'closed' &&
+            github.event.pull_request.merged == true &&
+            github.event.pull_request.user.login == 'jonaraphael' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.base.repo.full_name == github.repository &&
+            github.event.pull_request.base.ref == github.event.repository.default_branch
+          ) ||
+          (
             github.event_name == 'workflow_dispatch' &&
             github.actor == 'jonaraphael' &&
             github.event.inputs.pr_number != ''
@@ -410,6 +423,7 @@ jobs:
               --pr-json pr.json \
               --repository "${GITHUB_REPOSITORY}" \
               --default-branch "${DEFAULT_BRANCH}" \
+              --allow-merged \
               --output reviewed-pr-event.json
             echo "event_path=reviewed-pr-event.json" >> "${GITHUB_OUTPUT}"
           else
@@ -463,6 +477,7 @@ jobs:
               --pr-json pr.json \
               --repository "${GITHUB_REPOSITORY}" \
               --default-branch "${DEFAULT_BRANCH}" \
+              --allow-merged \
               --output reviewed-pr-event.json
             echo "event_path=reviewed-pr-event.json" >> "${GITHUB_OUTPUT}"
           else
@@ -738,6 +753,112 @@ jobs:
                       ],
                       check=True,
                   )
+          PY
+
+      - name: Send dataset upload summary
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import tempfile
+
+          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
+          bucket = os.environ["SHARED_DATASETS_BUCKET"]
+
+          def catalog_row(asset_slug):
+              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+                  for row in csv.DictReader(file_obj):
+                      if row.get("asset_slug") == asset_slug:
+                          return row
+              return None
+
+          def is_schema_target(asset_slug, destination_uri):
+              prefix = f"gs://{bucket}/"
+              if not destination_uri.startswith(prefix):
+                  return False
+              destination_name = destination_uri.removeprefix(prefix)
+              filename = destination_name.rsplit("/", 1)[-1]
+              suffix = pathlib.Path(filename).suffix.lower()
+              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
+                  return False
+              row = catalog_row(asset_slug)
+              if row:
+                  canonical_path = row.get("canonical_path", "")
+                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
+                  if destination_uri == canonical_path:
+                      return True
+                  if "/latest/" in canonical_path:
+                      asset_root = canonical_path.split("/latest/", 1)[0]
+                      if destination_uri.startswith(f"{asset_root}/releases/") and filename == canonical_filename:
+                          return True
+                  return False
+              return pathlib.Path(filename).stem == asset_slug
+
+          def release_path_for(destinations):
+              for uri in destinations:
+                  prefix, marker, suffix = uri.partition("/releases/")
+                  if not marker:
+                      continue
+                  release_date = suffix.split("/", 1)[0]
+                  if release_date:
+                      return f"{prefix}/releases/{release_date}/"
+              return ""
+
+          plan = json.load(open("publish-plan.json"))
+          asset_slug = plan["asset_slug"]
+          destinations = [promotion["destination_uri"] for promotion in plan["promotions"]]
+          args = [
+              "uv",
+              "run",
+              "python",
+              "scripts/dataset_alerts.py",
+              "upload-summary",
+              "--asset-slug",
+              asset_slug,
+          ]
+          for destination in destinations:
+              args.extend(["--changed-path", destination])
+          release_path = release_path_for(destinations)
+          if release_path:
+              args.extend(["--release-path", release_path])
+
+          schema_promotion = next(
+              (
+                  promotion
+                  for promotion in plan["promotions"]
+                  if is_schema_target(asset_slug, promotion["destination_uri"])
+              ),
+              None,
+          )
+          if schema_promotion is None:
+              subprocess.run(args, check=True)
+              raise SystemExit(0)
+
+          filename = schema_promotion["destination_uri"].rsplit("/", 1)[-1]
+          with tempfile.TemporaryDirectory() as tmp:
+              dataset_path = pathlib.Path(tmp) / filename
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "python",
+                      "scripts/gcs_asset.py",
+                      "download",
+                      schema_promotion["source_uri"],
+                      str(dataset_path),
+                      "--generation",
+                      schema_promotion["source_generation"],
+                  ],
+                  check=True,
+              )
+              subprocess.run(args + ["--dataset-path", str(dataset_path)], check=True)
           PY
 
       - name: Delete approved canonical objects

@@ -3,8 +3,12 @@ from __future__ import annotations
 import copy
 import json
 import unittest
+from pathlib import Path
 
 from scripts import catalog_drift_guard as guard
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def remote_object(name: str, text: str) -> guard.RemoteObject:
@@ -95,6 +99,22 @@ class CatalogDriftGuardTests(unittest.TestCase):
                 web_payload(),
                 remote_object(guard.REMOTE_WEB_CATALOG_OBJECT, json.dumps(live)),
             )
+
+    def test_catalog_drift_workflow_uses_readonly_gcp_variables(self):
+        workflow = (REPO_ROOT / ".github/workflows/catalog-drift-guard.yml").read_text()
+
+        self.assertIn("GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("GCP_READONLY_SERVICE_ACCOUNT", workflow)
+        self.assertIn("Missing repository variable: GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertNotIn("vars.GCP_SERVICE_ACCOUNT", workflow)
+
+    def test_bucket_hygiene_audit_workflow_uses_readonly_gcp_variables(self):
+        workflow = (REPO_ROOT / ".github/workflows/bucket-hygiene-audit.yml").read_text()
+
+        self.assertIn("GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("GCP_READONLY_SERVICE_ACCOUNT", workflow)
+        self.assertIn("Missing repository variable: GCP_READONLY_SERVICE_ACCOUNT", workflow)
+        self.assertNotIn("vars.GCP_SERVICE_ACCOUNT", workflow)
 
 
 if __name__ == "__main__":

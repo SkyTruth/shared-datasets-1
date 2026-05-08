@@ -53,6 +53,14 @@ output "github_workload_identity_provider" {
   value = google_iam_workload_identity_pool_provider.github.name
 }
 
+output "github_readonly_workload_identity_provider" {
+  value = google_iam_workload_identity_pool_provider.github_readonly.name
+}
+
+output "github_readonly_service_account" {
+  value = module.github_readonly_service_account.email
+}
+
 output "canonical_destructive_action_deny_policy" {
   value = try(google_iam_deny_policy.canonical_destructive_actions[0].id, null)
 }

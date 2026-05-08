@@ -53,10 +53,21 @@ def event_body(event_path: str | os.PathLike[str]) -> str:
     return event.get("pull_request", {}).get("body") or ""
 
 
-def pr_api_payload_to_event(pr: dict[str, Any], *, repository: str, default_branch: str) -> dict[str, Any]:
+def pr_api_payload_to_event(
+    pr: dict[str, Any],
+    *,
+    repository: str,
+    default_branch: str,
+    allow_merged: bool = False,
+) -> dict[str, Any]:
     errors = []
-    if pr.get("state") != "open":
-        errors.append("PR must be open")
+    is_open = pr.get("state") == "open"
+    is_merged = pr.get("state") == "closed" and pr.get("merged") is True
+    if not is_open and not (allow_merged and is_merged):
+        if allow_merged:
+            errors.append("PR must be open or merged")
+        else:
+            errors.append("PR must be open")
     if pr.get("head", {}).get("repo", {}).get("full_name") != repository:
         errors.append("PR head repository must match this repository")
     if pr.get("base", {}).get("repo", {}).get("full_name") != repository:
@@ -313,7 +324,12 @@ def command_event_from_pr(args: argparse.Namespace) -> int:
     pr = json.loads(pathlib.Path(args.pr_json).read_text())
     if not isinstance(pr, dict):
         raise PlanValidationError("PR API payload must be a JSON object")
-    event = pr_api_payload_to_event(pr, repository=args.repository, default_branch=args.default_branch)
+    event = pr_api_payload_to_event(
+        pr,
+        repository=args.repository,
+        default_branch=args.default_branch,
+        allow_merged=args.allow_merged,
+    )
     payload = json.dumps(event, indent=2, sort_keys=True) + "\n"
     if args.output:
         pathlib.Path(args.output).write_text(payload)
@@ -344,6 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
     event_from_pr.add_argument("--pr-json", required=True, help="Path to a GitHub REST pulls/{number} response.")
     event_from_pr.add_argument("--repository", required=True, help="Expected owner/name repository.")
     event_from_pr.add_argument("--default-branch", required=True, help="Expected base branch.")
+    event_from_pr.add_argument(
+        "--allow-merged",
+        action="store_true",
+        help="Accept already-merged same-repo PRs for approved self-authored fallback dispatch.",
+    )
     event_from_pr.add_argument("--output", help="Optional path for wrapped event JSON.")
     event_from_pr.set_defaults(func=command_event_from_pr)
 

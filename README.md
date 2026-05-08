@@ -314,6 +314,11 @@ alone. The workflow must use source and destination generation preconditions.
 After applying the Workload Identity resources, set the GitHub environment
 variable `GCP_WORKLOAD_IDENTITY_PROVIDER` to the Terraform output
 `github_workload_identity_provider`.
+For read-only catalog drift and bucket hygiene workflows, set repository
+variables `GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and
+`GCP_READONLY_SERVICE_ACCOUNT` to the Terraform outputs
+`github_readonly_workload_identity_provider` and
+`github_readonly_service_account`.
 The publisher also has read-only access to `_scratch/pending-publishes/` so the
 approved workflow can copy reviewed staged bytes into canonical prefixes.
 The Terraform `scratch_writer_members` variable preserves the current

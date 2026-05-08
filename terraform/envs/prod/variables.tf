@@ -155,6 +155,12 @@ variable "github_workload_identity_pool_provider_id" {
   default     = "github-actions"
 }
 
+variable "github_readonly_workload_identity_pool_provider_id" {
+  description = "Workload Identity Pool provider ID for read-only GitHub Actions bucket checks."
+  type        = string
+  default     = "github-actions-readonly"
+}
+
 variable "shared_datasets_breakglass_group_email" {
   description = "Emergency-only Google group exempted from optional canonical destructive-action deny rules."
   type        = string
