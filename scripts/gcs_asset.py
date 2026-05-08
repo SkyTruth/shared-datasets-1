@@ -352,6 +352,8 @@ def copy_object(
     unsafe_overwrite: bool = typer.Option(False, help="Allow replacing destination without a generation precondition."),
     source_generation: Optional[int] = typer.Option(None, help="Require this source generation."),
     replace_generation: Optional[int] = typer.Option(None, help="Require this destination generation."),
+    content_type: Optional[str] = typer.Option(None, help="Optional destination content type override."),
+    cache_control: Optional[str] = typer.Option(None, help="Optional destination Cache-Control metadata override."),
 ) -> None:
     """Copy an object within or across buckets.
 
@@ -379,6 +381,12 @@ def copy_object(
 
     try:
         new_blob = src_bucket.copy_blob(src_blob, dst_bucket, new_name=dst_name, **kwargs)
+        if content_type is not None or cache_control is not None:
+            if content_type is not None:
+                new_blob.content_type = content_type
+            if cache_control is not None:
+                new_blob.cache_control = cache_control
+            new_blob.patch(if_generation_match=int(new_blob.generation))
     except PreconditionFailed as exc:
         print("[red]Precondition failed.[/red]")
         raise typer.Exit(2) from exc

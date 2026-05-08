@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import gcs_asset
 
@@ -95,6 +98,65 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("asset slug is not in the catalog", result.stderr)
         self.assertNotIn("ModuleNotFoundError", result.stderr)
+
+    def test_copy_can_set_destination_metadata_with_generation_precondition(self):
+        class FakeBlob:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self.generation = 10
+                self.size = 42
+                self.content_type = None
+                self.cache_control = None
+                self.patch_calls = []
+
+            def patch(self, *, if_generation_match=None) -> None:
+                self.patch_calls.append(if_generation_match)
+
+        class FakeBucket:
+            def __init__(self) -> None:
+                self.blobs = {}
+                self.copy_kwargs = None
+
+            def blob(self, name: str) -> FakeBlob:
+                if name not in self.blobs:
+                    self.blobs[name] = FakeBlob(name)
+                return self.blobs[name]
+
+            def copy_blob(self, src_blob, dst_bucket, *, new_name: str, **kwargs):
+                self.copy_kwargs = kwargs
+                copied = dst_bucket.blob(new_name)
+                copied.content_type = src_blob.content_type
+                copied.cache_control = src_blob.cache_control
+                return copied
+
+        class FakeClient:
+            def __init__(self, bucket: FakeBucket) -> None:
+                self.bucket_obj = bucket
+
+            def bucket(self, _name: str) -> FakeBucket:
+                return self.bucket_obj
+
+        bucket = FakeBucket()
+        with (
+            mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            gcs_asset.copy_object(
+                "gs://test-bucket/source.json",
+                "gs://test-bucket/dest.json",
+                unsafe_overwrite=False,
+                source_generation=5,
+                replace_generation=9,
+                content_type="application/json",
+                cache_control="no-cache, max-age=0, must-revalidate",
+            )
+
+        self.assertEqual(bucket.copy_kwargs["if_source_generation_match"], 5)
+        self.assertEqual(bucket.copy_kwargs["if_generation_match"], 9)
+        copied = bucket.blob("dest.json")
+        self.assertEqual(copied.content_type, "application/json")
+        self.assertEqual(copied.cache_control, "no-cache, max-age=0, must-revalidate")
+        self.assertEqual(copied.patch_calls, [10])
 
 
 if __name__ == "__main__":

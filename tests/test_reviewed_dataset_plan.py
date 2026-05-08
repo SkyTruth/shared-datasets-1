@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import json
+import contextlib
+import io
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts import reviewed_dataset_plan
+
+
+BUCKET = "skytruth-shared-datasets-1"
+
+
+def event_path(body: str) -> Path:
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    with tmp:
+        json.dump({"pull_request": {"body": body}}, tmp)
+    return Path(tmp.name)
+
+
+class ReviewedDatasetPlanTests(unittest.TestCase):
+    def test_detect_finds_publish_and_delete_plan_fences(self):
+        body = """
+```shared-datasets-publish-plan
+{"asset_slug":"example-asset","proposal_id":"pr-123","promotions":[]}
+```
+
+```json shared-datasets-delete-plan
+{"asset_slug":"example-asset","proposal_id":"pr-123","deletions":[]}
+```
+"""
+
+        self.assertIsNotNone(reviewed_dataset_plan.find_fenced_json(body, "shared-datasets-publish-plan"))
+        self.assertIsNotNone(reviewed_dataset_plan.find_fenced_json(body, "shared-datasets-delete-plan"))
+
+    def test_normalize_publish_plan_accepts_reviewed_scratch_to_canonical_copy(self):
+        normalized = reviewed_dataset_plan.normalize_publish_plan(
+            {
+                "asset_slug": "example-asset",
+                "proposal_id": "pr-123",
+                "promotions": [
+                    {
+                        "source_uri": (
+                            f"gs://{BUCKET}/_scratch/pending-publishes/"
+                            "example-asset/pr-123/example-asset.fgb"
+                        ),
+                        "source_generation": 123,
+                        "destination_uri": (
+                            f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                            "example-asset/latest/example-asset.fgb"
+                        ),
+                        "destination_generation": "",
+                        "content_type": "application/octet-stream",
+                        "cache_control": None,
+                    }
+                ],
+            }
+        )
+
+        promotion = normalized["promotions"][0]
+        self.assertEqual(promotion["source_generation"], "123")
+        self.assertEqual(promotion["cache_control"], "")
+
+    def test_normalize_publish_plan_rejects_source_outside_pending_publish_prefix(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "source_uri must start"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "promotions": [
+                        {
+                            "source_uri": f"gs://{BUCKET}/_scratch/other/example-asset.fgb",
+                            "source_generation": "123",
+                            "destination_uri": (
+                                f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                                "example-asset/latest/example-asset.fgb"
+                            ),
+                        }
+                    ],
+                }
+            )
+
+    def test_normalize_delete_plan_accepts_exact_canonical_object_generation(self):
+        normalized = reviewed_dataset_plan.normalize_delete_plan(
+            {
+                "asset_slug": "example-asset",
+                "proposal_id": "pr-123",
+                "deletions": [
+                    {
+                        "uri": (
+                            f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                            "example-asset/releases/2026-05-08/example-asset.fgb"
+                        ),
+                        "generation": 123,
+                        "reason": "Incorrect duplicate release superseded by approved replacement.",
+                    }
+                ],
+            }
+        )
+
+        deletion = normalized["deletions"][0]
+        self.assertEqual(deletion["generation"], "123")
+        self.assertIn("duplicate release", deletion["reason"])
+
+    def test_normalize_delete_plan_rejects_prefix_delete(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "not a prefix"):
+            reviewed_dataset_plan.normalize_delete_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "deletions": [
+                        {
+                            "uri": (
+                                f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                                "example-asset/releases/2026-05-08/"
+                            ),
+                            "generation": "123",
+                            "reason": "Remove bad release prefix after replacement.",
+                        }
+                    ],
+                }
+            )
+
+    def test_normalize_delete_plan_rejects_wildcards(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "wildcard"):
+            reviewed_dataset_plan.normalize_delete_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "deletions": [
+                        {
+                            "uri": (
+                                f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                                "example-asset/releases/2026-05-08/*.fgb"
+                            ),
+                            "generation": "123",
+                            "reason": "Remove bad release objects after replacement.",
+                        }
+                    ],
+                }
+            )
+
+    def test_normalize_delete_plan_rejects_scratch_target(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "canonical mutation"):
+            reviewed_dataset_plan.normalize_delete_plan(
+                {
+                    "asset_slug": "example-asset",
+                    "proposal_id": "pr-123",
+                    "deletions": [
+                        {
+                            "uri": f"gs://{BUCKET}/_scratch/pending-publishes/example-asset/pr-123/file.fgb",
+                            "generation": "123",
+                            "reason": "Remove bad scratch object through the wrong path.",
+                        }
+                    ],
+                }
+            )
+
+    def test_extract_delete_plan_from_event_file(self):
+        path = event_path(
+            """
+```shared-datasets-delete-plan
+{
+  "asset_slug": "example-asset",
+  "proposal_id": "pr-123",
+  "deletions": [
+    {
+      "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb",
+      "generation": "123",
+      "reason": "Remove wrong latest object after approved replacement."
+    }
+  ]
+}
+```
+"""
+        )
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = reviewed_dataset_plan.main(["extract", "delete", "--event-path", str(path)])
+        finally:
+            path.unlink()
+
+        self.assertEqual(code, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

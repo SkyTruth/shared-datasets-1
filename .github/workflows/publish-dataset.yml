@@ -1,0 +1,384 @@
+name: Approved dataset mutation
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      asset_slug:
+        description: "Asset slug associated with the staged publish."
+        required: true
+        type: string
+      proposal_id:
+        description: "PR number, issue number, branch slug, or other reviewed proposal ID."
+        required: true
+        type: string
+      source_uri:
+        description: "Staged object URI under _scratch/pending-publishes/{asset_slug}/{proposal_id}/."
+        required: true
+        type: string
+      destination_uri:
+        description: "Approved canonical destination object URI."
+        required: true
+        type: string
+      source_generation:
+        description: "Required source generation precondition for the approved staged object."
+        required: true
+        type: string
+      destination_generation:
+        description: "Optional destination generation precondition; empty means no-clobber."
+        required: false
+        type: string
+      content_type:
+        description: "Optional destination content type override."
+        required: false
+        type: string
+      cache_control:
+        description: "Optional destination Cache-Control metadata override."
+        required: false
+        type: string
+      dry_run:
+        description: "Validate and print the copy command without writing."
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  promote:
+    name: Promote staged object manually
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' &&
+        github.actor == 'jonaraphael' &&
+        vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+      }}
+
+    env:
+      ASSET_SLUG: ${{ inputs.asset_slug }}
+      PROPOSAL_ID: ${{ inputs.proposal_id }}
+      SOURCE_URI: ${{ inputs.source_uri }}
+      DESTINATION_URI: ${{ inputs.destination_uri }}
+      SOURCE_GENERATION: ${{ inputs.source_generation }}
+      DESTINATION_GENERATION: ${{ inputs.destination_generation }}
+      CONTENT_TYPE: ${{ inputs.content_type }}
+      CACHE_CONTROL: ${{ inputs.cache_control }}
+      DRY_RUN: ${{ inputs.dry_run }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate publish request
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${ASSET_SLUG}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "asset_slug must be lowercase kebab-case" >&2
+            exit 1
+          fi
+
+          if [[ ! "${PROPOSAL_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "proposal_id may contain only letters, digits, dots, underscores, and hyphens" >&2
+            exit 1
+          fi
+
+          if [[ ! "${SOURCE_GENERATION}" =~ ^[0-9]+$ ]]; then
+            echo "source_generation must be a numeric object generation" >&2
+            exit 1
+          fi
+
+          if [[ -n "${DESTINATION_GENERATION}" && ! "${DESTINATION_GENERATION}" =~ ^[0-9]+$ ]]; then
+            echo "destination_generation must be empty or a numeric object generation" >&2
+            exit 1
+          fi
+
+          expected_source_prefix="gs://${SHARED_DATASETS_BUCKET}/_scratch/pending-publishes/${ASSET_SLUG}/${PROPOSAL_ID}/"
+          if [[ "${SOURCE_URI}" != "${expected_source_prefix}"* ]]; then
+            echo "source_uri must start with ${expected_source_prefix}" >&2
+            exit 1
+          fi
+
+          expected_destination_prefix="gs://${SHARED_DATASETS_BUCKET}/"
+          if [[ "${DESTINATION_URI}" != "${expected_destination_prefix}"* ]]; then
+            echo "destination_uri must be inside gs://${SHARED_DATASETS_BUCKET}/" >&2
+            exit 1
+          fi
+
+          destination_object="${DESTINATION_URI#${expected_destination_prefix}}"
+          case "${destination_object}" in
+            _scratch/*|_deprecated/*|000-system/*)
+              echo "destination_uri cannot target _scratch/, _deprecated/, or 000-system/" >&2
+              exit 1
+              ;;
+            README.md|_catalog/*|[0-9][0-9][0-9]-*)
+              ;;
+            *)
+              echo "destination_uri is outside approved canonical publish prefixes" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Validate destination layout
+        run: uv run python scripts/gcs_asset.py validate-path "${DESTINATION_URI}"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Promote staged object
+        run: |
+          set -euo pipefail
+
+          copy_args=(copy "${SOURCE_URI}" "${DESTINATION_URI}")
+          if [[ -n "${SOURCE_GENERATION}" ]]; then
+            copy_args+=(--source-generation "${SOURCE_GENERATION}")
+          fi
+          if [[ -n "${DESTINATION_GENERATION}" ]]; then
+            copy_args+=(--replace-generation "${DESTINATION_GENERATION}")
+          fi
+          if [[ -n "${CONTENT_TYPE}" ]]; then
+            copy_args+=(--content-type "${CONTENT_TYPE}")
+          fi
+          if [[ -n "${CACHE_CONTROL}" ]]; then
+            copy_args+=(--cache-control "${CACHE_CONTROL}")
+          fi
+
+          uv run python scripts/gcs_asset.py stat "${SOURCE_URI}"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            printf 'dry run: uv run python scripts/gcs_asset.py'
+            printf ' %q' "${copy_args[@]}"
+            printf '\n'
+          else
+            uv run python scripts/gcs_asset.py "${copy_args[@]}"
+            uv run python scripts/gcs_asset.py stat "${DESTINATION_URI}"
+          fi
+
+  reviewed_pr_plans:
+    name: Detect reviewed PR mutation plans
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        github.event_name == 'pull_request_review' &&
+        github.event.review.state == 'approved' &&
+        github.event.review.user.login == 'jonaraphael' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.base.repo.full_name == github.repository &&
+        github.event.pull_request.base.ref == github.event.repository.default_branch &&
+        vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+      }}
+    outputs:
+      has_publish_plan: ${{ steps.detect.outputs.has_publish_plan }}
+      has_delete_plan: ${{ steps.detect.outputs.has_delete_plan }}
+
+    steps:
+      - name: Check out trusted repository code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Detect reviewed mutation plans
+        id: detect
+        run: |
+          python scripts/reviewed_dataset_plan.py detect \
+            --event-path "${GITHUB_EVENT_PATH}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+  apply-approved-pr-plans:
+    name: Apply approved PR mutation plans
+    needs: reviewed_pr_plans
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    if: >-
+      ${{
+        needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' ||
+        needs.reviewed_pr_plans.outputs.has_delete_plan == 'true'
+      }}
+    concurrency:
+      group: approved-dataset-mutation-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out trusted repository code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Extract publish plan from PR body
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          python scripts/reviewed_dataset_plan.py extract publish \
+            --event-path "${GITHUB_EVENT_PATH}" \
+            --output publish-plan.json
+
+      - name: Extract delete plan from PR body
+        if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        run: |
+          python scripts/reviewed_dataset_plan.py extract delete \
+            --event-path "${GITHUB_EVENT_PATH}" \
+            --output delete-plan.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Validate publish destination layouts
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import subprocess
+
+          plan = json.load(open("publish-plan.json"))
+          for promotion in plan["promotions"]:
+              subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "validate-path", promotion["destination_uri"]],
+                  check=True,
+              )
+          PY
+
+      - name: Validate delete target layouts
+        if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import subprocess
+
+          plan = json.load(open("delete-plan.json"))
+          for deletion in plan["deletions"]:
+              subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "validate-path", deletion["uri"]],
+                  check=True,
+              )
+          PY
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Promote approved staged objects
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import shlex
+          import subprocess
+
+          plan = json.load(open("publish-plan.json"))
+          for index, promotion in enumerate(plan["promotions"], start=1):
+              print(f"Promoting object {index} of {len(plan['promotions'])}: {promotion['destination_uri']}")
+              subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "stat", promotion["source_uri"]],
+                  check=True,
+              )
+              args = [
+                  "uv",
+                  "run",
+                  "python",
+                  "scripts/gcs_asset.py",
+                  "copy",
+                  promotion["source_uri"],
+                  promotion["destination_uri"],
+                  "--source-generation",
+                  promotion["source_generation"],
+              ]
+              if promotion["destination_generation"]:
+                  args.extend(["--replace-generation", promotion["destination_generation"]])
+              if promotion["content_type"]:
+                  args.extend(["--content-type", promotion["content_type"]])
+              if promotion["cache_control"]:
+                  args.extend(["--cache-control", promotion["cache_control"]])
+              print("running:", " ".join(shlex.quote(part) for part in args))
+              subprocess.run(args, check=True)
+              subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "stat", promotion["destination_uri"]],
+                  check=True,
+              )
+          PY
+
+      - name: Delete approved canonical objects
+        if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import shlex
+          import subprocess
+          import sys
+
+          plan = json.load(open("delete-plan.json"))
+          for index, deletion in enumerate(plan["deletions"], start=1):
+              print(f"Deleting object {index} of {len(plan['deletions'])}: {deletion['uri']}")
+              subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "stat", deletion["uri"]],
+                  check=True,
+              )
+              args = [
+                  "uv",
+                  "run",
+                  "python",
+                  "scripts/gcs_asset.py",
+                  "delete",
+                  deletion["uri"],
+                  "--generation",
+                  deletion["generation"],
+                  "--confirm",
+                  "DELETE",
+              ]
+              print("running:", " ".join(shlex.quote(part) for part in args))
+              subprocess.run(args, check=True)
+              exists = subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "exists", deletion["uri"]],
+                  check=False,
+              )
+              if exists.returncode == 0:
+                  print(f"deleted object still exists: {deletion['uri']}", file=sys.stderr)
+                  sys.exit(1)
+              if exists.returncode != 1:
+                  print(f"could not verify deleted object absence: {deletion['uri']}", file=sys.stderr)
+                  sys.exit(exists.returncode)
+          PY

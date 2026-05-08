@@ -141,8 +141,11 @@ Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
 explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles
 with GDAL and converts them with `pmtiles convert`.
 
-The helper does not upload anything. Use `scripts/gcs_asset.py upload` for all
-Cloud Storage writes so no-clobber and generation preconditions stay enforced.
+The helper does not upload anything. Stage manual publish candidates under
+`_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with
+`scripts/gcs_asset.py upload`, then promote reviewed canonical objects through
+the approved GitHub publisher workflow so no-clobber and generation
+preconditions stay enforced.
 
 Publishing concierge planning lives in:
 
@@ -262,7 +265,10 @@ uv run python scripts/gcs_asset.py validate-path \
   gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa/latest/wdpa.fgb
 ```
 
-Delete only with an explicit object generation:
+Delete only with an explicit object generation. Canonical deletions should flow
+through a reviewed PR with a fenced `shared-datasets-delete-plan`; direct CLI
+deletes are for the approved workflow, approved publisher identity, or
+documented break-glass path:
 
 ```bash
 uv run python scripts/gcs_asset.py delete gs://skytruth-shared-datasets-1/path/to/object \
