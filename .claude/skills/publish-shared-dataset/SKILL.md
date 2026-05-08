@@ -43,6 +43,18 @@ classification, canonical format, target asset directory, and README content. If
 confidence is still low after discovery, stop before remote writes and ask for
 the missing confirmation.
 
+Do not treat an unsupported source format as permission to do a scratch-only
+upload. For requests phrased as "upload this," "add this data," or "publish this
+file," the default outcome is a reviewed canonical dataset proposal. If the
+provided file is a source container or analyst-friendly export such as `.xlsx`,
+`.zip`, raw GeoTIFF, NetCDF, or another noncanonical format, use it as source
+material, infer the approved canonical output, and keep working through artifact
+build, docs, catalog generation, staging, and PR creation. Stage the original
+source file only as reviewed scratch evidence unless `source/` or `archive/`
+promotion is allowed by the format standards and path validation. In either
+case, the asset README/PR must explain why consumers should use the canonical
+artifact instead.
+
 ## Publishing Concierge
 
 For a new manual asset, an under-specified upload, or any intake where the
@@ -91,6 +103,14 @@ Prefer the concierge output over ad hoc path math for:
 
 - Keep generated publishable data outside the repo tree unless it is a tiny
   intentional fixture.
+- Convert source files into approved canonical formats before staging promotion
+  candidates. Source spreadsheets with coordinates, WKT, WKB, GeoJSON geometry,
+  or other mappable geometry should become canonical vector artifacts, normally
+  FGB plus PMTiles. Source spreadsheets without geometry should become canonical
+  CSV after checking that geometry-like columns are not intended for spatial
+  analysis. Raw rasters should become COGs unless Zarr is the documented better
+  access pattern. Do not add a new canonical format just because the user
+  supplied that format.
 - For vector assets, prefer:
 
 ```bash
@@ -243,18 +263,24 @@ input, follow this ordered path unless the user explicitly asks to stop earlier:
    cannot be inferred, ask before remote writes.
 3. Run `scripts/publishing_concierge.py` for new or under-specified assets, using
    `--write-draft-doc` when creating a new `docs/assets/{asset-slug}.md`.
-   Resolve all `blocking_questions`.
+   Resolve all `blocking_questions`. If the concierge cannot infer a canonical
+   format because the supplied file is noncanonical, choose the approved output
+   format from the data contents and standards, then rerun or document the plan;
+   do not fall back to scratch-only staging.
 4. Choose the lowercase asset slug, category, subcategory, canonical format,
    asset root, release layout, and companion formats using
    `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md`, and
    `docs/standards/asset-layout-and-formats.md`.
 5. Build publishable artifacts outside the repo tree under the standard temp
-   workspace. For vector data, prefer `scripts/vector_asset.py build` so FGB and
-   PMTiles are generated consistently and tool versions are recorded.
+   workspace. Convert source-only formats to approved canonical artifacts. For
+   vector data, prefer `scripts/vector_asset.py build` so FGB and PMTiles are
+   generated consistently and tool versions are recorded. For tabular source
+   files, export a clean CSV only when it is a non-geometry table; otherwise
+   create a vector artifact from the geometry or coordinate columns.
 6. Create or update `docs/assets/{asset-slug}.md` with full frontmatter,
    source/license/citation, canonical paths, file table, update notes, and
-   schema/properties. Do not edit `catalog/shared-datasets-catalog.csv`
-   directly.
+   schema/properties. Include the dataset admission evidence for a new asset
+   slug. Do not edit `catalog/shared-datasets-catalog.csv` directly.
 7. Run:
 
 ```bash
@@ -278,20 +304,26 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with no-clobber
     uploads: canonical data files, companion PMTiles, exported bucket README,
     catalog web/cache-refresh objects, and any reviewed release-index JSON that
-    must be promoted. Record each staged source URI and generation.
+    must be promoted. If the original source file is staged too, keep it out of
+    the promotion plan unless its canonical `source/` or `archive/` destination
+    passes standards validation. Document that scratch copy as source evidence.
+    Record each staged source URI and generation.
 11. Stat existing canonical destinations when replacing objects. Record the
     expected destination generation, or record that the destination must be
     absent for no-clobber promotion.
 12. Create a focused branch, stage only related repo changes, commit, push, and
-    open a PR requesting review from `jonaraphael`. The PR body must include the
-    asset slug, changed repo files, staged source URIs and generations, intended
-    canonical destination URIs, destination-generation expectations, needed
-    `content_type` or `cache_control` workflow inputs, validation commands, and
-    any unresolved assumptions. If using the GitHub CLI, pass
-    `--reviewer jonaraphael` to `gh pr create`; if using a GitHub connector,
-    set `jonaraphael` as the requested reviewer. Include a fenced
-    `shared-datasets-publish-plan` JSON block so approval can trigger automatic
-    promotion:
+    open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+    the PR author and GitHub blocks the reviewer request. The PR body must
+    include the asset slug, changed repo files, staged source URIs and
+    generations, intended canonical destination URIs, destination-generation
+    expectations, needed `content_type` or `cache_control` workflow inputs,
+    validation commands, and any unresolved assumptions. If using the GitHub CLI,
+    pass `--reviewer jonaraphael` to `gh pr create` when `jonaraphael` is not the
+    PR author; if using a GitHub connector, set `jonaraphael` as requested
+    reviewer when allowed. If GitHub refuses because `jonaraphael` authored the
+    PR, record that note in the PR body. Include a fenced
+    `shared-datasets-publish-plan` JSON block so approval or restricted
+    self-approval dispatch can trigger promotion:
 
 ````markdown
 ```shared-datasets-publish-plan
@@ -315,12 +347,17 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 13. Do not promote canonical objects from the local terminal. When `jonaraphael`
     approves a same-repo PR that contains the publish-plan block, the GitHub
     `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. Manual workflow dispatch is
-    restricted to `jonaraphael`; use it only as a fallback for off-repo PRs,
-    failed automatic promotion, or explicit human direction.
+    the `shared-datasets-production` environment. If GitHub blocks self-review
+    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
+    workflow with the PR number; this self-approval path is also valid for
+    fallback promotion and applies the same plan validation.
 14. Verify promoted remote objects, metadata, catalog UI freshness, and release
     index behavior where applicable. Report changed remote paths, generations,
     alert state, and any residual uncertainty in the PR or final response.
+
+Scratch-only staging of the supplied source file satisfies this runbook only
+when the human explicitly asks to stage a file for later manual review and does
+not ask to add, update, upload, or publish a dataset.
 
 ### Fresh-Agent Existing Dataset Version Runbook
 
@@ -405,24 +442,27 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     catalog web, or release-index replacements, record the current destination
     generation that the approved workflow must use.
 14. Create a focused branch, stage only related repo changes, commit, push, and
-    open a PR requesting review from `jonaraphael`. The PR body must include the
-    asset slug, release date/source version, changed repo files, staged source
-    URIs and generations, intended canonical destination URIs,
+    open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+    the PR author and GitHub blocks the reviewer request. The PR body must
+    include the asset slug, release date/source version, changed repo files,
+    staged source URIs and generations, intended canonical destination URIs,
     destination-generation expectations, whether `publish-release --dry-run`
     passed, any stale companion formats, validation commands, and consumer
     impact. If using the GitHub CLI, pass `--reviewer jonaraphael` to
-    `gh pr create`; if using a GitHub connector, set `jonaraphael` as the
-    requested reviewer. Include a fenced `shared-datasets-publish-plan` JSON
-    block whose `promotions` are ordered exactly as they should be copied.
+    `gh pr create` when `jonaraphael` is not the PR author; if using a GitHub
+    connector, set `jonaraphael` as requested reviewer when allowed. If GitHub
+    refuses because `jonaraphael` authored the PR, record that note in the PR
+    body. Include a fenced `shared-datasets-publish-plan` JSON block whose
+    `promotions` are ordered exactly as they should be copied.
 15. Do not promote canonical objects from the local terminal. When `jonaraphael`
     approves a same-repo PR that contains the publish-plan block, the GitHub
     `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. Order the publish plan so dated
-    release objects come before `latest/` replacements, and run records and
+    the `shared-datasets-production` environment. If GitHub blocks self-review
+    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
+    workflow with the PR number. Order the publish plan so dated release objects
+    come before `latest/` replacements, and run records and
     `_catalog/releases/{asset-slug}.json` come only after the object metadata
-    they describe has been promoted. Manual workflow dispatch is restricted to
-    `jonaraphael`; use it only as a fallback for off-repo PRs, failed automatic
-    promotion, or explicit human direction.
+    they describe has been promoted.
 16. Verify the new version: release objects exist, `latest/` points to or
     contains the intended bytes, generations match the approved operations, the
     release index reports the newest successful release and latest run, catalog
@@ -457,7 +497,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    the same PR and order the publish plan before the delete plan. The approved
    workflow promotes listed publish objects before it deletes listed objects.
 7. Create a focused branch, stage only related repo changes, commit, push, and
-   open a PR requesting review from `jonaraphael`. The PR body must include
+   open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
+   the PR author and GitHub blocks the reviewer request. The PR body must include
    exact target URIs, current generations, deletion rationale, consumer impact,
    replacement/deprecation state, validation commands, and a fenced
    `shared-datasets-delete-plan` JSON block:
@@ -481,7 +522,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
 8. Do not delete canonical objects from the local terminal. When `jonaraphael`
    approves a same-repo PR that contains the delete-plan block, the GitHub
    `Approved dataset mutation` workflow deletes the listed objects under the
-   publisher identity using exact generation preconditions.
+   publisher identity using exact generation preconditions. If GitHub blocks
+   self-review because `jonaraphael` authored the PR, `jonaraphael` may dispatch
+   that workflow with the PR number.
 9. Verify the deletion: the live object is absent, no unintended objects were
    touched, catalog/release-index references no longer point at deleted paths,
    delete alerts/logs show the publisher identity, and any residual uncertainty
@@ -494,6 +537,8 @@ For a new manual asset:
 1. Run the publishing concierge unless all slug, taxonomy, format, doc, and
    target path decisions are already explicit and verified.
 2. Complete discovery, classification, slug selection, and local artifact build.
+   Unsupported source formats must be converted to approved canonical artifacts;
+   scratch staging the source file alone is not a completed manual asset flow.
 3. Update the asset doc and regenerate catalog outputs.
 4. Load `gcp-shared-datasets`.
 5. Validate target paths and inspect existing remote objects if replacing.

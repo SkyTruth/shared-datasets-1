@@ -169,6 +169,18 @@ Remote GCS objects:
   may stage reviewed bytes under `_scratch/pending-publishes/`, but must not
   mutate canonical `latest/`, `releases/`, `_catalog/`, or dataset README
   objects directly from a local terminal.
+- For manual dataset add/update/upload/publish requests, scratch staging is an
+  intermediate review step, not the deliverable. Unless the human explicitly
+  asks for scratch-only staging, the workflow must continue through approved
+  canonical artifact preparation, asset documentation, catalog regeneration,
+  staging of all promotion candidates, and a PR with a reviewed publish plan.
+- If the supplied source file is not an approved canonical format, do not stop
+  after uploading the original file to `_scratch/`. Treat it as source material:
+  infer or build approved canonical artifacts such as FGB/PMTiles for geographic
+  data, COG/Zarr for raster or array data, or CSV for non-geometry tables. Stage
+  the original source file only as reviewed scratch evidence when useful, or as
+  a canonical `source/` or `archive/` object only when the format standards and
+  path validation allow it.
 - Never overwrite a canonical remote object unless you know the current
   generation or the operation is explicitly marked as an unsafe overwrite.
 - Prefer generation-preconditioned replacements and no-clobber uploads through
@@ -249,10 +261,13 @@ Git and history:
 - For manual dataset add/update/upload/publish/delete requests, the requested
   reviewed mutation workflow includes creating a focused branch, staging only
   related repo metadata and workflow files, committing, pushing, and opening a
-  PR that requests review from `jonaraphael`, unless the user asks to stop
-  before PR. This exception does not permit staging unrelated files, amending
-  history, applying Terraform, or mutating canonical GCS objects from a local
-  terminal.
+  PR that requests review from `jonaraphael`, unless `jonaraphael` is also the
+  PR author or the user asks to stop before PR. If GitHub blocks the reviewer
+  request because `jonaraphael` authored the PR, record that in the PR and use
+  the `Approved dataset mutation` workflow's `workflow_dispatch` `pr_number`
+  path; that self-approval path is restricted to `jonaraphael`. This exception
+  does not permit staging unrelated files, amending history, applying Terraform,
+  or mutating canonical GCS objects from a local terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
 
@@ -281,6 +296,10 @@ A task is complete when:
 - Remote writes were done with safe preconditions or explicitly documented as
   unsafe.
 - README/catalog/templates are updated when relevant.
+- For manual dataset uploads, approved canonical artifacts have been built or a
+  specific blocker to building them has been reported. A lone `_scratch/`
+  upload of the provided source file is not complete unless the user explicitly
+  requested only scratch staging.
 - For a new asset slug or meaningful dataset release, any dataset upload
   announcement that was sent, skipped, or uncertain is reported without blocking
   otherwise complete commit or publish work.
@@ -288,13 +307,15 @@ A task is complete when:
   functionality, the committing agent generated and appended any warranted
   fenced `repo-alert` block without asking the human to decide.
 - The PR or final response lists changed files and remote paths.
-- Any opened dataset publish PR requests review from `jonaraphael` and includes
-  the staged `_scratch/pending-publishes/` source URIs, source generations,
-  intended canonical destination URIs, destination-generation expectations, and
-  validation performed. If the PR is expected to promote data after approval, it
-  must include a fenced `shared-datasets-publish-plan` JSON block matching the
-  staged objects and generation preconditions.
-- Any opened dataset deletion PR requests review from `jonaraphael` and includes
+- Any opened dataset publish PR requests review from `jonaraphael`, or records
+  the GitHub self-review block when `jonaraphael` is the author, and includes the
+  staged `_scratch/pending-publishes/` source URIs, source generations, intended
+  canonical destination URIs, destination-generation expectations, and validation
+  performed. If the PR is expected to promote data after approval, it must
+  include a fenced `shared-datasets-publish-plan` JSON block matching the staged
+  objects and generation preconditions.
+- Any opened dataset deletion PR requests review from `jonaraphael`, or records
+  the GitHub self-review block when `jonaraphael` is the author, and includes
   exact target object URIs, current generations, rationale, consumer impact,
   replacement/deprecation state, and a fenced `shared-datasets-delete-plan` JSON
   block. Prefix, wildcard, and generation-less deletes are not valid.

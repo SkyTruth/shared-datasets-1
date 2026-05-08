@@ -199,24 +199,32 @@ breaking existing paths.
 1. Read `AGENTS.md`.
 2. Load `.claude/skills/publish-shared-dataset/SKILL.md`.
 3. Pick the correct bucket category/subcategory using `catalog/categories.yaml` and `docs/standards/dataset-taxonomy.md`.
-4. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-5. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
-6. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
-7. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
-8. Stage any manual publish bytes under
+4. Convert supplied source files into approved canonical formats before staging
+   promotion candidates. Source files such as `.xlsx`, `.zip`, raw GeoTIFF,
+   NetCDF, or other noncanonical exports are inputs, not shared-datasets
+   contracts. Use FGB plus PMTiles for geographic vector data, COG/Zarr for
+   raster or array data, and CSV only for non-geometry tables.
+5. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
+6. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
+7. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
+8. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
+9. Stage any manual publish bytes under
    `_scratch/pending-publishes/{asset-slug}/{proposal-id}/`; use an issue/PR
    number when available, otherwise use a stable branch or timestamped proposal
-   ID and record it in the PR.
-9. Open a PR that requests review from `jonaraphael`. Include staged source
-   URIs/generations, intended canonical destination URIs, destination-generation
-   expectations, validation commands, and any needed `content_type` or
-   `cache_control` workflow inputs. Include a fenced
-   `shared-datasets-publish-plan` JSON block so approval can trigger automatic
-   promotion.
-10. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+   ID and record it in the PR. Scratch-only staging of the supplied source file
+   is not complete unless the request explicitly says to stage only.
+10. Open a PR that requests review from `jonaraphael`, unless `jonaraphael` is
+   also the PR author and GitHub blocks the reviewer request. Include staged
+   source URIs/generations, intended canonical destination URIs,
+   destination-generation expectations, validation commands, and any needed
+   `content_type` or `cache_control` workflow inputs. Include a fenced
+   `shared-datasets-publish-plan` JSON block so approval or the restricted
+   self-approval dispatch can trigger promotion.
+11. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
-    dispatch is restricted to `jonaraphael` and should be used only as a fallback.
+    dispatch by PR number is restricted to `jonaraphael` for self-authored PRs
+    and fallback operations.
 
 ### Upload a new version of an existing dataset
 
@@ -248,11 +256,12 @@ breaking existing paths.
 10. Stat canonical destinations. Dated release objects should be absent;
     replacements such as `latest/`, README, catalog web, and release-index
     objects need current destination generations.
-11. Open a focused PR requesting review from `jonaraphael`. Include release
-    date/source version, staged source URIs/generations, intended canonical
-    destination URIs, destination-generation expectations, validation commands,
-    stale companion formats if any, consumer impact, and a fenced
-    `shared-datasets-publish-plan` JSON block.
+11. Open a focused PR requesting review from `jonaraphael`, unless
+    `jonaraphael` is also the PR author and GitHub blocks the reviewer request.
+    Include release date/source version, staged source URIs/generations,
+    intended canonical destination URIs, destination-generation expectations,
+    validation commands, stale companion formats if any, consumer impact, and a
+    fenced `shared-datasets-publish-plan` JSON block.
 12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects. Order the plan so dated release objects come before `latest/`, and
@@ -271,7 +280,8 @@ breaking existing paths.
    references will not point at deleted objects.
 4. If deletion is part of a replacement, stage and approve the replacement
    objects first. In a combined PR plan, publish actions run before deletes.
-5. Open a focused PR requesting review from `jonaraphael`. Include consumer
+5. Open a focused PR requesting review from `jonaraphael`, unless `jonaraphael`
+   is also the PR author and GitHub blocks the reviewer request. Include consumer
    impact, replacement/deprecation state, exact object URIs, generations, and a
    fenced `shared-datasets-delete-plan` JSON block.
 6. When `jonaraphael` approves a same-repo PR with a valid delete plan, the
@@ -293,10 +303,13 @@ protection or rulesets require CODEOWNER review before merge.
 
 Terraform grants Workload Identity access only to the OIDC subject for this
 repository and environment. PR approval by `jonaraphael` is the normal human
-approval gate for automatic promotion. Manual workflow dispatch is restricted to
-`jonaraphael` for fallback operations. If the GitHub environment is also
-configured with required deployment reviewers, GitHub will pause the publish job
-for that separate environment approval instead of completing from PR approval
+approval gate for automatic promotion. When GitHub blocks self-review because
+`jonaraphael` authored the PR, the `Approved dataset mutation` workflow can be
+dispatched with the PR number by `jonaraphael` only; it applies the same fenced
+plan validation before promotion or deletion. Manual workflow dispatch remains
+restricted to `jonaraphael` for fallback operations. If the GitHub environment is
+also configured with required deployment reviewers, GitHub will pause the publish
+job for that separate environment approval instead of completing from PR approval
 alone. The workflow must use source and destination generation preconditions.
 After applying the Workload Identity resources, set the GitHub environment
 variable `GCP_WORKLOAD_IDENTITY_PROVIDER` to the Terraform output
@@ -595,7 +608,8 @@ See `docs/catalog-web-preview.md` for deployment and verification steps.
 A PR that changes remote asset organization, ingestion jobs, or access behavior should state:
 
 - What asset or path is affected.
-- Request review from `jonaraphael`.
+- Request review from `jonaraphael`, or record the GitHub self-review block when
+  `jonaraphael` is the PR author.
 - Whether the change is docs-only, infrastructure, ingestion code, API/access protocol, or remote data mutation.
 - For new canonical datasets or ingestion pipelines, the Dataset Admission
   section from the PR template.

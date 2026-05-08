@@ -5,25 +5,29 @@ on:
     types: [submitted]
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: "Same-repo PR number containing a publish/delete plan. Restricted to jonaraphael."
+        required: false
+        type: string
       asset_slug:
-        description: "Asset slug associated with the staged publish."
-        required: true
+        description: "Single-object fallback: asset slug associated with the staged publish."
+        required: false
         type: string
       proposal_id:
-        description: "PR number, issue number, branch slug, or other reviewed proposal ID."
-        required: true
+        description: "Single-object fallback: PR number, issue number, branch slug, or other reviewed proposal ID."
+        required: false
         type: string
       source_uri:
-        description: "Staged object URI under _scratch/pending-publishes/{asset_slug}/{proposal_id}/."
-        required: true
+        description: "Single-object fallback: staged object URI under _scratch/pending-publishes/{asset_slug}/{proposal_id}/."
+        required: false
         type: string
       destination_uri:
-        description: "Approved canonical destination object URI."
-        required: true
+        description: "Single-object fallback: approved canonical destination object URI."
+        required: false
         type: string
       source_generation:
-        description: "Required source generation precondition for the approved staged object."
-        required: true
+        description: "Single-object fallback: required source generation precondition for the approved staged object."
+        required: false
         type: string
       destination_generation:
         description: "Optional destination generation precondition; empty means no-clobber."
@@ -46,6 +50,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: read
 
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
@@ -65,6 +70,7 @@ jobs:
       ${{
         github.event_name == 'workflow_dispatch' &&
         github.actor == 'jonaraphael' &&
+        github.event.inputs.pr_number == '' &&
         vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
       }}
 
@@ -357,12 +363,21 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       ${{
-        github.event_name == 'pull_request_review' &&
-        github.event.review.state == 'approved' &&
-        github.event.review.user.login == 'jonaraphael' &&
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        github.event.pull_request.base.repo.full_name == github.repository &&
-        github.event.pull_request.base.ref == github.event.repository.default_branch &&
+        (
+          (
+            github.event_name == 'pull_request_review' &&
+            github.event.review.state == 'approved' &&
+            github.event.review.user.login == 'jonaraphael' &&
+            github.event.pull_request.head.repo.full_name == github.repository &&
+            github.event.pull_request.base.repo.full_name == github.repository &&
+            github.event.pull_request.base.ref == github.event.repository.default_branch
+          ) ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            github.actor == 'jonaraphael' &&
+            github.event.inputs.pr_number != ''
+          )
+        ) &&
         vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
       }}
     outputs:
@@ -375,11 +390,37 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
+      - name: Prepare PR event payload
+        id: pr_event
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+              echo "pr_number must be numeric" >&2
+              exit 1
+            fi
+
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
+            python scripts/reviewed_dataset_plan.py event-from-pr \
+              --pr-json pr.json \
+              --repository "${GITHUB_REPOSITORY}" \
+              --default-branch "${DEFAULT_BRANCH}" \
+              --output reviewed-pr-event.json
+            echo "event_path=reviewed-pr-event.json" >> "${GITHUB_OUTPUT}"
+          else
+            echo "event_path=${GITHUB_EVENT_PATH}" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Detect reviewed mutation plans
         id: detect
         run: |
           python scripts/reviewed_dataset_plan.py detect \
-            --event-path "${GITHUB_EVENT_PATH}" \
+            --event-path "${{ steps.pr_event.outputs.event_path }}" \
             --github-output "${GITHUB_OUTPUT}"
 
   apply-approved-pr-plans:
@@ -393,7 +434,7 @@ jobs:
         needs.reviewed_pr_plans.outputs.has_delete_plan == 'true'
       }}
     concurrency:
-      group: approved-dataset-mutation-pr-${{ github.event.pull_request.number }}
+      group: approved-dataset-mutation-pr-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
       cancel-in-progress: false
 
     steps:
@@ -402,18 +443,44 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
+      - name: Prepare PR event payload
+        id: pr_event
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ ! "${PR_NUMBER}" =~ ^[0-9]+$ ]]; then
+              echo "pr_number must be numeric" >&2
+              exit 1
+            fi
+
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
+            python scripts/reviewed_dataset_plan.py event-from-pr \
+              --pr-json pr.json \
+              --repository "${GITHUB_REPOSITORY}" \
+              --default-branch "${DEFAULT_BRANCH}" \
+              --output reviewed-pr-event.json
+            echo "event_path=reviewed-pr-event.json" >> "${GITHUB_OUTPUT}"
+          else
+            echo "event_path=${GITHUB_EVENT_PATH}" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Extract publish plan from PR body
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |
           python scripts/reviewed_dataset_plan.py extract publish \
-            --event-path "${GITHUB_EVENT_PATH}" \
+            --event-path "${{ steps.pr_event.outputs.event_path }}" \
             --output publish-plan.json
 
       - name: Extract delete plan from PR body
         if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
         run: |
           python scripts/reviewed_dataset_plan.py extract delete \
-            --event-path "${GITHUB_EVENT_PATH}" \
+            --event-path "${{ steps.pr_event.outputs.event_path }}" \
             --output delete-plan.json
 
       - name: Set up Python

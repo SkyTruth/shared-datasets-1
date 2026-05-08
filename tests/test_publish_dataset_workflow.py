@@ -47,6 +47,17 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertNotIn('f"{asset_slug}{suffix}"', workflow)
         self.assertNotIn('f"{slug}{suffix}"', workflow)
 
+    def test_workflow_dispatch_can_apply_pr_plan_for_jonaraphael_only(self):
+        workflow = WORKFLOW.read_text()
+
+        self.assertIn("pr_number:", workflow)
+        self.assertIn("github.actor == 'jonaraphael'", workflow)
+        self.assertIn("github.event.inputs.pr_number != ''", workflow)
+        self.assertIn("github.event.inputs.pr_number == ''", workflow)
+        self.assertIn('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"', workflow)
+        self.assertIn("scripts/reviewed_dataset_plan.py event-from-pr", workflow)
+        self.assertIn("--event-path \"${{ steps.pr_event.outputs.event_path }}\"", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
