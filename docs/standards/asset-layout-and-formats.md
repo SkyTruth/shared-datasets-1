@@ -36,6 +36,11 @@ Rules:
 - NetCDF, GRIB, HDF, raw non-COG GeoTIFF, and similar source rasters are allowed
   only under `source/`, `sources/`, or `archive/` by documented README
   exception.
+- Analyst-friendly source exports such as `.xlsx` are not canonical dataset
+  formats. For a publish request, convert them into an approved canonical format
+  and stage the original source export under `_scratch/pending-publishes/` as
+  review evidence unless a documented source/archive exception and path
+  validation explicitly allow promotion.
 - Adding a new canonical format requires explicit approval and updates to this
   doc, templates, catalog schema/validation, and review guidance.
 

@@ -169,6 +169,18 @@ Remote GCS objects:
   may stage reviewed bytes under `_scratch/pending-publishes/`, but must not
   mutate canonical `latest/`, `releases/`, `_catalog/`, or dataset README
   objects directly from a local terminal.
+- For manual dataset add/update/upload/publish requests, scratch staging is an
+  intermediate review step, not the deliverable. Unless the human explicitly
+  asks for scratch-only staging, the workflow must continue through approved
+  canonical artifact preparation, asset documentation, catalog regeneration,
+  staging of all promotion candidates, and a PR with a reviewed publish plan.
+- If the supplied source file is not an approved canonical format, do not stop
+  after uploading the original file to `_scratch/`. Treat it as source material:
+  infer or build approved canonical artifacts such as FGB/PMTiles for geographic
+  data, COG/Zarr for raster or array data, or CSV for non-geometry tables. Stage
+  the original source file only as reviewed scratch evidence when useful, or as
+  a canonical `source/` or `archive/` object only when the format standards and
+  path validation allow it.
 - Never overwrite a canonical remote object unless you know the current
   generation or the operation is explicitly marked as an unsafe overwrite.
 - Prefer generation-preconditioned replacements and no-clobber uploads through
@@ -281,6 +293,10 @@ A task is complete when:
 - Remote writes were done with safe preconditions or explicitly documented as
   unsafe.
 - README/catalog/templates are updated when relevant.
+- For manual dataset uploads, approved canonical artifacts have been built or a
+  specific blocker to building them has been reported. A lone `_scratch/`
+  upload of the provided source file is not complete unless the user explicitly
+  requested only scratch staging.
 - For a new asset slug or meaningful dataset release, any dataset upload
   announcement that was sent, skipped, or uncertain is reported without blocking
   otherwise complete commit or publish work.

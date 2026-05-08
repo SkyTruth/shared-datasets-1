@@ -43,6 +43,18 @@ classification, canonical format, target asset directory, and README content. If
 confidence is still low after discovery, stop before remote writes and ask for
 the missing confirmation.
 
+Do not treat an unsupported source format as permission to do a scratch-only
+upload. For requests phrased as "upload this," "add this data," or "publish this
+file," the default outcome is a reviewed canonical dataset proposal. If the
+provided file is a source container or analyst-friendly export such as `.xlsx`,
+`.zip`, raw GeoTIFF, NetCDF, or another noncanonical format, use it as source
+material, infer the approved canonical output, and keep working through artifact
+build, docs, catalog generation, staging, and PR creation. Stage the original
+source file only as reviewed scratch evidence unless `source/` or `archive/`
+promotion is allowed by the format standards and path validation. In either
+case, the asset README/PR must explain why consumers should use the canonical
+artifact instead.
+
 ## Publishing Concierge
 
 For a new manual asset, an under-specified upload, or any intake where the
@@ -91,6 +103,14 @@ Prefer the concierge output over ad hoc path math for:
 
 - Keep generated publishable data outside the repo tree unless it is a tiny
   intentional fixture.
+- Convert source files into approved canonical formats before staging promotion
+  candidates. Source spreadsheets with coordinates, WKT, WKB, GeoJSON geometry,
+  or other mappable geometry should become canonical vector artifacts, normally
+  FGB plus PMTiles. Source spreadsheets without geometry should become canonical
+  CSV after checking that geometry-like columns are not intended for spatial
+  analysis. Raw rasters should become COGs unless Zarr is the documented better
+  access pattern. Do not add a new canonical format just because the user
+  supplied that format.
 - For vector assets, prefer:
 
 ```bash
@@ -243,18 +263,24 @@ input, follow this ordered path unless the user explicitly asks to stop earlier:
    cannot be inferred, ask before remote writes.
 3. Run `scripts/publishing_concierge.py` for new or under-specified assets, using
    `--write-draft-doc` when creating a new `docs/assets/{asset-slug}.md`.
-   Resolve all `blocking_questions`.
+   Resolve all `blocking_questions`. If the concierge cannot infer a canonical
+   format because the supplied file is noncanonical, choose the approved output
+   format from the data contents and standards, then rerun or document the plan;
+   do not fall back to scratch-only staging.
 4. Choose the lowercase asset slug, category, subcategory, canonical format,
    asset root, release layout, and companion formats using
    `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md`, and
    `docs/standards/asset-layout-and-formats.md`.
 5. Build publishable artifacts outside the repo tree under the standard temp
-   workspace. For vector data, prefer `scripts/vector_asset.py build` so FGB and
-   PMTiles are generated consistently and tool versions are recorded.
+   workspace. Convert source-only formats to approved canonical artifacts. For
+   vector data, prefer `scripts/vector_asset.py build` so FGB and PMTiles are
+   generated consistently and tool versions are recorded. For tabular source
+   files, export a clean CSV only when it is a non-geometry table; otherwise
+   create a vector artifact from the geometry or coordinate columns.
 6. Create or update `docs/assets/{asset-slug}.md` with full frontmatter,
    source/license/citation, canonical paths, file table, update notes, and
-   schema/properties. Do not edit `catalog/shared-datasets-catalog.csv`
-   directly.
+   schema/properties. Include the dataset admission evidence for a new asset
+   slug. Do not edit `catalog/shared-datasets-catalog.csv` directly.
 7. Run:
 
 ```bash
@@ -278,7 +304,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with no-clobber
     uploads: canonical data files, companion PMTiles, exported bucket README,
     catalog web/cache-refresh objects, and any reviewed release-index JSON that
-    must be promoted. Record each staged source URI and generation.
+    must be promoted. If the original source file is staged too, keep it out of
+    the promotion plan unless its canonical `source/` or `archive/` destination
+    passes standards validation. Document that scratch copy as source evidence.
+    Record each staged source URI and generation.
 11. Stat existing canonical destinations when replacing objects. Record the
     expected destination generation, or record that the destination must be
     absent for no-clobber promotion.
@@ -321,6 +350,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 14. Verify promoted remote objects, metadata, catalog UI freshness, and release
     index behavior where applicable. Report changed remote paths, generations,
     alert state, and any residual uncertainty in the PR or final response.
+
+Scratch-only staging of the supplied source file satisfies this runbook only
+when the human explicitly asks to stage a file for later manual review and does
+not ask to add, update, upload, or publish a dataset.
 
 ### Fresh-Agent Existing Dataset Version Runbook
 
@@ -494,6 +527,8 @@ For a new manual asset:
 1. Run the publishing concierge unless all slug, taxonomy, format, doc, and
    target path decisions are already explicit and verified.
 2. Complete discovery, classification, slug selection, and local artifact build.
+   Unsupported source formats must be converted to approved canonical artifacts;
+   scratch staging the source file alone is not a completed manual asset flow.
 3. Update the asset doc and regenerate catalog outputs.
 4. Load `gcp-shared-datasets`.
 5. Validate target paths and inspect existing remote objects if replacing.

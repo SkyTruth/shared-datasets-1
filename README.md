@@ -199,21 +199,27 @@ breaking existing paths.
 1. Read `AGENTS.md`.
 2. Load `.claude/skills/publish-shared-dataset/SKILL.md`.
 3. Pick the correct bucket category/subcategory using `catalog/categories.yaml` and `docs/standards/dataset-taxonomy.md`.
-4. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-5. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
-6. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
-7. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
-8. Stage any manual publish bytes under
+4. Convert supplied source files into approved canonical formats before staging
+   promotion candidates. Source files such as `.xlsx`, `.zip`, raw GeoTIFF,
+   NetCDF, or other noncanonical exports are inputs, not shared-datasets
+   contracts. Use FGB plus PMTiles for geographic vector data, COG/Zarr for
+   raster or array data, and CSV only for non-geometry tables.
+5. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
+6. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
+7. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
+8. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
+9. Stage any manual publish bytes under
    `_scratch/pending-publishes/{asset-slug}/{proposal-id}/`; use an issue/PR
    number when available, otherwise use a stable branch or timestamped proposal
-   ID and record it in the PR.
-9. Open a PR that requests review from `jonaraphael`. Include staged source
+   ID and record it in the PR. Scratch-only staging of the supplied source file
+   is not complete unless the request explicitly says to stage only.
+10. Open a PR that requests review from `jonaraphael`. Include staged source
    URIs/generations, intended canonical destination URIs, destination-generation
    expectations, validation commands, and any needed `content_type` or
    `cache_control` workflow inputs. Include a fenced
    `shared-datasets-publish-plan` JSON block so approval can trigger automatic
    promotion.
-10. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+11. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
     dispatch is restricted to `jonaraphael` and should be used only as a fallback.
