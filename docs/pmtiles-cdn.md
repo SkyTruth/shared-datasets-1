@@ -19,8 +19,8 @@ path for downstream consumers that use `tiles.skytruth.org` directly.
 Public-tier PMTiles are anonymously readable. Private-tier PMTiles are present
 in the public catalog but require application authorization and a valid
 Cloud CDN signed cookie before the bytes are readable through the CDN. As of
-May 5, 2026, the catalog includes private PMTiles for
-`iucn-mammal-ranges` and `iucn-reptile-ranges`.
+May 9, 2026, the catalog includes private PMTiles for
+`global-coral-reefs`, `iucn-mammal-ranges`, and `iucn-reptile-ranges`.
 
 Cloud CDN signed cookies do not block unsigned requests by themselves. Google
 Cloud CDN forwards unsigned cache misses to the origin and can serve unsigned
@@ -48,8 +48,8 @@ The production Terraform stack owns:
   `service-${PROJECT_NUMBER}@cloud-cdn-fill.iam.gserviceaccount.com` receives
   `roles/storage.objectViewer` when
   `pmtiles_cdn_grant_fill_service_account=true`.
-- Managed folders for `_catalog/` and every catalog asset root whose
-  `access_tier=public`, each granting `allUsers`
+- Managed folders for `_catalog/` and every catalog asset root. Only folders
+  whose catalog row has `access_tier=public` grant `allUsers`
   `roles/storage.objectViewer`.
 - A temporary bucket-wide `allUsers` `roles/storage.objectViewer` grant,
   controlled by `shared_bucket_public_object_viewer_enabled`. Keep it enabled

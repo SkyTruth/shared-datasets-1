@@ -29,9 +29,11 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
 
         self.assertIn('resource "google_storage_managed_folder" "shared_bucket_public_prefixes"', shared_bucket_tf)
         self.assertIn('resource "google_storage_managed_folder_iam_member" "shared_bucket_public_object_viewers"', shared_bucket_tf)
+        self.assertIn("shared_bucket_managed_folder_names", shared_bucket_tf)
         self.assertIn('["_catalog/"]', shared_bucket_tf)
         self.assertIn('lower(row.access_tier) == "public"', shared_bucket_tf)
         self.assertIn('startswith(row.canonical_path, "gs://${var.bucket_name}/")', shared_bucket_tf)
+        self.assertIn("if contains(local.shared_bucket_public_managed_folder_names, name)", shared_bucket_tf)
         self.assertIn('roles/storage.objectViewer', shared_bucket_tf)
         self.assertIn('member         = "allUsers"', shared_bucket_tf)
         self.assertIn('variable "shared_bucket_public_object_viewer_enabled"', variables_tf)
@@ -46,6 +48,10 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
         self.assertIn("_catalog/", folders)
         self.assertIn(
             "100-geographic-reference/130-protected-areas/wdpa-marine/",
+            folders,
+        )
+        self.assertNotIn(
+            "500-conservation-ecosystems/530-habitat-condition/global-coral-reefs/",
             folders,
         )
         self.assertNotIn(
