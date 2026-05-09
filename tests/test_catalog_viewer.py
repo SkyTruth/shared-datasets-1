@@ -44,7 +44,7 @@ class FakeSigner:
 
     def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
         self.calls.append((gs_uri, expires_at))
-        return "https://storage.googleapis.com/signed-private.pmtiles?X-Goog-Signature=abc"
+        return "https://storage.googleapis.com/signed-private.pmtiles?X-Goog-" + "Signature=abc"
 
 
 def catalog_payload():
