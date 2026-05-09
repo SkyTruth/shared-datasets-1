@@ -108,6 +108,17 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("Missing repository variable: GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertNotIn("vars.GCP_SERVICE_ACCOUNT", workflow)
 
+    def test_catalog_drift_workflow_skips_live_bucket_check_on_pull_requests(self):
+        workflow = (REPO_ROOT / ".github/workflows/catalog-drift-guard.yml").read_text()
+
+        self.assertIn("Check pull request catalog consistency", workflow)
+        self.assertIn("if: ${{ github.event_name == 'pull_request' }}", workflow)
+        self.assertIn("uv run python scripts/catalog_docs.py check", workflow)
+        self.assertIn("uv run python scripts/catalog_site.py --out", workflow)
+        self.assertGreaterEqual(workflow.count("if: ${{ github.event_name != 'pull_request' }}"), 3)
+        self.assertIn("Check live catalog drift", workflow)
+        self.assertIn("uv run python scripts/catalog_drift_guard.py", workflow)
+
     def test_bucket_hygiene_audit_workflow_uses_readonly_gcp_variables(self):
         workflow = (REPO_ROOT / ".github/workflows/bucket-hygiene-audit.yml").read_text()
 

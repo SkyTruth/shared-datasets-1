@@ -32,7 +32,28 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Check pull request catalog consistency
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          uv run python scripts/catalog_docs.py check
+          uv run python scripts/catalog_site.py --out "${RUNNER_TEMP}/catalog-web"
+
       - name: Validate read-only GCP auth configuration
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_READONLY_SERVICE_ACCOUNT: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
@@ -49,24 +70,12 @@ jobs:
           fi
 
       - name: Authenticate to Google Cloud
+        if: ${{ github.event_name != 'pull_request' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --frozen
-
       - name: Check live catalog drift
+        if: ${{ github.event_name != 'pull_request' }}
         run: uv run python scripts/catalog_drift_guard.py
