@@ -13,6 +13,9 @@ The public entry point is:
 https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/web/index.html
 ```
 
+The authenticated internal entry point is the IAP-protected Cloud Run `run.app`
+URL exposed by the Terraform `catalog_viewer_uri` output.
+
 ## Build locally
 
 ```bash
@@ -107,14 +110,48 @@ as an explicit user-selected option.
 
 PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
 `https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles` URL for
-latest releases. The viewer keeps public PMTiles fetches anonymous so temporary
-redirect mode still works with public GCS objects. Private PMTiles URLs under
-`/pmtiles/private/` are loaded through a credential-aware PMTiles source so
-Cloud CDN signed cookies are sent on metadata, header, directory, and tile range
-requests.
+latest releases. The public static GCS entry point remains a static/public
+viewer: public PMTiles fetch anonymously, and private PMTiles may rely on an
+already-authorized `tiles.skytruth.org` setup when one exists.
 
-If the internal host provides a signed-cookie session endpoint, configure it
+When the app is served from the authenticated Cloud Run viewer, private PMTiles
+are resolved through the same-origin signer endpoint:
+
+```text
+GET /api/pmtiles/signed-url?slug={asset-slug}
+```
+
+The endpoint reads generated `catalog.json`, requires the asset to publish
+PMTiles, signs the exact catalog `pmtiles_path`, and returns:
+
+```json
+{
+  "pmtiles_url": "https://storage.googleapis.com/...",
+  "expires_at": "2026-05-09T12:00:00Z"
+}
+```
+
+Signed GCS PMTiles URLs are loaded without credentialed browser fetches. Public
+PMTiles do not call the signer and continue to use their catalog URL.
+
+If a nonstandard internal host needs an explicit signer endpoint, configure it
 before `app.js` loads with either:
+
+```html
+<meta name="shared-datasets-pmtiles-signer-url" content="/api/pmtiles/signed-url" />
+```
+
+or:
+
+```html
+<script>
+  window.SHARED_DATASETS_PMTILES_SIGNER_URL = "/api/pmtiles/signed-url";
+</script>
+```
+
+The older signed-cookie session hook is still available for static deployments
+that intentionally use `tiles.skytruth.org` private routes. Configure it before
+`app.js` loads with either:
 
 ```html
 <meta name="shared-datasets-pmtiles-session-url" content="/api/pmtiles/session?tier=private" />
@@ -186,6 +223,27 @@ matching dated release PMTiles object for the canonical dataset release. Do not
 create PMTiles-only dated release directories for display repairs unless
 PMTiles is the asset's canonical format; release indexes and catalog versions
 should represent release dates that include the canonical format.
+
+## Authenticated viewer infrastructure
+
+Terraform owns the IAP-protected Cloud Run viewer. It does not require a
+SkyTruth custom domain or load balancer; direct Cloud Run IAP protects the
+service's generated `run.app` URL. Build and push an immutable viewer image
+before the first apply, then pass it as `catalog_viewer_image`:
+
+```bash
+IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:$(date -u +%Y%m%d%H%M%S)
+
+docker build --platform linux/amd64 -f services/catalog_viewer/Dockerfile -t "$IMAGE" .
+docker push "$IMAGE"
+
+terraform -chdir=terraform/envs/prod apply \
+  -var="catalog_viewer_image=$IMAGE"
+```
+
+After apply, open the `catalog_viewer_uri` output. The service account is
+read-only on `_catalog/` and canonical dataset prefixes, and can only sign blobs
+as itself for 15-minute PMTiles URLs.
 
 ## CORS
 

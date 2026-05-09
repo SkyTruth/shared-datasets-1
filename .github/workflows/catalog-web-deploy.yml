@@ -1,0 +1,91 @@
+name: Catalog web deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/catalog-web-deploy.yml"
+      - "catalog/**"
+      - "docs/assets/**"
+      - "scripts/catalog_docs.py"
+      - "scripts/catalog_site.py"
+      - "scripts/catalog_web_publish.py"
+      - "web/catalog/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+  CATALOG_WEB_CACHE_CONTROL: "no-cache, max-age=0, must-revalidate"
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy:
+    name: Build and publish catalog web
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: catalog-web-deploy
+      cancel-in-progress: false
+    if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Check generated catalog docs
+        run: uv run python scripts/catalog_docs.py check
+
+      - name: Run focused catalog tests
+        run: |
+          uv run pytest \
+            tests/test_catalog_site.py \
+            tests/test_catalog_web_pmtiles_js.py \
+            tests/test_catalog_web_publish.py \
+            tests/test_catalog_web_workflows.py
+
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check web/catalog/app.js
+          node --check web/catalog/map-preview.js
+
+      - name: Build catalog web bundle
+        run: |
+          uv run python scripts/catalog_site.py \
+            --out "${RUNNER_TEMP}/catalog-web"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Publish catalog web bundle
+        run: |
+          uv run python scripts/catalog_web_publish.py \
+            --source "${RUNNER_TEMP}/catalog-web" \
+            --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
+            --cache-control "${CATALOG_WEB_CACHE_CONTROL}"

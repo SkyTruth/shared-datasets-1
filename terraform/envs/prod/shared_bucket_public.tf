@@ -13,7 +13,7 @@ resource "google_storage_bucket" "shared_bucket" {
   force_destroy               = false
 
   cors {
-    origin          = var.pmtiles_cdn_allowed_origins
+    origin          = local.pmtiles_browser_allowed_origins
     method          = ["GET", "HEAD", "OPTIONS"]
     response_header = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag", "Range"]
     max_age_seconds = 3600

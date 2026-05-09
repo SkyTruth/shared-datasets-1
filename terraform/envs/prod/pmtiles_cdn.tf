@@ -233,7 +233,7 @@ resource "google_compute_url_map" "pmtiles_cdn" {
             allow_credentials = true
             allow_headers     = ["Range"]
             allow_methods     = ["GET", "HEAD", "OPTIONS"]
-            allow_origins     = var.pmtiles_cdn_allowed_origins
+            allow_origins     = local.pmtiles_browser_allowed_origins
             disabled          = false
             expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag"]
             max_age           = 3600

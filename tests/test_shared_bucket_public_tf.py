@@ -37,7 +37,7 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
         self.assertIn('variable "shared_bucket_public_object_viewer_enabled"', variables_tf)
         self.assertIn('count = var.shared_bucket_public_object_viewer_enabled ? 1 : 0', shared_bucket_tf)
         self.assertIn('to   = google_storage_bucket_iam_member.shared_bucket_public_object_viewer[0]', shared_bucket_tf)
-        self.assertIn("origin          = var.pmtiles_cdn_allowed_origins", shared_bucket_tf)
+        self.assertIn("origin          = local.pmtiles_browser_allowed_origins", shared_bucket_tf)
         self.assertIn('shared_bucket_public_managed_folders', outputs_tf)
 
     def test_current_catalog_has_private_roots_outside_public_folder_set(self):

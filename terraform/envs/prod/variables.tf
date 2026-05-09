@@ -55,6 +55,36 @@ variable "artifact_registry_repository" {
   default     = "shared-datasets-jobs"
 }
 
+variable "catalog_viewer_image" {
+  description = "Container image URI for the authenticated catalog viewer Cloud Run service. Override with an immutable tag for production deploys."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:bootstrap-required"
+}
+
+variable "catalog_viewer_iap_accessor_members" {
+  description = "IAM members allowed through direct Cloud Run IAP to the authenticated catalog viewer run.app URL."
+  type        = set(string)
+  default     = ["domain:skytruth.org"]
+}
+
+variable "catalog_viewer_allowed_email_domains" {
+  description = "Email domains accepted by the catalog viewer service after IAP authentication for private PMTiles signing."
+  type        = list(string)
+  default     = ["skytruth.org"]
+}
+
+variable "catalog_viewer_signed_url_ttl_seconds" {
+  description = "TTL for private PMTiles V4 signed GCS URLs returned by the catalog viewer."
+  type        = number
+  default     = 900
+}
+
+variable "catalog_viewer_catalog_ttl_seconds" {
+  description = "Seconds the catalog viewer caches the generated catalog.json before re-reading GCS."
+  type        = number
+  default     = 60
+}
+
 variable "pmtiles_cdn_host" {
   description = "Public hostname for CDN-mediated PMTiles browser access."
   type        = string

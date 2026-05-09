@@ -9,6 +9,13 @@ https://tiles.skytruth.org/pmtiles/public/{asset}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{asset}.pmtiles
 ```
 
+The internal catalog viewer does not depend on these routes for private map
+preview. It is a Cloud Run service in `shared-datasets-1`, protected by direct
+Cloud Run IAP on its generated `run.app` URL, and it resolves private PMTiles
+through short-lived signed `storage.googleapis.com` URLs from
+`/api/pmtiles/signed-url?slug={asset-slug}`. The CDN remains the compatibility
+path for downstream consumers that use `tiles.skytruth.org` directly.
+
 Public-tier PMTiles are anonymously readable. Private-tier PMTiles are present
 in the public catalog but require application authorization and a valid
 Cloud CDN signed cookie before the bytes are readable through the CDN. As of

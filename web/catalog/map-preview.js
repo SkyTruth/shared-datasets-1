@@ -54,6 +54,7 @@ let activeColorContext = null;
 let activeFeatureMarker = null;
 let privateSessionPromise = null;
 let privateSessionUrl = "";
+let privateSignerUnavailable = false;
 
 export async function renderMapPreview({
   container,
@@ -87,6 +88,13 @@ export async function renderMapPreview({
 
   const resolvedBasemap = BASEMAPS[basemap] ? basemap : "map";
   const singleDataset = mapAssets.length === 1;
+  if (mapAssets.some(pmtilesCanUseSigner)) {
+    status.textContent = "Authorizing private PMTiles...";
+    for (let index = 0; index < mapAssets.length; index += 1) {
+      mapAssets[index] = await resolvePmtilesAccess(mapAssets[index]);
+      if (!renderIsCurrent(renderSerial)) return;
+    }
+  }
   if (mapAssets.some(pmtilesNeedsCredentials)) {
     status.textContent = "Authorizing private PMTiles...";
     await ensurePrivatePmtilesSession();
@@ -395,6 +403,85 @@ function pmtilesNeedsCredentials(asset) {
   } catch {
     return url.includes("/pmtiles/private/");
   }
+}
+
+async function resolvePmtilesAccess(asset) {
+  if (!pmtilesCanUseSigner(asset) || privateSignerUnavailable) {
+    return asset;
+  }
+  const signer = privatePmtilesSignerUrl();
+  if (!signer.url) {
+    return asset;
+  }
+  const signed = await requestSignedPmtilesUrl(asset, signer);
+  if (!signed) {
+    return asset;
+  }
+  return {
+    ...asset,
+    pmtiles_url: signed.pmtiles_url,
+    source_pmtiles_url: asset.pmtiles_url,
+    signed_pmtiles_expires_at: signed.expires_at || "",
+    _pmtiles_signed_url: true,
+  };
+}
+
+function pmtilesCanUseSigner(asset) {
+  if (!asset?.pmtiles_url || !asset?.slug) return false;
+  return String(asset.access_tier || "").toLowerCase() === "private" || pmtilesNeedsCredentials(asset);
+}
+
+async function requestSignedPmtilesUrl(asset, signer) {
+  const url = new URL(signer.url, window.location.href);
+  url.searchParams.set("slug", asset.slug);
+  const response = await fetch(url, {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  if (response.status === 404 && !signer.configured && !responseIsJson(response)) {
+    privateSignerUnavailable = true;
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Private PMTiles signer returned HTTP ${response.status}.`);
+  }
+  const payload = await response.json();
+  const signedUrl = String(payload?.pmtiles_url || "");
+  if (!signedUrl) {
+    throw new Error("Private PMTiles signer did not return a PMTiles URL.");
+  }
+  return {
+    pmtiles_url: signedUrl,
+    expires_at: String(payload?.expires_at || ""),
+  };
+}
+
+function privatePmtilesSignerUrl() {
+  const configured = window.SHARED_DATASETS_PMTILES_SIGNER_URL;
+  if (typeof configured === "string" && configured.trim()) {
+    return { url: configured.trim(), configured: true };
+  }
+  const meta = document.querySelector('meta[name="shared-datasets-pmtiles-signer-url"]');
+  if (meta?.content?.trim()) {
+    return { url: meta.content.trim(), configured: true };
+  }
+  if (window.location.protocol !== "http:" && window.location.protocol !== "https:") {
+    return { url: "", configured: false };
+  }
+  if (isStorageGoogleapisHost(window.location.hostname)) {
+    return { url: "", configured: false };
+  }
+  return { url: "/api/pmtiles/signed-url", configured: false };
+}
+
+function isStorageGoogleapisHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "storage.googleapis.com" || host.endsWith(".storage.googleapis.com");
+}
+
+function responseIsJson(response) {
+  return String(response.headers.get("content-type") || "").toLowerCase().includes("application/json");
 }
 
 async function ensurePrivatePmtilesSession() {

@@ -30,6 +30,18 @@ output "pmtiles_cdn_signing_key_secret_id" {
   value = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
 }
 
+output "catalog_viewer_service_name" {
+  value = google_cloud_run_v2_service.catalog_viewer.name
+}
+
+output "catalog_viewer_uri" {
+  value = google_cloud_run_v2_service.catalog_viewer.uri
+}
+
+output "catalog_viewer_service_account" {
+  value = module.catalog_viewer_service_account.email
+}
+
 output "shared_bucket_public_managed_folders" {
   value = sort(tolist(local.shared_bucket_public_managed_folder_names))
 }

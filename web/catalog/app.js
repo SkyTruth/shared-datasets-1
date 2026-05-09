@@ -791,8 +791,20 @@ async function renderPmtiles(assets) {
       onFeatureSelect: renderFeatureInspector,
     });
   } catch (error) {
-    elements.mapStatus.textContent = `Map unavailable. Open the PMTiles URL directly. ${error.message}`;
+    elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
   }
+}
+
+function mapUnavailableMessage(error, mapAssets) {
+  const message = String(error?.message || error || "Unknown map error.");
+  const usedSignedUrl = (Array.isArray(mapAssets) ? mapAssets : []).some((asset) => asset?._pmtiles_signed_url);
+  if (usedSignedUrl && /\b(401|403)\b|expired|signature/i.test(message)) {
+    return `Map unavailable. Signed PMTiles access was rejected or expired. ${message}`;
+  }
+  if (/Private PMTiles signer/i.test(message)) {
+    return `Map unavailable. ${message}`;
+  }
+  return `Map unavailable. Open the PMTiles URL directly. ${message}`;
 }
 
 function selectedColorizeAsset(assets = selectedReferences()) {
