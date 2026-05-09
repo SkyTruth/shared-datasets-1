@@ -77,6 +77,27 @@ class CatalogWebPublishTests(unittest.TestCase):
 
         self.assertEqual(blob.uploads[0][2]["if_generation_match"], 0)
 
+    def test_publish_catalog_contract_is_optional_and_generation_checked(self):
+        blob = FakeBlob(generation=789)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "shared-datasets-catalog.csv"
+            source.write_text("asset_slug,title\nexample,Example\n")
+
+            with mock.patch("scripts.catalog_web_publish.gcs_asset.require_mutation_allowed"), mock.patch(
+                "scripts.catalog_web_publish.gcs_asset.get_blob",
+                return_value=blob,
+            ):
+                result = catalog_web_publish.publish_catalog_contract(
+                    catalog_source=source,
+                    catalog_destination="gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv",
+                    cache_control="no-cache, max-age=0, must-revalidate",
+                    dry_run=False,
+                )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(blob.uploads[0][2]["if_generation_match"], 789)
+        self.assertEqual(result["destination_uri"], "gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv")
+
 
 if __name__ == "__main__":
     unittest.main()

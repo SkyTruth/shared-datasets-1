@@ -111,10 +111,14 @@ class CatalogDriftGuardTests(unittest.TestCase):
     def test_catalog_drift_workflow_skips_live_bucket_check_on_pull_requests(self):
         workflow = (REPO_ROOT / ".github/workflows/catalog-drift-guard.yml").read_text()
 
+        self.assertIn("workflow_run:", workflow)
+        self.assertIn("Catalog web deploy", workflow)
+        self.assertNotIn("push:", workflow)
         self.assertIn("Check pull request catalog consistency", workflow)
         self.assertIn("if: ${{ github.event_name == 'pull_request' }}", workflow)
         self.assertIn("uv run python scripts/catalog_docs.py check", workflow)
         self.assertIn("uv run python scripts/catalog_site.py --out", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertGreaterEqual(workflow.count("if: ${{ github.event_name != 'pull_request' }}"), 3)
         self.assertIn("Check live catalog drift", workflow)
         self.assertIn("uv run python scripts/catalog_drift_guard.py", workflow)

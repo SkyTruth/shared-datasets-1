@@ -36,7 +36,6 @@ jobs:
     concurrency:
       group: catalog-web-deploy
       cancel-in-progress: false
-    if: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
 
     steps:
       - name: Check out repository
@@ -77,6 +76,17 @@ jobs:
           uv run python scripts/catalog_site.py \
             --out "${RUNNER_TEMP}/catalog-web"
 
+      - name: Validate publisher auth configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -88,4 +98,6 @@ jobs:
           uv run python scripts/catalog_web_publish.py \
             --source "${RUNNER_TEMP}/catalog-web" \
             --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
+            --catalog-source "catalog/shared-datasets-catalog.csv" \
+            --catalog-destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/shared-datasets-catalog.csv" \
             --cache-control "${CATALOG_WEB_CACHE_CONTROL}"

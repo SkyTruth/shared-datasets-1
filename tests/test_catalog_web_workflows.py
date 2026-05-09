@@ -23,7 +23,11 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com", workflow)
         self.assertIn("SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: \"1\"", workflow)
         self.assertIn("no-cache, max-age=0, must-revalidate", workflow)
+        self.assertIn("Validate publisher auth configuration", workflow)
+        self.assertIn("Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("scripts/catalog_web_publish.py", workflow)
+        self.assertIn('--catalog-source "catalog/shared-datasets-catalog.csv"', workflow)
+        self.assertIn('--catalog-destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/shared-datasets-catalog.csv"', workflow)
         self.assertIn("node --check web/catalog/app.js", workflow)
         self.assertNotIn("shared-datasets-publish-plan", workflow)
 
@@ -31,6 +35,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         workflow = PMTILES_CDN_SYNC.read_text()
 
         self.assertIn("PMTiles CDN sync", workflow)
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("Check PMTiles CDN sync readiness", workflow)
+        self.assertIn("github.event_name != 'pull_request'", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod apply", workflow)
         self.assertIn("allowed_exact", workflow)
@@ -41,8 +48,12 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("google_storage_bucket.shared_bucket", workflow)
         self.assertIn("changed <= {\"cors\"}", workflow)
         self.assertIn("Refusing automatic PMTiles CDN sync", workflow)
+        self.assertIn("Validate Terraform auth configuration", workflow)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
+        self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("vars.GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
+        self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_TERRAFORM_SERVICE_ACCOUNT != ''", workflow)
 
 
 if __name__ == "__main__":

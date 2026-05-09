@@ -277,12 +277,15 @@ Git and history:
   reviewed mutation workflow includes creating a focused branch, staging only
   related repo metadata and workflow files, committing, pushing, and opening a
   PR that requests review from `jonaraphael`, unless `jonaraphael` is also the
-  PR author or the user asks to stop before PR. If GitHub blocks the reviewer
-  request because `jonaraphael` authored the PR, record that in the PR and use
-  the `Approved dataset mutation` workflow's `workflow_dispatch` `pr_number`
-  path; that self-approval path is restricted to `jonaraphael`. This exception
-  does not permit staging unrelated files, amending history, applying Terraform,
-  or mutating canonical GCS objects from a local terminal.
+  PR author or the user asks to stop before PR. The automatic canonical
+  mutation path runs only after the PR merges to `main`; a merged PR must have
+  an approved review from `jonaraphael`, except self-authored `jonaraphael` PRs
+  are treated as restricted self-acceptance after merge and may also use the
+  `Approved dataset mutation` workflow_dispatch `pr_number` fallback. If GitHub
+  blocks the reviewer request because `jonaraphael` authored the PR, record that
+  in the PR. This exception does not permit staging unrelated files, amending
+  history, applying Terraform, or mutating canonical GCS objects from a local
+  terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
 
@@ -326,9 +329,9 @@ A task is complete when:
   the GitHub self-review block when `jonaraphael` is the author, and includes the
   staged `_scratch/pending-publishes/` source URIs, source generations, intended
   canonical destination URIs, destination-generation expectations, and validation
-  performed. If the PR is expected to promote data after approval, it must
-  include a fenced `shared-datasets-publish-plan` JSON block matching the staged
-  objects and generation preconditions.
+  performed. If the PR is expected to promote data after merge, it must include a
+  fenced `shared-datasets-publish-plan` JSON block matching the staged objects
+  and generation preconditions.
 - Any opened dataset deletion PR requests review from `jonaraphael`, or records
   the GitHub self-review block when `jonaraphael` is the author, and includes
   exact target object URIs, current generations, rationale, consumer impact,
