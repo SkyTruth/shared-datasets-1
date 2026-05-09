@@ -5,7 +5,7 @@ title: Global Distribution of Coral Reefs
 category: 500-conservation-ecosystems
 subcategory: 530-habitat-condition
 status: active
-access_tier: public
+access_tier: private
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -56,7 +56,7 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
-- **Access tier:** public
+- **Access tier:** private
 - **Owner:** SkyTruth
 - **Update cadence:** manual
 - **Canonical file:** `latest/global-coral-reefs.fgb`

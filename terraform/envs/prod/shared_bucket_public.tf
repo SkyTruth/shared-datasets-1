@@ -35,6 +35,15 @@ resource "google_storage_bucket" "shared_bucket" {
 }
 
 locals {
+  shared_bucket_managed_folder_names = toset(concat(
+    ["_catalog/"],
+    [
+      for row in local.shared_catalog_rows :
+      "${dirname(dirname(replace(row.canonical_path, "gs://${var.bucket_name}/", "")))}/"
+      if startswith(row.canonical_path, "gs://${var.bucket_name}/")
+    ]
+  ))
+
   shared_bucket_public_managed_folder_names = toset(concat(
     ["_catalog/"],
     [
@@ -46,7 +55,7 @@ locals {
 }
 
 resource "google_storage_managed_folder" "shared_bucket_public_prefixes" {
-  for_each = local.shared_bucket_public_managed_folder_names
+  for_each = local.shared_bucket_managed_folder_names
 
   bucket = google_storage_bucket.shared_bucket.name
   name   = each.value
@@ -55,7 +64,11 @@ resource "google_storage_managed_folder" "shared_bucket_public_prefixes" {
 }
 
 resource "google_storage_managed_folder_iam_member" "shared_bucket_public_object_viewers" {
-  for_each = google_storage_managed_folder.shared_bucket_public_prefixes
+  for_each = {
+    for name, folder in google_storage_managed_folder.shared_bucket_public_prefixes :
+    name => folder
+    if contains(local.shared_bucket_public_managed_folder_names, name)
+  }
 
   bucket         = each.value.bucket
   managed_folder = each.value.name
