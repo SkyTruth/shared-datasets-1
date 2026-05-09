@@ -47,11 +47,13 @@ const NUMERIC_RAMPS = {
 };
 
 let dependencyPromise = null;
-let protocolInstalled = false;
+let pmtilesProtocol = null;
 let activeMap = null;
 let activeRenderSerial = 0;
 let activeColorContext = null;
 let activeFeatureMarker = null;
+let privateSessionPromise = null;
+let privateSessionUrl = "";
 
 export async function renderMapPreview({
   container,
@@ -81,10 +83,15 @@ export async function renderMapPreview({
 
   await loadDependencies();
   if (!renderIsCurrent(renderSerial)) return;
-  installProtocol();
+  const protocol = installProtocol();
 
   const resolvedBasemap = BASEMAPS[basemap] ? basemap : "map";
   const singleDataset = mapAssets.length === 1;
+  if (mapAssets.some(pmtilesNeedsCredentials)) {
+    status.textContent = "Authorizing private PMTiles...";
+    await ensurePrivatePmtilesSession();
+    if (!renderIsCurrent(renderSerial)) return;
+  }
   status.textContent = "Reading PMTiles metadata...";
   const mapSources = [];
   for (let index = 0; index < mapAssets.length; index += 1) {
@@ -93,7 +100,7 @@ export async function renderMapPreview({
         ? "Reading PMTiles metadata..."
         : `Reading PMTiles metadata ${index + 1} of ${mapAssets.length}...`;
     mapSources.push(
-      await mapSourceForAsset(mapAssets[index], index, resolvedBasemap, singleDataset ? selectedLayer : "")
+      await mapSourceForAsset(mapAssets[index], index, resolvedBasemap, singleDataset ? selectedLayer : "", protocol)
     );
     if (!renderIsCurrent(renderSerial)) return;
   }
@@ -326,16 +333,18 @@ function waitForGlobal(globalName) {
 }
 
 function installProtocol() {
-  if (protocolInstalled) {
-    return;
+  if (pmtilesProtocol) {
+    return pmtilesProtocol;
   }
   const protocol = new window.pmtiles.Protocol();
   window.maplibregl.addProtocol("pmtiles", protocol.tile);
-  protocolInstalled = true;
+  pmtilesProtocol = protocol;
+  return pmtilesProtocol;
 }
 
-async function mapSourceForAsset(asset, index, basemap, selectedLayer = "") {
-  const archive = new window.pmtiles.PMTiles(asset.pmtiles_url);
+async function mapSourceForAsset(asset, index, basemap, selectedLayer = "", protocol) {
+  const archive = pmtilesArchiveForAsset(asset);
+  protocol.add(archive);
   const metadata = await withTimeout(archive.getMetadata(), 8000, `${asset.title} PMTiles metadata request timed out.`);
   const header = await withTimeout(archive.getHeader(), 8000, `${asset.title} PMTiles header request timed out.`);
   const color = palette(index, basemap);
@@ -365,6 +374,59 @@ async function mapSourceForAsset(asset, index, basemap, selectedLayer = "") {
     selectedLayer: requestedLayer && sourceLayers.length ? requestedLayer : "",
     bounds: boundsFromHeader(header),
   };
+}
+
+function pmtilesArchiveForAsset(asset) {
+  if (!pmtilesNeedsCredentials(asset)) {
+    return new window.pmtiles.PMTiles(asset.pmtiles_url);
+  }
+  if (!window.pmtiles.FetchSource) {
+    throw new Error("Private PMTiles require credential-aware PMTiles fetch support.");
+  }
+  const source = new window.pmtiles.FetchSource(asset.pmtiles_url, new Headers(), "include");
+  return new window.pmtiles.PMTiles(source);
+}
+
+function pmtilesNeedsCredentials(asset) {
+  const url = String(asset?.pmtiles_url || "");
+  if (!url) return false;
+  try {
+    return new URL(url, window.location.href).pathname.startsWith("/pmtiles/private/");
+  } catch {
+    return url.includes("/pmtiles/private/");
+  }
+}
+
+async function ensurePrivatePmtilesSession() {
+  const sessionUrl = privatePmtilesSessionUrl();
+  if (!sessionUrl) return;
+  if (privateSessionPromise && privateSessionUrl === sessionUrl) {
+    return privateSessionPromise;
+  }
+  privateSessionUrl = sessionUrl;
+  privateSessionPromise = fetch(sessionUrl, {
+    cache: "no-store",
+    credentials: "include",
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Private PMTiles session returned HTTP ${response.status}.`);
+      }
+    })
+    .catch((error) => {
+      privateSessionPromise = null;
+      throw error;
+    });
+  return privateSessionPromise;
+}
+
+function privatePmtilesSessionUrl() {
+  const configured = window.SHARED_DATASETS_PMTILES_SESSION_URL;
+  if (typeof configured === "string" && configured.trim()) {
+    return configured.trim();
+  }
+  const meta = document.querySelector('meta[name="shared-datasets-pmtiles-session-url"]');
+  return meta?.content?.trim() || "";
 }
 
 function vectorLayerSpecs(metadata, asset) {

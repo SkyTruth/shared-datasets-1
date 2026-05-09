@@ -105,6 +105,33 @@ Satellite: Esri World Imagery raster tiles
 The street-style map is the default on every page load. Satellite is available
 as an explicit user-selected option.
 
+PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
+`https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles` URL for
+latest releases. The viewer keeps public PMTiles fetches anonymous so temporary
+redirect mode still works with public GCS objects. Private PMTiles URLs under
+`/pmtiles/private/` are loaded through a credential-aware PMTiles source so
+Cloud CDN signed cookies are sent on metadata, header, directory, and tile range
+requests.
+
+If the internal host provides a signed-cookie session endpoint, configure it
+before `app.js` loads with either:
+
+```html
+<meta name="shared-datasets-pmtiles-session-url" content="/api/pmtiles/session?tier=private" />
+```
+
+or:
+
+```html
+<script>
+  window.SHARED_DATASETS_PMTILES_SESSION_URL = "/api/pmtiles/session?tier=private";
+</script>
+```
+
+When no session URL is configured, the viewer still sends credentials for
+private tier URLs and relies on an existing valid `Cloud-CDN-Cookie` for
+`tiles.skytruth.org`.
+
 The rest of the catalog remains usable when those dependencies or PMTiles range
 requests fail. Vendor these files under `web/catalog/vendor/` before deployment
 if fully offline/self-contained hosting becomes a requirement.

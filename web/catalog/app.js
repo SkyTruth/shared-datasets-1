@@ -1149,12 +1149,15 @@ function withPmtilesCacheBust(asset) {
 }
 
 function pmtilesPreviewUrl(asset) {
+  if (asset?.pmtiles_url) {
+    return asset.pmtiles_url;
+  }
   const path = String(asset?.pmtiles_path || "");
   const match = path.match(/^gs:\/\/([^/]+)\/(.+)$/);
   if (match) {
     return `https://storage.googleapis.com/${match[1]}/${match[2]}`;
   }
-  return asset?.pmtiles_url || "";
+  return "";
 }
 
 function pmtilesCacheKey(asset) {
