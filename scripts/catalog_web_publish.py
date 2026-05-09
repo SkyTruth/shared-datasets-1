@@ -21,6 +21,7 @@ from scripts import gcs_asset
 
 DEFAULT_DESTINATION = "gs://skytruth-shared-datasets-1/_catalog/web"
 DEFAULT_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"
+DEFAULT_CATALOG_DESTINATION = "gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv"
 ROOT_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
 
 
@@ -112,10 +113,36 @@ def publish_bundle(
     return results
 
 
+def publish_catalog_contract(
+    *,
+    catalog_source: Path | None,
+    catalog_destination: str,
+    cache_control: str,
+    dry_run: bool,
+) -> dict[str, Any] | None:
+    if catalog_source is None:
+        return None
+    if not catalog_source.is_file():
+        raise CatalogWebPublishError(f"catalog source does not exist: {catalog_source}")
+    return publish_file(
+        catalog_source,
+        catalog_destination,
+        cache_control=cache_control,
+        dry_run=dry_run,
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True, help="Generated catalog web bundle directory.")
     parser.add_argument("--destination", default=DEFAULT_DESTINATION, help="Destination gs:// prefix.")
+    parser.add_argument(
+        "--catalog-source",
+        type=Path,
+        default=None,
+        help="Optional root CSV catalog contract to publish alongside the web bundle.",
+    )
+    parser.add_argument("--catalog-destination", default=DEFAULT_CATALOG_DESTINATION)
     parser.add_argument("--cache-control", default=DEFAULT_CACHE_CONTROL)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -130,10 +157,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             cache_control=args.cache_control,
             dry_run=args.dry_run,
         )
+        catalog_result = publish_catalog_contract(
+            catalog_source=args.catalog_source,
+            catalog_destination=args.catalog_destination,
+            cache_control=args.cache_control,
+            dry_run=args.dry_run,
+        )
     except CatalogWebPublishError as exc:
         print(f"catalog web publish failed: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps({"dry_run": args.dry_run, "published": results}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {"dry_run": args.dry_run, "published": results, "catalog_contract": catalog_result},
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

@@ -325,8 +325,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     PR author; if using a GitHub connector, set `jonaraphael` as requested
     reviewer when allowed. If GitHub refuses because `jonaraphael` authored the
     PR, record that note in the PR body. Include a fenced
-    `shared-datasets-publish-plan` JSON block so approval or restricted
-    self-approval dispatch can trigger promotion:
+    `shared-datasets-publish-plan` JSON block so merge or restricted
+    self-acceptance dispatch can trigger promotion:
 
 ````markdown
 ```shared-datasets-publish-plan
@@ -347,13 +347,14 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 ```
 ````
 
-13. Do not promote canonical objects from the local terminal. When `jonaraphael`
-    approves a same-repo PR that contains the publish-plan block, the GitHub
-    `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. If GitHub blocks self-review
-    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
-    workflow with the PR number; this self-approval path is also valid for
-    fallback promotion and applies the same plan validation.
+13. Do not promote canonical objects from the local terminal. After a same-repo
+    PR containing the publish-plan block is merged to `main`, the GitHub
+    `Approved dataset mutation` workflow verifies `jonaraphael` acceptance and
+    promotes the listed staged objects under the `shared-datasets-production`
+    environment. If GitHub blocks self-review because `jonaraphael` authored the
+    PR, the merged PR is treated as restricted self-acceptance, and
+    `jonaraphael` may also dispatch that workflow with the PR number as a
+    fallback. Both paths apply the same plan validation.
     If the asset doc changes `access_tier`, rely on the protected
     `catalog-web-deploy` and `pmtiles-cdn-sync` workflows after merge to update
     `_catalog/web`, PMTiles CDN routes, and public managed-folder IAM. Do not
@@ -461,13 +462,15 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     refuses because `jonaraphael` authored the PR, record that note in the PR
     body. Include a fenced `shared-datasets-publish-plan` JSON block whose
     `promotions` are ordered exactly as they should be copied.
-15. Do not promote canonical objects from the local terminal. When `jonaraphael`
-    approves a same-repo PR that contains the publish-plan block, the GitHub
-    `Approved dataset mutation` workflow promotes the listed staged objects under
-    the `shared-datasets-production` environment. If GitHub blocks self-review
-    because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
-    workflow with the PR number. Order the publish plan so dated release objects
-    come before `latest/` replacements, and run records and
+15. Do not promote canonical objects from the local terminal. After a same-repo
+    PR containing the publish-plan block is merged to `main`, the GitHub
+    `Approved dataset mutation` workflow verifies `jonaraphael` acceptance and
+    promotes the listed staged objects under the `shared-datasets-production`
+    environment. If GitHub blocks self-review because `jonaraphael` authored the
+    PR, the merged PR is treated as restricted self-acceptance, and
+    `jonaraphael` may also dispatch that workflow with the PR number as a
+    fallback. Order the publish plan so dated release objects come before
+    `latest/` replacements, and run records and
     `_catalog/releases/{asset-slug}.json` come only after the object metadata
     they describe has been promoted.
 16. Verify the new version: release objects exist, `latest/` points to or
@@ -526,12 +529,14 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
 ```
 ````
 
-8. Do not delete canonical objects from the local terminal. When `jonaraphael`
-   approves a same-repo PR that contains the delete-plan block, the GitHub
-   `Approved dataset mutation` workflow deletes the listed objects under the
-   publisher identity using exact generation preconditions. If GitHub blocks
-   self-review because `jonaraphael` authored the PR, `jonaraphael` may dispatch
-   that workflow with the PR number.
+8. Do not delete canonical objects from the local terminal. After a same-repo PR
+   containing the delete-plan block is merged to `main`, the GitHub `Approved
+   dataset mutation` workflow verifies `jonaraphael` acceptance and deletes the
+   listed objects under the publisher identity using exact generation
+   preconditions. If GitHub blocks self-review because `jonaraphael` authored
+   the PR, the merged PR is treated as restricted self-acceptance, and
+   `jonaraphael` may also dispatch that workflow with the PR number as a
+   fallback.
 9. Verify the deletion: the live object is absent, no unintended objects were
    touched, catalog/release-index references no longer point at deleted paths,
    delete alerts/logs show the publisher identity, and any residual uncertainty

@@ -4,9 +4,13 @@ on:
   pull_request:
     branches:
       - main
-  push:
+  workflow_run:
+    workflows:
+      - Catalog web deploy
     branches:
       - main
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -24,8 +28,15 @@ jobs:
   catalog-drift:
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        github.event.pull_request.head.repo.full_name == github.repository
+        (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        ) ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success'
+        )
       }}
     runs-on: ubuntu-latest
     steps:

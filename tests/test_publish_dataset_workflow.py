@@ -65,9 +65,26 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("types: [closed]", workflow)
         self.assertIn("github.event.pull_request.merged == true", workflow)
-        self.assertIn("github.event.pull_request.user.login == 'jonaraphael'", workflow)
+        self.assertIn('PR_AUTHOR: ${{ github.event.pull_request.user.login }}', workflow)
+        self.assertIn('if [[ "${PR_AUTHOR}" == "jonaraphael" ]]; then', workflow)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
         self.assertIn("github.event.pull_request.base.ref == github.event.repository.default_branch", workflow)
+
+    def test_review_approval_no_longer_mutates_before_merge(self):
+        workflow = WORKFLOW.read_text()
+
+        self.assertNotIn("pull_request_review:", workflow)
+        self.assertNotIn("github.event_name == 'pull_request_review'", workflow)
+        self.assertIn("Validate merged PR acceptance", workflow)
+        self.assertIn('pulls/${PR_NUMBER}/reviews?per_page=100', workflow)
+        self.assertIn("Merged PR does not have an APPROVED review from jonaraphael", workflow)
+
+    def test_publisher_auth_config_fails_loudly_instead_of_skipping(self):
+        workflow = WORKFLOW.read_text()
+
+        self.assertIn("Validate publisher auth configuration", workflow)
+        self.assertIn("Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertNotIn("vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''", workflow)
 
     def test_dataset_upload_summary_runs_after_approved_promotions_before_deletes(self):
         workflow = WORKFLOW.read_text()

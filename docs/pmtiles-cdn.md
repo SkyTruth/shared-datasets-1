@@ -387,6 +387,13 @@ terraform -chdir=terraform/envs/prod validate
 terraform -chdir=terraform/envs/prod plan ...
 ```
 
+The automatic PMTiles CDN sync workflow fails loudly when Terraform
+authentication is not configured. Repository variables must include
+`GCP_TERRAFORM_SERVICE_ACCOUNT` and either
+`GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER` or the shared
+`GCP_WORKLOAD_IDENTITY_PROVIDER`; otherwise PMTiles access-tier changes are not
+allowed to merge as silently skipped post-merge work.
+
 Live checks after CDN cutover:
 
 - Public direct GCS asset still returns `200`.
