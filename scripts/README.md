@@ -233,11 +233,9 @@ unless a reviewed compatibility waiver is supplied. After a successful
 compatible or waived publish, `check-schema` can still emit structured Cloud
 Logging warnings and update the snapshot for monitoring.
 
-Production Terraform applies should use:
-
-```bash
-uv run python scripts/terraform_prod_apply.py
-```
+Production Terraform mutations must land through reviewed PRs and protected
+GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is
+reserved for explicitly approved break-glass emergencies.
 
 Static catalog web builds use:
 

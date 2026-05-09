@@ -74,6 +74,33 @@ TERRAFORM_FORBIDDEN_PATTERNS = (
     ("Cloud Storage object ACL workflow", re.compile(r"google_storage_.*acl|predefined_acl|object_access_control")),
     ("Terraform-managed dataset object", re.compile(r'resource\s+"google_storage_bucket_object"')),
 )
+TERRAFORM_APPLY_GUIDANCE_GLOBS = (
+    "AGENTS.md",
+    ".claude/skills/**/SKILL.md",
+    "docs/**/*.md",
+    "scripts/README.md",
+)
+TERRAFORM_APPLY_GUIDANCE_RE = re.compile(
+    r"\bterraform\s+(?:-[^\s`]+(?:\s+|$))*apply\b|scripts/terraform_prod_apply\.py",
+    re.IGNORECASE,
+)
+TERRAFORM_APPLY_ALLOWED_CONTEXT_RE = re.compile(
+    r"("
+    r"\bdo not\b|"
+    r"\bmust not\b|"
+    r"\bnot (?:a )?local apply\b|"
+    r"\bprotected (?:github actions )?workflows?\b|"
+    r"\bprotected production workflows?\b|"
+    r"\bprotected-terraform-apply\b|"
+    r"\bprotected terraform apply\b|"
+    r"\breviewed PR\b|"
+    r"\bafter review and merge\b|"
+    r"\bbreak-glass\b|"
+    r"\bemergency\b|"
+    r"\breserved for explicitly approved break-glass"
+    r")",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -346,6 +373,34 @@ def check_terraform_static(repo_root: Path) -> list[str]:
     return errors
 
 
+def terraform_apply_guidance_paths(repo_root: Path) -> list[Path]:
+    paths: set[Path] = set()
+    for pattern in TERRAFORM_APPLY_GUIDANCE_GLOBS:
+        paths.update(path for path in repo_root.glob(pattern) if path.is_file())
+    return sorted(paths)
+
+
+def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
+    errors: list[str] = []
+    for path in terraform_apply_guidance_paths(repo_root):
+        text = file_text(path)
+        if not text:
+            continue
+        lines = text.splitlines()
+        for line_number, line in enumerate(lines, start=1):
+            if not TERRAFORM_APPLY_GUIDANCE_RE.search(line):
+                continue
+            if line_number <= 3 and path.name == "SKILL.md" and line.lstrip().startswith("description:"):
+                continue
+            context = "\n".join(lines[max(0, line_number - 2) : min(len(lines), line_number + 1)])
+            if TERRAFORM_APPLY_ALLOWED_CONTEXT_RE.search(context):
+                continue
+            errors.append(
+                f"{path.relative_to(repo_root)}:{line_number}: local production Terraform apply guidance must route through protected PR workflows or explicit break-glass"
+            )
+    return errors
+
+
 def check_diff(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
     changes = git_changed_files(args.base, args.head, repo_root=repo_root)
@@ -365,6 +420,7 @@ def check_static(args: argparse.Namespace) -> list[str]:
     errors.extend(check_ingestion_skip_tests(repo_root))
     errors.extend(check_secrets(repo_root))
     errors.extend(check_terraform_static(repo_root))
+    errors.extend(check_no_local_terraform_apply_guidance(repo_root))
     return errors
 
 

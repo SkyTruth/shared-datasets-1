@@ -1,0 +1,4 @@
+interface:
+  display_name: "Protected Terraform Apply"
+  short_description: "Enforce PR-only prod applies."
+  default_prompt: "Use this before suggesting or running Terraform apply in shared-datasets-1."

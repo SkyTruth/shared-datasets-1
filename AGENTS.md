@@ -64,6 +64,7 @@ Current repo-local skills:
 - `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
 - `.claude/skills/publish-shared-dataset/SKILL.md`
+- `.claude/skills/protected-terraform-apply/SKILL.md`
 - `.claude/skills/repo-alert-commit-messages/SKILL.md`
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
 - `.claude/skills/static-catalog-web-preview/SKILL.md`
@@ -76,6 +77,10 @@ High-priority triggers:
   documenting a shared dataset asset.
 - Use `deploy-scheduled-ingestion` before deploying or updating Cloud Run and
   Cloud Scheduler ingestion jobs.
+- Use `protected-terraform-apply` before suggesting, planning, documenting, or
+  running any production Terraform apply, `terraform_prod_apply.py`, PMTiles CDN
+  sync, GCP IAM/storage/Cloud Run/Scheduler/CDN Terraform mutation, or
+  shared-datasets prod infrastructure deployment.
 - Use `align-virtual-environment` before creating, repairing, changing, or
   documenting Python environments.
 - Use `repo-alert-commit-messages` before committing staged changes or preparing
@@ -152,6 +157,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
+| Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
 | Bucket/repo compliance audits | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Repo-alert commit messages | `.claude/skills/repo-alert-commit-messages/SKILL.md` |
@@ -236,6 +242,15 @@ Infrastructure and security:
 
 - Use Terraform for buckets, IAM, service accounts, Cloud Scheduler, Cloud Run,
   Pub/Sub, monitoring, APIs, and similar infrastructure.
+- Production Terraform mutations must go through a reviewed PR approved by
+  `jonaraphael`, merge to `main`, and a protected GitHub Actions workflow in the
+  `shared-datasets-production` environment. Agents may run local `terraform fmt`,
+  `terraform validate`, `terraform plan`, and `terraform show -json` for review,
+  but must not suggest or run local production `terraform apply`, targeted
+  apply, or `scripts/terraform_prod_apply.py` except for an explicitly named
+  break-glass emergency.
+- If no protected workflow exists for a Terraform resource class, add or extend
+  a constrained workflow by PR instead of applying locally.
 - Do not use Terraform or Pulumi for frequently changing dataset files under
   `latest/`, `releases/`, or `runs/`.
 - Do not commit credentials, tokens, service account keys, `.env` files, private

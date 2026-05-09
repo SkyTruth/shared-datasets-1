@@ -20,6 +20,9 @@ Read these before choosing names, paths, formats, or remote writes:
 - `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS operation
 - `.claude/skills/static-catalog-web-preview/SKILL.md` before refreshing the
   live catalog UI cache after dataset edits or uploads
+- `.claude/skills/protected-terraform-apply/SKILL.md` before any access-tier
+  change, PMTiles CDN route sync, public managed-folder IAM change, or other
+  production Terraform mutation
 - `scripts/publishing_concierge.py` before new manual asset intake or
   under-specified upload planning
 - Relevant existing `docs/assets/{asset-slug}.md` files and nearby catalog rows
@@ -351,6 +354,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     because `jonaraphael` authored the PR, `jonaraphael` may dispatch that
     workflow with the PR number; this self-approval path is also valid for
     fallback promotion and applies the same plan validation.
+    If the asset doc changes `access_tier`, rely on the protected
+    `catalog-web-deploy` and `pmtiles-cdn-sync` workflows after merge to update
+    `_catalog/web`, PMTiles CDN routes, and public managed-folder IAM. Do not
+    run local production Terraform apply for access-tier changes.
 14. Verify promoted remote objects, metadata, catalog UI freshness, and release
     index behavior where applicable. Report changed remote paths, generations,
     alert state, and any residual uncertainty in the PR or final response.

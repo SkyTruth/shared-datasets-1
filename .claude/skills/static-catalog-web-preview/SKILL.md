@@ -49,6 +49,9 @@ Negative examples:
    - Read `AGENTS.md`.
    - Read `.claude/skills/publish-shared-dataset/SKILL.md` when manually publishing or updating dataset assets.
    - Read `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS object write.
+   - Read `.claude/skills/protected-terraform-apply/SKILL.md` before any
+     catalog access-tier, PMTiles CDN, Cloud Run viewer, CORS, IAM, or other
+     production Terraform mutation.
    - Read `docs/catalog-web-preview.md`.
    - Inspect `catalog/shared-datasets-catalog.csv`, relevant `docs/assets/*.md`, `scripts/catalog_site.py`, and `web/catalog/*`.
 
@@ -139,6 +142,10 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
    - Pass the workflow `cache_control` input for `catalog.json`, PMTiles, and other cache-sensitive replacements when no-cache metadata is required.
    - Use no-clobber promotion for new objects.
    - Do not use unsafe overwrites.
+
+   Access-tier changes that affect PMTiles CDN routes or public managed-folder
+   IAM must land by reviewed PR and protected `main` workflows. Do not apply
+   the Terraform path locally.
 
 7. Cache control and live-site freshness:
    - When promoting web shell/runtime objects, pass the workflow

@@ -168,6 +168,38 @@ class RepoGuardrailsTests(unittest.TestCase):
 
         self.assertIn("Terraform-managed dataset object", errors[0])
 
+    def test_docs_must_not_recommend_local_production_terraform_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "deploy.md").write_text(
+                "Deploy production changes:\n"
+                "terraform -chdir=terraform/envs/prod apply\n"
+            )
+
+            errors = repo_guardrails.check_no_local_terraform_apply_guidance(root)
+
+        self.assertIn("local production Terraform apply guidance", errors[0])
+
+    def test_docs_may_describe_break_glass_or_protected_workflow_apply(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = root / "docs"
+            skills = root / ".claude/skills/protected-terraform-apply"
+            docs.mkdir(parents=True)
+            skills.mkdir(parents=True)
+            (docs / "deploy.md").write_text(
+                "The protected production workflow runs terraform -chdir=terraform/envs/prod apply after review and merge.\n"
+            )
+            (skills / "SKILL.md").write_text(
+                "Do not run `terraform apply` locally. Local use of `scripts/terraform_prod_apply.py` is break-glass only.\n"
+            )
+
+            errors = repo_guardrails.check_no_local_terraform_apply_guidance(root)
+
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

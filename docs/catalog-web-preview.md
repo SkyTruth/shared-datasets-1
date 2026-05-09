@@ -228,22 +228,20 @@ should represent release dates that include the canonical format.
 
 Terraform owns the IAP-protected Cloud Run viewer. It does not require a
 SkyTruth custom domain or load balancer; direct Cloud Run IAP protects the
-service's generated `run.app` URL. Build and push an immutable viewer image
-before the first apply, then pass it as `catalog_viewer_image`:
+service's generated `run.app` URL. Build and push an immutable viewer image,
+then update `catalog_viewer_image` in Terraform by PR. The protected production
+workflow applies after review and merge:
 
 ```bash
 IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:$(date -u +%Y%m%d%H%M%S)
 
 docker build --platform linux/amd64 -f services/catalog_viewer/Dockerfile -t "$IMAGE" .
 docker push "$IMAGE"
-
-terraform -chdir=terraform/envs/prod apply \
-  -var="catalog_viewer_image=$IMAGE"
 ```
 
-After apply, open the `catalog_viewer_uri` output. The service account is
-read-only on `_catalog/` and canonical dataset prefixes, and can only sign blobs
-as itself for 15-minute PMTiles URLs.
+After the protected workflow applies, open the `catalog_viewer_uri` output. The
+service account is read-only on `_catalog/` and canonical dataset prefixes, and
+can only sign blobs as itself for 15-minute PMTiles URLs.
 
 ## CORS
 

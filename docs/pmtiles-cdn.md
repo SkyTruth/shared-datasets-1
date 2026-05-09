@@ -117,18 +117,18 @@ Redirect mode keeps the browser-facing URL stable before the signed-cookie CDN
 path is ready. It does not make PMTiles private, and browser network tools will
 still show the final `storage.googleapis.com` request.
 
-Build and push the redirector image before applying redirect mode:
+Build and push the redirector image before opening the PR that switches
+redirect mode:
 
 ```bash
 IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:$(date -u +%Y%m%d%H%M%S)
 
 docker build --platform linux/amd64 -f services/pmtiles_redirector/Dockerfile -t "$IMAGE" .
 docker push "$IMAGE"
-
-UV_CACHE_DIR=.uv-cache uv run python scripts/terraform_prod_apply.py \
-  --var "pmtiles_serving_mode=redirect" \
-  --var "pmtiles_redirector_image=$IMAGE"
 ```
+
+Then update `pmtiles_serving_mode` and `pmtiles_redirector_image` in Terraform,
+open a PR, and let the protected workflow apply after review and merge.
 
 ## DNS
 
@@ -175,16 +175,17 @@ gcloud iam service-accounts describe \
   --project=shared-datasets-1
 ```
 
-Then set `pmtiles_cdn_grant_fill_service_account=true` and apply Terraform again
-so the service account can read PMTiles after public GCS access is removed.
+Then set `pmtiles_cdn_grant_fill_service_account=true` in Terraform so the
+service account can read PMTiles after public GCS access is removed. Open a PR
+and let the protected workflow apply after review and merge.
 
-Grant consumer runtime access to the signing secret in the same apply. The
+Grant consumer runtime access to the signing secret in the same PR. The
 Cerulean rollout used the current UI runtime service account:
 
-```bash
-UV_CACHE_DIR=.uv-cache uv run python scripts/terraform_prod_apply.py \
-  --var "pmtiles_cdn_grant_fill_service_account=true" \
-  --var 'cerulean_pmtiles_cookie_signer_service_accounts=["serviceAccount:734798842681-compute@developer.gserviceaccount.com"]'
+```hcl
+cerulean_pmtiles_cookie_signer_service_accounts = [
+  "serviceAccount:734798842681-compute@developer.gserviceaccount.com",
+]
 ```
 
 For another repo such as 30x30, replace that member with the runtime service
@@ -373,7 +374,7 @@ input key, HMAC output, or final cookie value.
 
 ## Validation
 
-Shared-datasets validation before each Terraform apply:
+Shared-datasets validation before each protected Terraform workflow apply:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run pytest \

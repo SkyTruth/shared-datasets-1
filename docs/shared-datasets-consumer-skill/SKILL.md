@@ -149,11 +149,14 @@ In shared-datasets Terraform, add the consumer signer principal to the signer
 allowlist used by `google_secret_manager_secret_iam_member.pmtiles_cdn_cookie_signers`.
 The Cerulean rollout used:
 
-```bash
-terraform -chdir=terraform/envs/prod apply \
-  -var "pmtiles_cdn_grant_fill_service_account=true" \
-  -var 'cerulean_pmtiles_cookie_signer_service_accounts=["serviceAccount:734798842681-compute@developer.gserviceaccount.com"]'
+```hcl
+cerulean_pmtiles_cookie_signer_service_accounts = [
+  "serviceAccount:734798842681-compute@developer.gserviceaccount.com",
+]
 ```
+
+That shared-datasets Terraform change must land through a reviewed PR and the
+protected production workflow after merge, not a local apply.
 
 For another repo, use that repo's real runtime service account instead. The
 30x30 reader service account is

@@ -15,7 +15,10 @@ load `deploy-scheduled-ingestion`.
 Use the repo-owned Python CLI/library built on `google-cloud-storage` for
 dataset object operations.
 
-Use Terraform for infrastructure.
+Use Terraform for infrastructure, but route production Terraform mutations
+through reviewed PRs merged to `main` and protected GitHub Actions workflows.
+Load `.claude/skills/protected-terraform-apply/SKILL.md` before suggesting,
+planning, documenting, or running any production Terraform apply.
 
 Use `gcloud storage` only for human diagnostics, emergency downloads, and
 documented break-glass operations.

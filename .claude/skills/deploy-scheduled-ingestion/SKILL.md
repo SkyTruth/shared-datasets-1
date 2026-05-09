@@ -10,6 +10,10 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 ## Rules
 
 - Use Terraform for GCP assets: APIs, Artifact Registry, service accounts, IAM, Cloud Run Jobs, Cloud Scheduler jobs, and monitoring.
+- Load `.claude/skills/protected-terraform-apply/SKILL.md` before any
+  production Terraform apply discussion. Production infrastructure mutations go
+  through reviewed PRs merged to `main` and protected GitHub Actions workflows,
+  not local applies.
 - Use remote Terraform state for shared environments; do not leave production state only on a local workstation.
 - Use immutable container tags for deployments. Do not deploy `latest`.
 - Build Cloud Run images for `linux/amd64`; make multi-stage Dockerfiles use `$BUILDPLATFORM`/`$TARGETOS`/`$TARGETARCH` for compiled helper binaries.
@@ -118,7 +122,7 @@ gcloud monitoring policies describe <scheduler-failure-policy-name> \
 If the user expects Slack delivery, verify the relevant path:
 
 - Cloud Monitoring Slack alerts use Monitoring notification channels.
-- Terraform apply summaries use `scripts/slack_notify.py` and the `shared-datasets-slack-webhook-url` Secret Manager secret, unless `SHARED_DATASETS_SLACK_WEBHOOK_URL` is set locally.
+- Protected Terraform workflow summaries use `scripts/slack_notify.py` and the `shared-datasets-slack-webhook-url` Secret Manager secret, unless `SHARED_DATASETS_SLACK_WEBHOOK_URL` is set locally.
 
 A safe controlled alert test is to execute a newly deployed job with an env override that fails before any GCS write, then confirm the matching log and Slack notification. Do not use a failure mode that can write partial releases, overwrite `latest/`, delete objects, or create confusing run records.
 
@@ -157,15 +161,12 @@ docker run --platform linux/amd64 --rm -i \
 
 Use `WDPA_SAMPLE_FRACTION=0.001` for fast smoke loops and increase only when the bug requires more coverage. Sampling should be deterministic so row-count validation compares the same sampled predicate used for FGB and PMTiles generation.
 
-4. Create or update infrastructure that the image push depends on:
+4. If infrastructure is needed before an image can be pushed, add that
+   prerequisite to Terraform and open a focused PR. After review and merge, let
+   the protected workflow apply it before pushing the image.
 
-```bash
-terraform -chdir=terraform/envs/prod apply \
-  -target=google_artifact_registry_repository.jobs \
-  -var="wdpa_monthly_image=<final-image-uri>"
-```
-
-5. Build and push an immutable image:
+5. Build and push an immutable image after the required repository and auth
+   surface exists:
 
 ```bash
 IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/<job-name>:YYYYMMDDHHMMSS
@@ -174,18 +175,17 @@ docker build --platform linux/amd64 -f ingestion/<job>/Dockerfile -t "$IMAGE" .
 docker push "$IMAGE"
 ```
 
-6. Apply full infrastructure with the exact image URI:
+6. Update Terraform to reference the exact image URI and run a local review
+   plan, but do not apply it locally:
 
 ```bash
 terraform -chdir=terraform/envs/prod plan  -var="wdpa_monthly_image=$IMAGE"
-terraform -chdir=terraform/envs/prod apply -var="wdpa_monthly_image=$IMAGE"
 ```
 
-Prefer the repo wrapper for local production applies:
-
-```bash
-uv run python scripts/terraform_prod_apply.py --var <job_image_variable>="$IMAGE"
-```
+Open a PR with the Terraform change and plan summary. The protected production
+workflow applies after `jonaraphael` review and merge to `main`. If no workflow
+covers the resource class, add a constrained workflow in the PR instead of using
+a local apply.
 
 7. Execute the job once. For short jobs, wait for completion:
 
@@ -238,6 +238,6 @@ In the final response or PR, include:
 - Scheduler schedule and timezone.
 - Remote GCS paths verified.
 - Alert policy coverage verified, including whether filters are future-proof or job-specific.
-- Slack delivery status when relevant, distinguishing Monitoring notification channels from the Terraform apply-summary webhook.
+- Slack delivery status when relevant, distinguishing Monitoring notification channels from the protected Terraform workflow summary webhook.
 - Any known skipped, cancelled, failed, or still-running executions.
 - Any partial release paths intentionally left untouched.
