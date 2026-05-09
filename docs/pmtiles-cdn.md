@@ -393,6 +393,8 @@ authentication is not configured. Repository variables must include
 `GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER` or the shared
 `GCP_WORKLOAD_IDENTITY_PROVIDER`; otherwise PMTiles access-tier changes are not
 allowed to merge as silently skipped post-merge work.
+Workflow-only changes to `.github/workflows/pmtiles-cdn-sync.yml` do not trigger
+the readiness/apply workflow because they do not require a live Terraform apply.
 
 Live checks after CDN cutover:
 

@@ -37,6 +37,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("PMTiles CDN sync", workflow)
         self.assertIn("pull_request:", workflow)
         self.assertIn("Check PMTiles CDN sync readiness", workflow)
+        self.assertNotIn('- ".github/workflows/pmtiles-cdn-sync.yml"', workflow)
         self.assertIn("github.event_name != 'pull_request'", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod apply", workflow)

@@ -5,7 +5,6 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/pmtiles-cdn-sync.yml"
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
       - "terraform/envs/prod/pmtiles_cdn.tf"
@@ -16,7 +15,6 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/pmtiles-cdn-sync.yml"
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
       - "terraform/envs/prod/pmtiles_cdn.tf"
