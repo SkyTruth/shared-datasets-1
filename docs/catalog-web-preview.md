@@ -10,8 +10,12 @@ gs://skytruth-shared-datasets-1/_catalog/web/
 The public entry point is:
 
 ```text
-https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/web/index.html
+https://tiles.skytruth.org/_catalog/web/index.html
 ```
+
+Direct `https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/...`
+reads are a temporary proof-of-concept bypass while bucket public access is
+being removed. Public browser access should use `tiles.skytruth.org/_catalog/`.
 
 The authenticated internal entry point is the IAP-protected Cloud Run `run.app`
 URL exposed by the Terraform `catalog_viewer_uri` output.
@@ -110,9 +114,9 @@ as an explicit user-selected option.
 
 PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
 `https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles` URL for
-latest releases. The public static GCS entry point remains a static/public
-viewer: public PMTiles fetch anonymously, and private PMTiles may rely on an
-already-authorized `tiles.skytruth.org` setup when one exists.
+latest releases. The public `tiles.skytruth.org/_catalog/web/` entry point is a
+static/public viewer: public PMTiles fetch anonymously, and private PMTiles may
+rely on an already-authorized `tiles.skytruth.org` setup when one exists.
 
 When the app is served from the authenticated Cloud Run viewer, private PMTiles
 are resolved through the same-origin signer endpoint:

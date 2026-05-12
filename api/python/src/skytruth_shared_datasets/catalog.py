@@ -19,7 +19,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_CATALOG_GS_URI = f"gs://{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
-DEFAULT_CATALOG_URL = f"https://storage.googleapis.com/{DEFAULT_BUCKET}/_catalog/shared-datasets-catalog.csv"
+DEFAULT_CATALOG_CDN_BASE_URL = "https://tiles.skytruth.org"
+DEFAULT_CATALOG_URL = f"{DEFAULT_CATALOG_CDN_BASE_URL}/_catalog/shared-datasets-catalog.csv"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 USER_AGENT = "skytruth-shared-datasets/0.1"
@@ -314,7 +315,7 @@ class Catalog:
         try:
             access_mode = _normalize_access(access)
             if access_mode == "public":
-                text = _read_url(gs_to_https(release_index_uri), timeout=timeout)
+                text = _read_url(gs_to_catalog_url(release_index_uri), timeout=timeout)
             else:
                 text = _read_gcs_text(release_index_uri, client=client, timeout=timeout)
             payload = json.loads(text)
@@ -346,10 +347,12 @@ class Catalog:
         """Resolve an asset to its canonical GCS URI and a browser-facing URL.
 
         ``gs_uri`` is the stable object identity. For PMTiles, ``url`` defaults
-        to the shared SkyTruth PMTiles CDN. Other formats default to public
-        storage.googleapis.com URLs while public access remains available. Pass
-        ``url_strategy="public_gcs"`` to force public GCS URLs, or pass
-        ``web_base_url`` to shape alternate CDN/application URLs.
+        to the shared SkyTruth PMTiles CDN. Other formats retain
+        ``storage.googleapis.com`` URL construction for diagnostics and exact
+        object references, but production consumers should download through
+        authenticated GCS. Pass ``url_strategy="public_gcs"`` to inspect the
+        direct GCS URL, or pass ``web_base_url`` to shape alternate
+        CDN/application URLs.
         """
         asset = self.get(slug)
         if version != "latest":
@@ -487,7 +490,7 @@ def fetch_dataset(
 
 
 def gs_to_https(uri: str) -> str:
-    """Convert a gs:// object URI to the public storage.googleapis.com URL."""
+    """Convert a gs:// object URI to its storage.googleapis.com HTTPS URL."""
     if not uri.startswith("gs://"):
         if _is_url(uri):
             return uri
@@ -501,6 +504,14 @@ def gs_to_https(uri: str) -> str:
     return f"https://storage.googleapis.com/{bucket}/{quote(name)}"
 
 
+def gs_to_catalog_url(uri: str) -> str:
+    """Convert a shared bucket _catalog object URI to the public catalog CDN URL."""
+    bucket, object_name = split_gs_uri(uri)
+    if bucket == DEFAULT_BUCKET and object_name.startswith("_catalog/"):
+        return f"{DEFAULT_CATALOG_CDN_BASE_URL}/{quote(object_name)}"
+    return gs_to_https(uri)
+
+
 def gs_to_web_url(
     uri: str,
     *,
@@ -510,7 +521,7 @@ def gs_to_web_url(
 ) -> str:
     """Convert a GCS URI into a browser-facing URL.
 
-    The default strategy returns the public ``storage.googleapis.com`` URL.
+    The default strategy returns the ``storage.googleapis.com`` URL.
     Passing ``web_base_url`` without an explicit strategy selects the CDN-style
     strategy, mapping the object filename under ``{base}/{access_tier}/``.
     """

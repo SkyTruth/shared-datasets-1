@@ -21,6 +21,17 @@ https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
 The access tier is part of the contract so public layers can coexist with
 future logged-in/private layers.
 
+Public catalog reads use the shared CDN endpoint:
+
+```text
+https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv
+```
+
+Do not build new consumers on anonymous
+`https://storage.googleapis.com/skytruth-shared-datasets-1/...` reads. Direct
+public bucket access is a proof-of-concept bypass and is planned to be removed.
+Backend code should use Application Default Credentials.
+
 ### Backend/server data: one helper call
 
 Install the GCS extra from this repository:
@@ -85,7 +96,7 @@ print(ref.cache_path)   # None; resolve_dataset does not download bytes
 
 This package is currently distributed from GitHub, not PyPI.
 
-Public/browser-url-only usage:
+Public catalog/browser-url-only usage:
 
 ```bash
 pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"
@@ -147,11 +158,16 @@ pmtiles = catalog.resolve("wdpa-marine", "pmtiles", web_base_url="/pmtiles")
 assert pmtiles.url == "/pmtiles/public/wdpa-marine.pmtiles"
 ```
 
-To force current public GCS URLs while the bucket remains public:
+To inspect the underlying current GCS URL during the temporary public-bucket
+window:
 
 ```python
 pmtiles = catalog.resolve("wdpa-marine", "pmtiles", url_strategy="public_gcs")
 ```
+
+Do not use `url_strategy="public_gcs"` in production consumers. Direct public
+GCS object access is being removed; browser PMTiles should use the shared CDN,
+and backend data reads should use authenticated GCS.
 
 ## CLI
 
@@ -168,20 +184,22 @@ The CLI is useful for diagnostics. Production backend code should prefer
 `fetch_dataset(...)` or `resolve_dataset(...)` when authenticated GCS access is
 the normal path.
 
-## Private-Bucket Direction
+## Direct-Public-Bucket Removal Direction
 
-All current assets are `public`. Future private PMTiles can use the same shape
-with a different tier:
+The shared bucket is moving away from anonymous direct
+`storage.googleapis.com` access. Public PMTiles and private PMTiles use the same
+CDN URL shape with different tiers:
 
 ```text
+https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
 ```
 
-Browser clients should not authenticate directly to private GCS. The intended
-private model is:
+Browser clients should not authenticate directly to GCS. The intended model is:
 
 - backend/server code uses ADC/service accounts and this SDK;
 - browser PMTiles use `tiles.skytruth.org`;
+- public catalog reads use `https://tiles.skytruth.org/_catalog/`;
 - the consuming app issues Cloud CDN signed cookies only for users allowed to
   access private-tier PMTiles.
 

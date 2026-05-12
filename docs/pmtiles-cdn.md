@@ -41,6 +41,9 @@ The production Terraform stack owns:
   Terraform keeps it deployed but unrouted in CDN mode to avoid a destructive
   mode-switch cycle and preserve a fast rollback path.
 - A Cloud CDN backend bucket for `skytruth-shared-datasets-1`.
+- Public `_catalog/*` routes on `tiles.skytruth.org` so catalog CSV, generated
+  catalog web files, docs Markdown, and release indexes remain freely readable
+  after direct public GCS access is removed.
 - URL map rules from `/pmtiles/{access-tier}/{asset}.pmtiles` paths to
   canonical `latest/{asset}.pmtiles` objects, generated from active PMTiles
   catalog rows.
@@ -68,14 +71,15 @@ outputs, commit history, logs, or PR comments.
 
 ## Current Implementation State
 
-As of the May 5, 2026 cookie-mediated CDN prep:
+As of May 12, 2026:
 
-- `pmtiles_serving_mode` is still `redirect`.
+- `pmtiles_serving_mode` is `cdn`.
 - The managed certificate for `tiles.skytruth.org` is active.
-- Public managed folders and managed-folder `allUsers` objectViewer grants have
-  been applied for `_catalog/` and every current public asset root.
-- The bucket-wide `allUsers` objectViewer grant is still enabled as the
-  temporary bridge.
+- The bucket-wide `allUsers` objectViewer bridge is disabled in
+  `production.auto.tfvars`.
+- The URL map serves latest PMTiles through `/pmtiles/{tier}/{asset}.pmtiles`.
+- The URL map serves public catalog files through `/_catalog/*` so the catalog
+  remains freely readable after direct public GCS access is removed.
 - The backend bucket has signed request key
   `shared-datasets-pmtiles-v1`.
 - Secret Manager secret `pmtiles-cdn-signed-request-key` has enabled version
@@ -87,8 +91,9 @@ As of the May 5, 2026 cookie-mediated CDN prep:
   `734798842681-compute@developer.gserviceaccount.com` has
   `roles/secretmanager.secretAccessor` on the signing-key secret.
 
-Do not remove the bucket-wide public grant or switch to CDN mode until
-consuming apps that need private PMTiles have deployed signed-cookie support.
+Managed-folder `allUsers` grants for direct GCS reads are a temporary
+proof-of-concept bypass and should be removed after the `tiles.skytruth.org`
+catalog route and consumer PMTiles paths are verified.
 
 ## Temporary Redirect Mode
 
@@ -396,11 +401,13 @@ allowed to merge as silently skipped post-merge work.
 Workflow-only changes to `.github/workflows/pmtiles-cdn-sync.yml` do not trigger
 the readiness/apply workflow because they do not require a live Terraform apply.
 
-Live checks after CDN cutover:
+Live checks after CDN cutover and direct public GCS removal:
 
-- Public direct GCS asset still returns `200`.
+- Public direct GCS asset requests without credentials return `403`.
 - Private direct GCS asset returns `403`.
-- `_catalog/shared-datasets-catalog.csv` still returns `200`.
+- `https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv` returns
+  `200`.
+- `https://tiles.skytruth.org/_catalog/web/catalog.json` returns `200`.
 - Public CDN range request without a cookie returns `200` or `206`.
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.

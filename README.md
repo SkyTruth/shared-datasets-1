@@ -34,6 +34,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Asset layout, formats, and README requirements | `docs/standards/asset-layout-and-formats.md` |
 | Dataset README templates | `templates/dataset_README.template.md`, `templates/dataset_README.minimal.template.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
+| Consumer integration guide | `docs/consumer-guide.md` |
 | Tiered PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
@@ -86,6 +87,7 @@ When instructions conflict, follow this order:
 │   ├── categories.yaml
 │   └── shared-datasets-catalog.csv
 ├── docs/
+│   ├── consumer-guide.md
 │   ├── gcp-asset-operations.md
 │   ├── pmtiles-cdn.md
 │   ├── standards/

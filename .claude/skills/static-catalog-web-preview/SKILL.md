@@ -158,11 +158,11 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
    - Do not assume `fetch(..., { cache: "no-store" })` alone bypasses all GCS/browser stale-content cases.
 
 8. Public verification:
-   - Verify public headers:
+   - Verify public headers through the `tiles.skytruth.org` route:
 
 ```bash
-curl -I -sS 'https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/web/catalog.json?verify=<generation>'
-curl -I -sS 'https://storage.googleapis.com/skytruth-shared-datasets-1/path/to/asset/latest/asset.pmtiles?v=<sha256>'
+curl -I -sS 'https://tiles.skytruth.org/_catalog/web/catalog.json?verify=<generation>'
+curl -I -sS 'https://tiles.skytruth.org/pmtiles/public/asset.pmtiles?v=<sha256>'
 ```
 
    - Confirm:

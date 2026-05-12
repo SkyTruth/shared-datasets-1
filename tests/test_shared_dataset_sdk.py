@@ -19,6 +19,7 @@ if str(SDK_SRC) not in sys.path:
 from skytruth_shared_datasets import (  # noqa: E402
     Catalog,
     CatalogLoadError,
+    DEFAULT_CATALOG_URL,
     DEFAULT_PMTILES_CDN_BASE_URL,
     DatasetRef,
     DatasetNotFoundError,
@@ -26,6 +27,7 @@ from skytruth_shared_datasets import (  # noqa: E402
     UnsupportedFormatError,
     UnsupportedVersionError,
     fetch_dataset,
+    gs_to_catalog_url,
     gs_to_https,
     resolve_dataset,
     split_gs_uri,
@@ -124,6 +126,19 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 Catalog.load()
         self.assertIn("offline", str(raised.exception))
 
+    def test_default_catalog_url_uses_tiles_endpoint(self):
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append((request.full_url, timeout))
+            return io.BytesIO(FIXTURE_CSV.encode())
+
+        with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=fake_urlopen):
+            Catalog.load()
+
+        self.assertEqual(DEFAULT_CATALOG_URL, "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv")
+        self.assertEqual(calls, [(DEFAULT_CATALOG_URL, 10.0)])
+
     def test_default_load_raises_on_malformed_live_catalog(self):
         malformed_catalog = b"not,catalog\nx,y\n"
         with mock.patch("skytruth_shared_datasets.catalog.urlopen", return_value=io.BytesIO(malformed_catalog)):
@@ -160,6 +175,11 @@ class SharedDatasetSdkTests(unittest.TestCase):
         url = gs_to_https("gs://bucket/path with spaces/object.fgb")
 
         self.assertEqual(url, "https://storage.googleapis.com/bucket/path%20with%20spaces/object.fgb")
+
+    def test_gs_to_catalog_url_uses_tiles_for_shared_catalog_objects(self):
+        url = gs_to_catalog_url("gs://skytruth-shared-datasets-1/_catalog/releases/example asset.json")
+
+        self.assertEqual(url, "https://tiles.skytruth.org/_catalog/releases/example%20asset.json")
 
     def test_resolve_supports_canonical_and_companion_formats(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
@@ -257,6 +277,24 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 client=client,
                 web_base_url="/pmtiles",
             )
+
+    def test_public_versions_use_tiles_catalog_endpoint(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV.replace("gs://example-bucket/", "gs://skytruth-shared-datasets-1/"))
+        release_index = {
+            "asset_slug": "example-vector",
+            "releases": [],
+        }
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append((request.full_url, timeout))
+            return io.BytesIO(json.dumps(release_index).encode())
+
+        with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=fake_urlopen):
+            versions = catalog.versions("example-vector")
+
+        self.assertEqual(versions["asset_slug"], "example-vector")
+        self.assertEqual(calls, [("https://tiles.skytruth.org/_catalog/releases/example-vector.json", 10.0)])
 
     def test_dated_fetch_uses_exact_version_cache_path(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)

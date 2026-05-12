@@ -2,6 +2,7 @@
 
 from .catalog import (
     DEFAULT_CATALOG_GS_URI,
+    DEFAULT_CATALOG_CDN_BASE_URL,
     DEFAULT_CATALOG_URL,
     DEFAULT_PMTILES_CDN_BASE_URL,
     Catalog,
@@ -14,6 +15,7 @@ from .catalog import (
     UnsupportedFormatError,
     UnsupportedVersionError,
     fetch_dataset,
+    gs_to_catalog_url,
     gs_to_https,
     gs_to_web_url,
     resolve_dataset,
@@ -22,6 +24,7 @@ from .catalog import (
 
 __all__ = [
     "DEFAULT_CATALOG_GS_URI",
+    "DEFAULT_CATALOG_CDN_BASE_URL",
     "DEFAULT_CATALOG_URL",
     "DEFAULT_PMTILES_CDN_BASE_URL",
     "Catalog",
@@ -34,6 +37,7 @@ __all__ = [
     "UnsupportedFormatError",
     "UnsupportedVersionError",
     "fetch_dataset",
+    "gs_to_catalog_url",
     "gs_to_https",
     "gs_to_web_url",
     "resolve_dataset",

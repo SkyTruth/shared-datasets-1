@@ -190,7 +190,7 @@ resource "google_storage_bucket_iam_member" "shared_bucket_cloud_cdn_fill_object
 resource "google_compute_url_map" "pmtiles_cdn" {
   project     = var.project_id
   name        = "shared-datasets-pmtiles-cdn"
-  description = "Expose /pmtiles/{access-tier}/{asset}.pmtiles URLs backed by canonical shared dataset GCS objects."
+  description = "Expose shared dataset catalog and /pmtiles/{access-tier}/{asset}.pmtiles URLs backed by canonical shared dataset GCS objects."
 
   default_url_redirect {
     path_redirect          = "/pmtiles/"
@@ -210,6 +210,23 @@ resource "google_compute_url_map" "pmtiles_cdn" {
       path_redirect          = "/pmtiles/"
       redirect_response_code = "FOUND"
       strip_query            = true
+    }
+
+    path_rule {
+      paths   = ["/_catalog/*"]
+      service = google_compute_backend_bucket.pmtiles_cdn.self_link
+
+      route_action {
+        cors_policy {
+          allow_credentials = false
+          allow_headers     = ["Accept", "Content-Type", "Origin"]
+          allow_methods     = ["GET", "HEAD", "OPTIONS"]
+          allow_origins     = ["*"]
+          disabled          = false
+          expose_headers    = ["Cache-Control", "Content-Length", "Content-Type", "ETag"]
+          max_age           = 3600
+        }
+      }
     }
 
     dynamic "path_rule" {
@@ -256,6 +273,20 @@ resource "google_compute_url_map" "pmtiles_cdn" {
       service             = google_compute_backend_bucket.pmtiles_cdn.self_link
       expected_output_url = "https://${var.pmtiles_cdn_host}/${test.value}"
     }
+  }
+
+  test {
+    host                = var.pmtiles_cdn_host
+    path                = "/_catalog/shared-datasets-catalog.csv"
+    service             = google_compute_backend_bucket.pmtiles_cdn.self_link
+    expected_output_url = "https://${var.pmtiles_cdn_host}/_catalog/shared-datasets-catalog.csv"
+  }
+
+  test {
+    host                = var.pmtiles_cdn_host
+    path                = "/_catalog/web/catalog.json"
+    service             = google_compute_backend_bucket.pmtiles_cdn.self_link
+    expected_output_url = "https://${var.pmtiles_cdn_host}/_catalog/web/catalog.json"
   }
 
   depends_on = [google_project_service.required]
