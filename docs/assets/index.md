@@ -33,6 +33,7 @@
 | Asset | Subcategory | Status | Access tier | Formats | Canonical file |
 |---|---|---|---|---|---|
 | [ACLED Europe and Central Asia Weekly Admin 1 Aggregated Events](acled-europe-central-asia-aggregated-weekly-admin1.md) | 430-alerts-notices | active | private | `fgb;pmtiles` | `latest/acled-europe-central-asia-aggregated-weekly-admin1.fgb` |
+| [ACLED Middle East Weekly Admin 1 Aggregated Events](acled-middle-east-aggregated-weekly-admin1.md) | 430-alerts-notices | active | private | `fgb;pmtiles` | `latest/acled-middle-east-aggregated-weekly-admin1.fgb` |
 
 ## 500-conservation-ecosystems
 
