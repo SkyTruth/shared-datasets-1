@@ -34,7 +34,9 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
     def test_tiles_endpoint_serves_catalog_without_credentials(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 
-        self.assertIn('paths   = ["/_catalog/*"]', pmtiles_cdn_tf)
+        self.assertIn('"/_catalog/shared-datasets-catalog.csv"', pmtiles_cdn_tf)
+        self.assertIn('"/_catalog/web/catalog.json"', pmtiles_cdn_tf)
+        self.assertIn('"/_catalog/*"', pmtiles_cdn_tf)
         self.assertIn("allow_credentials = false", pmtiles_cdn_tf)
         self.assertIn('allow_origins     = ["*"]', pmtiles_cdn_tf)
         self.assertIn('path                = "/_catalog/shared-datasets-catalog.csv"', pmtiles_cdn_tf)

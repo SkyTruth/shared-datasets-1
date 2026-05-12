@@ -213,7 +213,11 @@ resource "google_compute_url_map" "pmtiles_cdn" {
     }
 
     path_rule {
-      paths   = ["/_catalog/*"]
+      paths = [
+        "/_catalog/shared-datasets-catalog.csv",
+        "/_catalog/web/catalog.json",
+        "/_catalog/*",
+      ]
       service = google_compute_backend_bucket.pmtiles_cdn.self_link
 
       route_action {
