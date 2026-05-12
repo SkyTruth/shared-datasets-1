@@ -94,14 +94,6 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Read current ingestion images
-        id: images
-        run: |
-          set -euo pipefail
-          echo "wdpa_monthly_image=$(gcloud run jobs describe wdpa-monthly --region=us-central1 --project=${GOOGLE_CLOUD_PROJECT} --format='value(spec.template.spec.template.spec.containers[0].image)')" >> "${GITHUB_OUTPUT}"
-          echo "sea_ice_daily_image=$(gcloud run jobs describe sea-ice-daily --region=us-central1 --project=${GOOGLE_CLOUD_PROJECT} --format='value(spec.template.spec.template.spec.containers[0].image)')" >> "${GITHUB_OUTPUT}"
-          echo "eamlis_monthly_image=$(gcloud run jobs describe eamlis-monthly --region=us-central1 --project=${GOOGLE_CLOUD_PROJECT} --format='value(spec.template.spec.template.spec.containers[0].image)')" >> "${GITHUB_OUTPUT}"
-
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 
@@ -109,10 +101,12 @@ jobs:
         run: |
           terraform -chdir=terraform/envs/prod plan \
             -input=false \
+            -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
-            -var="wdpa_monthly_image=${{ steps.images.outputs.wdpa_monthly_image }}" \
-            -var="sea_ice_daily_image=${{ steps.images.outputs.sea_ice_daily_image }}" \
-            -var="eamlis_monthly_image=${{ steps.images.outputs.eamlis_monthly_image }}"
+            -target=google_compute_url_map.pmtiles_cdn \
+            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
+            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
+            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
 
       - name: Export Terraform plan JSON
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
@@ -126,18 +120,7 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_compute_url_map.pmtiles_cdn",
-              "google_compute_backend_bucket.pmtiles_cdn",
           }
-          allowed_prefixes = (
-              "google_storage_managed_folder.shared_bucket_public_prefixes",
-              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
-          )
-
-          def changed_top_level_keys(before, after):
-              before = before or {}
-              after = after or {}
-              keys = set(before) | set(after)
-              return {key for key in keys if before.get(key) != after.get(key)}
 
           blocked = []
           for resource in plan.get("resource_changes", []):
@@ -145,15 +128,8 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
-              if address in allowed_exact or address.startswith(allowed_prefixes):
+              if address in allowed_exact:
                   continue
-              if address == "google_storage_bucket.shared_bucket":
-                  changed = changed_top_level_keys(
-                      resource.get("change", {}).get("before"),
-                      resource.get("change", {}).get("after"),
-                  )
-                  if changed <= {"cors"}:
-                      continue
               blocked.append(f"{'/'.join(actions)} {address}")
 
           if blocked:
