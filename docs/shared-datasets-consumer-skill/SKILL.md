@@ -19,7 +19,10 @@ Use this workflow when moving downstream repos off direct shared bucket URLs.
 2. Classify each hit by runtime surface:
    - Browser map PMTiles should use tiered `tiles.skytruth.org` URLs.
    - Private browser PMTiles need a backend signed-cookie session endpoint.
-   - Backend/server downloads or catalog resolution should use the Python SDK.
+   - Browser or service catalog discovery should use
+     `https://tiles.skytruth.org/_catalog/` or an app-owned backend/config API.
+   - Backend/server downloads or authenticated catalog resolution should use
+     the Python SDK.
    - Unrelated references, docs, tests, and comments should only change when
      they would otherwise keep the old integration pattern alive.
 3. Make the smallest coherent replacement. Prefer a tiny helper such as
@@ -45,13 +48,44 @@ Start here. Do not add more machinery than the consumer actually needs.
    record when callers request `version="latest"`. When both bytes and lineage
    are needed, call `fetch_dataset(...)` once; do not call
    `resolve_dataset(...)` and `fetch_dataset(...)` separately.
-3. For credentials, prefer runtime identity: Cloud Run, jobs, or CI should run
+3. Public catalog reads should use
+   `https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv` or
+   `https://tiles.skytruth.org/_catalog/web/catalog.json`, not anonymous direct
+   `storage.googleapis.com` bucket URLs.
+4. For credentials, prefer runtime identity: Cloud Run, jobs, or CI should run
    as an established runtime or reader service account that already has bucket
    read access. Do not create service account JSON keys.
-4. For browser map layers that may use private shared-dataset PMTiles, resolve
+5. For browser map layers that may use private shared-dataset PMTiles, resolve
    the PMTiles URL from the shared catalog `access_tier`, add a signed-cookie
    session endpoint in the consuming backend, and make PMTiles range requests
    with browser credentials included.
+
+## Catalog Discovery
+
+Use this when the consuming repo needs search, layer config, citations, schema
+notes, or release metadata.
+
+Public catalog reads use:
+
+```text
+https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv
+https://tiles.skytruth.org/_catalog/web/catalog.json
+https://tiles.skytruth.org/_catalog/web/index.html
+https://tiles.skytruth.org/_catalog/web/docs/assets/{asset-slug}.md
+https://tiles.skytruth.org/_catalog/releases/{asset-slug}.json
+```
+
+Do not build new consumer behavior on anonymous direct
+`https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/...` reads.
+Those direct bucket URLs are diagnostic or transitional only. Browser apps
+should use `tiles.skytruth.org/_catalog/`, a docs site, or an app-owned config
+API. Backend code that needs authenticated catalog resolution should use the SDK
+with Application Default Credentials.
+
+When generating app config from the catalog, preserve `access_tier`,
+`citation`, `license`, and `last_updated` where the UI or API displays
+provenance. Reject missing or unknown `access_tier` values instead of silently
+defaulting private assets to public.
 
 ## Frontend PMTiles
 
@@ -103,10 +137,12 @@ The access tier is part of the stable URL contract. Use the same
 `tiles.skytruth.org` URL in redirect mode and CDN mode; do not switch consumers
 back to `storage.googleapis.com` for CDN rollout or fallback behavior.
 
-Do not assume every PMTiles asset is public. The catalog can include private
-PMTiles; as of the cookie-mediated CDN rollout, `iucn-mammal-ranges` and
-`iucn-reptile-ranges` are private-tier PMTiles. If a consumer derives layers
-from the catalog, preserve `citation` in service-facing metadata and parse
+Do not assume every PMTiles asset is public. The catalog includes private
+PMTiles; as of May 12, 2026, examples include `global-coral-reefs`,
+`iucn-mammal-ranges`, `iucn-reptile-ranges`,
+`acled-europe-central-asia-aggregated-weekly-admin1`, and
+`acled-middle-east-aggregated-weekly-admin1`. If a consumer derives layers from
+the catalog, preserve `citation` in service-facing metadata and parse
 `access_tier` to emit:
 
 ```ts
@@ -116,14 +152,15 @@ from the catalog, preserve `citation` in service-facing metadata and parse
 When a config API caches shared-dataset layer config, bump the cache key after
 changing URL generation so stale direct GCS PMTiles URLs are flushed.
 
-In redirect mode, `public` PMTiles may be served by a temporary `307` redirect
-to public GCS. A final browser request to `storage.googleapis.com` is expected
-until CDN mode replaces the redirector. Private-tier paths should not be treated
-as readable in redirect mode.
+The current production mode is CDN mode. Successful PMTiles reads should stay
+on `tiles.skytruth.org` and return normal object or range responses such as
+`200` or `206`. Public-tier CDN access does not require signed cookies. Direct
+`storage.googleapis.com` PMTiles URLs are not a production fallback for shared
+dataset browser layers.
 
-In CDN mode, successful PMTiles reads should stay on `tiles.skytruth.org` and
-return normal object or range responses such as `200` or `206`. Public-tier CDN
-access does not require signed cookies.
+Redirect mode is retained as historical rollback machinery only. In that mode,
+public PMTiles may be served by a temporary `307` redirect to public GCS, but
+consumers should still keep the stable tiered `tiles.skytruth.org` URL.
 
 ## Private PMTiles Signed-Cookie Pattern
 
@@ -168,7 +205,8 @@ redirector serves `/pmtiles/*`. CDN backend-bucket mode cannot use regex
 origins: external URL-map CORS regexes are not allowed, and Cloud Armor edge
 policies on backend buckets cannot evaluate request-header expressions. Add
 each browser origin to `pmtiles_cdn_allowed_origins` as an exact origin before
-CDN cutover. Credentialed CORS cannot use `*`.
+deploying private PMTiles in that environment. Credentialed CORS cannot use
+`*`.
 
 The current exact CDN allowlist is `http://localhost:3000`,
 `https://localhost:3000`, `https://feature-three.cerulean.skytruth.org`,
@@ -272,9 +310,9 @@ features.
 7. Confirm CSP and CORS origins allow `https://tiles.skytruth.org`.
 8. Run the repo's lint, type, and build checks.
 9. Deploy to test, then develop, then production.
-10. After all consumers are deployed, shared-datasets can remove the bucket-wide
-    public grant, switch `pmtiles_serving_mode="cdn"`, invalidate `/pmtiles/*`,
-    and run live public/private checks.
+10. For new private-PMTiles environments, open the matching shared-datasets PR
+    for exact-origin CORS and signer-secret IAM, then let the protected
+    production workflow apply after merge.
 
 ## WDPA MPA Identity
 
@@ -358,7 +396,6 @@ repo's established deployment model:
 ```text
 Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
 30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
-Monitor:      shared-datasets-reader@skytruth-monitor.iam.gserviceaccount.com
 SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
 ```
 
@@ -398,6 +435,7 @@ Look for:
 ```text
 storage.googleapis.com/skytruth-shared-datasets-1
 tiles.skytruth.org/pmtiles/
+tiles.skytruth.org/_catalog/
 .pmtiles
 access_tier
 Cloud-CDN-Cookie
@@ -421,6 +459,9 @@ map-layer behavior.
   tiered URL.
 - If the repo reads the shared catalog, parse `access_tier` and do not preserve
   old direct GCS `pmtiles_url` overrides for shared-dataset layers.
+- If the repo reads public catalog files, use `https://tiles.skytruth.org/_catalog/`
+  or an app-owned backend/config API rather than direct
+  `storage.googleapis.com` bucket URLs.
 - Bump any config cache key that could retain old PMTiles URLs.
 - Keep PMTiles asset slugs lowercase kebab-case.
 - If private PMTiles are possible, add a backend session endpoint that issues
@@ -458,6 +499,8 @@ Add focused tests that prove:
   `https://tiles.skytruth.org/pmtiles/private/...`.
 - Catalog-derived PMTiles URLs use `access_tier`; tests should include at least
   one public and one private fixture row.
+- Public catalog reads use `https://tiles.skytruth.org/_catalog/...` or an
+  app-owned API, not direct public GCS URLs.
 - PMTiles layer source configuration does not hardcode
   `storage.googleapis.com`.
 - The PMTiles base URL is configurable by environment.
