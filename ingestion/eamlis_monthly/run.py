@@ -10,7 +10,6 @@ import os
 import re
 import sys
 import tempfile
-import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -22,6 +21,7 @@ from google.cloud import storage
 
 from ingestion.common import release_index
 from ingestion.common.gcs import GcsPublisher
+from ingestion.common.http import STATUS_SUCCESS, request_with_retries
 from ingestion.common.runtime import (
     configure_logging,
     remove_if_exists,
@@ -144,16 +144,19 @@ def request_json(url: str, params: dict[str, Any] | None = None) -> dict[str, An
         full_url,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
+    outcome, body = request_with_retries(
+        request,
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        response_reader=lambda response: response.read(),
+        opener=urllib.request.urlopen,
+        logger=LOGGER,
+    )
+    if outcome.status != STATUS_SUCCESS:
+        raise RuntimeError(
+            f"ArcGIS request failed with {outcome.reason or outcome.status}: {full_url}"
+        )
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            status = int(getattr(response, "status", response.getcode()))
-            if status >= 400:
-                raise RuntimeError(f"ArcGIS request failed with HTTP {status}: {full_url}")
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"ArcGIS request failed with HTTP {exc.code}: {full_url}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"ArcGIS request failed: {full_url}: {exc}") from exc
+        payload = json.loads((body or b"").decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"ArcGIS response was not JSON: {full_url}") from exc
     if "error" in payload:

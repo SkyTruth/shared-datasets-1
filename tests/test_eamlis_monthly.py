@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -100,6 +102,21 @@ class FakeClient:
         return self._bucket
 
 
+class FakeHttpResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = io.BytesIO(body)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._body.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> bool:
+        return False
+
+
 def sample_metadata(*, data_last_edit_date: int = 2000) -> dict:
     return {
         "serviceItemId": "service-1",
@@ -151,6 +168,48 @@ def sample_source_state(*, fingerprint_hash: str = "abc123", feature_count: int 
 
 
 class EamlisMonthlyTests(unittest.TestCase):
+    def test_request_json_retries_transient_transport_failure(self):
+        calls = []
+
+        def flaky(_request, *, timeout):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    "https://example.test/layer",
+                    500,
+                    "server error",
+                    hdrs=None,
+                    fp=None,
+                )
+            return FakeHttpResponse(200, b'{"ok": true}')
+
+        with (
+            mock.patch.object(eamlis.urllib.request, "urlopen", flaky),
+            mock.patch("ingestion.common.http.time.sleep"),
+        ):
+            payload = eamlis.request_json("https://example.test/layer", {"f": "json"})
+
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(len(calls), 2)
+
+    def test_request_json_rejects_non_json_response(self):
+        with mock.patch.object(
+            eamlis.urllib.request,
+            "urlopen",
+            return_value=FakeHttpResponse(200, b"not json"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not JSON"):
+                eamlis.request_json("https://example.test/layer", {"f": "json"})
+
+    def test_request_json_rejects_arcgis_application_error(self):
+        with mock.patch.object(
+            eamlis.urllib.request,
+            "urlopen",
+            return_value=FakeHttpResponse(200, b'{"error": {"message": "bad"}}'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ArcGIS returned an error"):
+                eamlis.request_json("https://example.test/layer", {"f": "json"})
+
     def test_source_fingerprint_includes_edit_dates_and_stats(self):
         metadata = sample_metadata(data_last_edit_date=1234)
         fields = eamlis.normalized_fields(metadata)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import json
 import shutil
 import tempfile
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
 from unittest import mock
@@ -76,6 +78,21 @@ class FakeClient:
         return self._bucket
 
 
+class FakeHttpResponse:
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = io.BytesIO(body)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._body.read(size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> bool:
+        return False
+
+
 class WdpaMonthlyTests(unittest.TestCase):
     def test_default_run_date_uses_month_start(self):
         self.assertEqual(
@@ -92,7 +109,7 @@ class WdpaMonthlyTests(unittest.TestCase):
 
     def test_download_missing_monthly_source_is_source_unavailable(self):
         def unavailable(_request, *, timeout):
-            raise wdpa.urllib.error.HTTPError(
+            raise urllib.error.HTTPError(
                 "https://example/missing.zip",
                 404,
                 "not found",
@@ -110,6 +127,32 @@ class WdpaMonthlyTests(unittest.TestCase):
                         "https://example/missing.zip",
                         Path(tmp) / "wdpa.zip",
                     )
+
+    def test_download_retries_transient_source_failure(self):
+        calls = []
+
+        def flaky(_request, *, timeout):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    "https://example/source.zip",
+                    500,
+                    "server error",
+                    hdrs=None,
+                    fp=None,
+                )
+            return FakeHttpResponse(200, b"zip-bytes")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "wdpa.zip"
+            with (
+                mock.patch.object(wdpa.urllib.request, "urlopen", flaky),
+                mock.patch("ingestion.common.http.time.sleep"),
+            ):
+                wdpa.download_file("https://example/source.zip", dest)
+
+            self.assertEqual(dest.read_bytes(), b"zip-bytes")
+            self.assertEqual(len(calls), 2)
 
     def test_run_skips_when_monthly_source_is_not_available_yet(self):
         bucket = FakeBucket()

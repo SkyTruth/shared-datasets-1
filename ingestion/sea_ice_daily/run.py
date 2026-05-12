@@ -12,7 +12,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +20,13 @@ from typing import Any
 from google.cloud import storage
 
 from ingestion.common.gcs import GcsPublisher
+from ingestion.common.http import (
+    STATUS_NOT_READY,
+    STATUS_SUCCESS,
+    STATUS_TRANSIENT,
+    RequestOutcome,
+    request_with_retries,
+)
 from ingestion.common.runtime import (
     configure_logging,
     remove_if_exists,
@@ -83,6 +89,12 @@ class AvailableSource:
     @property
     def documented_valid_date(self) -> dt.date:
         return documented_valid_date_for_filename_date(self.filename_date)
+
+
+@dataclass(frozen=True)
+class SourceLookupResult:
+    source: AvailableSource | None
+    source_request_warnings: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,40 +171,89 @@ def iter_source_days(anchor_day: dt.date, max_lookback_days: int):
         yield anchor_day - dt.timedelta(days=days_back)
 
 
-def source_exists(source_url: str, timeout_seconds: int = REQUEST_TIMEOUT_SECONDS) -> bool:
+def probe_source(source_url: str) -> RequestOutcome:
     request = urllib.request.Request(
         source_url,
         method="HEAD",
         headers={"User-Agent": USER_AGENT},
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            return int(getattr(response, "status", response.getcode())) < 400
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return False
-        raise RuntimeError(f"Source probe failed with HTTP {exc.code}: {source_url}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Source probe failed: {source_url}: {exc}") from exc
+    outcome, _payload = request_with_retries(
+        request,
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        not_ready_status_codes=frozenset({404}),
+        opener=urllib.request.urlopen,
+        logger=LOGGER,
+    )
+    return outcome
 
 
 def find_latest_available_source(
     source_template: str,
     anchor_day: dt.date,
     max_lookback_days: int,
-) -> AvailableSource:
+) -> SourceLookupResult:
+    source_request_warnings: list[dict[str, Any]] = []
     for source_day in iter_source_days(anchor_day, max_lookback_days):
         source_url = source_url_for_day(source_template, source_day)
         LOGGER.info("probing IMS source %s", source_url)
-        if source_exists(source_url):
-            return AvailableSource(
-                filename_date=source_day,
-                source_url=source_url,
-                source_filename=ims_filename_for_day(source_day),
+        probe_result = probe_source(source_url)
+        if probe_result.status == STATUS_SUCCESS:
+            return SourceLookupResult(
+                source=AvailableSource(
+                    filename_date=source_day,
+                    source_url=source_url,
+                    source_filename=ims_filename_for_day(source_day),
+                ),
+                source_request_warnings=tuple(source_request_warnings),
             )
-    raise FileNotFoundError(
+        if probe_result.status == STATUS_NOT_READY:
+            continue
+        if probe_result.status == STATUS_TRANSIENT:
+            warning = {
+                **probe_result.warning_payload(),
+                "source_date": source_day.isoformat(),
+            }
+            LOGGER.warning("skipping transient IMS source probe failure: %s", warning)
+            source_request_warnings.append(warning)
+            continue
+        raise RuntimeError(
+            f"Source probe failed with {probe_result.reason or probe_result.status}: "
+            f"{source_url}"
+        )
+    return SourceLookupResult(
+        source=None,
+        source_request_warnings=tuple(source_request_warnings),
+    )
+
+
+def add_source_request_warnings(
+    record: dict[str, Any],
+    source_request_warnings: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+) -> dict[str, Any]:
+    if source_request_warnings:
+        record["source_request_warnings"] = list(source_request_warnings)
+    return record
+
+
+def no_available_source_record(
+    *,
+    asset: AssetSpec,
+    anchor_day: dt.date,
+    max_lookback_days: int,
+    source_request_warnings: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    reason = (
         f"No IMS 4 km GeoTIFF available from {anchor_day.isoformat()} "
         f"within the last {max_lookback_days} day(s)"
+    )
+    return add_source_request_warnings(
+        {
+            "asset_slug": asset.slug,
+            "run_date": anchor_day.isoformat(),
+            "status": "skipped",
+            "reason": reason,
+        },
+        source_request_warnings,
     )
 
 
@@ -213,13 +274,24 @@ def run_command(
 def download_file(url: str, dest: Path) -> None:
     LOGGER.info("downloading IMS source: %s", url)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-        status = int(getattr(response, "status", response.getcode()))
-        if status >= 400:
-            raise RuntimeError(f"Download failed with HTTP {status}: {url}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    def write_response(response) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("wb") as file_obj:
             shutil.copyfileobj(response, file_obj)
+
+    outcome, _payload = request_with_retries(
+        request,
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        response_reader=write_response,
+        opener=urllib.request.urlopen,
+        logger=LOGGER,
+    )
+    if outcome.status != STATUS_SUCCESS:
+        raise RuntimeError(
+            f"Download failed with {outcome.reason or outcome.status}: {url}"
+        )
     if dest.stat().st_size == 0:
         raise RuntimeError(f"Downloaded zero-byte IMS source file: {url}")
 
@@ -491,6 +563,7 @@ def publish_outputs(
     asset: AssetSpec,
     outputs: AssetOutputs,
     source: DownloadedSource | AvailableSource,
+    source_request_warnings: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     run_date = source.filename_date
     metadata = metadata_for_source(asset=asset, source=source)
@@ -502,13 +575,16 @@ def publish_outputs(
             run_date,
             metadata,
         )
-        return {
-            "asset_slug": asset.slug,
-            "run_date": run_date.isoformat(),
-            "status": "skipped",
-            "release_index": release_index_info,
-            "latest_metadata": latest_metadata,
-        }
+        return add_source_request_warnings(
+            {
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "status": "skipped",
+                "release_index": release_index_info,
+                "latest_metadata": latest_metadata,
+            },
+            source_request_warnings,
+        )
 
     publisher.assert_no_partial_release(asset, run_date)
 
@@ -533,28 +609,31 @@ def publish_outputs(
         metadata=metadata,
     )
 
-    record = {
-        "record_version": RUN_RECORD_VERSION,
-        "asset_slug": asset.slug,
-        "run_date": run_date.isoformat(),
-        "status": "success",
-        "source": source.source_url,
-        "source_url": source.source_url,
-        "source_filename": source.source_filename,
-        "source_filename_date": source.filename_date.isoformat(),
-        "documented_valid_date": source.documented_valid_date.isoformat(),
-        "source_version": source.source_filename,
-        "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-        "release_paths": [release_fgb, release_pmtiles],
-        "latest_paths": [latest_fgb, latest_pmtiles],
-        "rows": outputs.row_count,
-        "sha256": outputs.sha256,
-        "notes": (
-            "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
-            "Release date and ice_date use the GeoTIFF filename date by repository "
-            "decision; NSIDC documents GeoTIFF imagery as valid for the next day."
-        ),
-    }
+    record = add_source_request_warnings(
+        {
+            "record_version": RUN_RECORD_VERSION,
+            "asset_slug": asset.slug,
+            "run_date": run_date.isoformat(),
+            "status": "success",
+            "source": source.source_url,
+            "source_url": source.source_url,
+            "source_filename": source.source_filename,
+            "source_filename_date": source.filename_date.isoformat(),
+            "documented_valid_date": source.documented_valid_date.isoformat(),
+            "source_version": source.source_filename,
+            "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
+            "release_paths": [release_fgb, release_pmtiles],
+            "latest_paths": [latest_fgb, latest_pmtiles],
+            "rows": outputs.row_count,
+            "sha256": outputs.sha256,
+            "notes": (
+                "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
+                "Release date and ice_date use the GeoTIFF filename date by repository "
+                "decision; NSIDC documents GeoTIFF imagery as valid for the next day."
+            ),
+        },
+        source_request_warnings,
+    )
     run_record = publisher.write_run_record(
         asset=asset,
         run_date=run_date,
@@ -606,26 +685,27 @@ def run() -> dict[str, Any]:
     )
 
     publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
-    try:
-        available_source = find_latest_available_source(
-            source_template=source_template,
+    lookup = find_latest_available_source(
+        source_template=source_template,
+        anchor_day=anchor_day,
+        max_lookback_days=max_lookback_days,
+    )
+    source_request_warnings = lookup.source_request_warnings
+    if lookup.source is None:
+        record = no_available_source_record(
+            asset=ASSET,
             anchor_day=anchor_day,
             max_lookback_days=max_lookback_days,
+            source_request_warnings=source_request_warnings,
         )
-    except FileNotFoundError as exc:
-        LOGGER.info("%s", exc)
-        record = {
-            "asset_slug": ASSET.slug,
-            "run_date": anchor_day.isoformat(),
-            "status": "skipped",
-            "reason": str(exc),
-        }
+        LOGGER.info("%s", record["reason"])
         record["release_index"] = publisher.update_latest_run_index(
             asset=ASSET,
             payload=record,
         )
         return record
 
+    available_source = lookup.source
     if publisher.successful_run_record(ASSET, available_source.filename_date):
         LOGGER.info(
             "%s already has a successful run record for %s",
@@ -641,18 +721,21 @@ def run() -> dict[str, Any]:
             available_source.filename_date,
             metadata_for_source(asset=ASSET, source=available_source),
         )
-        record = {
-            "asset_slug": ASSET.slug,
-            "run_date": anchor_day.isoformat(),
-            "status": "skipped",
-            "reason": "latest available source already published",
-            "source": available_source.source_url,
-            "source_url": available_source.source_url,
-            "source_filename": available_source.source_filename,
-            "source_filename_date": available_source.filename_date.isoformat(),
-            "documented_valid_date": available_source.documented_valid_date.isoformat(),
-            "source_version": available_source.source_filename,
-        }
+        record = add_source_request_warnings(
+            {
+                "asset_slug": ASSET.slug,
+                "run_date": anchor_day.isoformat(),
+                "status": "skipped",
+                "reason": "latest available source already published",
+                "source": available_source.source_url,
+                "source_url": available_source.source_url,
+                "source_filename": available_source.source_filename,
+                "source_filename_date": available_source.filename_date.isoformat(),
+                "documented_valid_date": available_source.documented_valid_date.isoformat(),
+                "source_version": available_source.source_filename,
+            },
+            source_request_warnings,
+        )
         if successful_release_index:
             record["successful_release_index"] = successful_release_index
         if latest_metadata:
@@ -681,6 +764,7 @@ def run() -> dict[str, Any]:
             asset=ASSET,
             outputs=outputs,
             source=downloaded,
+            source_request_warnings=source_request_warnings,
         )
 
 

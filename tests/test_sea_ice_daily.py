@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
@@ -159,6 +160,196 @@ ice_date: String (0.0)
             sea_ice.parse_text_layer_fields(text),
             ("DN", "ice_date"),
         )
+
+    def test_probe_source_uses_common_request_helper(self):
+        source_url = "https://example.test/source.tif.gz"
+        outcome = sea_ice.RequestOutcome(
+            status=sea_ice.STATUS_SUCCESS,
+            url=source_url,
+            attempts=1,
+            http_status=200,
+        )
+        with mock.patch.object(
+            sea_ice,
+            "request_with_retries",
+            return_value=(outcome, None),
+        ) as request_with_retries:
+            result = sea_ice.probe_source(source_url)
+
+        self.assertEqual(result, outcome)
+        request_with_retries.assert_called_once()
+        kwargs = request_with_retries.call_args.kwargs
+        self.assertEqual(kwargs["not_ready_status_codes"], frozenset({404}))
+        self.assertEqual(kwargs["timeout_seconds"], sea_ice.REQUEST_TIMEOUT_SECONDS)
+
+    def test_find_latest_available_source_continues_after_transient_probe(self):
+        anchor_day = dt.date(2026, 5, 12)
+
+        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
+            if "ims2026132" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_TRANSIENT,
+                    url=source_url,
+                    attempts=3,
+                    http_status=500,
+                    reason="HTTP 500",
+                )
+            if "ims2026131" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_SUCCESS,
+                    url=source_url,
+                    http_status=200,
+                    attempts=1,
+                )
+            self.fail(f"unexpected probe URL: {source_url}")
+
+        with mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe):
+            lookup = sea_ice.find_latest_available_source(
+                "https://example.test/{yyyy}/{file_name}",
+                anchor_day,
+                2,
+            )
+
+        self.assertIsNotNone(lookup.source)
+        self.assertEqual(lookup.source.filename_date, dt.date(2026, 5, 11))
+        self.assertEqual(len(lookup.source_request_warnings), 1)
+        self.assertEqual(lookup.source_request_warnings[0]["http_status"], 500)
+
+    def test_find_latest_available_source_continues_after_missing_probe(self):
+        anchor_day = dt.date(2026, 5, 12)
+
+        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
+            if "ims2026132" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_NOT_READY,
+                    url=source_url,
+                    http_status=404,
+                    attempts=1,
+                )
+            if "ims2026131" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_SUCCESS,
+                    url=source_url,
+                    http_status=200,
+                    attempts=1,
+                )
+            self.fail(f"unexpected probe URL: {source_url}")
+
+        with mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe):
+            lookup = sea_ice.find_latest_available_source(
+                "https://example.test/{yyyy}/{file_name}",
+                anchor_day,
+                2,
+            )
+
+        self.assertIsNotNone(lookup.source)
+        self.assertEqual(lookup.source.filename_date, dt.date(2026, 5, 11))
+        self.assertEqual(lookup.source_request_warnings, ())
+
+    def test_transient_probe_to_published_source_skips_without_uploads(self):
+        bucket = FakeBucket()
+        asset = sea_ice.ASSET
+        source_date = dt.date(2026, 5, 11)
+        run_record = bucket.blob(asset.run_record_object(source_date))
+        run_record.exists = True
+        run_record.text = json.dumps(
+            {
+                "status": "success",
+                "run_date": source_date.isoformat(),
+                "source_version": sea_ice.ims_filename_for_day(source_date),
+                "release_paths": [],
+                "latest_paths": [],
+            }
+        )
+
+        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
+            if "ims2026132" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_TRANSIENT,
+                    url=source_url,
+                    attempts=3,
+                    http_status=500,
+                    reason="HTTP 500",
+                )
+            if "ims2026131" in source_url:
+                return sea_ice.RequestOutcome(
+                    status=sea_ice.STATUS_SUCCESS,
+                    url=source_url,
+                    http_status=200,
+                    attempts=1,
+                )
+            self.fail(f"unexpected probe URL: {source_url}")
+
+        with (
+            mock.patch.dict(
+                sea_ice.os.environ,
+                {
+                    "RUN_DATE": "2026-05-12",
+                    "GOOGLE_CLOUD_PROJECT": "test-project",
+                    "SHARED_DATASETS_BUCKET": bucket.name,
+                    "SEA_ICE_SOURCE_URL_TEMPLATE": "https://example.test/{yyyy}/{file_name}",
+                    "SEA_ICE_MAX_LOOKBACK_DAYS": "2",
+                },
+            ),
+            mock.patch.object(sea_ice, "require_binary", return_value=None),
+            mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
+            mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
+            mock.patch.object(
+                sea_ice,
+                "download_source",
+                side_effect=AssertionError("published source should not download"),
+            ),
+        ):
+            record = sea_ice.run()
+
+        self.assertEqual(record["status"], "skipped")
+        self.assertEqual(record["source_filename_date"], "2026-05-11")
+        self.assertEqual(record["source_request_warnings"][0]["http_status"], 500)
+        self.assertFalse(bucket.blob(asset.release_object(source_date, ".fgb")).uploads)
+        self.assertFalse(bucket.blob(asset.latest_object(".fgb")).uploads)
+
+    def test_repeated_transient_probes_skip_without_release_uploads(self):
+        bucket = FakeBucket()
+        asset = sea_ice.ASSET
+
+        def fake_probe(source_url: str) -> sea_ice.RequestOutcome:
+            return sea_ice.RequestOutcome(
+                status=sea_ice.STATUS_TRANSIENT,
+                url=source_url,
+                attempts=3,
+                http_status=500,
+                reason="HTTP 500",
+            )
+
+        with (
+            mock.patch.dict(
+                sea_ice.os.environ,
+                {
+                    "RUN_DATE": "2026-05-12",
+                    "GOOGLE_CLOUD_PROJECT": "test-project",
+                    "SHARED_DATASETS_BUCKET": bucket.name,
+                    "SEA_ICE_SOURCE_URL_TEMPLATE": "https://example.test/{yyyy}/{file_name}",
+                    "SEA_ICE_MAX_LOOKBACK_DAYS": "2",
+                },
+            ),
+            mock.patch.object(sea_ice, "require_binary", return_value=None),
+            mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
+            mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
+            mock.patch.object(
+                sea_ice,
+                "download_source",
+                side_effect=AssertionError("no source should not download"),
+            ),
+        ):
+            record = sea_ice.run()
+
+        self.assertEqual(record["status"], "skipped")
+        self.assertEqual(len(record["source_request_warnings"]), 2)
+        for source_date in (dt.date(2026, 5, 12), dt.date(2026, 5, 11)):
+            self.assertFalse(bucket.blob(asset.release_object(source_date, ".fgb")).uploads)
+            self.assertFalse(
+                bucket.blob(asset.release_object(source_date, ".pmtiles")).uploads
+            )
 
     def test_publish_uses_release_no_clobber_and_latest_generation(self):
         bucket = FakeBucket()

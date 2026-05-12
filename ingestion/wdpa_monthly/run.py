@@ -16,7 +16,6 @@ import shlex
 import shutil
 import sys
 import tempfile
-import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -26,6 +25,11 @@ from typing import Any
 from google.cloud import storage
 
 from ingestion.common.gcs import GcsPublisher
+from ingestion.common.http import (
+    STATUS_NOT_READY,
+    STATUS_SUCCESS,
+    request_with_retries,
+)
 from ingestion.common.runtime import (
     configure_logging,
     content_type_for as content_type_for,
@@ -191,25 +195,27 @@ def download_file(url: str, dest: Path) -> None:
         url,
         headers={"User-Agent": USER_AGENT},
     )
-    try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            status = int(getattr(response, "status", response.getcode()))
-            if status in SOURCE_NOT_READY_STATUS_CODES:
-                raise SourceNotAvailableError(
-                    f"WDPA source not available yet (HTTP {status}): {url}"
-                )
-            if status >= 400:
-                raise RuntimeError(f"Download failed with HTTP {status}: {url}")
-            with dest.open("wb") as file_obj:
-                shutil.copyfileobj(response, file_obj)
-    except urllib.error.HTTPError as exc:
-        if exc.code in SOURCE_NOT_READY_STATUS_CODES:
-            raise SourceNotAvailableError(
-                f"WDPA source not available yet (HTTP {exc.code}): {url}"
-            ) from exc
-        raise RuntimeError(f"Download failed with HTTP {exc.code}: {url}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Download failed: {url}: {exc}") from exc
+
+    def write_response(response) -> None:
+        with dest.open("wb") as file_obj:
+            shutil.copyfileobj(response, file_obj)
+
+    outcome, _payload = request_with_retries(
+        request,
+        timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        not_ready_status_codes=SOURCE_NOT_READY_STATUS_CODES,
+        response_reader=write_response,
+        opener=urllib.request.urlopen,
+        logger=LOGGER,
+    )
+    if outcome.status == STATUS_NOT_READY:
+        raise SourceNotAvailableError(
+            f"WDPA source not available yet ({outcome.reason}): {url}"
+        )
+    if outcome.status != STATUS_SUCCESS:
+        raise RuntimeError(
+            f"Download failed with {outcome.reason or outcome.status}: {url}"
+        )
     if dest.stat().st_size == 0:
         raise RuntimeError(f"Downloaded zero-byte source file: {url}")
 
