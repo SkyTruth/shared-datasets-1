@@ -408,6 +408,7 @@ Live checks after CDN cutover and direct public GCS removal:
 - `https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv` returns
   `200`.
 - `https://tiles.skytruth.org/_catalog/web/catalog.json` returns `200`.
+- `https://tiles.skytruth.org/_catalog/web/index.html` returns `200`.
 - Public CDN range request without a cookie returns `200` or `206`.
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.
@@ -430,3 +431,23 @@ gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
 
 Prefer targeted invalidations. Use `/pmtiles/*` only for broad emergency
 rollbacks.
+
+Catalog objects use revalidating cache metadata, but stale redirect responses
+from URL-map changes can persist at the edge. After PMTiles CDN URL-map changes
+that affect `/_catalog/*`, or after observing stale redirects from catalog
+paths to `/pmtiles/`, invalidate the catalog prefix:
+
+```bash
+gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
+  --path="/_catalog/*" \
+  --project=shared-datasets-1
+```
+
+Then verify the exact catalog URLs without following redirects. Each first
+response must be `200` with the expected content type:
+
+```bash
+curl -sS -o /dev/null -D - https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv
+curl -sS -o /dev/null -D - https://tiles.skytruth.org/_catalog/web/catalog.json
+curl -sS -o /dev/null -D - https://tiles.skytruth.org/_catalog/web/index.html
+```

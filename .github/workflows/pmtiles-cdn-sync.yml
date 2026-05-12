@@ -141,3 +141,47 @@ jobs:
 
       - name: Terraform apply
         run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
+
+      - name: Invalidate catalog CDN cache
+        run: |
+          gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
+            --path="/_catalog/*" \
+            --project="${GOOGLE_CLOUD_PROJECT}"
+
+      - name: Verify catalog CDN routes
+        run: |
+          set -euo pipefail
+
+          check_catalog_url() {
+            local url="$1"
+            local expected_content_type="$2"
+            local headers
+            local status
+            local content_type
+
+            for attempt in {1..12}; do
+              headers="$(mktemp)"
+              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
+                status="curl-error"
+              fi
+              content_type="$(awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
+
+              if [[ "$status" == "200" && "$content_type" == *"$expected_content_type"* ]]; then
+                echo "$url returned $status with $content_type"
+                rm -f "$headers"
+                return 0
+              fi
+
+              echo "Attempt ${attempt}: $url returned $status with ${content_type:-missing content-type}; expected 200 and ${expected_content_type}"
+              cat "$headers"
+              rm -f "$headers"
+              sleep 10
+            done
+
+            echo "Catalog CDN route verification failed for $url" >&2
+            return 1
+          }
+
+          check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"
+          check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
+          check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
