@@ -190,7 +190,7 @@ resource "google_storage_bucket_iam_member" "shared_bucket_cloud_cdn_fill_object
 resource "google_compute_url_map" "pmtiles_cdn" {
   project     = var.project_id
   name        = "shared-datasets-pmtiles-cdn"
-  description = "Expose shared dataset catalog and /pmtiles/{access-tier}/{asset}.pmtiles URLs backed by canonical shared dataset GCS objects."
+  description = "Expose the shared dataset catalog and tiered PMTiles URLs backed by canonical shared dataset GCS objects."
 
   default_url_redirect {
     path_redirect          = "/pmtiles/"
