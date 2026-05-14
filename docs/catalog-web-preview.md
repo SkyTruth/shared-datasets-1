@@ -185,12 +185,16 @@ if fully offline/self-contained hosting becomes a requirement.
 
 ## Deploy
 
-After trusted pushes to `main`, `.github/workflows/catalog-web-deploy.yml`
+After trusted PRs merge to `main`, `.github/workflows/catalog-web-deploy.yml`
 rebuilds the catalog web bundle and publishes both `_catalog/web/` and the root
 `_catalog/shared-datasets-catalog.csv` contract with the approved publisher
 identity, generation preconditions, and `no-cache, max-age=0,
-must-revalidate`. The live catalog drift guard runs after that deploy workflow
-completes so it does not race the object promotion.
+must-revalidate`. This workflow is the normal PR-backed promotion path for
+repo-generated catalog web changes. Do not also add a
+`shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
+web deploy workflow will run from the same PR; that duplicates the promotion and
+can race the automatic deploy. The live catalog drift guard runs after that
+deploy workflow completes so it does not race the object promotion.
 
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
 explicit. Manual catalog web deployments should stage files under

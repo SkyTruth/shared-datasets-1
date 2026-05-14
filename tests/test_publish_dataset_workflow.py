@@ -100,6 +100,27 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn("upload-summary", apply_step[summary_index:delete_index])
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", apply_step[summary_index:delete_index])
 
+    def test_catalog_json_publish_plan_is_idempotent_after_catalog_web_deploy(self):
+        workflow = WORKFLOW.read_text()
+        step = workflow.split("name: Promote approved staged objects", 1)[1].split(
+            "name: Delete approved canonical objects",
+            1,
+        )[0]
+
+        self.assertIn("catalog_json_destination_already_current", step)
+        self.assertIn("_catalog/web/catalog.json", step)
+        self.assertIn("generated_at", step)
+        self.assertIn("destination_blob.content_type", step)
+        self.assertIn("destination_blob.cache_control", step)
+        self.assertIn("cache-control metadata", step)
+
+        stat_index = step.index('"stat", promotion["source_uri"]')
+        skip_index = step.index("if catalog_json_destination_already_current(promotion):")
+        copy_index = step.index('"scripts/gcs_asset.py",\n                  "copy"')
+
+        self.assertLess(stat_index, skip_index)
+        self.assertLess(skip_index, copy_index)
+
 
 if __name__ == "__main__":
     unittest.main()
