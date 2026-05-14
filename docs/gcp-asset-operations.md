@@ -23,8 +23,10 @@ Do not use Cloud Storage FUSE for canonical writes.
 
 Canonical writes are controlled. Humans and general-purpose agents should stage
 manual publish bytes under `_scratch/pending-publishes/` and promote approved
-objects through the GitHub `Approved dataset mutation` workflow under the
-`shared-datasets-production` environment.
+objects only through an explicit PR with a fenced publish or delete plan. After
+that PR merges, the GitHub `Approved dataset mutation` workflow promotes the
+planned objects under the `shared-datasets-production` environment. Do not use
+standalone workflow dispatch or single-object fallback inputs to bypass a PR.
 Direct local writes to `latest/`, `releases/`, dataset README files, or
 `_catalog/` are reserved for the approved publisher identity or documented
 break-glass response.
@@ -50,8 +52,9 @@ uv run python scripts/gcs_asset.py upload ./local-file \
 2. Download it if editing.
 3. Make local changes.
 4. Stage the edited file under `_scratch/pending-publishes/`.
-5. Promote through the approved publisher workflow, passing the destination
-   generation as the workflow `destination_generation` precondition.
+5. Open an explicit PR with a fenced publish plan, then promote through the
+   approved publisher workflow after merge, passing the destination generation
+   as the workflow `destination_generation` precondition.
 6. Update README/catalog when relevant, including `citation` when source
    publication metadata changes.
 

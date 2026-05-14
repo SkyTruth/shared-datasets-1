@@ -9,8 +9,9 @@ For the shared datasets project:
 - **`uv`** manages local Python dependencies and runs the repo CLI.
 - **`gcloud storage`** is allowed for human diagnostics, emergency downloads,
   and documented break-glass operations. Manual canonical writes should still
-  stage under `_scratch/pending-publishes/` and promote through the approved
-  publisher workflow.
+  stage under `_scratch/pending-publishes/` and promote only through an
+  explicit PR with a fenced publish or delete plan and the approved publisher
+  workflow after merge.
 - **Cloud Storage FUSE** is allowed only for read-heavy exploration, not canonical writes.
 - **Terraform/Pulumi should not manage frequently changing dataset objects.**
 
@@ -36,8 +37,9 @@ The repo controls both cloud automation and the organization of a shared data bu
 - We can make no-clobber and generation preconditions the default.
 - Terraform remains clean and focused on infrastructure.
 - Manual object edits become easier to audit because they stage under
-  `_scratch/pending-publishes/` and promote through the approved publisher
-  workflow; exceptional break-glass edits must be documented.
+  `_scratch/pending-publishes/` and promote only through an explicit PR and the
+  approved publisher workflow after merge; exceptional break-glass edits must be
+  documented.
 
 ## Implementation
 

@@ -26,8 +26,10 @@ documented break-glass operations.
 Do not use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical
 dataset uploads/edits. Do not perform canonical writes from a local human or
 agent terminal; stage manual publish bytes under `_scratch/pending-publishes/`
-and promote approved objects through the GitHub `Approved dataset mutation`
-workflow under the `shared-datasets-production` environment.
+and promote approved objects only through an explicit PR with a fenced publish
+or delete plan. After that PR merges, the GitHub `Approved dataset mutation`
+workflow runs under the `shared-datasets-production` environment. Do not use
+standalone workflow dispatch or single-object fallback inputs to bypass a PR.
 
 ## Required Environment
 
@@ -165,7 +167,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py delete \
 Use this read-modify-write pattern for remote README or metadata edits only
 under the approved publisher identity or documented break-glass path. Local
 agents should download/read for inspection, stage edited bytes under
-`_scratch/pending-publishes/`, and promote through GitHub approval:
+`_scratch/pending-publishes/`, and promote through an explicit PR:
 
 ```bash
 URI=gs://$SHARED_DATASETS_BUCKET/path/to/README.md
@@ -212,9 +214,10 @@ gcloud storage cp gs://$SHARED_DATASETS_BUCKET/README.md \
 Do not use ad hoc `gcloud storage cp` commands as hidden production automation
 when a repo script/job should exist. Do not use local `gcloud storage cp` for
 canonical writes; stage manual bytes under `_scratch/pending-publishes/` and
-promote them through the approved publisher workflow. For documented
-break-glass or approved publisher-identity work, prefer `scripts/gcs_asset.py`
-so generation preconditions and metadata are explicit.
+promote them only through an explicit PR and the approved publisher workflow
+after merge. For documented break-glass or approved publisher-identity work,
+prefer `scripts/gcs_asset.py` so generation preconditions and metadata are
+explicit.
 
 ## Cloud Storage FUSE
 

@@ -191,6 +191,22 @@ For normal asset metadata changes:
    Compute duplicate counts over non-empty candidate values: duplicate values
    are distinct values appearing more than once, and duplicate rows are all rows
    carrying those repeated values.
+   - `search_fields`: curator-selected high-value search/filter fields such as
+     names, labels, site names, region names, or source grouping labels. Keep
+     these separate from provider identity candidates.
+   - `generated_group_id`: required when the canonical artifact has a
+     generated `shared_datasets_group_id` column. Record the column, algorithm,
+     grouping fields, token length, group count, blank group count when
+     applicable, and stability note.
+   During dataset creation, present the curator with likely provider-ID
+   candidates and likely grouping/search fields from `publishing_concierge.py`.
+   Do not generate `shared_datasets_group_id` until the curator-selected
+   grouping field is known.
+   If `generated_group_id` is present, `shared_datasets_group_id` must be a
+   native property/column in the canonical FGB/table and must be preserved in
+   PMTiles feature properties. For vector builds, pass
+   `--group-id-field FIELD` to `scripts/vector_asset.py build`; the helper
+   automatically validates that the column survives both artifacts.
 6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
    band semantics, dtype, nodata, units, scale/offset, and sampling where
    applicable.
@@ -241,10 +257,11 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 ```
 
 For normal dataset metadata changes, stage the rebuilt `catalog.json` under
-`_scratch/pending-publishes/{asset-slug-or-catalog}/{proposal-id}/` and promote
-it to the deployed path with a generation precondition through the approved
-publisher workflow. The deployed object should keep no-cache metadata; capture
-the current destination generation and pass it to the workflow as
+`_scratch/pending-publishes/{asset-slug-or-catalog}/{proposal-id}/` and include
+it in an explicit PR with a fenced publish plan. The approved publisher workflow
+promotes it to the deployed path with a generation precondition only after that
+PR merges. The deployed object should keep no-cache metadata; capture the
+current destination generation and pass it to the workflow as
 `destination_generation`:
 
 ```bash
@@ -252,9 +269,10 @@ DEST=gs://skytruth-shared-datasets-1/_catalog/web
 UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$DEST/catalog.json"
 ```
 
-Local agents should stage the file under `_scratch/pending-publishes/` and use
-the GitHub workflow to promote it, passing the workflow `cache_control` input
-with `no-cache, max-age=0, must-revalidate`.
+Local agents should stage the file under `_scratch/pending-publishes/` and
+record it in the PR publish plan, passing the workflow `cache_control` input
+with `no-cache, max-age=0, must-revalidate`. Do not use standalone workflow
+dispatch or single-object fallback inputs to bypass a PR.
 
 If the dataset publish replaced same-path PMTiles display artifacts, also set
 no-cache metadata on the affected `latest/*.pmtiles` and
@@ -368,9 +386,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     `Approved dataset mutation` workflow verifies `jonaraphael` acceptance and
     promotes the listed staged objects under the `shared-datasets-production`
     environment. If GitHub blocks self-review because `jonaraphael` authored the
-    PR, the merged PR is treated as restricted self-acceptance, and
-    `jonaraphael` may also dispatch that workflow with the PR number as a
-    fallback. Both paths apply the same plan validation.
+    PR, the merged PR is treated as restricted self-acceptance. Promotion still
+    requires that explicit PR; do not use standalone workflow dispatch or
+    single-object fallback inputs to bypass the PR.
     If the asset doc changes `access_tier`, rely on the protected
     `catalog-web-deploy` and `pmtiles-cdn-sync` workflows after merge to update
     `_catalog/web`, PMTiles CDN routes, and public managed-folder IAM. Do not
@@ -484,10 +502,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     `Approved dataset mutation` workflow verifies `jonaraphael` acceptance and
     promotes the listed staged objects under the `shared-datasets-production`
     environment. If GitHub blocks self-review because `jonaraphael` authored the
-    PR, the merged PR is treated as restricted self-acceptance, and
-    `jonaraphael` may also dispatch that workflow with the PR number as a
-    fallback. Order the publish plan so dated release objects come before
-    `latest/` replacements, and run records and
+    PR, the merged PR is treated as restricted self-acceptance. Promotion still
+    requires that explicit PR; do not use standalone workflow dispatch or
+    single-object fallback inputs to bypass the PR. Order the publish plan so
+    dated release objects come before `latest/` replacements, and run records and
     `_catalog/releases/{asset-slug}.json` come only after the object metadata
     they describe has been promoted.
 16. Verify the new version: release objects exist, `latest/` points to or
@@ -551,9 +569,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    dataset mutation` workflow verifies `jonaraphael` acceptance and deletes the
    listed objects under the publisher identity using exact generation
    preconditions. If GitHub blocks self-review because `jonaraphael` authored
-   the PR, the merged PR is treated as restricted self-acceptance, and
-   `jonaraphael` may also dispatch that workflow with the PR number as a
-   fallback.
+   the PR, the merged PR is treated as restricted self-acceptance. Deletion
+   still requires that explicit PR; do not use standalone workflow dispatch or
+   single-object fallback inputs to bypass the PR.
 9. Verify the deletion: the live object is absent, no unintended objects were
    touched, catalog/release-index references no longer point at deleted paths,
    delete alerts/logs show the publisher identity, and any residual uncertainty
@@ -574,10 +592,11 @@ For a new manual asset:
 6. Stage manual publish bytes under
    `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with no-clobber
    behavior.
-7. Promote reviewed canonical objects through the GitHub `Approved dataset
-   mutation` workflow, which runs under the `shared-datasets-production`
-   environment and approved publisher identity. Do not mutate canonical paths
-   directly from a local human or agent terminal.
+7. Promote reviewed canonical objects only through an explicit PR with a fenced
+   publish plan and the GitHub `Approved dataset mutation` workflow after merge.
+   The workflow runs under the `shared-datasets-production` environment and
+   approved publisher identity. Do not mutate canonical paths directly from a
+   local human or agent terminal.
 8. Use `releases/YYYY-MM-DD/` when the asset is cron-updated, multi-project
    critical, difficult to recreate, or needs reproducible snapshots.
 9. Verify remote paths and object metadata.

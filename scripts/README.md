@@ -144,9 +144,10 @@ with GDAL and converts them with `pmtiles convert`.
 
 The helper does not upload anything. Stage manual publish candidates under
 `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with
-`scripts/gcs_asset.py upload`, then promote reviewed canonical objects through
-the approved GitHub publisher workflow so no-clobber and generation
-preconditions stay enforced.
+`scripts/gcs_asset.py upload`, then reference those staged objects from an
+explicit PR with a fenced publish plan. After the PR merges, the approved GitHub
+publisher workflow promotes the reviewed canonical objects so no-clobber and
+generation preconditions stay enforced.
 
 Publishing concierge planning lives in:
 

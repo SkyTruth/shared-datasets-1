@@ -69,11 +69,15 @@ The runtime `catalog.json` includes the CSV catalog fields, including
 publication or authoritative dataset release. Optional discovery fields in
 asset-doc frontmatter are emitted when present: `bounds` as
 `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
-`data_profile`, `source_url`, and frontmatter `license_flags` merged with
-license-text-derived flags. `data_profile` carries curated at-a-glance profiling
-facts such as column count, identity-field candidates, distinct values, duplicate
-counts, and short profile notes. These fields are additive so existing CSV and
-JSON consumers can ignore them.
+`data_profile`, `search_fields`, `generated_group_id`, `source_url`, and
+frontmatter `license_flags` merged with license-text-derived flags.
+`data_profile` carries curated at-a-glance profiling facts such as column count,
+provider identity-field candidates, distinct values, duplicate counts, and short
+profile notes. `search_fields` surfaces curator-selected high-value filter
+fields that are not provider IDs. `generated_group_id` records the policy and
+counts for a native `shared_datasets_group_id` feature property when an asset
+needs generated group IDs. These fields are additive so existing CSV and JSON
+consumers can ignore them.
 
 ## Validate
 
@@ -191,11 +195,13 @@ completes so it does not race the object promotion.
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
 explicit. Manual catalog web deployments should stage files under
 `_scratch/pending-publishes/catalog-web/{proposal-id}/` and promote approved
-objects through the `Approved dataset mutation` GitHub workflow. New files should
-use no-clobber promotion. Existing files should be replaced only after reading
-the current generation. Pass the workflow `cache_control` input for
-`catalog.json` and any other cache-sensitive replacement that needs no-cache
-metadata.
+objects only through an explicit PR with a fenced publish plan. After that PR
+merges, the `Approved dataset mutation` GitHub workflow applies the plan. Do not
+use standalone workflow dispatch or single-object fallback inputs for catalog
+refreshes. New files should use no-clobber promotion. Existing files should be
+replaced only after reading the current generation. Pass the workflow
+`cache_control` input for `catalog.json` and any other cache-sensitive
+replacement that needs no-cache metadata.
 
 Publisher-identity CLI reference only:
 
