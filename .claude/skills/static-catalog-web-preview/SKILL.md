@@ -141,6 +141,11 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
 6. Safe GCS deployment:
    - Stage manual deployment files under `_scratch/pending-publishes/catalog-web/{proposal-id}/`.
    - Promote approved objects through the GitHub `Approved dataset mutation` workflow.
+   - For repo-generated catalog web changes that will trigger
+     `.github/workflows/catalog-web-deploy.yml` after the PR merges, treat that
+     workflow as the PR-backed promotion path and do not also include
+     `_catalog/web/catalog.json` in a `shared-datasets-publish-plan`; the
+     duplicate promotion can race the automatic deploy.
    - Stat existing objects before replacement and use the returned generation as the workflow destination precondition.
    - Pass the workflow `cache_control` input for `catalog.json`, PMTiles, and other cache-sensitive replacements when no-cache metadata is required.
    - Use no-clobber promotion for new objects.

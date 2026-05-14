@@ -695,6 +695,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import copy
           import csv
           import json
           import os
@@ -703,8 +704,74 @@ jobs:
           import subprocess
           import tempfile
 
+          from google.api_core.exceptions import NotFound
+
+          from scripts import gcs_asset
+
           schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
           bucket = os.environ["SHARED_DATASETS_BUCKET"]
+          catalog_web_catalog_uri = f"gs://{bucket}/_catalog/web/catalog.json"
+          ignored_generated_at = "<ignored-generated-at>"
+
+          def normalize_catalog_json(text, *, label):
+              payload = json.loads(text)
+              if not isinstance(payload, dict):
+                  raise ValueError(f"{label} must be a JSON object")
+              generated_at = payload.get("generated_at")
+              if not isinstance(generated_at, str) or not generated_at.strip():
+                  raise ValueError(f"{label} generated_at must be a non-empty string")
+              normalized = copy.deepcopy(payload)
+              normalized["generated_at"] = ignored_generated_at
+              return normalized
+
+          def catalog_json_destination_already_current(promotion):
+              if promotion["destination_uri"] != catalog_web_catalog_uri:
+                  return False
+
+              client = gcs_asset.get_client()
+              destination_blob = gcs_asset.get_blob(promotion["destination_uri"])
+              try:
+                  destination_blob.reload()
+              except NotFound:
+                  return False
+
+              if promotion["content_type"] and destination_blob.content_type != promotion["content_type"]:
+                  return False
+              if promotion["cache_control"] and destination_blob.cache_control != promotion["cache_control"]:
+                  return False
+
+              source_bucket, source_name = gcs_asset.parse_gs_uri(promotion["source_uri"])
+              destination_bucket, destination_name = gcs_asset.parse_gs_uri(promotion["destination_uri"])
+              source_blob = client.bucket(source_bucket).blob(
+                  source_name,
+                  generation=int(promotion["source_generation"]),
+              )
+              current_destination_blob = client.bucket(destination_bucket).blob(
+                  destination_name,
+                  generation=int(destination_blob.generation),
+              )
+
+              try:
+                  source_payload = normalize_catalog_json(
+                      source_blob.download_as_text(),
+                      label=promotion["source_uri"],
+                  )
+                  destination_payload = normalize_catalog_json(
+                      current_destination_blob.download_as_text(),
+                      label=promotion["destination_uri"],
+                  )
+              except (json.JSONDecodeError, ValueError):
+                  return False
+
+              if source_payload != destination_payload:
+                  return False
+
+              print(
+                  "Skipping catalog.json promotion because the destination already matches "
+                  "the staged source after ignoring generated_at, with matching content "
+                  "type and cache-control metadata."
+              )
+              return True
 
           def catalog_row(asset_slug):
               with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
@@ -743,6 +810,8 @@ jobs:
                   ["uv", "run", "python", "scripts/gcs_asset.py", "stat", promotion["source_uri"]],
                   check=True,
               )
+              if catalog_json_destination_already_current(promotion):
+                  continue
               args = [
                   "uv",
                   "run",
