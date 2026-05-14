@@ -35,9 +35,6 @@ data_profile:
     duplicate_row_count: 17490
     status: non_unique
     notes: Metadata link, not row-unique
-search_fields:
-- field: NAME
-  notes: Curator-selected human-readable grouping/search field for named reef features.
 files:
 - path: latest/global-coral-reefs.fgb
   format: fgb
