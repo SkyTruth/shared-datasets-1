@@ -36,6 +36,7 @@ bounds:
 geometry_type: MultiPolygon
 row_count: 14052
 data_profile:
+  field_count: 29
   identity_candidates:
   - field: id_no
     distinct_values: 10116

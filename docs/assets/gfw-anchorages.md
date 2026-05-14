@@ -25,6 +25,7 @@ notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points
 row_count: 166496
 data_profile:
+  field_count: 10
   identity_candidates:
   - field: s2id
     distinct_values: 166496

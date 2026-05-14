@@ -397,6 +397,26 @@ class CatalogDocsTests(unittest.TestCase):
                     allow_legacy=False,
                 )
 
+    def test_data_profile_requires_field_count(self):
+        profile = (
+            "data_profile:\n"
+            "  identity_candidates: []\n"
+            "  notes: No documented ext_id candidate\n"
+        )
+        bad_doc = STRICT_DOC.replace("row_count: 12345\n", "row_count: 12345\n" + profile, 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "data_profile.field_count is required"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
     def test_update_cadence_rejects_unchanged_skip_detail(self):
         bad_doc = STRICT_DOC.replace("update_cadence: manual", "update_cadence: monthly, skipped when unchanged")
         with tempfile.TemporaryDirectory() as tmp:

@@ -27,6 +27,7 @@ notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footpr
   inspection; canonical FGB preserves the source WKT geometry as an envelope only
 row_count: 1
 data_profile:
+  field_count: 0
   identity_candidates: []
   notes: No attribute fields
 pmtiles_detail_hint: coarse

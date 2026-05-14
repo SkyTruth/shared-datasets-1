@@ -206,7 +206,8 @@ data_profile:
 ```
 
 Use the canonical artifact, not a source file or PMTiles display artifact, for
-these counts. `field_count` is the number of published non-geometry columns.
+these counts. `field_count` is required whenever `data_profile` is present and
+is the number of published non-geometry columns.
 For identifier candidates, prefer stable source IDs, registry IDs, or fields
 documented as identifiers. Count distinct and duplicate values after excluding
 null/blank candidate values. `duplicate_value_count` is the number of distinct

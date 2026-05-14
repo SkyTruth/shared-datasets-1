@@ -25,6 +25,7 @@ notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. PMTiles were reb
   source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 2632
 data_profile:
+  field_count: 2
   identity_candidates: []
   notes: No unique ID candidate; DN/ice_date are class/time attributes
 source_resolution_meters: 4000

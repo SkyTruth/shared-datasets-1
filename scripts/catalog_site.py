@@ -363,9 +363,13 @@ def optional_data_profile(metadata: dict[str, Any], *, row_count: int | None, do
         raise CatalogSiteError(f"{doc_path}: data_profile must be a mapping")
 
     normalized: dict[str, Any] = {}
-    field_count = profile_int(raw_profile.get("field_count"), label="data_profile.field_count", doc_path=doc_path)
-    if field_count is not None:
-        normalized["field_count"] = field_count
+    field_count = profile_int(
+        raw_profile.get("field_count"),
+        label="data_profile.field_count",
+        doc_path=doc_path,
+        required=True,
+    )
+    normalized["field_count"] = field_count
 
     raw_candidates = raw_profile.get("identity_candidates", [])
     if raw_candidates in (None, ""):
