@@ -277,15 +277,17 @@ Git and history:
   reviewed mutation workflow includes creating a focused branch, staging only
   related repo metadata and workflow files, committing, pushing, and opening a
   PR that requests review from `jonaraphael`, unless `jonaraphael` is also the
-  PR author or the user asks to stop before PR. The automatic canonical
-  mutation path runs only after the PR merges to `main`; a merged PR must have
-  an approved review from `jonaraphael`, except self-authored `jonaraphael` PRs
-  are treated as restricted self-acceptance after merge and may also use the
-  `Approved dataset mutation` workflow_dispatch `pr_number` fallback. If GitHub
-  blocks the reviewer request because `jonaraphael` authored the PR, record that
-  in the PR. This exception does not permit staging unrelated files, amending
-  history, applying Terraform, or mutating canonical GCS objects from a local
-  terminal.
+  PR author or the user asks to stop before PR. Every canonical object
+  promotion or deletion must be represented in an explicit PR with a fenced
+  publish or delete plan. The automatic canonical mutation path runs only after
+  that PR merges to `main`; a merged PR must have an approved review from
+  `jonaraphael`, except self-authored `jonaraphael` PRs are treated as
+  restricted self-acceptance after merge. Do not promote or delete canonical
+  objects through standalone workflow dispatch, single-object fallback inputs,
+  or any other path that is not tied to an explicit PR. If GitHub blocks the
+  reviewer request because `jonaraphael` authored the PR, record that in the PR.
+  This exception does not permit staging unrelated files, amending history,
+  applying Terraform, or mutating canonical GCS objects from a local terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
 
