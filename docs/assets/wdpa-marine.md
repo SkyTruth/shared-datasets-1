@@ -24,6 +24,21 @@ citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Pr
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. Release history, source versions, row counts, and
   file hashes are recorded in the bucket release index and per-run records. The 2026-05-04 PMTiles were rebuilt at maxzoom
   12 from the published FGB profile; pmtiles sha256 963e851bf7f0952a9eee321074d77bd071bc935e74692932569a98fa4801ed8e
+row_count: 17657
+data_profile:
+  identity_candidates:
+  - field: SITE_ID
+    distinct_values: 17343
+    duplicate_value_count: 152
+    duplicate_row_count: 466
+    status: non_unique
+    notes: Not unique
+  - field: SITE_PID
+    distinct_values: 17657
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/wdpa-marine.fgb
   format: fgb

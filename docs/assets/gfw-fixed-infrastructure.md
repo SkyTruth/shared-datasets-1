@@ -23,6 +23,15 @@ citation: 'Global Fishing Watch (2026). Fixed infrastructure detections from Sen
 notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
   pmtiles sha256 c2a3c96f98ef38a8ac1db217b8d42008d0c4c874581947e84a6c59521839ff1e; PMTiles rebuilt 2026-05-04 at maxzoom 12
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 57681 points; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
+row_count: 57681
+data_profile:
+  identity_candidates:
+  - field: structure_id
+    distinct_values: 57681
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/gfw-fixed-infrastructure.fgb
   format: fgb

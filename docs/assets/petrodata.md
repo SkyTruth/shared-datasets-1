@@ -26,6 +26,14 @@ notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles 
   PMTiles maxzoom 9 from sampled FGB geometry detail
 geometry_type: MultiPolygon
 row_count: 1273
+data_profile:
+  identity_candidates:
+  - field: PRIMKEY
+    distinct_values: 1270
+    duplicate_value_count: 3
+    duplicate_row_count: 6
+    status: non_unique
+    notes: 'Duplicate source rows preserved: AL001PET, TU006PET, TU009PET'
 files:
 - path: latest/petrodata.fgb
   format: fgb

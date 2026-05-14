@@ -23,6 +23,15 @@ notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-
   166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
   pmtiles sha256 54d8a622cf6f426aa78dc9cbffae89a57212f5c428e6fd2218e414718f8e8cdd; PMTiles rebuilt 2026-05-04 at maxzoom 12
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points
+row_count: 166496
+data_profile:
+  identity_candidates:
+  - field: s2id
+    distinct_values: 166496
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/gfw-anchorages.fgb
   format: fgb

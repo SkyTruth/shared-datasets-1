@@ -25,6 +25,19 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   sha256 387d9999983a2cf9916ce3d7d496c45319ed8196eccfe9b3d2e8622b82756869; point fgb sha256 a81fcf8264e397fe08cd2655ad580cf36da6fea6010e830b97947fb091bb8ccf;
   pmtiles sha256 2e33c2bbbf0942d0b692e663815177c47f87a008a5206451e0e293f8af82b7b6; PMTiles rebuilt 2026-05-04 at maxzoom 12
   from the multi-layer FGB profile with polygon detail and point-layer retention
+row_count: 17504
+data_profile:
+  field_count: 18
+  identity_candidates:
+  - field: METADATA_I
+    distinct_values: 79
+    duplicate_value_count: 65
+    duplicate_row_count: 17490
+    status: non_unique
+    notes: Metadata link, not row-unique
+search_fields:
+- field: NAME
+  notes: Curator-selected human-readable grouping/search field for named reef features.
 files:
 - path: latest/global-coral-reefs.fgb
   format: fgb
@@ -97,6 +110,8 @@ The canonical analytical file is the polygon layer. A companion point layer is r
 This is a format conversion from the local source shapefiles `WCMC008_CoralReef2018_Py_v4_1.shp` and `WCMC008_CoralReef2018_Pt_v4_1.shp` to FlatGeobuf and PMTiles. Source field names and values are preserved. The polygon output was promoted to multipolygon geometry and repaired with GDAL `-makevalid`.
 
 The local source package contains 17,504 polygon features and 925 point features. The source metadata states that the dataset was collected from 1954-2009, version 4.1 was released in March 2021, and corrections are made on an ad hoc basis.
+
+No provider row-level external ID is documented for the polygon layer. `METADATA_I` is a low-cardinality metadata grouping value, not a unique feature identifier. Use `NAME` for human-readable search/filter workflows. If this asset is rebuilt with generated shared-datasets group IDs, `NAME` should be the curated grouping field and `shared_datasets_group_id` must be written as a native property in both the FGB and PMTiles artifacts.
 
 ## Properties / columns
 

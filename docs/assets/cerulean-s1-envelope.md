@@ -25,6 +25,10 @@ notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footpr
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
   PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-6, no simplification, and synthetic source_layer property for catalog
   inspection; canonical FGB preserves the source WKT geometry as an envelope only
+row_count: 1
+data_profile:
+  identity_candidates: []
+  notes: No attribute fields
 pmtiles_detail_hint: coarse
 files:
 - path: latest/cerulean-s1-envelope.fgb

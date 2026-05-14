@@ -35,6 +35,14 @@ bounds:
 - 71.18811
 geometry_type: MultiPolygon
 row_count: 14052
+data_profile:
+  identity_candidates:
+  - field: id_no
+    distinct_values: 10116
+    duplicate_value_count: 1867
+    duplicate_row_count: 5803
+    status: non_unique
+    notes: Taxon ID, not feature-unique
 pmtiles_maxzoom: 6
 pmtiles_maxzoom_reason: Simplified display artifact for coarse global range-map preview; canonical FGB remains the analytical
   geometry.

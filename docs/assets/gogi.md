@@ -30,7 +30,21 @@ notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip s
   rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties, Tippecanoe v2.79.0, and low-zoom
   point retention
 geometry_type: mixed
-row_count: 1623469
+row_count: 411521
+data_profile:
+  identity_candidates:
+  - field: ORIG_FID
+    distinct_values: 94448
+    duplicate_value_count: 33590
+    duplicate_row_count: 350663
+    status: non_unique
+    notes: Not row-unique
+  - field: MD_Fkey
+    distinct_values: 81
+    duplicate_value_count: 80
+    duplicate_row_count: 411519
+    status: non_unique
+    notes: Metadata/group key, not row-unique
 files:
 - path: latest/gogi-pipelines.fgb
   format: fgb

@@ -32,6 +32,12 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique
+  - field: MRGID_EEZ
+    distinct_values: 285
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/marine-regions-eez.fgb
   format: fgb

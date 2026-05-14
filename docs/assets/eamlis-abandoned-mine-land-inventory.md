@@ -24,6 +24,27 @@ notes: Monthly job publishes FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 a
   with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for all-point retention; pmtiles sha256 09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4.
   Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records.
   Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
+row_count: 63112
+data_profile:
+  identity_candidates:
+  - field: AMLIS_KEY
+    distinct_values: 24427
+    duplicate_value_count: 13141
+    duplicate_row_count: 51826
+    status: non_unique
+    notes: Expected grouping key, not row-unique
+  - field: OBJECTID
+    distinct_values: 63112
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
+  - field: PROBLEM_KEY
+    distinct_values: 63087
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique among non-empty values; 25 null/empty
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb

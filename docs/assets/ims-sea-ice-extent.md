@@ -23,6 +23,10 @@ citation: 'U.S. National Ice Center (2008). IMS Daily Northern Hemisphere Snow a
 notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 8 from the 4000-meter
   source-resolution hint; pmtiles sha256 66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d. Release history,
   source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+row_count: 2632
+data_profile:
+  identity_candidates: []
+  notes: No unique ID candidate; DN/ice_date are class/time attributes
 source_resolution_meters: 4000
 files:
 - path: latest/ims-sea-ice-extent.fgb
