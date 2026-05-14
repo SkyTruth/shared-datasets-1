@@ -77,6 +77,7 @@ FRONTMATTER_KEYS = [
     "bounds",
     "geometry_type",
     "row_count",
+    "data_profile",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -91,6 +92,7 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "bounds",
     "geometry_type",
     "row_count",
+    "data_profile",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -107,6 +109,7 @@ LIFECYCLE_FIELDS = [
 LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS = ["lifecycle_reason", "lifecycle_date", "consumer_guidance"]
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
 
 REQUIRED_SCALAR_FIELDS = [
     "asset_slug",
@@ -458,7 +461,102 @@ def validate_lifecycle_metadata(path: Path, metadata: dict[str, Any]) -> None:
         raise CatalogDocsError(f"{path}: superseded assets require successor_asset_slug")
 
 
+def profile_int(
+    value: Any,
+    *,
+    label: str,
+    path: Path,
+    required: bool = False,
+    row_count: int | None = None,
+) -> int | None:
+    if value in (None, ""):
+        if required:
+            raise CatalogDocsError(f"{path}: {label} is required")
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError) as error:
+        raise CatalogDocsError(f"{path}: {label} must be an integer") from error
+    if numeric < 0:
+        raise CatalogDocsError(f"{path}: {label} must be non-negative")
+    if row_count is not None and numeric > row_count:
+        raise CatalogDocsError(f"{path}: {label} must not exceed row_count")
+    return numeric
+
+
+def validate_identity_candidate(candidate: Any, *, index: int, path: Path, row_count: int | None) -> None:
+    context = f"data_profile.identity_candidates[{index}]"
+    if not isinstance(candidate, dict):
+        raise CatalogDocsError(f"{path}: {context} must be a mapping")
+    if not as_text(candidate.get("field")).strip():
+        raise CatalogDocsError(f"{path}: {context}.field is required")
+    status = as_text(candidate.get("status")).strip().lower().replace("-", "_")
+    if status not in IDENTITY_CANDIDATE_STATUSES:
+        allowed = ", ".join(sorted(IDENTITY_CANDIDATE_STATUSES))
+        raise CatalogDocsError(f"{path}: {context}.status must be one of: {allowed}")
+    duplicate_value_count = profile_int(
+        candidate.get("duplicate_value_count"),
+        label=f"{context}.duplicate_value_count",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+    duplicate_row_count = profile_int(
+        candidate.get("duplicate_row_count"),
+        label=f"{context}.duplicate_row_count",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+    profile_int(
+        candidate.get("distinct_values"),
+        label=f"{context}.distinct_values",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+    if status == "unique" and (duplicate_value_count or duplicate_row_count):
+        raise CatalogDocsError(f"{path}: {context} is marked unique but has duplicate counts")
+
+
+def validate_most_unique_field(value: Any, *, path: Path, row_count: int | None) -> None:
+    if value in (None, ""):
+        return
+    context = "data_profile.most_unique_field"
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: {context} must be a mapping")
+    if not as_text(value.get("field")).strip():
+        raise CatalogDocsError(f"{path}: {context}.field is required")
+    profile_int(
+        value.get("distinct_values"),
+        label=f"{context}.distinct_values",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+
+
+def validate_data_profile(path: Path, metadata: dict[str, Any], *, row_count: int | None) -> None:
+    profile = metadata.get("data_profile")
+    if profile in (None, ""):
+        return
+    if not isinstance(profile, dict):
+        raise CatalogDocsError(f"{path}: data_profile must be a mapping")
+    profile_int(profile.get("field_count"), label="data_profile.field_count", path=path)
+    candidates = profile.get("identity_candidates", [])
+    if candidates in (None, ""):
+        candidates = []
+    if not isinstance(candidates, list):
+        raise CatalogDocsError(f"{path}: data_profile.identity_candidates must be a list")
+    for index, candidate in enumerate(candidates, start=1):
+        validate_identity_candidate(candidate, index=index, path=path, row_count=row_count)
+    validate_most_unique_field(profile.get("most_unique_field"), path=path, row_count=row_count)
+    if "notes" in profile and profile["notes"] not in (None, "") and not as_text(profile["notes"]).strip():
+        raise CatalogDocsError(f"{path}: data_profile.notes must be non-empty when provided")
+
+
 def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -> None:
+    row_count: int | None = None
     if "bounds" in metadata and metadata["bounds"] not in (None, ""):
         bounds = metadata["bounds"]
         if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
@@ -478,6 +576,7 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be an integer") from error
         if row_count < 0:
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
+    validate_data_profile(path, metadata, row_count=row_count)
     if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):
         try:
             resolution = float(metadata["source_resolution_meters"])

@@ -43,6 +43,16 @@ const elements = {
   geometry: document.querySelector("#detail-geometry"),
   rowCountCard: document.querySelector("#detail-row-count-card"),
   rowCount: document.querySelector("#detail-row-count"),
+  fieldCountCard: document.querySelector("#detail-field-count-card"),
+  fieldCount: document.querySelector("#detail-field-count"),
+  identityFieldCard: document.querySelector("#detail-identity-field-card"),
+  identityField: document.querySelector("#detail-identity-field"),
+  distinctValuesCard: document.querySelector("#detail-distinct-values-card"),
+  distinctValues: document.querySelector("#detail-distinct-values"),
+  duplicateSummaryCard: document.querySelector("#detail-duplicate-summary-card"),
+  duplicateSummary: document.querySelector("#detail-duplicate-summary"),
+  profileNoteCard: document.querySelector("#detail-profile-note-card"),
+  profileNote: document.querySelector("#detail-profile-note"),
   boundsCard: document.querySelector("#detail-bounds-card"),
   bounds: document.querySelector("#detail-bounds"),
   gs: document.querySelector("#detail-gs"),
@@ -367,6 +377,7 @@ function searchableText(asset) {
       asset.geometry_type,
       formatRowCount(asset.row_count),
       formatBounds(asset.bounds),
+      searchableDataProfile(asset.data_profile),
       asset.source,
       asset.source_url,
       asset.license,
@@ -540,10 +551,10 @@ function renderDetail(asset) {
   elements.licenseText.textContent = asset.license || "Unknown";
   elements.citation.textContent = asset.citation || "Unknown";
   renderLifecycle(asset);
-  renderDiscoveryMetadata(asset);
   renderSourceUrl(asset);
   renderVersionSelector(asset);
   const reference = selectedReference(asset);
+  renderDiscoveryMetadata(asset, reference);
   elements.gs.textContent = reference.canonical_path;
   elements.url.textContent = reference.public_url;
   renderLicenseNote(asset);
@@ -699,10 +710,15 @@ function renderLicenseNote(asset) {
   elements.licenseNote.textContent = `Reuse limits: ${actionableFlags.join(", ")}.`;
 }
 
-function renderDiscoveryMetadata(asset) {
+function renderDiscoveryMetadata(asset, reference = selectedReference(asset)) {
   setOptionalMeta(elements.geometryCard, elements.geometry, asset.geometry_type);
-  setOptionalMeta(elements.rowCountCard, elements.rowCount, formatRowCount(asset.row_count));
+  setOptionalMeta(elements.rowCountCard, elements.rowCount, formatRowCount(effectiveRowCount(asset, reference)));
   setOptionalMeta(elements.boundsCard, elements.bounds, formatBounds(asset.bounds));
+  setOptionalMeta(elements.fieldCountCard, elements.fieldCount, formatInteger(profileFieldCount(asset)));
+  setOptionalMeta(elements.identityFieldCard, elements.identityField, formatIdentityField(asset));
+  setOptionalMeta(elements.distinctValuesCard, elements.distinctValues, formatDistinctValues(asset));
+  setOptionalMeta(elements.duplicateSummaryCard, elements.duplicateSummary, formatDuplicateSummary(asset));
+  setOptionalMeta(elements.profileNoteCard, elements.profileNote, profileNote(asset));
 }
 
 function setOptionalMeta(card, valueElement, value) {
@@ -717,6 +733,130 @@ function formatRowCount(value) {
   }
   const numeric = Number(value);
   return Number.isFinite(numeric) ? new Intl.NumberFormat("en").format(numeric) : String(value);
+}
+
+function formatInteger(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? new Intl.NumberFormat("en").format(numeric) : String(value);
+}
+
+function effectiveRowCount(asset, reference) {
+  if (reference?.rows !== null && reference?.rows !== undefined && reference?.rows !== "") {
+    return reference.rows;
+  }
+  return asset.row_count;
+}
+
+function dataProfile(asset) {
+  return asset?.data_profile && typeof asset.data_profile === "object" ? asset.data_profile : null;
+}
+
+function identityCandidates(asset) {
+  const candidates = dataProfile(asset)?.identity_candidates;
+  return Array.isArray(candidates) ? candidates.filter((candidate) => candidate && typeof candidate === "object") : [];
+}
+
+function primaryIdentityCandidate(asset) {
+  const candidates = identityCandidates(asset);
+  return candidates.find((candidate) => candidate.status === "unique") || candidates[0] || null;
+}
+
+function mostUniqueField(asset) {
+  const value = dataProfile(asset)?.most_unique_field;
+  return value && typeof value === "object" ? value : null;
+}
+
+function profileFieldCount(asset) {
+  return dataProfile(asset)?.field_count;
+}
+
+function formatIdentityField(asset) {
+  const candidate = primaryIdentityCandidate(asset);
+  if (!candidate?.field) {
+    return "";
+  }
+  const status = formatCandidateStatus(candidate.status);
+  return status ? `${candidate.field} (${status})` : candidate.field;
+}
+
+function formatCandidateStatus(status) {
+  const labels = {
+    unique: "unique",
+    non_unique: "not unique",
+    unknown: "unknown",
+    not_applicable: "not applicable",
+  };
+  return labels[String(status || "")] || "";
+}
+
+function formatDistinctValues(asset) {
+  const candidate = primaryIdentityCandidate(asset);
+  if (candidate?.distinct_values !== null && candidate?.distinct_values !== undefined) {
+    return formatInteger(candidate.distinct_values);
+  }
+  const field = mostUniqueField(asset);
+  if (field?.distinct_values === null || field?.distinct_values === undefined) {
+    return "";
+  }
+  return field.field ? `${field.field}: ${formatInteger(field.distinct_values)}` : formatInteger(field.distinct_values);
+}
+
+function formatDuplicateSummary(asset) {
+  const candidate = primaryIdentityCandidate(asset);
+  if (!candidate) {
+    return "";
+  }
+  const duplicateValues =
+    candidate.duplicate_value_count === null || candidate.duplicate_value_count === undefined
+      ? ""
+      : formatInteger(candidate.duplicate_value_count);
+  const duplicateRows =
+    candidate.duplicate_row_count === null || candidate.duplicate_row_count === undefined
+      ? ""
+      : formatInteger(candidate.duplicate_row_count);
+  if (!duplicateValues && !duplicateRows) {
+    return "";
+  }
+  return `${duplicateValues || "0"} values / ${duplicateRows || "0"} rows`;
+}
+
+function profileNote(asset) {
+  const profile = dataProfile(asset);
+  if (!profile) {
+    return "";
+  }
+  const notes = String(profile.notes || "").trim();
+  if (notes) {
+    return notes;
+  }
+  const candidateNote = String(primaryIdentityCandidate(asset)?.notes || "").trim();
+  return /^unique$/i.test(candidateNote) ? "" : candidateNote;
+}
+
+function searchableDataProfile(profile) {
+  if (!profile || typeof profile !== "object") {
+    return "";
+  }
+  const candidates = Array.isArray(profile.identity_candidates) ? profile.identity_candidates : [];
+  return [
+    profile.field_count,
+    profile.notes,
+    profile.most_unique_field?.field,
+    profile.most_unique_field?.distinct_values,
+    ...candidates.flatMap((candidate) => [
+      candidate?.field,
+      candidate?.status,
+      candidate?.distinct_values,
+      candidate?.duplicate_value_count,
+      candidate?.duplicate_row_count,
+      candidate?.notes,
+    ]),
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .join(" ");
 }
 
 function formatBounds(bounds) {

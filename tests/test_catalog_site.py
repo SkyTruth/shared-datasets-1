@@ -39,6 +39,18 @@ bounds:
 - 40.125
 geometry_type: Polygon
 row_count: 12345
+data_profile:
+  field_count: 8
+  identity_candidates:
+  - field: source_id
+    distinct_values: 12345
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
+  most_unique_field:
+    field: source_id
+    distinct_values: 12345
 files:
 - path: latest/example-asset.fgb
   format: fgb
@@ -163,6 +175,13 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["bounds"], [-10.5, 20.25, 30.75, 40.125])
         self.assertEqual(asset["geometry_type"], "Polygon")
         self.assertEqual(asset["row_count"], 12345)
+        self.assertEqual(asset["data_profile"]["field_count"], 8)
+        self.assertEqual(asset["data_profile"]["identity_candidates"][0]["field"], "source_id")
+        self.assertEqual(asset["data_profile"]["identity_candidates"][0]["distinct_values"], 12345)
+        self.assertEqual(asset["data_profile"]["identity_candidates"][0]["duplicate_value_count"], 0)
+        self.assertEqual(asset["data_profile"]["identity_candidates"][0]["duplicate_row_count"], 0)
+        self.assertEqual(asset["data_profile"]["identity_candidates"][0]["status"], "unique")
+        self.assertEqual(asset["data_profile"]["most_unique_field"]["field"], "source_id")
         self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertEqual(asset["citation"], "Example citation")
         self.assertIn("Reusable example boundary dataset", asset["description"])
@@ -228,6 +247,70 @@ class CatalogSiteTests(unittest.TestCase):
             (docs_dir / "example-asset.md").write_text(bad_doc)
 
             with self.assertRaisesRegex(catalog_site.CatalogSiteError, "row_count must be an integer"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_data_profile_rejects_negative_counts(self):
+        bad_doc = DOC.replace("duplicate_value_count: 0", "duplicate_value_count: -1", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "duplicate_value_count must be non-negative"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_data_profile_rejects_distinct_values_above_row_count(self):
+        bad_doc = DOC.replace("distinct_values: 12345", "distinct_values: 12346", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "distinct_values must not exceed row_count"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_data_profile_rejects_missing_candidate_field(self):
+        bad_doc = DOC.replace("field: source_id", "field: ''", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "field is required"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_data_profile_rejects_invalid_status(self):
+        bad_doc = DOC.replace("status: unique", "status: best", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "status must be one of"):
                 catalog_site.build_catalog_payload(
                     catalog_path=catalog_path,
                     categories_path=categories_path,

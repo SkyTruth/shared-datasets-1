@@ -22,6 +22,22 @@ citation: Flanders Marine Institute (2018). IHO Sea Areas, version 3. Available 
 notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
   PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
   from sampled FGB geometry detail with local tile and browser QA
+row_count: 101
+data_profile:
+  field_count: 10
+  identity_candidates:
+  - field: ID
+    distinct_values: 101
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
+  - field: MRGID
+    distinct_values: 101
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/iho-world-seas.fgb
   format: fgb

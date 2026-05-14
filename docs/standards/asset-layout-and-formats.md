@@ -177,6 +177,8 @@ Required fields:
 - Schema notes or field notes.
 - Property/column table with names, types, and short explanations where these
   can be derived from the source data or source documentation.
+- For vector and table assets, frontmatter `row_count` and `data_profile`
+  summary metadata used by the browser catalog cards.
 - Raster metadata table for canonical COG or Zarr assets, including CRS,
   resolution, dimensions, band semantics, dtype, nodata, units, scale/offset,
   and sampling where applicable.
@@ -184,6 +186,40 @@ Required fields:
 
 If property explanations are unknown, still list names/types and say definitions
 need source confirmation.
+
+### Data Profile Frontmatter
+
+For canonical vector and table assets, include compact profile metadata in the
+asset-doc frontmatter after the canonical artifact is built:
+
+```yaml
+row_count: 12345
+data_profile:
+  field_count: 8
+  identity_candidates:
+  - field: source_id
+    distinct_values: 12345
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
+```
+
+Use the canonical artifact, not a source file or PMTiles display artifact, for
+these counts. `field_count` is the number of published non-geometry columns.
+For identifier candidates, prefer stable source IDs, registry IDs, or fields
+documented as identifiers. Count distinct and duplicate values after excluding
+null/blank candidate values. `duplicate_value_count` is the number of distinct
+candidate values appearing more than once; `duplicate_row_count` is the total
+number of rows carrying those repeated values. If no credible identifier field
+exists, use:
+
+```yaml
+data_profile:
+  field_count: 3
+  identity_candidates: []
+  notes: No documented ext_id candidate
+```
 
 Use `templates/dataset_README.template.md` for important assets and
 `templates/dataset_README.minimal.template.md` for small/simple assets.

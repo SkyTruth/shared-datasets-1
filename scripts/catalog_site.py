@@ -50,6 +50,7 @@ MARKDOWN_TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RELEASE_PATH_RE = re.compile(r"^releases/(?P<date>\d{4}-\d{2}-\d{2}|YYYY-MM-DD)/(?P<object>.+)$")
 REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
+IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
 
 
 class CatalogSiteError(ValueError):
@@ -104,6 +105,7 @@ class CatalogAsset:
     bounds: list[float] | None
     geometry_type: str | None
     row_count: int | None
+    data_profile: dict[str, Any] | None
     source_url: str | None
     public_url: str
     pmtiles_path: str | None
@@ -247,6 +249,149 @@ def optional_bounds(metadata: dict[str, Any], *, doc_path: Path) -> list[float] 
     if min_lon > max_lon or min_lat > max_lat:
         raise CatalogSiteError(f"{doc_path}: bounds minimums must not exceed maximums")
     return bounds
+
+
+def profile_int(
+    value: Any,
+    *,
+    label: str,
+    doc_path: Path,
+    required: bool = False,
+    row_count: int | None = None,
+) -> int | None:
+    if value in (None, ""):
+        if required:
+            raise CatalogSiteError(f"{doc_path}: {label} is required")
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError) as error:
+        raise CatalogSiteError(f"{doc_path}: {label} must be an integer") from error
+    if numeric < 0:
+        raise CatalogSiteError(f"{doc_path}: {label} must be non-negative")
+    if row_count is not None and numeric > row_count:
+        raise CatalogSiteError(f"{doc_path}: {label} must not exceed row_count")
+    return numeric
+
+
+def normalize_identity_candidate(
+    candidate: Any,
+    *,
+    index: int,
+    doc_path: Path,
+    row_count: int | None,
+) -> dict[str, Any]:
+    context = f"data_profile.identity_candidates[{index}]"
+    if not isinstance(candidate, dict):
+        raise CatalogSiteError(f"{doc_path}: {context} must be a mapping")
+    field = str(candidate.get("field") or "").strip()
+    if not field:
+        raise CatalogSiteError(f"{doc_path}: {context}.field is required")
+    status = str(candidate.get("status") or "").strip().lower().replace("-", "_")
+    if status not in IDENTITY_CANDIDATE_STATUSES:
+        allowed = ", ".join(sorted(IDENTITY_CANDIDATE_STATUSES))
+        raise CatalogSiteError(f"{doc_path}: {context}.status must be one of: {allowed}")
+    distinct_values = profile_int(
+        candidate.get("distinct_values"),
+        label=f"{context}.distinct_values",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    duplicate_value_count = profile_int(
+        candidate.get("duplicate_value_count"),
+        label=f"{context}.duplicate_value_count",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    duplicate_row_count = profile_int(
+        candidate.get("duplicate_row_count"),
+        label=f"{context}.duplicate_row_count",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    if status == "unique" and (duplicate_value_count or duplicate_row_count):
+        raise CatalogSiteError(f"{doc_path}: {context} is marked unique but has duplicate counts")
+    normalized = {
+        "field": field,
+        "distinct_values": distinct_values,
+        "duplicate_value_count": duplicate_value_count,
+        "duplicate_row_count": duplicate_row_count,
+        "status": status,
+    }
+    notes = str(candidate.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+    return normalized
+
+
+def normalize_most_unique_field(
+    value: Any,
+    *,
+    doc_path: Path,
+    row_count: int | None,
+) -> dict[str, Any] | None:
+    if value in (None, ""):
+        return None
+    context = "data_profile.most_unique_field"
+    if not isinstance(value, dict):
+        raise CatalogSiteError(f"{doc_path}: {context} must be a mapping")
+    field = str(value.get("field") or "").strip()
+    if not field:
+        raise CatalogSiteError(f"{doc_path}: {context}.field is required")
+    distinct_values = profile_int(
+        value.get("distinct_values"),
+        label=f"{context}.distinct_values",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    normalized: dict[str, Any] = {"field": field, "distinct_values": distinct_values}
+    notes = str(value.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+    return normalized
+
+
+def optional_data_profile(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
+    raw_profile = metadata.get("data_profile")
+    if raw_profile in (None, ""):
+        return None
+    if not isinstance(raw_profile, dict):
+        raise CatalogSiteError(f"{doc_path}: data_profile must be a mapping")
+
+    normalized: dict[str, Any] = {}
+    field_count = profile_int(raw_profile.get("field_count"), label="data_profile.field_count", doc_path=doc_path)
+    if field_count is not None:
+        normalized["field_count"] = field_count
+
+    raw_candidates = raw_profile.get("identity_candidates", [])
+    if raw_candidates in (None, ""):
+        raw_candidates = []
+    if not isinstance(raw_candidates, list):
+        raise CatalogSiteError(f"{doc_path}: data_profile.identity_candidates must be a list")
+    candidates = [
+        normalize_identity_candidate(candidate, index=index, doc_path=doc_path, row_count=row_count)
+        for index, candidate in enumerate(raw_candidates, start=1)
+    ]
+    if candidates or "identity_candidates" in raw_profile:
+        normalized["identity_candidates"] = candidates
+
+    most_unique = normalize_most_unique_field(
+        raw_profile.get("most_unique_field"),
+        doc_path=doc_path,
+        row_count=row_count,
+    )
+    if most_unique:
+        normalized["most_unique_field"] = most_unique
+
+    notes = str(raw_profile.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+
+    return normalized or None
 
 
 def frontmatter_license_flags(metadata: dict[str, Any], *, doc_path: Path) -> list[str]:
@@ -597,6 +742,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         latest_release_date = versions[0].date
     effective_last_updated = latest_release_date or last_updated
     latest_version = next((version for version in versions if version.date == latest_release_date), versions[0] if versions else None)
+    row_count = optional_int(doc_metadata, "row_count", doc_path=doc_path)
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -627,7 +773,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         notes=row.get("notes", "").strip(),
         bounds=optional_bounds(doc_metadata, doc_path=doc_path),
         geometry_type=optional_text(doc_metadata, "geometry_type", doc_path=doc_path),
-        row_count=optional_int(doc_metadata, "row_count", doc_path=doc_path),
+        row_count=row_count,
+        data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,

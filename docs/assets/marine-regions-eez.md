@@ -22,6 +22,16 @@ citation: 'Flanders Marine Institute (2023). Maritime Boundaries Geodatabase: Ma
 notes: Initial upload from eez-mr_eez_v12.fgb; release 2026-04-29; sha256 b4f1d04cff66a75a4176734a02e2af994b7c55490b7b42cdcf7ba2d5c431f6b7;
   PMTiles sha256 071b081c7a64d8fedd53c07a9be6cce85bb234afeb3216f7449e2b8ee42fc225; PMTiles rebuilt 2026-05-04 at maxzoom 11
   from sampled FGB geometry detail with local tile and browser QA
+row_count: 285
+data_profile:
+  field_count: 31
+  identity_candidates:
+  - field: MRGID
+    distinct_values: 285
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+    notes: Unique
 files:
 - path: latest/marine-regions-eez.fgb
   format: fgb

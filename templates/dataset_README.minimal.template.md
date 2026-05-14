@@ -37,6 +37,17 @@ admission:
 bounds: ["{min_lon}", "{min_lat}", "{max_lon}", "{max_lat}"] # optional WGS84 extent
 geometry_type: "{optional geometry type}"
 row_count: "{optional integer row count}"
+data_profile:
+  field_count: "{optional integer non-geometry column count}"
+  identity_candidates:
+    - field: "{stable identifier field checked for uniqueness}"
+      distinct_values: "{integer distinct non-empty values}"
+      duplicate_value_count: "{integer count of repeated non-empty values}"
+      duplicate_row_count: "{integer rows carrying repeated non-empty values}"
+      status: "{unique | non_unique | unknown | not_applicable}"
+      notes: "{short uniqueness note}"
+  # If no credible identifier exists, use identity_candidates: [] and notes.
+  notes: "{optional profile note such as No documented ext_id candidate}"
 source_resolution_meters: "{optional source resolution for PMTiles auto maxzoom}"
 source_scale_denominator: "{optional source scale denominator for PMTiles auto maxzoom}"
 pmtiles_maxzoom: "{optional explicit PMTiles maxzoom}"
@@ -68,6 +79,9 @@ Run `uv run python scripts/catalog_docs.py generate` after filling in the frontm
 ## Schema notes
 
 Short notes on fields or usage.
+Populate `row_count` and `data_profile` in frontmatter from the canonical
+artifact after conversion. For identifier candidates, count distinct and
+duplicate values over non-empty values in the canonical artifact.
 
 ## Raster metadata
 

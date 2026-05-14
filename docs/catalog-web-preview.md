@@ -69,9 +69,11 @@ The runtime `catalog.json` includes the CSV catalog fields, including
 publication or authoritative dataset release. Optional discovery fields in
 asset-doc frontmatter are emitted when present: `bounds` as
 `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
-`source_url`, and frontmatter `license_flags` merged with license-text-derived
-flags. These fields are additive so existing CSV and JSON consumers can ignore
-them.
+`data_profile`, `source_url`, and frontmatter `license_flags` merged with
+license-text-derived flags. `data_profile` carries curated at-a-glance profiling
+facts such as column count, identity-field candidates, distinct values, duplicate
+counts, and short profile notes. These fields are additive so existing CSV and
+JSON consumers can ignore them.
 
 ## Validate
 

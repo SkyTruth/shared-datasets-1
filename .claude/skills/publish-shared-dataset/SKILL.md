@@ -177,10 +177,24 @@ For normal asset metadata changes:
 4. For fields/properties, list names, types, and short explanations when they
    can be derived. If meanings are unknown, list names/types and say definitions
    need source confirmation.
-5. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
+5. For vector and table assets, calculate and populate discovery/profile
+   frontmatter from the canonical artifact after conversion:
+   - `row_count`: feature or table row count in the canonical artifact.
+   - `data_profile.field_count`: number of published non-geometry columns.
+   - `data_profile.identity_candidates`: stable source identifier fields checked
+     for uniqueness. For each candidate, record `field`, `distinct_values`,
+     `duplicate_value_count`, `duplicate_row_count`, `status`, and concise
+     `notes`.
+   - If no credible identifier field exists, set
+     `identity_candidates: []` and add a short `data_profile.notes` explanation
+     such as `No documented ext_id candidate`.
+   Compute duplicate counts over non-empty candidate values: duplicate values
+   are distinct values appearing more than once, and duplicate rows are all rows
+   carrying those repeated values.
+6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
    band semantics, dtype, nodata, units, scale/offset, and sampling where
    applicable.
-6. Regenerate and check derived catalog outputs:
+7. Regenerate and check derived catalog outputs:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate
@@ -282,7 +296,9 @@ input, follow this ordered path unless the user explicitly asks to stop earlier:
    create a vector artifact from the geometry or coordinate columns.
 6. Create or update `docs/assets/{asset-slug}.md` with full frontmatter,
    source/license/citation, canonical paths, file table, update notes, and
-   schema/properties. Include the dataset admission evidence for a new asset
+   schema/properties. Populate `row_count` and `data_profile` from the
+   canonical artifact, including checked identifier candidates or a short
+   no-candidate note. Include the dataset admission evidence for a new asset
    slug. Do not edit `catalog/shared-datasets-catalog.csv` directly.
 7. Run:
 
@@ -390,8 +406,9 @@ ordered path unless the user explicitly asks to stop earlier:
    metadata for an existing release.
 5. Compare the new source version with the existing asset contract: source name
    and URL, license/terms, citation, schema/properties, CRS, geometry or raster
-   characteristics, row/feature counts, bounds, available formats, and consumer
-   impact. Ask before incompatible schema changes, slug/path changes, new
+   characteristics, row/feature counts, data-profile uniqueness checks, bounds,
+   available formats, and consumer impact. Ask before incompatible schema
+   changes, slug/path changes, new
    formats, or unclear license/citation changes.
 6. Build the replacement artifacts outside the repo tree under the standard temp
    workspace. Match the catalog-listed formats. If intentionally leaving a

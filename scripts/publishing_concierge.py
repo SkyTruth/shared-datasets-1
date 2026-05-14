@@ -382,6 +382,10 @@ Run `uv run python scripts/catalog_docs.py generate` after reviewing the `files`
 ## Schema notes
 
 Describe fields, geometry type, CRS, units, join keys, and source quirks.
+After building the canonical artifact, populate frontmatter `row_count` and
+`data_profile` from that artifact. Include `field_count`, checked identifier
+candidates with distinct and duplicate counts, or `identity_candidates: []` with
+a short no-candidate note.
 
 ## Properties / columns
 

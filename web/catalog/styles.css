@@ -598,6 +598,10 @@ dt {
   overflow-wrap: anywhere;
 }
 
+.profile-note-card {
+  grid-column: span 2;
+}
+
 .path-section {
   overflow: hidden;
 }
@@ -1181,6 +1185,10 @@ h3 {
   .path-row,
   .asset-card {
     grid-template-columns: 1fr;
+  }
+
+  .profile-note-card {
+    grid-column: auto;
   }
 
   .asset-card-side {
