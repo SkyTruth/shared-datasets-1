@@ -26,6 +26,7 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. Relea
   12 from the published FGB profile; pmtiles sha256 963e851bf7f0952a9eee321074d77bd071bc935e74692932569a98fa4801ed8e
 row_count: 17657
 data_profile:
+  field_count: 33
   identity_candidates:
   - field: SITE_ID
     distinct_values: 17343

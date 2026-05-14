@@ -180,7 +180,8 @@ For normal asset metadata changes:
 5. For vector and table assets, calculate and populate discovery/profile
    frontmatter from the canonical artifact after conversion:
    - `row_count`: feature or table row count in the canonical artifact.
-   - `data_profile.field_count`: number of published non-geometry columns.
+   - `data_profile.field_count`: required whenever `data_profile` is present;
+     number of published non-geometry columns.
    - `data_profile.identity_candidates`: stable source identifier fields checked
      for uniqueness. For each candidate, record `field`, `distinct_values`,
      `duplicate_value_count`, `duplicate_row_count`, `status`, and concise

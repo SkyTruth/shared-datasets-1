@@ -38,7 +38,7 @@ bounds: ["{min_lon}", "{min_lat}", "{max_lon}", "{max_lat}"] # optional WGS84 ex
 geometry_type: "{optional Point | LineString | Polygon | MultiPolygon | mixed | none}"
 row_count: "{optional integer row count}"
 data_profile:
-  field_count: "{optional integer non-geometry column count}"
+  field_count: "{required integer non-geometry column count when data_profile is present}"
   identity_candidates:
     - field: "{stable identifier field checked for uniqueness}"
       distinct_values: "{integer distinct non-empty values}"

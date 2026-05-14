@@ -27,6 +27,7 @@ notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles 
 geometry_type: MultiPolygon
 row_count: 1273
 data_profile:
+  field_count: 21
   identity_candidates:
   - field: PRIMKEY
     distinct_values: 1270

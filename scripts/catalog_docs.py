@@ -542,7 +542,7 @@ def validate_data_profile(path: Path, metadata: dict[str, Any], *, row_count: in
         return
     if not isinstance(profile, dict):
         raise CatalogDocsError(f"{path}: data_profile must be a mapping")
-    profile_int(profile.get("field_count"), label="data_profile.field_count", path=path)
+    profile_int(profile.get("field_count"), label="data_profile.field_count", path=path, required=True)
     candidates = profile.get("identity_candidates", [])
     if candidates in (None, ""):
         candidates = []

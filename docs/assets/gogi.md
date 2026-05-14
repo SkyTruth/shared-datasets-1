@@ -32,6 +32,7 @@ notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip s
 geometry_type: mixed
 row_count: 411521
 data_profile:
+  field_count: 32
   identity_candidates:
   - field: ORIG_FID
     distinct_values: 94448

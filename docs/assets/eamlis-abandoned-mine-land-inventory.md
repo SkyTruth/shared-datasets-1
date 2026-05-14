@@ -26,6 +26,7 @@ notes: Monthly job publishes FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 a
   Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
 row_count: 63112
 data_profile:
+  field_count: 57
   identity_candidates:
   - field: AMLIS_KEY
     distinct_values: 24427

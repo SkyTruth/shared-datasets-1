@@ -272,6 +272,22 @@ class CatalogSiteTests(unittest.TestCase):
                     generated_at="2026-05-01T00:00:00Z",
                 )
 
+    def test_data_profile_requires_field_count(self):
+        bad_doc = DOC.replace("  field_count: 8\n", "", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "data_profile.field_count is required"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
     def test_data_profile_rejects_distinct_values_above_row_count(self):
         bad_doc = DOC.replace("distinct_values: 12345", "distinct_values: 12346", 1)
         with tempfile.TemporaryDirectory() as tmp:
