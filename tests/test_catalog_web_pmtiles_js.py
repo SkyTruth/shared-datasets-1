@@ -34,6 +34,19 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             infer_color_mode.index("isGradientCandidate"),
         )
 
+    def test_catalog_viewer_can_zoom_to_selected_map_assets(self):
+        index = (REPO_ROOT / "web/catalog/index.html").read_text()
+        app = (REPO_ROOT / "web/catalog/app.js").read_text()
+        map_preview = (REPO_ROOT / "web/catalog/map-preview.js").read_text()
+
+        self.assertIn('id="zoom-selection"', index)
+        self.assertIn("Zoom to selection", index)
+        self.assertIn("hidden", index[index.index('id=\"zoom-selection\"') : index.index("Zoom to selection")])
+        self.assertIn("state.mapModule?.zoomToSelection", app)
+        self.assertIn("legend.focusedValue && state.mapModule?.canZoomToSelection?.()", app)
+        self.assertIn("export function zoomToSelection()", map_preview)
+        self.assertIn("activeMap.fitBounds(activeSelectionBounds", map_preview)
+
 
 if __name__ == "__main__":
     unittest.main()

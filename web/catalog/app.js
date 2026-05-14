@@ -79,6 +79,7 @@ const elements = {
   colorLegend: document.querySelector("#color-legend"),
   featureInspector: document.querySelector("#feature-inspector"),
   basemap: document.querySelector("#basemap-select"),
+  zoomSelection: document.querySelector("#zoom-selection"),
   colorizeControl: document.querySelector("#colorize-control"),
   colorize: document.querySelector("#colorize-select"),
   layerControl: document.querySelector("#layer-control"),
@@ -284,6 +285,12 @@ function wireEvents() {
   elements.basemap.addEventListener("change", () => {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
     renderSelectedPmtiles();
+  });
+  elements.zoomSelection.addEventListener("click", () => {
+    const zoomed = state.mapModule?.zoomToSelection?.();
+    if (!zoomed) {
+      setZoomSelectionEnabled(false);
+    }
   });
   elements.colorize.addEventListener("change", () => {
     const asset = selectedColorizeAsset();
@@ -889,6 +896,7 @@ function renderSelectedPmtiles() {
 
 async function renderPmtiles(assets) {
   const rawMapAssets = (Array.isArray(assets) ? assets : [assets]).filter((asset) => asset?.pmtiles_url);
+  setZoomSelectionEnabled(false);
   if (!rawMapAssets.length) {
     elements.pmtilesRow.hidden = true;
     elements.mapSection.hidden = true;
@@ -930,7 +938,9 @@ async function renderPmtiles(assets) {
       onColorLegendChange: renderColorLegend,
       onFeatureSelect: renderFeatureInspector,
     });
+    setZoomSelectionEnabled(false);
   } catch (error) {
+    setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
   }
 }
@@ -1114,9 +1124,16 @@ function clearFeatureInspector() {
   state.mapModule?.clearFeatureInspectionIndicator?.();
 }
 
+function setZoomSelectionEnabled(enabled) {
+  elements.zoomSelection.hidden = !enabled;
+  elements.zoomSelection.disabled = !enabled;
+  elements.zoomSelection.title = enabled ? "Zoom map to selected datasets" : "Select a legend item to enable zoom";
+}
+
 function clearColorLegend() {
   elements.colorLegend.hidden = true;
   elements.colorLegend.replaceChildren();
+  setZoomSelectionEnabled(false);
 }
 
 function renderColorLegend(legend) {
@@ -1160,6 +1177,7 @@ function renderColorLegend(legend) {
     items.append(item);
   }
 
+  setZoomSelectionEnabled(Boolean(legend.focusedValue && state.mapModule?.canZoomToSelection?.()));
   elements.colorLegend.append(heading, items);
   elements.colorLegend.hidden = false;
 }
@@ -1585,6 +1603,7 @@ function clearDetail() {
   elements.detail.hidden = true;
   elements.empty.hidden = false;
   renderSelectionLegend([]);
+  setZoomSelectionEnabled(false);
   clearFeatureInspector();
   elements.empty.querySelector("h2").textContent = "No matching datasets";
   elements.empty.querySelector("p:last-child").textContent =

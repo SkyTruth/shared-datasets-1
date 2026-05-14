@@ -53,6 +53,7 @@ let dependencyPromise = null;
 let pmtilesProtocol = null;
 let activeMap = null;
 let activeRenderSerial = 0;
+let activeSelectionBounds = null;
 let activeColorContext = null;
 let activeFeatureMarker = null;
 let privateSessionPromise = null;
@@ -155,14 +156,15 @@ export async function renderMapPreview({
   if (!renderIsCurrent(renderSerial)) {
     if (activeMap === map) {
       activeMap = null;
+      activeSelectionBounds = null;
     }
     map.remove();
     return;
   }
 
-  const bounds = combinedBounds(mapSources.map((source) => source.bounds).filter(Boolean));
-  if (bounds) {
-    map.fitBounds(bounds, { padding: 34, duration: 0, maxZoom: 8 });
+  activeSelectionBounds = combinedBounds(mapSources.map((source) => source.bounds).filter(Boolean));
+  if (activeSelectionBounds) {
+    map.fitBounds(activeSelectionBounds, { padding: 34, duration: 0, maxZoom: 8 });
   }
 
   activeColorContext = {
@@ -243,9 +245,22 @@ export function clearFeatureInspectionIndicator() {
   }
 }
 
+export function canZoomToSelection() {
+  return Boolean(activeMap && activeSelectionBounds);
+}
+
+export function zoomToSelection() {
+  if (!activeMap || !activeSelectionBounds) {
+    return false;
+  }
+  activeMap.fitBounds(activeSelectionBounds, { padding: 44, duration: 500, maxZoom: 10 });
+  return true;
+}
+
 function clearActiveMap() {
   clearFeatureInspectionIndicator();
   clearActiveColorContext();
+  activeSelectionBounds = null;
   if (activeMap) {
     activeMap.remove();
     activeMap = null;
