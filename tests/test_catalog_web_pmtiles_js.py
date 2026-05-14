@@ -22,6 +22,18 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("isStorageGoogleapisHost", map_preview)
         self.assertIn("Signed PMTiles access was rejected or expired", app)
 
+    def test_numeric_identifier_fields_use_categorical_color_mode_before_gradients(self):
+        map_preview = (REPO_ROOT / "web/catalog/map-preview.js").read_text()
+        infer_color_mode = map_preview[map_preview.index("function inferColorMode") :]
+
+        self.assertIn("IDENTIFIER_FIELD_PATTERN", map_preview)
+        self.assertIn("metadata_i", map_preview)
+        self.assertIn("shouldUseCategoricalNumericMode", map_preview)
+        self.assertLess(
+            infer_color_mode.index("shouldUseCategoricalNumericMode"),
+            infer_color_mode.index("isGradientCandidate"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

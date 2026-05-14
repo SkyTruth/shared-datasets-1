@@ -4,9 +4,12 @@ const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
 const MISSING_COLOR = "#949d97";
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
+const CATEGORICAL_NUMERIC_VALUE_LIMIT = 12;
 const GRADIENT_LEGEND_VALUE_LIMIT = 20;
 const MIN_GRADIENT_VALUES = 4;
 const GRADIENT_PARSE_RATIO = 0.86;
+const IDENTIFIER_FIELD_PATTERN =
+  /(^|[_\-\s])(?:id|gid|uid|uuid|key|code|metadata_i|objectid|featureid)(?:s)?($|[_\-\s])|[_\-\s]id$/i;
 const STRICT_NUMBER_PATTERN = /^[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:e[+-]?\d+)?$/i;
 const TIME_ONLY_PATTERN = /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(am|pm)?$/i;
 const ISO_DATE_PATTERN =
@@ -749,7 +752,11 @@ function inferColorMode(field, samples) {
     .filter((item) => item.parsed !== null);
   const numericValues = numericItems.map((item) => item.parsed);
   const temporalNumbers = temporalValues.map((item) => item.parsed.value);
+  const categoricalValues = uniqueSampleValues(nonEmpty);
 
+  if (shouldUseCategoricalNumericMode(field, nonEmpty, numericItems, categoricalValues)) {
+    return { type: "categorical", field, values: categoricalValues };
+  }
   if (isGradientCandidate(nonEmpty.length, numericValues)) {
     const extent = extentFor(numericValues);
     return {
@@ -771,7 +778,28 @@ function inferColorMode(field, samples) {
       legendValues: gradientLegendValues(temporalValues),
     };
   }
-  return { type: "categorical", field, values: uniqueSampleValues(nonEmpty) };
+  return { type: "categorical", field, values: categoricalValues };
+}
+
+function shouldUseCategoricalNumericMode(field, samples, numericItems, categoricalValues) {
+  if (!samples.length || numericItems.length / samples.length < GRADIENT_PARSE_RATIO) {
+    return false;
+  }
+  if (categoricalValues.length < 2 || categoricalValues.length > CATEGORICAL_MATCH_LIMIT) {
+    return false;
+  }
+  // Numeric identifiers are labels, not measurements. Keep fields such as METADATA_I discrete.
+  if (looksLikeIdentifierField(field)) {
+    return true;
+  }
+  return (
+    categoricalValues.length <= CATEGORICAL_NUMERIC_VALUE_LIMIT &&
+    numericItems.every((item) => Number.isInteger(item.parsed))
+  );
+}
+
+function looksLikeIdentifierField(field) {
+  return IDENTIFIER_FIELD_PATTERN.test(String(field || "").trim());
 }
 
 function isGradientCandidate(totalCount, parsedValues) {
