@@ -69,9 +69,7 @@ const elements = {
   bounds: document.querySelector("#detail-bounds"),
   gs: document.querySelector("#detail-gs"),
   url: document.querySelector("#detail-url"),
-  downloadFgbRow: document.querySelector("#download-fgb-row"),
   downloadFgb: document.querySelector("#download-fgb"),
-  downloadGs: document.querySelector("#detail-download-gs"),
   versionRow: document.querySelector("#version-path-row"),
   versionSelect: document.querySelector("#version-select"),
   pmtiles: document.querySelector("#detail-pmtiles"),
@@ -591,6 +589,7 @@ function renderMultiDetail(assets) {
   elements.detail.hidden = false;
   elements.detail.classList.add("multi-detail");
   elements.docs.hidden = true;
+  resetFgbDownload();
   elements.metaGrid.hidden = true;
   elements.pathSection.hidden = true;
   elements.sourceSection.hidden = true;
@@ -910,8 +909,7 @@ function renderFgbDownload(asset, reference = selectedReference(asset)) {
 
   const version = selectedVersionValue(asset);
   const filename = basename(reference.canonical_path) || `${asset.slug}.fgb`;
-  elements.downloadFgbRow.hidden = false;
-  elements.downloadGs.textContent = reference.canonical_path;
+  elements.downloadFgb.hidden = false;
   elements.downloadFgb.textContent = "Download FGB";
   elements.downloadFgb.download = filename;
   elements.downloadFgb.dataset.slug = asset.slug;
@@ -932,8 +930,7 @@ function renderFgbDownload(asset, reference = selectedReference(asset)) {
 }
 
 function resetFgbDownload() {
-  elements.downloadFgbRow.hidden = true;
-  elements.downloadGs.textContent = "";
+  elements.downloadFgb.hidden = true;
   elements.downloadFgb.href = "#";
   elements.downloadFgb.textContent = "Download FGB";
   elements.downloadFgb.title = "Download the canonical FGB";
@@ -1749,6 +1746,7 @@ function clearDetail() {
   state.selectedSlugs = [];
   elements.detail.hidden = true;
   elements.empty.hidden = false;
+  resetFgbDownload();
   renderSelectionLegend([]);
   setZoomSelectionEnabled(false);
   clearFeatureInspector();

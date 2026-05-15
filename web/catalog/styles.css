@@ -338,6 +338,15 @@ a:focus-visible {
   line-height: 1.55;
 }
 
+.detail-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .selection-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1166,11 +1175,14 @@ h3 {
   }
 
   .map-actions,
+  .detail-actions,
   .docs-actions {
     justify-content: stretch;
   }
 
   .map-actions .quiet-link,
+  .detail-actions .quiet-link,
+  .detail-actions .icon-button,
   .basemap-control,
   .colorize-control,
   .layer-control,
