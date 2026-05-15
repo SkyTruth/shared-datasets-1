@@ -79,6 +79,40 @@ counts for a native `shared_datasets_group_id` feature property when an asset
 needs generated group IDs. These fields are additive so existing CSV and JSON
 consumers can ignore them.
 
+## FGB downloads
+
+The detail view includes a one-click `Download FGB` control for assets whose
+canonical format is FlatGeobuf. The control follows the version selector: with
+`Latest` selected it downloads the catalog `canonical_path`, and with a dated
+release selected it downloads that release's canonical FGB.
+
+Public assets use the generated `public_url` directly, which resolves to
+`https://storage.googleapis.com/...`. The browser downloads from GCS; the static
+catalog app does not proxy or read dataset bytes.
+
+When the same UI is served from the authenticated Cloud Run viewer, private FGB
+downloads are resolved through:
+
+```text
+GET /api/download-url?slug={asset-slug}&format=fgb&version={latest-or-YYYY-MM-DD}
+```
+
+The endpoint resolves the requested object only from generated catalog metadata
+or the bucket release index, requires an IAP-authenticated SkyTruth identity for
+private assets, and returns a short-lived signed GCS URL:
+
+```json
+{
+  "download_url": "https://storage.googleapis.com/...",
+  "expires_at": "2026-05-09T12:15:00Z",
+  "gs_uri": "gs://skytruth-shared-datasets-1/...",
+  "filename": "example-asset.fgb"
+}
+```
+
+Public assets may also use this endpoint and return `expires_at: null`, but the
+browser UI uses direct links for public FGBs.
+
 ## Validate
 
 ```bash

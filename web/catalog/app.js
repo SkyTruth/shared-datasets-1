@@ -73,6 +73,7 @@ const elements = {
   bounds: document.querySelector("#detail-bounds"),
   gs: document.querySelector("#detail-gs"),
   url: document.querySelector("#detail-url"),
+  downloadFgb: document.querySelector("#download-fgb"),
   versionRow: document.querySelector("#version-path-row"),
   versionSelect: document.querySelector("#version-select"),
   pmtiles: document.querySelector("#detail-pmtiles"),
@@ -270,6 +271,7 @@ function wireEvents() {
   elements.copyGs.addEventListener("click", () => copyValue(elements.gs.textContent, elements.copyGs));
   elements.copyUrl.addEventListener("click", () => copyValue(elements.url.textContent, elements.copyUrl));
   elements.copyPmtiles.addEventListener("click", () => copyValue(elements.pmtiles.textContent, elements.copyPmtiles));
+  elements.downloadFgb.addEventListener("click", handleFgbDownloadClick);
   elements.docsCopyMarkdown.addEventListener("click", () =>
     copyValue(elements.docsCopyMarkdown.dataset.markdown || "", elements.docsCopyMarkdown)
   );
@@ -302,11 +304,20 @@ function wireEvents() {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
     renderSelectedPmtiles();
   });
-  elements.zoomSelection.addEventListener("click", () => {
-    const zoomed = state.mapModule?.zoomToSelection?.();
-    if (!zoomed) {
-      setZoomSelectionEnabled(false);
+  elements.zoomSelection.addEventListener("click", async () => {
+    elements.zoomSelection.disabled = true;
+    elements.zoomSelection.title = "Finding selected legend bounds...";
+    let zoomed = false;
+    try {
+      zoomed = Boolean(await state.mapModule?.zoomToSelection?.());
+    } catch {
+      zoomed = false;
     }
+    if (!zoomed) {
+      setZoomSelectionEnabled(Boolean(state.mapModule?.canZoomToLegendSelection?.()));
+      return;
+    }
+    setZoomSelectionEnabled(Boolean(state.mapModule?.canZoomToLegendSelection?.()));
   });
   elements.colorize.addEventListener("change", () => {
     const asset = selectedColorizeAsset();
@@ -582,6 +593,7 @@ function renderDetail(asset) {
   renderDiscoveryMetadata(asset, reference);
   elements.gs.textContent = reference.canonical_path;
   elements.url.textContent = reference.public_url;
+  renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
   renderPmtiles([reference]);
 }
@@ -592,6 +604,7 @@ function renderMultiDetail(assets) {
   elements.detail.hidden = false;
   elements.detail.classList.add("multi-detail");
   elements.docs.hidden = true;
+  resetFgbDownload();
   elements.metaGrid.hidden = true;
   elements.pathSection.hidden = true;
   elements.sourceSection.hidden = true;
@@ -968,6 +981,127 @@ function renderSourceUrl(asset) {
   elements.sourceUrlRow.hidden = false;
   elements.sourceUrl.href = asset.source_url;
   elements.sourceUrl.textContent = asset.source_url;
+}
+
+function renderFgbDownload(asset, reference = selectedReference(asset)) {
+  resetFgbDownload();
+  if (!isFgbDownloadableReference(asset, reference)) {
+    return;
+  }
+
+  const version = selectedVersionValue(asset);
+  const filename = basename(reference.canonical_path) || `${asset.slug}.fgb`;
+  elements.downloadFgb.hidden = false;
+  elements.downloadFgb.textContent = "Download FGB";
+  elements.downloadFgb.download = filename;
+  elements.downloadFgb.dataset.slug = asset.slug;
+  elements.downloadFgb.dataset.version = version;
+  elements.downloadFgb.dataset.filename = filename;
+  elements.downloadFgb.dataset.format = "fgb";
+
+  if (downloadRequiresSigner(asset)) {
+    elements.downloadFgb.href = "#";
+    elements.downloadFgb.dataset.requiresSigner = "true";
+    elements.downloadFgb.title = "Get a signed URL and download the canonical FGB";
+  } else {
+    elements.downloadFgb.href = reference.public_url;
+    elements.downloadFgb.rel = "noreferrer";
+    elements.downloadFgb.title = "Download the canonical FGB";
+    delete elements.downloadFgb.dataset.requiresSigner;
+  }
+}
+
+function resetFgbDownload() {
+  elements.downloadFgb.hidden = true;
+  elements.downloadFgb.href = "#";
+  elements.downloadFgb.textContent = "Download FGB";
+  elements.downloadFgb.title = "Download the canonical FGB";
+  elements.downloadFgb.removeAttribute("aria-disabled");
+  elements.downloadFgb.classList.remove("is-busy");
+  elements.downloadFgb.removeAttribute("download");
+  elements.downloadFgb.removeAttribute("rel");
+  for (const key of ["slug", "version", "filename", "format", "requiresSigner"]) {
+    delete elements.downloadFgb.dataset[key];
+  }
+}
+
+function isFgbDownloadableReference(asset, reference) {
+  const canonicalFormat = String(asset?.canonical_format || "").trim().toLowerCase();
+  const canonicalPath = String(reference?.canonical_path || "").trim();
+  return canonicalFormat === "fgb" && canonicalPath.toLowerCase().endsWith(".fgb") && Boolean(reference?.public_url);
+}
+
+function downloadRequiresSigner(asset) {
+  return String(asset?.access_tier || "").toLowerCase() === "private";
+}
+
+async function handleFgbDownloadClick(event) {
+  if (elements.downloadFgb.dataset.requiresSigner !== "true") {
+    return;
+  }
+  event.preventDefault();
+  if (elements.downloadFgb.getAttribute("aria-disabled") === "true") {
+    return;
+  }
+
+  const slug = elements.downloadFgb.dataset.slug || "";
+  const version = elements.downloadFgb.dataset.version || "latest";
+  const filename = elements.downloadFgb.dataset.filename || `${slug}.fgb`;
+  setFgbDownloadBusy("Preparing");
+  try {
+    const response = await fetch(downloadUrlRequestUrl(slug, version), { credentials: "include", cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `download URL returned HTTP ${response.status}`);
+    }
+    const downloadUrl = String(payload.download_url || "").trim();
+    if (!downloadUrl) {
+      throw new Error("download URL response did not include download_url");
+    }
+    triggerBrowserDownload(downloadUrl, payload.filename || filename);
+    flashFgbDownloadState("Downloading");
+  } catch (error) {
+    console.warn(`Could not prepare FGB download for ${slug}:`, error);
+    elements.downloadFgb.title = `Download unavailable. ${error.message}`;
+    flashFgbDownloadState("Unavailable");
+  }
+}
+
+function downloadUrlRequestUrl(slug, version) {
+  const params = new URLSearchParams({
+    slug,
+    format: "fgb",
+    version: version || "latest",
+  });
+  return `/api/download-url?${params.toString()}`;
+}
+
+function triggerBrowserDownload(url, filename) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.rel = "noreferrer";
+  if (filename) {
+    anchor.download = filename;
+  }
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function setFgbDownloadBusy(label) {
+  elements.downloadFgb.textContent = label;
+  elements.downloadFgb.setAttribute("aria-disabled", "true");
+  elements.downloadFgb.classList.add("is-busy");
+}
+
+function flashFgbDownloadState(label) {
+  elements.downloadFgb.textContent = label;
+  window.setTimeout(() => {
+    elements.downloadFgb.textContent = "Download FGB";
+    elements.downloadFgb.removeAttribute("aria-disabled");
+    elements.downloadFgb.classList.remove("is-busy");
+  }, 1400);
 }
 
 function renderSelectedPmtiles() {
@@ -1694,6 +1828,7 @@ function clearDetail() {
   state.selectedSlugs = [];
   elements.detail.hidden = true;
   elements.empty.hidden = false;
+  resetFgbDownload();
   renderSelectionLegend([]);
   setZoomSelectionEnabled(false);
   clearFeatureInspector();
