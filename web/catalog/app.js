@@ -300,11 +300,20 @@ function wireEvents() {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
     renderSelectedPmtiles();
   });
-  elements.zoomSelection.addEventListener("click", () => {
-    const zoomed = state.mapModule?.zoomToSelection?.();
-    if (!zoomed) {
-      setZoomSelectionEnabled(false);
+  elements.zoomSelection.addEventListener("click", async () => {
+    elements.zoomSelection.disabled = true;
+    elements.zoomSelection.title = "Finding selected legend bounds...";
+    let zoomed = false;
+    try {
+      zoomed = Boolean(await state.mapModule?.zoomToSelection?.());
+    } catch {
+      zoomed = false;
     }
+    if (!zoomed) {
+      setZoomSelectionEnabled(Boolean(state.mapModule?.canZoomToLegendSelection?.()));
+      return;
+    }
+    setZoomSelectionEnabled(Boolean(state.mapModule?.canZoomToLegendSelection?.()));
   });
   elements.colorize.addEventListener("change", () => {
     const asset = selectedColorizeAsset();
