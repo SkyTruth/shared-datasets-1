@@ -639,24 +639,38 @@ code {
 }
 
 .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 34px;
   min-width: 66px;
+  padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--panel);
   color: var(--accent-strong);
   font-weight: 760;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.icon-button.copied {
+.icon-button.copied,
+.download-button.is-busy {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
 
-.icon-button:disabled {
+.icon-button:disabled,
+.icon-button[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.download-button {
+  min-width: 118px;
+  white-space: nowrap;
 }
 
 .source-section,

@@ -51,6 +51,21 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("context.colorMode?.boundsByValue?.get", map_preview)
         self.assertIn("queryRenderedFeatures(queryBox", map_preview)
 
+    def test_catalog_viewer_has_one_click_fgb_download_control(self):
+        app = (REPO_ROOT / "web/catalog/app.js").read_text()
+        html = (REPO_ROOT / "web/catalog/index.html").read_text()
+
+        self.assertIn('id="download-fgb"', html)
+        self.assertIn("renderFgbDownload(asset, reference)", app)
+        self.assertIn("selectedReference(asset)", app)
+        self.assertIn("/api/download-url?", app)
+        self.assertIn('format: "fgb"', app)
+        self.assertIn('credentials: "include"', app)
+        self.assertIn("payload.download_url", app)
+        self.assertIn("triggerBrowserDownload(downloadUrl", app)
+        self.assertNotIn(".blob()", app)
+        self.assertNotIn("createObjectURL", app)
+
 
 if __name__ == "__main__":
     unittest.main()

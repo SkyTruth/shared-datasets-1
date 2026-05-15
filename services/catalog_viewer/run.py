@@ -24,6 +24,7 @@ DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
 NO_CACHE = "no-cache, max-age=0, must-revalidate"
 NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
 
 
@@ -60,6 +61,15 @@ class CatalogUnavailable(RuntimeError):
 
 class StaticObjectNotFound(FileNotFoundError):
     """Raised when a static catalog web object is not found."""
+
+
+class DownloadResolutionError(ValueError):
+    """Raised when a requested dataset download cannot be resolved safely."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
 
 
 class CatalogJsonCache:
@@ -235,6 +245,19 @@ def handle_request(
             allowed_email_domains=allowed_email_domains,
             now=now,
         )
+    if request_path == "/api/download-url":
+        return handle_download_url(
+            method,
+            path,
+            headers,
+            catalog_cache=catalog_cache,
+            object_store=object_store,
+            signer=signer,
+            bucket_name=bucket_name,
+            signed_url_ttl_seconds=signed_url_ttl_seconds,
+            allowed_email_domains=allowed_email_domains,
+            now=now,
+        )
     return handle_static(method, request_path, object_store=object_store)
 
 
@@ -298,6 +321,170 @@ def handle_signed_url(
         },
         include_body=method != "HEAD",
     )
+
+
+def handle_download_url(
+    method: str,
+    path: str,
+    headers: Mapping[str, str],
+    *,
+    catalog_cache: CatalogJsonCache,
+    object_store: ObjectStore,
+    signer: UrlSigner,
+    bucket_name: str,
+    signed_url_ttl_seconds: int,
+    allowed_email_domains: tuple[str, ...],
+    now: Callable[[], dt.datetime],
+) -> Response:
+    if method == "OPTIONS":
+        return Response(HTTPStatus.NO_CONTENT, api_headers())
+    if method not in {"GET", "HEAD"}:
+        return json_response(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
+
+    slug = first_query_value(path, "slug")
+    if not slug or not SLUG_RE.fullmatch(slug):
+        return json_response(HTTPStatus.BAD_REQUEST, {"error": "slug must be lowercase kebab-case"})
+
+    format_name = (first_query_value(path, "format") or "fgb").lower()
+    version = first_query_value(path, "version") or "latest"
+    try:
+        catalog = catalog_cache.get()
+    except CatalogUnavailable:
+        return json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "catalog unavailable"})
+
+    asset = catalog_asset(catalog, slug)
+    if asset is None:
+        return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown asset slug"})
+
+    try:
+        gs_uri = resolve_download_gs_uri(asset, format_name, version, object_store=object_store)
+        download_bucket, _object_name = split_gs_uri(gs_uri)
+    except DownloadResolutionError as exc:
+        return json_response(exc.status, {"error": exc.message})
+    except ValueError:
+        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog download path is invalid"})
+
+    if download_bucket != bucket_name:
+        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog download path is outside the shared bucket"})
+
+    filename = basename(gs_uri) or f"{slug}.{format_name}"
+    access_tier = str(asset.get("access_tier") or "public").lower()
+    if access_tier == "private":
+        email = authenticated_user_email(headers)
+        if not email:
+            return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
+        if not email_domain_allowed(email, allowed_email_domains):
+            return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
+        expires_at = now() + dt.timedelta(seconds=signed_url_ttl_seconds)
+        payload = {
+            "download_url": signer.sign(gs_uri, expires_at),
+            "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "filename": filename,
+            "gs_uri": gs_uri,
+        }
+        return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
+
+    return json_response(
+        HTTPStatus.OK,
+        {
+            "download_url": gs_to_https(gs_uri),
+            "expires_at": None,
+            "filename": filename,
+            "gs_uri": gs_uri,
+        },
+        include_body=method != "HEAD",
+    )
+
+
+def resolve_download_gs_uri(
+    asset: Mapping[str, Any],
+    format_name: str,
+    version: str,
+    *,
+    object_store: ObjectStore,
+) -> str:
+    if format_name != "fgb":
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb")
+    if str(asset.get("canonical_format") or "").strip() != "fgb":
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
+    if version != "latest" and not DATE_RE.fullmatch(version):
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
+
+    if version == "latest":
+        gs_uri = str(asset.get("canonical_path") or "").strip()
+    else:
+        gs_uri = release_download_gs_uri(asset, version, object_store=object_store)
+    if not gs_uri:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "requested release version was not found")
+    if not gs_uri.lower().endswith(".fgb"):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog download path is not an FGB")
+    return gs_uri
+
+
+def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
+    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
+    if release_index:
+        release = release_index_release(release_index, version)
+        if release:
+            gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
+            if not gs_uri:
+                raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
+            return gs_uri
+
+    versions = asset.get("versions") or []
+    if isinstance(versions, list):
+        for candidate in versions:
+            if not isinstance(candidate, Mapping):
+                continue
+            if str(candidate.get("date") or "") == version:
+                return str(candidate.get("canonical_path") or "").strip()
+    return ""
+
+
+def read_release_index(object_store: ObjectStore, slug: str) -> Mapping[str, Any] | None:
+    if not SLUG_RE.fullmatch(slug):
+        return None
+    try:
+        static_object = object_store.read_static(f"releases/{slug}.json")
+    except StaticObjectNotFound:
+        return None
+    try:
+        payload = json.loads(static_object.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid") from exc
+    if not isinstance(payload, Mapping):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid")
+    release_slug = str(payload.get("asset_slug") or "")
+    if release_slug and release_slug != slug:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index asset slug does not match")
+    return payload
+
+
+def release_index_release(release_index: Mapping[str, Any], version: str) -> Mapping[str, Any] | None:
+    releases = release_index.get("releases") or []
+    if not isinstance(releases, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index releases field is invalid")
+    for release in releases:
+        if isinstance(release, Mapping) and str(release.get("date") or "") == version:
+            return release
+    return None
+
+
+def release_file_for_canonical_format(files: Any, format_name: str, canonical_path: str) -> str:
+    if not isinstance(files, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
+    canonical_name = basename(canonical_path)
+    if not canonical_name:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog canonical path is invalid")
+    for file_entry in files:
+        if not isinstance(file_entry, Mapping):
+            continue
+        if str(file_entry.get("format") or "").strip() != format_name:
+            continue
+        file_path = str(file_entry.get("path") or "").strip()
+        if file_path.startswith("gs://") and basename(file_path) == canonical_name:
+            return file_path
+    return ""
 
 
 def handle_static(method: str, request_path: str, *, object_store: ObjectStore) -> Response:
@@ -384,6 +571,10 @@ def split_gs_uri(uri: str) -> tuple[str, str]:
     if not bucket or not separator or not object_name:
         raise ValueError(f"expected gs:// object URI, got {uri!r}")
     return bucket, object_name
+
+
+def basename(path: str) -> str:
+    return next(reversed([part for part in str(path or "").split("/") if part]), "")
 
 
 def gs_to_https(uri: str) -> str:
