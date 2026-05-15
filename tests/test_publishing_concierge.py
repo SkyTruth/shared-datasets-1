@@ -61,6 +61,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertFalse(any("PMTiles is automatic" in note for note in plan.notes))
         self.assertTrue(any("require a PMTiles companion" in note for note in plan.notes))
         self.assertTrue(any("resolved after the canonical FGB" in note for note in plan.notes))
+        self.assertTrue(any("shared_datasets_group_id" in note for note in plan.notes))
 
     def test_missing_source_and_license_are_blocking_questions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -97,6 +98,45 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertIn("Confirm license or terms.", plan.blocking_questions)
         self.assertIn("Confirm citation for the original source publication.", plan.blocking_questions)
         self.assertTrue(any("geometry-free" in note for note in plan.notes))
+
+    def test_curator_field_options_profile_csv_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.csv"
+            source.write_text(
+                "source_id,NAME,GIS_AREA_K\n"
+                "A1,North Reef,10\n"
+                "A2,North Reef,11\n"
+                "A3,South Reef,12\n"
+            )
+
+            plan = publishing_concierge.build_plan(
+                source=source,
+                asset_slug="example",
+                title="Example",
+                category="300-infrastructure-industrial",
+                subcategory="330-offshore-platforms",
+                owner="SkyTruth",
+                source_name="Example source",
+                license_text="Example license",
+                citation="Example citation",
+                update_cadence="manual",
+                canonical_format=None,
+                access_tier="public",
+                bucket="example-bucket",
+                release_date=None,
+                with_pmtiles=False,
+                categories_path=categories,
+                docs_dir=root / "docs/assets",
+            )
+
+        self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
+        self.assertEqual(plan.curator_field_options.id_field_candidates[0].confidence, "high")
+        self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
+        self.assertEqual(plan.curator_field_options.group_field_candidates[0].distinct_values, 2)
+        self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
 
     def test_existing_fgb_still_uses_vector_build_for_pmtiles_companion(self):
         with tempfile.TemporaryDirectory() as tmp:

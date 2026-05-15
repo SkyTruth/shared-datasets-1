@@ -48,6 +48,19 @@ data_profile:
       notes: "{short uniqueness note}"
   # If no credible identifier exists, use identity_candidates: [] and notes.
   notes: "{optional profile note such as No documented ext_id candidate}"
+search_fields:
+  - field: "{curated search/filter field such as NAME}"
+    distinct_values: "{optional integer distinct non-empty values}"
+    notes: "{optional reason this is useful for search/filtering}"
+generated_group_id:
+  column: "shared_datasets_group_id"
+  algorithm: "shared-datasets-group-id:v1"
+  grouping_fields:
+    - "{curator-selected grouping field}"
+  token_length: "{base62 token length, minimum 8}"
+  group_count: "{integer generated group count}"
+  blank_group_count: "{optional integer blank/null groups assigned per feature}"
+  stability: "{geometry-addressed stability note, including any identical-geometry ambiguity review}"
 source_resolution_meters: "{optional source resolution for PMTiles auto maxzoom}"
 source_scale_denominator: "{optional source scale denominator for PMTiles auto maxzoom}"
 pmtiles_maxzoom: "{optional explicit PMTiles maxzoom}"
@@ -82,6 +95,8 @@ Short notes on fields or usage.
 Populate `row_count` and `data_profile` in frontmatter from the canonical
 artifact after conversion. For identifier candidates, count distinct and
 duplicate values over non-empty values in the canonical artifact.
+If `generated_group_id` is present, `shared_datasets_group_id` must be a native
+property/column in the canonical file and PMTiles feature properties.
 
 ## Raster metadata
 

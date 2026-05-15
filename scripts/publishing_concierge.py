@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
+import os
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -39,10 +42,31 @@ FORMAT_FILE_EXTENSIONS = {
     "zarr": "zarr",
 }
 SUPPORTED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
+ID_FIELD_RE = re.compile(r"(^id$|_id$|^id_|uuid|guid|external.?id|ext.?id|source.?id|objectid|mrgid|wdpaid)", re.IGNORECASE)
+GROUP_FIELD_RE = re.compile(r"(^name$|name$|title|label|site|region|zone|area_name|place|locality|unit)", re.IGNORECASE)
+MEASUREMENT_FIELD_RE = re.compile(r"(area|length|shape|perimeter|lat|lon|longitude|latitude|date|time|rank|zoom|count)$", re.IGNORECASE)
 
 
 class ConciergeError(ValueError):
     """Raised when a publish plan cannot be built."""
+
+
+@dataclass(frozen=True)
+class FieldRecommendation:
+    field: str
+    reason: str
+    distinct_values: int | None = None
+    non_empty_values: int | None = None
+    duplicate_value_count: int | None = None
+    duplicate_row_count: int | None = None
+    confidence: str = "medium"
+
+
+@dataclass(frozen=True)
+class CuratorFieldOptions:
+    id_field_candidates: list[FieldRecommendation]
+    group_field_candidates: list[FieldRecommendation]
+    notes: list[str]
 
 
 @dataclass(frozen=True)
@@ -63,6 +87,7 @@ class ConciergePlan:
     suggested_commands: list[str]
     remote_write_commands: list[str]
     notes: list[str]
+    curator_field_options: CuratorFieldOptions
     source_resolution_meters: float | None = None
     source_scale_denominator: float | None = None
     pmtiles_maxzoom: int | None = None
@@ -119,6 +144,219 @@ def validate_taxonomy(category: str, subcategory: str, categories: dict[str, set
         raise ConciergeError(f"unknown subcategory {category}/{subcategory}")
 
 
+def normalize_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+
+
+def field_is_measurement(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(MEASUREMENT_FIELD_RE.search(normalized)) and "name" not in normalized
+
+
+def field_is_id_like(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(ID_FIELD_RE.search(normalized)) and not normalized.startswith("metadata")
+
+
+def field_is_group_like(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(GROUP_FIELD_RE.search(normalized)) and not field_is_measurement(normalized)
+
+
+def duplicate_counts(values: list[str]) -> tuple[int, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    repeated = [count for count in counts.values() if count > 1]
+    return len(repeated), sum(repeated)
+
+
+def profile_rows(rows: Sequence[dict[str, Any]]) -> CuratorFieldOptions:
+    if not rows:
+        return CuratorFieldOptions([], [], ["No rows were available for field profiling."])
+    fields = list(rows[0].keys())
+    row_count = len(rows)
+    id_candidates: list[FieldRecommendation] = []
+    group_candidates: list[FieldRecommendation] = []
+    for field in fields:
+        values = [
+            " ".join(str(row.get(field) or "").strip().split())
+            for row in rows
+            if str(row.get(field) or "").strip()
+        ]
+        distinct = len(set(values))
+        duplicate_value_count, duplicate_row_count = duplicate_counts(values)
+        non_empty = len(values)
+        id_like = field_is_id_like(field)
+        group_like = field_is_group_like(field)
+        if id_like and distinct and distinct == non_empty and non_empty >= max(1, row_count * 0.8):
+            id_candidates.append(
+                FieldRecommendation(
+                    field=field,
+                    reason="ID-like field name with unique non-empty values.",
+                    distinct_values=distinct,
+                    non_empty_values=non_empty,
+                    duplicate_value_count=duplicate_value_count,
+                    duplicate_row_count=duplicate_row_count,
+                    confidence="high",
+                )
+            )
+        elif id_like and distinct:
+            id_candidates.append(
+                FieldRecommendation(
+                    field=field,
+                    reason="ID-like field name, but values are not unique enough for a provider row ID.",
+                    distinct_values=distinct,
+                    non_empty_values=non_empty,
+                    duplicate_value_count=duplicate_value_count,
+                    duplicate_row_count=duplicate_row_count,
+                    confidence="low",
+                )
+            )
+        if group_like and distinct > 1:
+            group_candidates.append(
+                FieldRecommendation(
+                    field=field,
+                    reason="Human-readable grouping/search field.",
+                    distinct_values=distinct,
+                    non_empty_values=non_empty,
+                    duplicate_value_count=duplicate_value_count,
+                    duplicate_row_count=duplicate_row_count,
+                    confidence="high" if distinct < non_empty else "medium",
+                )
+            )
+        elif not id_like and not field_is_measurement(field) and 1 < distinct < non_empty:
+            group_candidates.append(
+                FieldRecommendation(
+                    field=field,
+                    reason="Non-measurement field with repeated values that may be useful for grouping/filtering.",
+                    distinct_values=distinct,
+                    non_empty_values=non_empty,
+                    duplicate_value_count=duplicate_value_count,
+                    duplicate_row_count=duplicate_row_count,
+                    confidence="medium",
+                )
+            )
+
+    id_candidates.sort(key=lambda candidate: (candidate.confidence != "high", -(candidate.distinct_values or 0), candidate.field.lower()))
+    group_candidates.sort(
+        key=lambda candidate: (
+            candidate.confidence != "high",
+            candidate.field.lower() != "name",
+            -(candidate.distinct_values or 0),
+            candidate.field.lower(),
+        )
+    )
+    notes = [f"Profiled {row_count} row(s) exactly from source attributes."]
+    if not id_candidates:
+        notes.append("No high-likelihood provider row ID field was found.")
+    if not group_candidates:
+        notes.append("No high-likelihood grouping/search field was found.")
+    return CuratorFieldOptions(id_candidates[:8], group_candidates[:8], notes)
+
+
+def read_csv_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    with source.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = []
+        for row in reader:
+            rows.append(dict(row))
+            if limit is not None and len(rows) >= limit:
+                break
+        return rows
+
+
+def read_geojson_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    text = source.read_text()
+    stripped = text.lstrip()
+    features: list[dict[str, Any]]
+    if stripped.startswith("{"):
+        payload = json.loads(text)
+        features = payload.get("features") if isinstance(payload, dict) else []
+        if not isinstance(features, list):
+            return []
+    else:
+        features = [json.loads(line) for line in text.splitlines() if line.strip()]
+    rows = []
+    for feature in features:
+        if isinstance(feature, dict) and isinstance(feature.get("properties"), dict):
+            rows.append(dict(feature["properties"]))
+            if limit is not None and len(rows) >= limit:
+                break
+    return rows
+
+
+def ogrinfo_field_names(source: Path) -> list[str]:
+    if not shutil.which("ogrinfo"):
+        return []
+    completed = subprocess.run(
+        ["ogrinfo", "-ro", "-al", "-so", "-json", str(source)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        return []
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return []
+    layers = payload.get("layers") or []
+    if not layers:
+        return []
+    fields = layers[0].get("fields") or []
+    return [str(field.get("name")) for field in fields if isinstance(field, dict) and field.get("name")]
+
+
+def recommend_schema_fields(field_names: Sequence[str]) -> CuratorFieldOptions:
+    id_candidates = [
+        FieldRecommendation(field=field, reason="ID-like field name; verify uniqueness after conversion.", confidence="medium")
+        for field in field_names
+        if field_is_id_like(field)
+    ]
+    group_candidates = [
+        FieldRecommendation(field=field, reason="Human-readable grouping/search field name; verify cardinality after conversion.", confidence="medium")
+        for field in field_names
+        if field_is_group_like(field)
+    ]
+    notes = ["Inspected source schema only; distinct and duplicate counts must be populated after canonical conversion."]
+    if not id_candidates:
+        notes.append("No high-likelihood provider row ID field name was found.")
+    if not group_candidates:
+        notes.append("No high-likelihood grouping/search field name was found.")
+    return CuratorFieldOptions(id_candidates[:8], group_candidates[:8], notes)
+
+
+def recommend_curator_field_options(source: Path, canonical_format: str) -> CuratorFieldOptions:
+    try:
+        if source.suffix.lower() == ".csv":
+            return profile_rows(read_csv_rows(source))
+        if source.suffix.lower() in {".geojson", ".json", ".ndgeojson"}:
+            return profile_rows(read_geojson_rows(source))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, csv.Error) as exc:
+        return CuratorFieldOptions([], [], [f"Could not profile source attributes: {exc}"])
+
+    if canonical_format == "fgb":
+        if os.environ.get("SHARED_DATASETS_PROFILE_WITH_GDAL") == "1":
+            field_names = ogrinfo_field_names(source)
+            if field_names:
+                return recommend_schema_fields(field_names)
+        return CuratorFieldOptions(
+            [],
+            [],
+            [
+                "Vector source schema was not profiled with GDAL during planning; set SHARED_DATASETS_PROFILE_WITH_GDAL=1 "
+                "or profile the canonical artifact after conversion.",
+            ],
+        )
+    return CuratorFieldOptions(
+        [],
+        [],
+        ["No source attribute profile was available; populate ID and group-field candidates after canonical conversion."],
+    )
+
+
 def build_plan(
     *,
     source: Path,
@@ -153,6 +391,7 @@ def build_plan(
     if not SLUG_RE.fullmatch(slug):
         raise ConciergeError(f"asset slug must be lowercase kebab-case: {slug!r}")
     resolved_format = infer_format(source, canonical_format)
+    curator_field_options = recommend_curator_field_options(source, resolved_format)
     if access_tier not in {"public", "private"}:
         raise ConciergeError("access tier must be public or private")
     if source_resolution_meters is not None and source_resolution_meters <= 0:
@@ -245,11 +484,17 @@ def build_plan(
     notes = [
         "This concierge plan does not write to Cloud Storage.",
         "Review generated docs/catalog diffs before any remote upload.",
+        "Curator must choose provider ID candidates and grouping/search fields before publishing generated group IDs.",
     ]
     if resolved_format == "csv":
         notes.append("CSV must remain geometry-free under shared-datasets standards.")
     if include_pmtiles:
         notes.append("FGB vector assets require a PMTiles companion for catalog map preview.")
+        notes.append(
+            "If the curator chooses a generated group ID, run vector_asset.py build with "
+            "--group-id-field FIELD; the helper will write shared_datasets_group_id into the FGB "
+            "and require it in PMTiles feature properties."
+        )
         notes.append(
             "PMTiles maxzoom is resolved after the canonical FGB is generated and profiled; "
             "the concierge does not assume a fallback zoom."
@@ -286,6 +531,7 @@ def build_plan(
         suggested_commands=commands,
         remote_write_commands=remote_commands,
         notes=notes,
+        curator_field_options=curator_field_options,
         source_resolution_meters=source_resolution_meters,
         source_scale_denominator=source_scale_denominator,
         pmtiles_maxzoom=pmtiles_maxzoom,

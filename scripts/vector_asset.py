@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -39,6 +40,7 @@ WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
+GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
 POINT_DROPPING_TIPPECANOE_ARGS = {
     "--cluster-distance",
@@ -60,6 +62,8 @@ class VectorBuildPlan:
     layer_name: str
     work_dir: str
     output_dir: str
+    group_id_source_path: str | None
+    group_id_input_path: str | None
     fgb_path: str
     tippecanoe_input_path: str
     mbtiles_path: str
@@ -82,6 +86,10 @@ class VectorBuildPlan:
     pmtiles_profile_path: str
     tile_simplify: float | None
     tippecanoe_extra_args: tuple[str, ...]
+    required_properties: tuple[str, ...]
+    group_id_fields: tuple[str, ...]
+    group_id_token_length: int | None
+    group_id_fail_on_ambiguous_geometry: bool
     title: str
     description: str
     commands: list[list[str]]
@@ -94,12 +102,16 @@ class VectorValidationResult:
     valid: bool
     errors: tuple[str, ...]
     pmtiles_verify: str | None = None
+    decoded_feature_count: int | None = None
+    decoded_property_keys: tuple[str, ...] = ()
+    decoded_tile: str | None = None
     decoded_z0_feature_count: int | None = None
     decoded_z0_property_keys: tuple[str, ...] = ()
     point_retention_valid: bool | None = None
     pmtiles_profile_path: str | None = None
     profile: dict[str, Any] | None = None
     recommendation: dict[str, Any] | None = None
+    required_properties: tuple[str, ...] = ()
 
 
 def default_work_dir(asset_slug: str, *, root: Path | None = None) -> Path:
@@ -117,8 +129,24 @@ def validate_asset_slug(asset_slug: str) -> None:
         raise ValueError(f"asset slug must be lowercase kebab-case: {asset_slug!r}")
 
 
-def validate_tippecanoe_args(args: Sequence[str], *, allow_point_dropping: bool = False) -> None:
-    for arg in args:
+def tippecanoe_option_value(args: Sequence[str], index: int) -> str | None:
+    arg = args[index]
+    if "=" in arg:
+        return arg.split("=", 1)[1]
+    if index + 1 < len(args) and not args[index + 1].startswith("-"):
+        return args[index + 1]
+    return None
+
+
+def validate_tippecanoe_args(
+    args: Sequence[str],
+    *,
+    allow_point_dropping: bool = False,
+    required_properties: Sequence[str] = (),
+) -> None:
+    required = {property_name for property_name in required_properties if property_name}
+    included_properties: set[str] = set()
+    for index, arg in enumerate(args):
         option = arg.split("=", 1)[0]
         if option in PROPERTY_STRIPPING_TIPPECANOE_ARGS:
             raise ValueError(
@@ -126,6 +154,14 @@ def validate_tippecanoe_args(args: Sequence[str], *, allow_point_dropping: bool 
                 "feature inspector. Use narrower --exclude/--include filters or add compact "
                 "synthetic properties instead."
             )
+        if option in {"--exclude", "-x"}:
+            value = tippecanoe_option_value(args, index)
+            if value in required:
+                raise ValueError(f"{option} would strip required PMTiles property {value!r}")
+        if option in {"--include", "-y"}:
+            value = tippecanoe_option_value(args, index)
+            if value:
+                included_properties.add(value)
         if option == "--drop-rate" and arg != "--drop-rate=1" and not allow_point_dropping:
             raise ValueError(
                 "--drop-rate values other than 1 can drop point features. Pass "
@@ -136,6 +172,9 @@ def validate_tippecanoe_args(args: Sequence[str], *, allow_point_dropping: bool 
                 f"{option} can drop or alter point features. Pass --allow-point-dropping "
                 "only for a documented exception."
             )
+    if included_properties and not required.issubset(included_properties):
+        missing = ", ".join(sorted(required - included_properties))
+        raise ValueError(f"--include would omit required PMTiles propert{'y' if len(required - included_properties) == 1 else 'ies'}: {missing}")
 
 
 def parse_maxzoom(value: int | str | None) -> tuple[int | None, str]:
@@ -224,6 +263,8 @@ def executable_path(name: str) -> str:
 
 
 def executable_version(command: Sequence[str]) -> str:
+    if os.environ.get("SHARED_DATASETS_SKIP_TOOL_VERSION_PROBES") == "1":
+        return "not probed; SHARED_DATASETS_SKIP_TOOL_VERSION_PROBES=1 was set"
     try:
         completed = subprocess.run(
             command,
@@ -231,8 +272,9 @@ def executable_version(command: Sequence[str]) -> str:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            timeout=5,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         return f"unavailable: {exc}"
     return (completed.stdout or "").strip().splitlines()[0] if completed.stdout else "unknown"
 
@@ -277,6 +319,10 @@ def build_plan(
     pmtiles_bin: str = "pmtiles",
     pmtiles_engine: str = "tippecanoe",
     tippecanoe_extra_args: Sequence[str] = (),
+    required_properties: Sequence[str] = (),
+    group_id_fields: Sequence[str] = (),
+    group_id_token_length: int | None = None,
+    group_id_fail_on_ambiguous_geometry: bool = False,
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
@@ -311,7 +357,22 @@ def build_plan(
         raise ValueError("pmtiles engine must be 'tippecanoe' or 'gdal-mbtiles'")
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
-    validate_tippecanoe_args(tippecanoe_extra_args, allow_point_dropping=allow_point_dropping)
+    group_id_field_tuple = tuple(dict.fromkeys(field.strip() for field in group_id_fields if field.strip()))
+    if group_id_token_length is not None and group_id_token_length < 8:
+        raise ValueError("group ID token length must be at least 8")
+    required_property_tuple = tuple(
+        dict.fromkeys(
+            [
+                *(property_name.strip() for property_name in required_properties if property_name.strip()),
+                *([GENERATED_GROUP_ID_COLUMN] if group_id_field_tuple else []),
+            ]
+        )
+    )
+    validate_tippecanoe_args(
+        tippecanoe_extra_args,
+        allow_point_dropping=allow_point_dropping,
+        required_properties=required_property_tuple,
+    )
 
     layer = layer_name or slug_to_layer_name(asset_slug)
     work = work_dir or default_work_dir(asset_slug)
@@ -321,6 +382,8 @@ def build_plan(
     ensure_local_output_path(output, label="output directory", allow_repo_output=allow_repo_output)
 
     fgb_path = output / f"{asset_slug}.fgb"
+    group_id_source_path = build / f"{asset_slug}-group-id-source.geojson" if group_id_field_tuple else None
+    group_id_input_path = build / f"{asset_slug}-grouped.geojson" if group_id_field_tuple else None
     tippecanoe_input_path = build / f"{asset_slug}.geojson"
     mbtiles_path = build / f"{asset_slug}.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
@@ -329,6 +392,7 @@ def build_plan(
     dataset_description = description or f"{dataset_title} vector tiles"
     effective_tippecanoe_args = tuple(dict.fromkeys([*DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args]))
 
+    fgb_source_path = group_id_input_path or source
     fgb_command = [
         ogr2ogr_bin,
         "-f",
@@ -341,12 +405,41 @@ def build_plan(
         "-lco",
         "SPATIAL_INDEX=YES",
         str(fgb_path),
-        str(source),
+        str(fgb_source_path),
     ]
-    if source_layer:
+    if source_layer and group_id_input_path is None:
         fgb_command.append(source_layer)
 
-    commands = [fgb_command]
+    commands: list[list[str]] = []
+    if group_id_field_tuple and group_id_source_path and group_id_input_path:
+        group_source_command = [
+            ogr2ogr_bin,
+            "-f",
+            "GeoJSON",
+            "-t_srs",
+            "EPSG:4326",
+            str(group_id_source_path),
+            str(source),
+        ]
+        if source_layer:
+            group_source_command.append(source_layer)
+        group_id_command = [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "shared_dataset_group_ids.py"),
+            str(group_id_source_path),
+            "--asset-slug",
+            asset_slug,
+            "--out",
+            str(group_id_input_path),
+        ]
+        for field in group_id_field_tuple:
+            group_id_command.extend(["--grouping-field", field])
+        if group_id_token_length is not None:
+            group_id_command.extend(["--token-length", str(group_id_token_length)])
+        if group_id_fail_on_ambiguous_geometry:
+            group_id_command.append("--fail-on-ambiguous-geometry")
+        commands.extend([group_source_command, group_id_command])
+    commands.append(fgb_command)
 
     plan = VectorBuildPlan(
         source=str(source),
@@ -354,6 +447,8 @@ def build_plan(
         layer_name=layer,
         work_dir=str(work),
         output_dir=str(output),
+        group_id_source_path=str(group_id_source_path) if group_id_source_path else None,
+        group_id_input_path=str(group_id_input_path) if group_id_input_path else None,
         fgb_path=str(fgb_path),
         tippecanoe_input_path=str(tippecanoe_input_path),
         mbtiles_path=str(mbtiles_path),
@@ -384,12 +479,16 @@ def build_plan(
         pmtiles_profile_path=str(pmtiles_profile_path),
         tile_simplify=tile_simplify,
         tippecanoe_extra_args=effective_tippecanoe_args,
+        required_properties=required_property_tuple,
+        group_id_fields=group_id_field_tuple,
+        group_id_token_length=group_id_token_length,
+        group_id_fail_on_ambiguous_geometry=group_id_fail_on_ambiguous_geometry,
         title=dataset_title,
         description=dataset_description,
         commands=commands,
     )
     if resolved_maxzoom is not None:
-        plan = replace(plan, commands=[fgb_command, *pmtiles_commands(plan, resolved_maxzoom)])
+        plan = replace(plan, commands=[*commands, *pmtiles_commands(plan, resolved_maxzoom)])
     return plan
 
 
@@ -496,6 +595,10 @@ def remove_existing_outputs(plan: VectorBuildPlan, *, keep_mbtiles: bool) -> Non
         Path(plan.tippecanoe_input_path),
         Path(plan.pmtiles_profile_path),
     ]
+    if plan.group_id_source_path:
+        paths.append(Path(plan.group_id_source_path))
+    if plan.group_id_input_path:
+        paths.append(Path(plan.group_id_input_path))
     if not keep_mbtiles:
         paths.append(Path(plan.mbtiles_path))
     for path in paths:
@@ -517,7 +620,11 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
     if overwrite:
         remove_existing_outputs(plan, keep_mbtiles=keep_mbtiles)
 
-    run_command(plan.commands[0])
+    pre_profile_commands = plan.commands
+    if plan.maxzoom is not None:
+        pre_profile_commands = plan.commands[: -len(pmtiles_commands(plan, plan.maxzoom))]
+    for command in pre_profile_commands:
+        run_command(command)
     profile = profile_fgb(Path(plan.fgb_path), ogr2ogr_bin=plan.ogr2ogr_bin)
     recommendation = resolve_maxzoom(plan, profile)
     if recommendation.status != "recommended" or recommendation.maxzoom is None:
@@ -529,7 +636,12 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
         run_command(command)
 
     if not keep_mbtiles:
-        for intermediate in (Path(plan.mbtiles_path), Path(plan.tippecanoe_input_path)):
+        intermediates = [Path(plan.mbtiles_path), Path(plan.tippecanoe_input_path)]
+        if plan.group_id_source_path:
+            intermediates.append(Path(plan.group_id_source_path))
+        if plan.group_id_input_path:
+            intermediates.append(Path(plan.group_id_input_path))
+        for intermediate in intermediates:
             if intermediate.exists():
                 intermediate.unlink()
     validation = validate_outputs(
@@ -539,6 +651,8 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
         profile=profile,
         recommendation=recommendation,
         pmtiles_profile_path=Path(plan.pmtiles_profile_path),
+        required_properties=plan.required_properties,
+        decode_zoom=plan.minzoom,
     )
     write_pmtiles_profile(plan, profile, recommendation, validation=validation)
     return validation
@@ -582,6 +696,8 @@ def write_pmtiles_profile(
     payload = profile_payload(profile, recommendation)
     payload["asset_slug"] = plan.asset_slug
     payload["minzoom"] = plan.minzoom
+    if plan.required_properties:
+        payload["required_properties"] = list(plan.required_properties)
     synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
     if synthetic_sql is not None:
         payload["pmtiles_synthetic_properties"] = {SYNTHETIC_PMTILES_PROPERTY: plan.layer_name}
@@ -590,6 +706,9 @@ def write_pmtiles_profile(
             "valid": validation.valid,
             "errors": list(validation.errors),
             "pmtiles_verify": validation.pmtiles_verify,
+            "decoded_feature_count": validation.decoded_feature_count,
+            "decoded_property_keys": list(validation.decoded_property_keys),
+            "decoded_tile": validation.decoded_tile,
             "decoded_z0_feature_count": validation.decoded_z0_feature_count,
             "decoded_z0_property_keys": list(validation.decoded_z0_property_keys),
             "point_retention_valid": validation.point_retention_valid,
@@ -605,13 +724,22 @@ def validate_outputs(
     profile: FgbProfile | None = None,
     recommendation: ZoomRecommendation | None = None,
     pmtiles_profile_path: Path | None = None,
+    required_properties: Sequence[str] = (),
+    decode_zoom: int = 0,
 ) -> VectorValidationResult:
     errors: list[str] = []
+    required_property_tuple = tuple(dict.fromkeys(property_name for property_name in required_properties if property_name))
     pmtiles_verify: str | None = None
+    decoded_feature_count: int | None = None
+    decoded_property_keys: tuple[str, ...] = ()
+    decoded_tile: str | None = None
     decoded_z0_feature_count: int | None = None
     decoded_z0_property_keys: tuple[str, ...] = ()
     point_retention_valid: bool | None = None
     fgb_layer_name: str | None = None
+    fgb_property_keys: tuple[str, ...] | None = None
+    if decode_zoom < 0:
+        errors.append("decode_zoom must be non-negative")
     for label, path in (("FGB", fgb_path), ("PMTiles", pmtiles_path)):
         if not path.exists():
             errors.append(f"{label} file does not exist: {path}")
@@ -655,6 +783,7 @@ def validate_outputs(
                     errors.append("FGB layer has no features.")
                 else:
                     fgb_layer_name = layers[0].get("name")
+                    fgb_property_keys = ogrinfo_property_keys(layers[0])
 
         if fgb_layer_name:
             geometry_result = validate_fgb_geometry_validity(fgb_path, fgb_layer_name)
@@ -673,6 +802,14 @@ def validate_outputs(
                         "Repair source geometries with GDAL -makevalid before publishing."
                     )
 
+    if required_property_tuple:
+        if fgb_property_keys is None:
+            errors.append("Could not verify required FGB properties with ogrinfo.")
+        else:
+            missing_fgb = sorted(set(required_property_tuple) - set(fgb_property_keys))
+            if missing_fgb:
+                errors.append(f"FGB is missing required propert{'y' if len(missing_fgb) == 1 else 'ies'}: {', '.join(missing_fgb)}")
+
     if pmtiles_path.exists() and shutil.which(pmtiles_bin):
         completed = subprocess.run(
             [pmtiles_bin, "verify", str(pmtiles_path)],
@@ -687,12 +824,30 @@ def validate_outputs(
         else:
             pmtiles_verify = "passed"
 
-    decode_summary = decoded_pmtiles_property_summary(pmtiles_path)
+    decode_summary = (
+        None
+        if decode_zoom < 0
+        else decoded_pmtiles_property_summary(
+            pmtiles_path,
+            zoom=decode_zoom,
+            bounds=profile.bounds if profile else None,
+        )
+    )
     if decode_summary is not None:
-        decoded_z0_feature_count, decoded_z0_property_keys = decode_summary
-        if decoded_z0_feature_count > 0 and not decoded_z0_property_keys:
+        decoded_feature_count, decoded_property_keys, decoded_tile_values = decode_summary
+        decoded_tile = "/".join(str(value) for value in decoded_tile_values)
+        if decoded_tile_values == (0, 0, 0):
+            decoded_z0_feature_count = decoded_feature_count
+            decoded_z0_property_keys = decoded_property_keys
+        missing_pmtiles = sorted(set(required_property_tuple) - set(decoded_property_keys))
+        if missing_pmtiles:
             errors.append(
-                "PMTiles features decode with no feature properties at z0/0/0. "
+                f"PMTiles decoded features are missing required propert{'y' if len(missing_pmtiles) == 1 else 'ies'}: "
+                f"{', '.join(missing_pmtiles)}"
+            )
+        if decoded_feature_count > 0 and not decoded_property_keys:
+            errors.append(
+                f"PMTiles features decode with no feature properties at {decoded_tile}. "
                 "Do not publish geometry-only display tiles; preserve compact source properties "
                 "or add a synthetic property such as source_layer for the catalog inspector."
             )
@@ -700,13 +855,16 @@ def validate_outputs(
             profile is not None
             and profile.feature_count > 0
             and profile.point_feature_count == profile.feature_count
+            and decode_zoom == 0
         ):
-            point_retention_valid = decoded_z0_feature_count == profile.point_feature_count
+            point_retention_valid = decoded_feature_count == profile.point_feature_count
             if not point_retention_valid:
                 errors.append(
                     "Decoded PMTiles z0 feature count does not match point profile count: "
-                    f"{decoded_z0_feature_count} != {profile.point_feature_count}"
+                    f"{decoded_feature_count} != {profile.point_feature_count}"
                 )
+    elif required_property_tuple:
+        errors.append("Could not verify required PMTiles properties with tippecanoe-decode.")
 
     return VectorValidationResult(
         fgb_path=str(fgb_path),
@@ -714,13 +872,26 @@ def validate_outputs(
         valid=not errors,
         errors=tuple(errors),
         pmtiles_verify=pmtiles_verify,
+        decoded_feature_count=decoded_feature_count,
+        decoded_property_keys=decoded_property_keys,
+        decoded_tile=decoded_tile,
         decoded_z0_feature_count=decoded_z0_feature_count,
         decoded_z0_property_keys=decoded_z0_property_keys,
         point_retention_valid=point_retention_valid,
         pmtiles_profile_path=str(pmtiles_profile_path) if pmtiles_profile_path else None,
         profile=asdict(profile) if profile else None,
         recommendation=asdict(recommendation) if recommendation else None,
+        required_properties=required_property_tuple,
     )
+
+
+def ogrinfo_property_keys(layer: dict[str, Any]) -> tuple[str, ...]:
+    fields = layer.get("fields") or []
+    keys: list[str] = []
+    for field in fields:
+        if isinstance(field, dict) and field.get("name"):
+            keys.append(str(field["name"]))
+    return tuple(sorted(keys))
 
 
 def parse_ogrinfo_layer_name(output: str) -> str | None:
@@ -748,43 +919,85 @@ def parse_invalid_geometry_count(output: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[int, int]:
+    lat = max(-85.05112878, min(85.05112878, lat))
+    lon = max(-180.0, min(180.0, lon))
+    tile_count = 2**zoom
+    x = int((lon + 180.0) / 360.0 * tile_count)
+    lat_rad = math.radians(lat)
+    y = int((1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi) / 2.0 * tile_count)
+    return max(0, min(tile_count - 1, x)), max(0, min(tile_count - 1, y))
+
+
+def candidate_decode_tiles(*, zoom: int, bounds: tuple[float, float, float, float] | None) -> tuple[tuple[int, int], ...]:
+    if zoom == 0 or bounds is None:
+        return ((0, 0),)
+    min_lon, min_lat, max_lon, max_lat = bounds
+    center_lon = (min_lon + max_lon) / 2
+    center_lat = (min_lat + max_lat) / 2
+    lonlats = (
+        (center_lon, center_lat),
+        (min_lon, min_lat),
+        (min_lon, max_lat),
+        (max_lon, min_lat),
+        (max_lon, max_lat),
+    )
+    tiles: list[tuple[int, int]] = []
+    for lon, lat in lonlats:
+        tile = lonlat_to_tile(lon, lat, zoom)
+        if tile not in tiles:
+            tiles.append(tile)
+    return tuple(tiles)
+
+
 def decoded_pmtiles_property_summary(
     pmtiles_path: Path,
     *,
     decoder_bin: str = "tippecanoe-decode",
-) -> tuple[int, tuple[str, ...]] | None:
-    """Return decoded z0 feature count and property keys when tippecanoe-decode is available."""
+    zoom: int = 0,
+    bounds: tuple[float, float, float, float] | None = None,
+) -> tuple[int, tuple[str, ...], tuple[int, int, int]] | None:
+    """Return decoded feature count and property keys from a likely occupied tile."""
     if not pmtiles_path.exists() or not shutil.which(decoder_bin):
         return None
-
-    completed = subprocess.run(
-        [decoder_bin, str(pmtiles_path), "0", "0", "0"],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if completed.returncode != 0:
+    if zoom < 0:
         return None
 
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        return None
+    empty_summary: tuple[int, tuple[str, ...], tuple[int, int, int]] | None = None
+    for x, y in candidate_decode_tiles(zoom=zoom, bounds=bounds):
+        completed = subprocess.run(
+            [decoder_bin, str(pmtiles_path), str(zoom), str(x), str(y)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode != 0:
+            continue
 
-    feature_count = 0
-    property_keys: set[str] = set()
-    for layer_or_feature in payload.get("features") or []:
-        nested_features = layer_or_feature.get("features")
-        if isinstance(nested_features, list):
-            for feature in nested_features:
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            continue
+
+        feature_count = 0
+        property_keys: set[str] = set()
+        for layer_or_feature in payload.get("features") or []:
+            nested_features = layer_or_feature.get("features")
+            if isinstance(nested_features, list):
+                for feature in nested_features:
+                    feature_count += 1
+                    property_keys.update((feature.get("properties") or {}).keys())
+            else:
                 feature_count += 1
-                property_keys.update((feature.get("properties") or {}).keys())
-        else:
-            feature_count += 1
-            property_keys.update((layer_or_feature.get("properties") or {}).keys())
+                property_keys.update((layer_or_feature.get("properties") or {}).keys())
 
-    return feature_count, tuple(sorted(property_keys))
+        summary = (feature_count, tuple(sorted(property_keys)), (zoom, x, y))
+        if feature_count > 0:
+            return summary
+        empty_summary = summary
+
+    return empty_summary
 
 
 def _cmd_workdir(args: argparse.Namespace) -> int:
@@ -817,6 +1030,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         pmtiles_bin=args.pmtiles_bin,
         pmtiles_engine=args.pmtiles_engine,
         tippecanoe_extra_args=args.tippecanoe_arg,
+        required_properties=args.required_property,
+        group_id_fields=args.group_id_field,
+        group_id_token_length=args.group_id_token_length,
+        group_id_fail_on_ambiguous_geometry=args.group_id_fail_on_ambiguous_geometry,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
@@ -831,7 +1048,13 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    result = validate_outputs(Path(args.fgb), Path(args.pmtiles), pmtiles_bin=args.pmtiles_bin)
+    result = validate_outputs(
+        Path(args.fgb),
+        Path(args.pmtiles),
+        pmtiles_bin=args.pmtiles_bin,
+        required_properties=args.required_property,
+        decode_zoom=args.decode_zoom,
+    )
     print(json.dumps(asdict(result), indent=2, sort_keys=True))
     return 0 if result.valid else 1
 
@@ -906,6 +1129,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     build_parser.add_argument("--pmtiles-bin", default="pmtiles")
     build_parser.add_argument(
+        "--required-property",
+        action="append",
+        default=[],
+        help=(
+            "Property that must be present in the generated FGB schema and decoded PMTiles features. "
+            f"Use --required-property {GENERATED_GROUP_ID_COLUMN} when generating shared group IDs."
+        ),
+    )
+    build_parser.add_argument(
+        "--group-id-field",
+        action="append",
+        default=[],
+        help=(
+            "Curator-selected field used to generate shared_datasets_group_id before FGB creation. "
+            "Repeat for composite grouping fields."
+        ),
+    )
+    build_parser.add_argument(
+        "--group-id-token-length",
+        type=int,
+        help="Optional base62 token length for generated shared_datasets_group_id values; defaults to policy calculation.",
+    )
+    build_parser.add_argument(
+        "--group-id-fail-on-ambiguous-geometry",
+        action="store_true",
+        help=(
+            "Fail group ID generation when multiple grouping values share identical collective geometry "
+            "and would receive the same generated ID."
+        ),
+    )
+    build_parser.add_argument(
         "--pmtiles-engine",
         choices=["tippecanoe", "gdal-mbtiles"],
         default="tippecanoe",
@@ -939,6 +1193,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     validate_parser.add_argument("--fgb", required=True)
     validate_parser.add_argument("--pmtiles", required=True)
     validate_parser.add_argument("--pmtiles-bin", default="pmtiles")
+    validate_parser.add_argument(
+        "--decode-zoom",
+        type=int,
+        default=0,
+        help="Zoom level to sample with tippecanoe-decode when validating PMTiles properties.",
+    )
+    validate_parser.add_argument(
+        "--required-property",
+        action="append",
+        default=[],
+        help="Property that must be present in both the FGB schema and decoded PMTiles properties.",
+    )
     validate_parser.set_defaults(func=_cmd_validate)
 
     recommend_parser = subparsers.add_parser(

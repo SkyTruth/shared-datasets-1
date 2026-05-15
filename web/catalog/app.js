@@ -59,6 +59,10 @@ const elements = {
   fieldCount: document.querySelector("#detail-field-count"),
   identityFieldCard: document.querySelector("#detail-identity-field-card"),
   identityField: document.querySelector("#detail-identity-field"),
+  searchFieldsCard: document.querySelector("#detail-search-fields-card"),
+  searchFields: document.querySelector("#detail-search-fields"),
+  groupIdCard: document.querySelector("#detail-group-id-card"),
+  groupId: document.querySelector("#detail-group-id"),
   distinctValuesCard: document.querySelector("#detail-distinct-values-card"),
   distinctValues: document.querySelector("#detail-distinct-values"),
   duplicateSummaryCard: document.querySelector("#detail-duplicate-summary-card"),
@@ -397,6 +401,8 @@ function searchableText(asset) {
       formatRowCount(asset.row_count),
       formatBounds(asset.bounds),
       searchableDataProfile(asset.data_profile),
+      searchableSearchFields(asset.search_fields),
+      searchableGeneratedGroupId(asset.generated_group_id),
       asset.source,
       asset.source_url,
       asset.license,
@@ -735,6 +741,8 @@ function renderDiscoveryMetadata(asset, reference = selectedReference(asset)) {
   setOptionalMeta(elements.boundsCard, elements.bounds, formatBounds(asset.bounds));
   setOptionalMeta(elements.fieldCountCard, elements.fieldCount, formatInteger(profileFieldCount(asset)));
   setOptionalMeta(elements.identityFieldCard, elements.identityField, formatIdentityField(asset));
+  setOptionalMeta(elements.searchFieldsCard, elements.searchFields, formatSearchFields(asset));
+  setOptionalMeta(elements.groupIdCard, elements.groupId, formatGeneratedGroupId(asset));
   setOptionalMeta(elements.distinctValuesCard, elements.distinctValues, formatDistinctValues(asset));
   setOptionalMeta(elements.duplicateSummaryCard, elements.duplicateSummary, formatDuplicateSummary(asset));
   setOptionalMeta(elements.profileNoteCard, elements.profileNote, profileNote(asset));
@@ -799,6 +807,43 @@ function formatIdentityField(asset) {
   }
   const status = formatCandidateStatus(candidate.status);
   return status ? `${candidate.field} (${status})` : candidate.field;
+}
+
+function searchFields(asset) {
+  const fields = Array.isArray(asset?.search_fields) ? asset.search_fields : [];
+  return fields.filter((field) => field && typeof field === "object" && field.field);
+}
+
+function formatSearchFields(asset) {
+  const fields = searchFields(asset);
+  if (fields.length) {
+    return fields.map(formatProfileField).join(", ");
+  }
+  const field = mostUniqueField(asset);
+  return field?.field ? formatProfileField(field) : "";
+}
+
+function formatProfileField(field) {
+  const distinct = field.distinct_values === null || field.distinct_values === undefined ? "" : formatInteger(field.distinct_values);
+  return distinct ? `${field.field} (${distinct})` : field.field;
+}
+
+function generatedGroupId(asset) {
+  const value = asset?.generated_group_id;
+  return value && typeof value === "object" ? value : null;
+}
+
+function formatGeneratedGroupId(asset) {
+  const groupId = generatedGroupId(asset);
+  if (!groupId?.column) {
+    return "";
+  }
+  const groupCount =
+    groupId.group_count === null || groupId.group_count === undefined ? "" : `${formatInteger(groupId.group_count)} groups`;
+  const tokenLength =
+    groupId.token_length === null || groupId.token_length === undefined ? "" : `${formatInteger(groupId.token_length)} chars`;
+  const detail = [groupCount, tokenLength].filter(Boolean).join(", ");
+  return detail ? `${groupId.column} (${detail})` : groupId.column;
 }
 
 function formatCandidateStatus(status) {
@@ -873,6 +918,34 @@ function searchableDataProfile(profile) {
       candidate?.duplicate_row_count,
       candidate?.notes,
     ]),
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .join(" ");
+}
+
+function searchableSearchFields(fields) {
+  if (!Array.isArray(fields)) {
+    return "";
+  }
+  return fields
+    .flatMap((field) => [field?.field, field?.distinct_values, field?.notes])
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .join(" ");
+}
+
+function searchableGeneratedGroupId(groupId) {
+  if (!groupId || typeof groupId !== "object") {
+    return "";
+  }
+  return [
+    groupId.column,
+    groupId.algorithm,
+    Array.isArray(groupId.grouping_fields) ? groupId.grouping_fields.join(" ") : "",
+    groupId.token_length,
+    groupId.group_count,
+    groupId.blank_group_count,
+    groupId.stability,
+    groupId.notes,
   ]
     .filter((value) => value !== null && value !== undefined && value !== "")
     .join(" ");

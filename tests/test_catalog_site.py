@@ -51,6 +51,19 @@ data_profile:
   most_unique_field:
     field: source_id
     distinct_values: 12345
+search_fields:
+- field: source_name
+  distinct_values: 345
+  notes: Useful human-readable filter
+generated_group_id:
+  column: shared_datasets_group_id
+  algorithm: shared-datasets-group-id:v1
+  grouping_fields:
+  - source_name
+  token_length: 8
+  group_count: 345
+  blank_group_count: 0
+  stability: Geometry-addressed ID; source-name changes do not change IDs, but material geometry changes do.
 files:
 - path: latest/example-asset.fgb
   format: fgb
@@ -182,6 +195,13 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["data_profile"]["identity_candidates"][0]["duplicate_row_count"], 0)
         self.assertEqual(asset["data_profile"]["identity_candidates"][0]["status"], "unique")
         self.assertEqual(asset["data_profile"]["most_unique_field"]["field"], "source_id")
+        self.assertEqual(asset["search_fields"][0]["field"], "source_name")
+        self.assertEqual(asset["search_fields"][0]["distinct_values"], 345)
+        self.assertEqual(asset["generated_group_id"]["column"], "shared_datasets_group_id")
+        self.assertEqual(asset["generated_group_id"]["algorithm"], "shared-datasets-group-id:v1")
+        self.assertEqual(asset["generated_group_id"]["grouping_fields"], ["source_name"])
+        self.assertEqual(asset["generated_group_id"]["token_length"], 8)
+        self.assertEqual(asset["generated_group_id"]["group_count"], 345)
         self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertEqual(asset["citation"], "Example citation")
         self.assertIn("Reusable example boundary dataset", asset["description"])

@@ -51,6 +51,8 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 RELEASE_PATH_RE = re.compile(r"^releases/(?P<date>\d{4}-\d{2}-\d{2}|YYYY-MM-DD)/(?P<object>.+)$")
 REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
+GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
+GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 
 
 class CatalogSiteError(ValueError):
@@ -106,6 +108,8 @@ class CatalogAsset:
     geometry_type: str | None
     row_count: int | None
     data_profile: dict[str, Any] | None
+    search_fields: list[dict[str, Any]]
+    generated_group_id: dict[str, Any] | None
     source_url: str | None
     public_url: str
     pmtiles_path: str | None
@@ -350,6 +354,109 @@ def normalize_most_unique_field(
     )
     normalized: dict[str, Any] = {"field": field, "distinct_values": distinct_values}
     notes = str(value.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+    return normalized
+
+
+def normalize_search_field(
+    value: Any,
+    *,
+    index: int,
+    doc_path: Path,
+    row_count: int | None,
+) -> dict[str, Any]:
+    context = f"search_fields[{index}]"
+    if isinstance(value, str):
+        field = value.strip()
+        if not field:
+            raise CatalogSiteError(f"{doc_path}: {context} must be non-empty")
+        return {"field": field}
+    if not isinstance(value, dict):
+        raise CatalogSiteError(f"{doc_path}: {context} must be a mapping or string")
+    field = str(value.get("field") or "").strip()
+    if not field:
+        raise CatalogSiteError(f"{doc_path}: {context}.field is required")
+    normalized: dict[str, Any] = {"field": field}
+    distinct_values = profile_int(
+        value.get("distinct_values"),
+        label=f"{context}.distinct_values",
+        doc_path=doc_path,
+        row_count=row_count,
+    )
+    if distinct_values is not None:
+        normalized["distinct_values"] = distinct_values
+    notes = str(value.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+    return normalized
+
+
+def optional_search_fields(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> list[dict[str, Any]]:
+    raw_fields = metadata.get("search_fields")
+    if raw_fields in (None, ""):
+        return []
+    if not isinstance(raw_fields, list):
+        raise CatalogSiteError(f"{doc_path}: search_fields must be a list")
+    return [
+        normalize_search_field(value, index=index, doc_path=doc_path, row_count=row_count)
+        for index, value in enumerate(raw_fields, start=1)
+    ]
+
+
+def optional_generated_group_id(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
+    raw_group_id = metadata.get("generated_group_id")
+    if raw_group_id in (None, ""):
+        return None
+    if not isinstance(raw_group_id, dict):
+        raise CatalogSiteError(f"{doc_path}: generated_group_id must be a mapping")
+    column = str(raw_group_id.get("column") or "").strip()
+    if column != GENERATED_GROUP_ID_COLUMN:
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.column must be {GENERATED_GROUP_ID_COLUMN}")
+    algorithm = str(raw_group_id.get("algorithm") or "").strip()
+    if algorithm != GENERATED_GROUP_ID_ALGORITHM:
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.algorithm must be {GENERATED_GROUP_ID_ALGORITHM}")
+    raw_fields = raw_group_id.get("grouping_fields")
+    if not isinstance(raw_fields, list):
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.grouping_fields must be a non-empty list")
+    grouping_fields = [str(field).strip() for field in raw_fields if str(field).strip()]
+    if not grouping_fields:
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.grouping_fields must be a non-empty list")
+    token_length = profile_int(
+        raw_group_id.get("token_length"),
+        label="generated_group_id.token_length",
+        doc_path=doc_path,
+        required=True,
+    )
+    if token_length is not None and token_length < 8:
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.token_length must be at least 8")
+    group_count = profile_int(
+        raw_group_id.get("group_count"),
+        label="generated_group_id.group_count",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    blank_group_count = profile_int(
+        raw_group_id.get("blank_group_count"),
+        label="generated_group_id.blank_group_count",
+        doc_path=doc_path,
+        row_count=row_count,
+    )
+    stability = str(raw_group_id.get("stability") or "").strip()
+    if not stability:
+        raise CatalogSiteError(f"{doc_path}: generated_group_id.stability is required")
+    normalized: dict[str, Any] = {
+        "column": column,
+        "algorithm": algorithm,
+        "grouping_fields": grouping_fields,
+        "token_length": token_length,
+        "group_count": group_count,
+        "stability": stability,
+    }
+    if blank_group_count is not None:
+        normalized["blank_group_count"] = blank_group_count
+    notes = str(raw_group_id.get("notes") or "").strip()
     if notes:
         normalized["notes"] = notes
     return normalized
@@ -779,6 +886,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         geometry_type=optional_text(doc_metadata, "geometry_type", doc_path=doc_path),
         row_count=row_count,
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
+        search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
+        generated_group_id=optional_generated_group_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,

@@ -222,5 +222,24 @@ data_profile:
   notes: No documented ext_id candidate
 ```
 
+Provider ID fields and shared-datasets-generated group IDs are separate
+concepts. Keep provider identifiers in `data_profile.identity_candidates` only
+when they come from the source and have been checked for uniqueness. Use
+`search_fields` for high-value search/filter fields such as names, labels,
+sites, regions, or source grouping labels; these fields do not need to be
+unique.
+
+Use `generated_group_id` only when an asset needs generated group-level
+addressing and lacks a useful provider row ID. The generated native column is
+`shared_datasets_group_id`, produced with `shared-datasets-group-id:v1`.
+`shared_datasets_group_id` must be a native property/column in the canonical
+vector/table artifact and must be preserved in PMTiles feature properties.
+Generated group IDs are geometry-addressed within the asset: they are stable for
+unchanged collective group geometry, including source-name or label changes, but
+they are not persistent business/entity IDs across material source geometry
+changes. If multiple grouping values share identical collective geometry, the
+helper reports that ambiguity because those groups intentionally receive the
+same generated ID unless a curator chooses an explicit stable disambiguator.
+
 Use `templates/dataset_README.template.md` for important assets and
 `templates/dataset_README.minimal.template.md` for small/simple assets.

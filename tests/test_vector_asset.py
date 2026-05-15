@@ -109,6 +109,42 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIsNone(plan.maxzoom)
         self.assertEqual(plan.maxzoom_mode, "auto")
 
+    def test_group_id_field_adds_native_column_generation_before_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="global-coral-reefs",
+                work_dir=Path(tmp) / "work",
+                group_id_fields=("NAME",),
+            )
+
+        self.assertEqual(plan.group_id_fields, ("NAME",))
+        self.assertIn(vector_asset.GENERATED_GROUP_ID_COLUMN, plan.required_properties)
+        self.assertEqual(plan.commands[0][:3], ["ogr2ogr", "-f", "GeoJSON"])
+        self.assertIn("shared_dataset_group_ids.py", plan.commands[1][1])
+        self.assertIn("--grouping-field", plan.commands[1])
+        self.assertEqual(plan.commands[2][:3], ["ogr2ogr", "-f", "FlatGeobuf"])
+        self.assertEqual(plan.commands[2][-1], plan.group_id_input_path)
+
+    def test_group_id_strict_ambiguity_flag_is_passed_to_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="global-coral-reefs",
+                work_dir=Path(tmp) / "work",
+                group_id_fields=("NAME",),
+                group_id_fail_on_ambiguous_geometry=True,
+            )
+
+        self.assertTrue(plan.group_id_fail_on_ambiguous_geometry)
+        self.assertIn("--fail-on-ambiguous-geometry", plan.commands[1])
+
     def test_pmtiles_commands_add_source_layer_for_geometry_only_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -215,6 +251,44 @@ class VectorAssetTests(unittest.TestCase):
                     tippecanoe_extra_args=("--exclude-all",),
                 )
 
+    def test_tippecanoe_rejects_required_group_id_exclusion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "required PMTiles property"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                    tippecanoe_extra_args=("--exclude", vector_asset.GENERATED_GROUP_ID_COLUMN),
+                )
+
+    def test_tippecanoe_include_must_preserve_required_group_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "would omit required"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                    tippecanoe_extra_args=("--include", "NAME"),
+                )
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work-okay",
+                required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                tippecanoe_extra_args=("--include", vector_asset.GENERATED_GROUP_ID_COLUMN),
+            )
+
+        self.assertEqual(plan.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
+
     def test_tippecanoe_rejects_point_dropping_flags_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -311,6 +385,220 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertTrue(result.valid)
         self.assertEqual(result.errors, ())
+
+    def test_validation_requires_group_id_in_fgb_and_pmtiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "layers": [
+                                    {
+                                        "name": "example",
+                                        "featureCount": 1,
+                                        "fields": [{"name": vector_asset.GENERATED_GROUP_ID_COLUMN}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                if command[:4] == ["ogrinfo", "-ro", "-q", "-dialect"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="invalid_geometry_count (Integer) = 0\n",
+                        stderr="",
+                    )
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "features": [
+                                    {
+                                        "properties": {},
+                                        "features": [
+                                            {"properties": {vector_asset.GENERATED_GROUP_ID_COLUMN: "abc12345"}}
+                                        ],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(
+                    fgb,
+                    pmtiles,
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
+
+    def test_validation_decodes_required_properties_at_requested_zoom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+            profile = pmtiles_zoom.FgbProfile(
+                path=str(fgb),
+                feature_count=1,
+                geometry_types=("Point",),
+                bounds=(-75.0, 40.0, -74.0, 41.0),
+                point_feature_count=1,
+                sampled_feature_count=1,
+                sampled_segment_count=0,
+                segment_length_m_p25=None,
+                segment_length_m_p50=None,
+                feature_min_dimension_m_p10=None,
+                feature_min_dimension_m_p25=None,
+                envelope_like=False,
+                property_keys=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                errors=(),
+            )
+            decoded_commands = []
+
+            def which(name):
+                if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "layers": [
+                                    {
+                                        "name": "example",
+                                        "featureCount": 1,
+                                        "fields": [{"name": vector_asset.GENERATED_GROUP_ID_COLUMN}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                if command[:4] == ["ogrinfo", "-ro", "-q", "-dialect"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="invalid_geometry_count (Integer) = 0\n",
+                        stderr="",
+                    )
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    decoded_commands.append(command)
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "features": [
+                                    {
+                                        "features": [
+                                            {"properties": {vector_asset.GENERATED_GROUP_ID_COLUMN: "abc12345"}}
+                                        ]
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(
+                    fgb,
+                    pmtiles,
+                    profile=profile,
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                    decode_zoom=4,
+                )
+
+        expected_x, expected_y = vector_asset.lonlat_to_tile(-74.5, 40.5, 4)
+        self.assertTrue(result.valid)
+        self.assertEqual(decoded_commands[0][2:], ["4", str(expected_x), str(expected_y)])
+        self.assertEqual(result.decoded_tile, f"4/{expected_x}/{expected_y}")
+        self.assertEqual(result.decoded_property_keys, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
+        self.assertIsNone(result.decoded_z0_feature_count)
+        self.assertIsNone(result.point_retention_valid)
+
+    def test_validation_rejects_missing_required_group_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps({"layers": [{"name": "example", "featureCount": 1, "fields": [{"name": "NAME"}]}]}),
+                        stderr="",
+                    )
+                if command[:4] == ["ogrinfo", "-ro", "-q", "-dialect"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="invalid_geometry_count (Integer) = 0\n",
+                        stderr="",
+                    )
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps({"features": [{"features": [{"properties": {"NAME": "Alpha"}}]}]}),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(
+                    fgb,
+                    pmtiles,
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                )
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any("FGB is missing" in error for error in result.errors))
+        self.assertTrue(any("PMTiles decoded features are missing" in error for error in result.errors))
 
     def test_validation_rejects_invalid_fgb_geometries(self):
         with tempfile.TemporaryDirectory() as tmp:

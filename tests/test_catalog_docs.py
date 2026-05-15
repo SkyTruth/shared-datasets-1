@@ -58,6 +58,27 @@ bounds:
 - 40.125
 geometry_type: Polygon
 row_count: 12345
+data_profile:
+  field_count: 8
+  identity_candidates:
+  - field: source_id
+    distinct_values: 12345
+    duplicate_value_count: 0
+    duplicate_row_count: 0
+    status: unique
+search_fields:
+- field: source_name
+  distinct_values: 345
+  notes: Useful human-readable filter
+generated_group_id:
+  column: shared_datasets_group_id
+  algorithm: shared-datasets-group-id:v1
+  grouping_fields:
+  - source_name
+  token_length: 8
+  group_count: 345
+  blank_group_count: 0
+  stability: Geometry-addressed ID; source-name changes do not change IDs, but material geometry changes do.
 files:
 - path: latest/example-asset.fgb
   format: fgb
@@ -191,6 +212,8 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertIn("source_url: https://example.test/source", rendered)
         self.assertIn("geometry_type: Polygon", rendered)
         self.assertIn("row_count: 12345", rendered)
+        self.assertIn("search_fields:", rendered)
+        self.assertIn("generated_group_id:", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
 
     def test_legacy_generate_backfills_frontmatter_from_catalog_and_files_table(self):
@@ -403,7 +426,18 @@ class CatalogDocsTests(unittest.TestCase):
             "  identity_candidates: []\n"
             "  notes: No documented ext_id candidate\n"
         )
-        bad_doc = STRICT_DOC.replace("row_count: 12345\n", "row_count: 12345\n" + profile, 1)
+        bad_doc = STRICT_DOC.replace(
+            "data_profile:\n"
+            "  field_count: 8\n"
+            "  identity_candidates:\n"
+            "  - field: source_id\n"
+            "    distinct_values: 12345\n"
+            "    duplicate_value_count: 0\n"
+            "    duplicate_row_count: 0\n"
+            "    status: unique\n",
+            profile,
+            1,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)

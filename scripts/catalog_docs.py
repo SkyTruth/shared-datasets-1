@@ -78,6 +78,8 @@ FRONTMATTER_KEYS = [
     "geometry_type",
     "row_count",
     "data_profile",
+    "search_fields",
+    "generated_group_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -93,6 +95,8 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "geometry_type",
     "row_count",
     "data_profile",
+    "search_fields",
+    "generated_group_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -110,6 +114,8 @@ LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS = ["lifecycle_reason", "lifecycle_date", "consumer_guidance"]
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
+GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
+GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 
 REQUIRED_SCALAR_FIELDS = [
     "asset_slug",
@@ -536,6 +542,70 @@ def validate_most_unique_field(value: Any, *, path: Path, row_count: int | None)
     )
 
 
+def validate_search_fields(value: Any, *, path: Path, row_count: int | None) -> None:
+    if value in (None, ""):
+        return
+    if not isinstance(value, list):
+        raise CatalogDocsError(f"{path}: search_fields must be a list")
+    for index, entry in enumerate(value, start=1):
+        context = f"search_fields[{index}]"
+        if isinstance(entry, str):
+            if not entry.strip():
+                raise CatalogDocsError(f"{path}: {context} must be non-empty")
+            continue
+        if not isinstance(entry, dict):
+            raise CatalogDocsError(f"{path}: {context} must be a mapping or string")
+        if not as_text(entry.get("field")).strip():
+            raise CatalogDocsError(f"{path}: {context}.field is required")
+        profile_int(
+            entry.get("distinct_values"),
+            label=f"{context}.distinct_values",
+            path=path,
+            row_count=row_count,
+        )
+        if "notes" in entry and entry["notes"] not in (None, "") and not as_text(entry["notes"]).strip():
+            raise CatalogDocsError(f"{path}: {context}.notes must be non-empty when provided")
+
+
+def validate_generated_group_id(value: Any, *, path: Path, row_count: int | None) -> None:
+    if value in (None, ""):
+        return
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: generated_group_id must be a mapping")
+    column = as_text(value.get("column")).strip()
+    if column != GENERATED_GROUP_ID_COLUMN:
+        raise CatalogDocsError(f"{path}: generated_group_id.column must be {GENERATED_GROUP_ID_COLUMN}")
+    algorithm = as_text(value.get("algorithm")).strip()
+    if algorithm != GENERATED_GROUP_ID_ALGORITHM:
+        raise CatalogDocsError(f"{path}: generated_group_id.algorithm must be {GENERATED_GROUP_ID_ALGORITHM}")
+    grouping_fields = value.get("grouping_fields")
+    if not isinstance(grouping_fields, list) or not [as_text(field).strip() for field in grouping_fields if as_text(field).strip()]:
+        raise CatalogDocsError(f"{path}: generated_group_id.grouping_fields must be a non-empty list")
+    token_length = profile_int(
+        value.get("token_length"),
+        label="generated_group_id.token_length",
+        path=path,
+        required=True,
+    )
+    if token_length is not None and token_length < 8:
+        raise CatalogDocsError(f"{path}: generated_group_id.token_length must be at least 8")
+    profile_int(
+        value.get("group_count"),
+        label="generated_group_id.group_count",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+    profile_int(
+        value.get("blank_group_count"),
+        label="generated_group_id.blank_group_count",
+        path=path,
+        row_count=row_count,
+    )
+    if not as_text(value.get("stability")).strip():
+        raise CatalogDocsError(f"{path}: generated_group_id.stability is required")
+
+
 def validate_data_profile(path: Path, metadata: dict[str, Any], *, row_count: int | None) -> None:
     profile = metadata.get("data_profile")
     if profile in (None, ""):
@@ -577,6 +647,8 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
         if row_count < 0:
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
     validate_data_profile(path, metadata, row_count=row_count)
+    validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
+    validate_generated_group_id(metadata.get("generated_group_id"), path=path, row_count=row_count)
     if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):
         try:
             resolution = float(metadata["source_resolution_meters"])
