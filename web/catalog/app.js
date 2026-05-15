@@ -14,6 +14,18 @@ const state = {
   docsRequestSerial: 0,
 };
 
+function createZoomSelectionButton() {
+  const button = document.createElement("button");
+  button.id = "zoom-selection";
+  button.className = "icon-button zoom-selection-button";
+  button.type = "button";
+  button.hidden = true;
+  button.disabled = true;
+  button.textContent = "Zoom to selection";
+  button.title = "Select a legend item to enable zoom";
+  return button;
+}
+
 const elements = {
   count: document.querySelector("#catalog-count"),
   list: document.querySelector("#asset-list"),
@@ -79,7 +91,7 @@ const elements = {
   colorLegend: document.querySelector("#color-legend"),
   featureInspector: document.querySelector("#feature-inspector"),
   basemap: document.querySelector("#basemap-select"),
-  zoomSelection: document.querySelector("#zoom-selection"),
+  zoomSelection: createZoomSelectionButton(),
   colorizeControl: document.querySelector("#colorize-control"),
   colorize: document.querySelector("#colorize-select"),
   layerControl: document.querySelector("#layer-control"),
@@ -1127,7 +1139,7 @@ function clearFeatureInspector() {
 function setZoomSelectionEnabled(enabled) {
   elements.zoomSelection.hidden = !enabled;
   elements.zoomSelection.disabled = !enabled;
-  elements.zoomSelection.title = enabled ? "Zoom map to selected datasets" : "Select a legend item to enable zoom";
+  elements.zoomSelection.title = enabled ? "Zoom map to selected legend item" : "Select a legend item to enable zoom";
 }
 
 function clearColorLegend() {
@@ -1150,7 +1162,15 @@ function renderColorLegend(legend) {
   title.textContent = legend.field || "Categories";
   const count = document.createElement("span");
   count.textContent = `${entries.length} unique values`;
-  heading.append(title, count);
+  const actions = document.createElement("div");
+  actions.className = "color-legend-actions";
+  actions.append(count);
+  const canZoomToLegend = Boolean(legend.focusedValue && state.mapModule?.canZoomToLegendSelection?.());
+  setZoomSelectionEnabled(canZoomToLegend);
+  if (canZoomToLegend) {
+    actions.append(elements.zoomSelection);
+  }
+  heading.append(title, actions);
 
   const items = document.createElement("div");
   items.className = "color-legend-items";
@@ -1177,7 +1197,6 @@ function renderColorLegend(legend) {
     items.append(item);
   }
 
-  setZoomSelectionEnabled(Boolean(legend.focusedValue && state.mapModule?.canZoomToSelection?.()));
   elements.colorLegend.append(heading, items);
   elements.colorLegend.hidden = false;
 }

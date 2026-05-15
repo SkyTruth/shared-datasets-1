@@ -35,17 +35,21 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         )
 
     def test_catalog_viewer_can_zoom_to_selected_map_assets(self):
-        index = (REPO_ROOT / "web/catalog/index.html").read_text()
         app = (REPO_ROOT / "web/catalog/app.js").read_text()
         map_preview = (REPO_ROOT / "web/catalog/map-preview.js").read_text()
 
-        self.assertIn('id="zoom-selection"', index)
-        self.assertIn("Zoom to selection", index)
-        self.assertIn("hidden", index[index.index('id=\"zoom-selection\"') : index.index("Zoom to selection")])
+        self.assertIn('button.id = "zoom-selection"', app)
+        self.assertIn("Zoom to selection", app)
+        self.assertIn("color-legend-actions", app)
+        self.assertIn("actions.append(elements.zoomSelection)", app)
         self.assertIn("state.mapModule?.zoomToSelection", app)
-        self.assertIn("legend.focusedValue && state.mapModule?.canZoomToSelection?.()", app)
+        self.assertIn("legend.focusedValue && state.mapModule?.canZoomToLegendSelection?.()", app)
         self.assertIn("export function zoomToSelection()", map_preview)
-        self.assertIn("activeMap.fitBounds(activeSelectionBounds", map_preview)
+        self.assertIn("export function canZoomToLegendSelection()", map_preview)
+        self.assertIn("focusedLegendBounds() || activeSelectionBounds", map_preview)
+        self.assertIn("mode.boundsByValue = samples.boundsByValue", map_preview)
+        self.assertIn("context.colorMode?.boundsByValue?.get", map_preview)
+        self.assertIn("queryRenderedFeatures(queryBox", map_preview)
 
 
 if __name__ == "__main__":

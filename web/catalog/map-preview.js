@@ -246,15 +246,63 @@ export function clearFeatureInspectionIndicator() {
 }
 
 export function canZoomToSelection() {
-  return Boolean(activeMap && activeSelectionBounds);
+  return Boolean(activeMap && (focusedLegendBounds() || activeSelectionBounds));
+}
+
+export function canZoomToLegendSelection() {
+  return Boolean(activeMap && focusedLegendBounds());
 }
 
 export function zoomToSelection() {
-  if (!activeMap || !activeSelectionBounds) {
+  const bounds = focusedLegendBounds() || activeSelectionBounds;
+  if (!activeMap || !bounds) {
     return false;
   }
-  activeMap.fitBounds(activeSelectionBounds, { padding: 44, duration: 500, maxZoom: 10 });
+  activeMap.fitBounds(bounds, { padding: 44, duration: 500, maxZoom: 12 });
   return true;
+}
+
+function focusedLegendBounds() {
+  const context = activeColorContext;
+  if (!context?.map || !context.focusedLegendValue || !modeSupportsLegendFocus(context.colorMode)) {
+    return null;
+  }
+  const cachedBounds = context.colorMode?.boundsByValue?.get(context.focusedLegendValue);
+  if (cachedBounds) {
+    return cachedBounds;
+  }
+  return focusedRenderedLegendBounds(context);
+}
+
+function focusedRenderedLegendBounds(context) {
+  const layerIds = context.mapSources.flatMap(layerIdsForSource).filter((layerId) => context.map.getLayer(layerId));
+  if (!layerIds.length) {
+    return null;
+  }
+  const canvas = context.map.getCanvas();
+  const queryBox = [
+    [0, 0],
+    [canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height],
+  ];
+  let features = [];
+  try {
+    features = context.map.queryRenderedFeatures(queryBox, { layers: layerIds });
+  } catch {
+    return null;
+  }
+  const bounds = features
+    .filter((feature) => featureMatchesLegendFocus(feature, context))
+    .map((feature) => boundsFromFeatureGeometry(feature.geometry))
+    .filter(Boolean);
+  return combinedBounds(bounds);
+}
+
+function featureMatchesLegendFocus(feature, context) {
+  const field = context.colorMode?.field;
+  if (!field) {
+    return false;
+  }
+  return normalizedValue(feature?.properties?.[field]) === context.focusedLegendValue;
 }
 
 function clearActiveMap() {
@@ -710,7 +758,8 @@ function refreshColorSample(context) {
     return;
   }
   const samples = sampleFieldValues(context, context.colorField);
-  const mode = inferColorMode(context.colorField, samples);
+  const mode = inferColorMode(context.colorField, samples.values);
+  mode.boundsByValue = samples.boundsByValue;
   const signature = colorModeSignature(mode);
   const previousFocus = context.focusedLegendValue;
   context.colorMode = mode;
@@ -723,7 +772,8 @@ function refreshColorSample(context) {
 }
 
 function sampleFieldValues(context, field) {
-  const samples = [];
+  const values = [];
+  const boundsByValue = new Map();
   let seen = 0;
   const random = seededRandom(hashString(field));
   for (const source of context.mapSources) {
@@ -735,18 +785,22 @@ function sampleFieldValues(context, field) {
         }
         seen += 1;
         const item = { raw: properties[field], text: normalizedValue(properties[field]) };
-        if (samples.length < SAMPLE_LIMIT) {
-          samples.push(item);
+        const bounds = boundsFromFeatureGeometry(feature.geometry);
+        if (bounds && item.text) {
+          boundsByValue.set(item.text, combineTwoBounds(boundsByValue.get(item.text), bounds));
+        }
+        if (values.length < SAMPLE_LIMIT) {
+          values.push(item);
         } else {
           const replacementIndex = Math.floor(random() * seen);
           if (replacementIndex < SAMPLE_LIMIT) {
-            samples[replacementIndex] = item;
+            values[replacementIndex] = item;
           }
         }
       }
     }
   }
-  return samples;
+  return { values, boundsByValue };
 }
 
 function querySourceLayerFeatures(map, source, layer) {
@@ -1297,6 +1351,49 @@ function boundsFromHeader(header) {
   ];
 }
 
+function boundsFromFeatureGeometry(geometry) {
+  const accumulator = {
+    minLon: Infinity,
+    minLat: Infinity,
+    maxLon: -Infinity,
+    maxLat: -Infinity,
+  };
+  collectGeometryBounds(geometry, accumulator);
+  return normalizedBounds(accumulator.minLon, accumulator.minLat, accumulator.maxLon, accumulator.maxLat);
+}
+
+function collectGeometryBounds(value, accumulator) {
+  if (!value) {
+    return;
+  }
+  if (value.type === "GeometryCollection" && Array.isArray(value.geometries)) {
+    for (const geometry of value.geometries) {
+      collectGeometryBounds(geometry, accumulator);
+    }
+    return;
+  }
+  if (Array.isArray(value.coordinates)) {
+    collectGeometryBounds(value.coordinates, accumulator);
+    return;
+  }
+  if (Array.isArray(value) && typeof value[0] === "number" && typeof value[1] === "number") {
+    const lon = Number(value[0]);
+    const lat = Number(value[1]);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      accumulator.minLon = Math.min(accumulator.minLon, lon);
+      accumulator.minLat = Math.min(accumulator.minLat, lat);
+      accumulator.maxLon = Math.max(accumulator.maxLon, lon);
+      accumulator.maxLat = Math.max(accumulator.maxLat, lat);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      collectGeometryBounds(child, accumulator);
+    }
+  }
+}
+
 function combinedBounds(boundsList) {
   if (!boundsList.length) {
     return null;
@@ -1311,8 +1408,24 @@ function combinedBounds(boundsList) {
     maxLon = Math.max(maxLon, bounds[1][0]);
     maxLat = Math.max(maxLat, bounds[1][1]);
   }
-  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite) || minLon >= maxLon || minLat >= maxLat) {
+  return normalizedBounds(minLon, minLat, maxLon, maxLat);
+}
+
+function combineTwoBounds(left, right) {
+  return combinedBounds([left, right].filter(Boolean));
+}
+
+function normalizedBounds(minLon, minLat, maxLon, maxLat) {
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite) || minLon > maxLon || minLat > maxLat) {
     return null;
+  }
+  if (minLon === maxLon) {
+    minLon -= 0.01;
+    maxLon += 0.01;
+  }
+  if (minLat === maxLat) {
+    minLat -= 0.01;
+    maxLat += 0.01;
   }
   return [
     [minLon, minLat],

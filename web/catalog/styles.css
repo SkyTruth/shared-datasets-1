@@ -828,7 +828,7 @@ h3 {
 
 .color-legend-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 7px;
@@ -847,6 +847,21 @@ h3 {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 720;
+}
+
+.color-legend-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.color-legend-actions .zoom-selection-button {
+  min-height: 28px;
+  min-width: 126px;
+  padding: 0 9px;
+  font-size: 0.72rem;
 }
 
 .color-legend-items {
@@ -1142,7 +1157,6 @@ h3 {
   }
 
   .map-actions .quiet-link,
-  .map-actions .icon-button,
   .basemap-control,
   .colorize-control,
   .layer-control,
