@@ -42,6 +42,8 @@ FORMAT_FILE_EXTENSIONS = {
     "zarr": "zarr",
 }
 SUPPORTED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
+PROFILE_ROW_LIMIT = 1000
+MAX_IN_MEMORY_GEOJSON_BYTES = 5 * 1024 * 1024
 ID_FIELD_RE = re.compile(r"(^id$|_id$|^id_|uuid|guid|external.?id|ext.?id|source.?id|objectid|mrgid|wdpaid)", re.IGNORECASE)
 GROUP_FIELD_RE = re.compile(r"(^name$|name$|title|label|site|region|zone|area_name|place|locality|unit)", re.IGNORECASE)
 MEASUREMENT_FIELD_RE = re.compile(r"(area|length|shape|perimeter|lat|lon|longitude|latitude|date|time|rank|zoom|count)$", re.IGNORECASE)
@@ -247,7 +249,7 @@ def profile_rows(rows: Sequence[dict[str, Any]]) -> CuratorFieldOptions:
             candidate.field.lower(),
         )
     )
-    notes = [f"Profiled {row_count} row(s) exactly from source attributes."]
+    notes = [f"Profiled {row_count} sampled row(s) from source attributes."]
     if not id_candidates:
         notes.append("No high-likelihood provider row ID field was found.")
     if not group_candidates:
@@ -267,6 +269,19 @@ def read_csv_rows(source: Path, *, limit: int | None = None) -> list[dict[str, A
 
 
 def read_geojson_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    if source.suffix.lower() == ".ndgeojson":
+        rows = []
+        with source.open() as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                feature = json.loads(line)
+                if isinstance(feature, dict) and isinstance(feature.get("properties"), dict):
+                    rows.append(dict(feature["properties"]))
+                    if limit is not None and len(rows) >= limit:
+                        break
+        return rows
+
     text = source.read_text()
     stripped = text.lstrip()
     features: list[dict[str, Any]]
@@ -331,9 +346,20 @@ def recommend_schema_fields(field_names: Sequence[str]) -> CuratorFieldOptions:
 def recommend_curator_field_options(source: Path, canonical_format: str) -> CuratorFieldOptions:
     try:
         if source.suffix.lower() == ".csv":
-            return profile_rows(read_csv_rows(source))
-        if source.suffix.lower() in {".geojson", ".json", ".ndgeojson"}:
-            return profile_rows(read_geojson_rows(source))
+            return profile_rows(read_csv_rows(source, limit=PROFILE_ROW_LIMIT))
+        if source.suffix.lower() == ".ndgeojson":
+            return profile_rows(read_geojson_rows(source, limit=PROFILE_ROW_LIMIT))
+        if source.suffix.lower() in {".geojson", ".json"}:
+            if source.stat().st_size > MAX_IN_MEMORY_GEOJSON_BYTES:
+                return CuratorFieldOptions(
+                    [],
+                    [],
+                    [
+                        "GeoJSON source is too large for in-memory planning-time profiling; "
+                        "profile the canonical artifact after conversion.",
+                    ],
+                )
+            return profile_rows(read_geojson_rows(source, limit=PROFILE_ROW_LIMIT))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, csv.Error) as exc:
         return CuratorFieldOptions([], [], [f"Could not profile source attributes: {exc}"])
 

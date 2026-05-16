@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import publishing_concierge
 
@@ -137,6 +138,80 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].distinct_values, 2)
         self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
+
+    def test_curator_field_options_limits_csv_profile_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.csv"
+            source.write_text("source_id,NAME\nA1,North Reef\n")
+
+            with mock.patch.object(
+                publishing_concierge,
+                "read_csv_rows",
+                return_value=[
+                    {"source_id": "A1", "NAME": "North Reef"},
+                    {"source_id": "A2", "NAME": "North Reef"},
+                ],
+            ) as read_rows:
+                plan = publishing_concierge.build_plan(
+                    source=source,
+                    asset_slug="example",
+                    title="Example",
+                    category="300-infrastructure-industrial",
+                    subcategory="330-offshore-platforms",
+                    owner="SkyTruth",
+                    source_name="Example source",
+                    license_text="Example license",
+                    citation="Example citation",
+                    update_cadence="manual",
+                    canonical_format=None,
+                    access_tier="public",
+                    bucket="example-bucket",
+                    release_date=None,
+                    with_pmtiles=False,
+                    categories_path=categories,
+                    docs_dir=root / "docs/assets",
+                )
+
+        read_rows.assert_called_once_with(source, limit=publishing_concierge.PROFILE_ROW_LIMIT)
+        self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
+
+    def test_curator_field_options_skip_large_geojson_feature_collection_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}' + (" " * 32))
+
+            with mock.patch.object(publishing_concierge, "MAX_IN_MEMORY_GEOJSON_BYTES", 16), mock.patch.object(
+                publishing_concierge,
+                "read_geojson_rows",
+            ) as read_rows:
+                plan = publishing_concierge.build_plan(
+                    source=source,
+                    asset_slug="example",
+                    title="Example",
+                    category="300-infrastructure-industrial",
+                    subcategory="330-offshore-platforms",
+                    owner="SkyTruth",
+                    source_name="Example source",
+                    license_text="Example license",
+                    citation="Example citation",
+                    update_cadence="manual",
+                    canonical_format=None,
+                    access_tier="public",
+                    bucket="example-bucket",
+                    release_date=None,
+                    with_pmtiles=False,
+                    categories_path=categories,
+                    docs_dir=root / "docs/assets",
+                )
+
+        read_rows.assert_not_called()
+        self.assertTrue(any("too large for in-memory" in note for note in plan.curator_field_options.notes))
 
     def test_existing_fgb_still_uses_vector_build_for_pmtiles_companion(self):
         with tempfile.TemporaryDirectory() as tmp:

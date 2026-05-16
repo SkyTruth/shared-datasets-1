@@ -35,7 +35,6 @@ class VectorAssetTests(unittest.TestCase):
                 maxzoom=8,
                 maxzoom_reason="Natural Earth 1:10m source scale maps to zoom 8.",
                 tile_simplify=0.01,
-                tippecanoe_extra_args=("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
                 title="Natural Earth 10m Land",
                 description="Natural Earth land polygons",
             )
@@ -289,6 +288,44 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertEqual(plan.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
 
+    def test_tippecanoe_repeated_include_args_are_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work",
+                required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                tippecanoe_extra_args=(
+                    "--include",
+                    "NAME",
+                    "--include",
+                    vector_asset.GENERATED_GROUP_ID_COLUMN,
+                ),
+            )
+
+        self.assertEqual(
+            plan.tippecanoe_extra_args,
+            (
+                "--no-feature-limit",
+                "--no-tile-size-limit",
+                "--drop-rate=1",
+                "--include",
+                "NAME",
+                "--include",
+                vector_asset.GENERATED_GROUP_ID_COLUMN,
+            ),
+        )
+        tippecanoe_command = vector_asset.pmtiles_commands(plan, 8)[1]
+        include_values = [
+            tippecanoe_command[index + 1]
+            for index, value in enumerate(tippecanoe_command)
+            if value == "--include"
+        ]
+        self.assertEqual(include_values, ["NAME", vector_asset.GENERATED_GROUP_ID_COLUMN])
+
     def test_tippecanoe_rejects_point_dropping_flags_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -455,6 +492,63 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertTrue(result.valid)
         self.assertEqual(result.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
+
+    def test_validation_treats_empty_sampled_tile_as_pmtiles_property_unverified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "layers": [
+                                    {
+                                        "name": "example",
+                                        "featureCount": 1,
+                                        "fields": [{"name": vector_asset.GENERATED_GROUP_ID_COLUMN}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                if command[:4] == ["ogrinfo", "-ro", "-q", "-dialect"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="invalid_geometry_count (Integer) = 0\n",
+                        stderr="",
+                    )
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(returncode=0, stdout=json.dumps({"features": []}), stderr="")
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(
+                    fgb,
+                    pmtiles,
+                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
+                )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.decoded_feature_count, 0)
+        self.assertEqual(result.decoded_property_keys, ())
+        self.assertEqual(result.decoded_tile, "0/0/0")
 
     def test_validation_decodes_required_properties_at_requested_zoom(self):
         with tempfile.TemporaryDirectory() as tmp:

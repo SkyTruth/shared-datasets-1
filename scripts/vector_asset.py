@@ -390,7 +390,7 @@ def build_plan(
     pmtiles_profile_path = output / "pmtiles-profile.json"
     dataset_title = title or asset_slug.replace("-", " ").title()
     dataset_description = description or f"{dataset_title} vector tiles"
-    effective_tippecanoe_args = tuple(dict.fromkeys([*DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args]))
+    effective_tippecanoe_args = (*DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args)
 
     fgb_source_path = group_id_input_path or source
     fgb_command = [
@@ -839,18 +839,19 @@ def validate_outputs(
         if decoded_tile_values == (0, 0, 0):
             decoded_z0_feature_count = decoded_feature_count
             decoded_z0_property_keys = decoded_property_keys
-        missing_pmtiles = sorted(set(required_property_tuple) - set(decoded_property_keys))
-        if missing_pmtiles:
-            errors.append(
-                f"PMTiles decoded features are missing required propert{'y' if len(missing_pmtiles) == 1 else 'ies'}: "
-                f"{', '.join(missing_pmtiles)}"
-            )
-        if decoded_feature_count > 0 and not decoded_property_keys:
-            errors.append(
-                f"PMTiles features decode with no feature properties at {decoded_tile}. "
-                "Do not publish geometry-only display tiles; preserve compact source properties "
-                "or add a synthetic property such as source_layer for the catalog inspector."
-            )
+        if decoded_feature_count > 0:
+            missing_pmtiles = sorted(set(required_property_tuple) - set(decoded_property_keys))
+            if missing_pmtiles:
+                errors.append(
+                    f"PMTiles decoded features are missing required propert{'y' if len(missing_pmtiles) == 1 else 'ies'}: "
+                    f"{', '.join(missing_pmtiles)}"
+                )
+            if not decoded_property_keys:
+                errors.append(
+                    f"PMTiles features decode with no feature properties at {decoded_tile}. "
+                    "Do not publish geometry-only display tiles; preserve compact source properties "
+                    "or add a synthetic property such as source_layer for the catalog inspector."
+                )
         if (
             profile is not None
             and profile.feature_count > 0
