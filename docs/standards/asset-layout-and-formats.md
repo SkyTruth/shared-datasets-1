@@ -234,6 +234,9 @@ addressing and lacks a useful provider row ID. The generated native column is
 `shared_datasets_group_id`, produced with `shared-datasets-group-id:v1`.
 `shared_datasets_group_id` must be a native property/column in the canonical
 vector/table artifact and must be preserved in PMTiles feature properties.
+Do not generate this column by default for every asset; first evaluate provider
+IDs and group/search needs, and leave `generated_group_id` absent when no
+curator-approved grouping field exists.
 Generated group IDs are geometry-addressed within the asset: they are stable for
 unchanged collective group geometry, including source-name or label changes, but
 they are not persistent business/entity IDs across material source geometry

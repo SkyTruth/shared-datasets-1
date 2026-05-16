@@ -211,6 +211,12 @@ Dataset metadata and local files:
   preferred. The PR must identify source/license/citation status, a named
   steward, update expectations, intended consumers, shared-datasets rationale,
   alternatives considered, and deprecation or exit policy.
+- For every new vector/table asset or new ingestion pipeline that publishes
+  vector/table data, evaluate provider ID candidates, high-value
+  `search_fields`, and generated group-ID need before publish. Prefer verified
+  source/provider IDs. Generate `shared_datasets_group_id` only when the asset
+  needs group-level addressing and a curator has chosen the grouping field; do
+  not infer and publish generated IDs from guessed fields.
 - Asset `status` must be one of `active`, `deprecated`, `superseded`, or
   `retired`. These are consumer-guidance states, not deletion states. Deprecated,
   superseded, and retired assets remain readable and citable, keep their README,

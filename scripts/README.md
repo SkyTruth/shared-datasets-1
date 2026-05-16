@@ -138,6 +138,22 @@ tools resolved from `PATH`; the helper records their versions in the build plan.
 The helper rejects Tippecanoe `--exclude-all` because it creates geometry-only
 display tiles and leaves catalog feature-inspector clicks with no properties.
 
+Generated group IDs are opt-in. When a curator chooses group-level addressing
+for an asset that lacks a useful provider row ID, pass one or more
+`--group-id-field FIELD` flags:
+
+```bash
+uv run python scripts/vector_asset.py build ./source.shp \
+  --asset-slug example-asset \
+  --group-id-field NAME
+```
+
+The helper writes `shared_datasets_group_id` before FGB creation and validates
+that the property is present in the FGB schema and decoded PMTiles features.
+Use `--group-id-fail-on-ambiguous-geometry` when identical collective geometry
+should fail the build instead of being reported for curator review. If
+Tippecanoe `--include` filters are passed, include `shared_datasets_group_id`.
+
 Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
 explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles
 with GDAL and converts them with `pmtiles convert`.

@@ -206,23 +206,28 @@ breaking existing paths.
    NetCDF, or other noncanonical exports are inputs, not shared-datasets
    contracts. Use FGB plus PMTiles for geographic vector data, COG/Zarr for
    raster or array data, and CSV only for non-geometry tables.
-5. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-6. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory.
-7. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
-8. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
-9. Stage any manual publish bytes under
+5. For vector/table assets, use the publishing concierge output and canonical
+   artifact profile to identify provider ID candidates and high-value
+   `search_fields`. Prefer real source IDs. If no useful provider row ID exists
+   and the asset needs group-level addressing, choose the curator-approved
+   grouping field before generating `shared_datasets_group_id`.
+6. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
+7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. When a generated group ID is approved, pass `--group-id-field FIELD` so the helper writes and validates `shared_datasets_group_id`.
+8. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
+9. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
+10. Stage any manual publish bytes under
    `_scratch/pending-publishes/{asset-slug}/{proposal-id}/`; use an issue/PR
    number when available, otherwise use a stable branch or timestamped proposal
    ID and record it in the PR. Scratch-only staging of the supplied source file
    is not complete unless the request explicitly says to stage only.
-10. Open a PR that requests review from `jonaraphael`, unless `jonaraphael` is
+11. Open a PR that requests review from `jonaraphael`, unless `jonaraphael` is
    also the PR author and GitHub blocks the reviewer request. Include staged
    source URIs/generations, intended canonical destination URIs,
    destination-generation expectations, validation commands, and any needed
    `content_type` or `cache_control` workflow inputs. Include a fenced
    `shared-datasets-publish-plan` JSON block so approval or the restricted
    self-approval dispatch can trigger promotion.
-11. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
     dispatch by PR number is restricted to `jonaraphael` for self-authored PRs
@@ -592,6 +597,12 @@ Shared PMTiles should use auto maxzoom from FGB profiling and source metadata.
 The policy biases toward detailed display, caps at zoom 12 by default, and only
 uses zooms below 8 when source/profile evidence or a documented override proves
 the asset is intentionally coarse.
+
+Generated group IDs are opt-in. When the curator chooses group-level addressing
+for an asset that lacks a useful provider row ID, add `--group-id-field FIELD`
+to the vector build, repeating the flag for composite grouping fields. The
+helper writes `shared_datasets_group_id` before FGB creation and validates that
+the property survives into decoded PMTiles features.
 
 ## Catalog web preview
 

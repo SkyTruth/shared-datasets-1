@@ -34,6 +34,13 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Keep each production cron job in its own package under `ingestion/<job_slug>/`, with a README, `run.py`, a Dockerfile when containerized, focused tests, and distinct Terraform blocks such as `terraform/envs/prod/<job_slug>.tf`.
 - Put shared runtime and publishing behavior in `ingestion/common/`: GCS generation-precondition helpers, run-record writes, logging setup, subprocess helpers, content type selection, hashes, and temp cleanup.
 - Keep source-specific parsing, filtering, schema choices, asset slugs, canonical paths, conversion rules, environment variables, and scheduler configuration inside the owning job package and its Terraform file.
+- For new vector/table ingestion jobs, make the identity decision part of job
+  design: preserve verified source/provider IDs when available, choose
+  high-value `search_fields`, and decide with the curator whether generated
+  `shared_datasets_group_id` is required. Do not auto-generate IDs from guessed
+  fields. If generated IDs are approved, keep the grouping field in job config
+  and tests, write the native column before publication, preserve it in PMTiles,
+  and document `generated_group_id` in the asset doc and PR.
 - Do not import from another job package, such as `ingestion.wdpa_monthly`, unless the task is explicitly maintaining that job.
 - Do not edit a functioning live job to support a new job unless the user explicitly requests a behavior-preserving refactor.
 - Preserve live surfaces unless explicitly approved: Cloud Run job names, scheduler names, service account identities, asset slugs, canonical GCS paths, output formats, schemas, entrypoints, and run-record shape.

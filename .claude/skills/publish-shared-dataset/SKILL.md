@@ -124,6 +124,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   --description "Example vector tiles"
 ```
 
+- Generated group IDs are opt-in. If the curator chooses group-level addressing
+  for an asset that lacks a useful provider row ID, add `--group-id-field FIELD`
+  to the vector build, repeating the flag for composite grouping fields. Do not
+  generate `shared_datasets_group_id` from a guessed field.
 - Local downloads, generated artifacts, and scratch files must follow
   `docs/standards/local-temp-workspaces.md`.
 - The default vector work directory is

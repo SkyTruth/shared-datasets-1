@@ -113,6 +113,13 @@ The standard vector build is:
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
 
+Generated group IDs are opt-in. When a curator chooses group-level addressing
+for an asset that lacks a useful provider row ID, pass `--group-id-field FIELD`
+to `scripts/vector_asset.py build`, repeating the flag for composite grouping
+fields. The helper writes `shared_datasets_group_id` before FGB creation and
+validates that the property survives into decoded PMTiles features. If
+Tippecanoe `--include` filters are used, include `shared_datasets_group_id`.
+
 For corrective PMTiles-only rebuilds on a versioned asset, replace the
 `latest/*.pmtiles` object and the PMTiles object under the matching canonical
 `releases/YYYY-MM-DD/` directory with generation preconditions. Do not create a
