@@ -694,7 +694,7 @@ jobs:
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |
           set -euo pipefail
-          python - <<'PY'
+          uv run python - <<'PY'
           import copy
           import csv
           import json

@@ -1,7 +1,6 @@
 const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css";
 const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
-const FLATGEOBUF_JS = "https://unpkg.com/flatgeobuf@4.4.0/dist/flatgeobuf-geojson.min.js";
 const MISSING_COLOR = "#949d97";
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
@@ -51,14 +50,12 @@ const NUMERIC_RAMPS = {
 };
 
 let dependencyPromise = null;
-let flatgeobufPromise = null;
 let pmtilesProtocol = null;
 let activeMap = null;
 let activeRenderSerial = 0;
 let activeSelectionBounds = null;
 let activeColorContext = null;
 let activeFeatureMarker = null;
-const exactLegendBoundsCache = new Map();
 let privateSessionPromise = null;
 let privateSessionUrl = "";
 let privateSignerUnavailable = false;
@@ -180,7 +177,6 @@ export async function renderMapPreview({
     fieldSignature: "",
     colorSignature: "",
     refreshTimer: null,
-    uniqueColorFields: new Set(),
     onColorFieldsChange: singleDataset ? onColorFieldsChange : () => {},
     onColorLegendChange: singleDataset ? onColorLegendChange : () => {},
   };
@@ -254,17 +250,11 @@ export function canZoomToSelection() {
 }
 
 export function canZoomToLegendSelection() {
-  return Boolean(hasFocusedLegendSelection(activeColorContext));
+  return Boolean(activeMap && focusedLegendBounds());
 }
 
-export async function zoomToSelection() {
-  const context = activeColorContext;
-  const focusedValue = context?.focusedLegendValue || "";
-  const exactBounds = await exactFocusedLegendBounds(context, focusedValue);
-  if (context !== activeColorContext || focusedValue !== context?.focusedLegendValue) {
-    return false;
-  }
-  const bounds = exactBounds || focusedLegendBounds() || activeSelectionBounds;
+export function zoomToSelection() {
+  const bounds = focusedLegendBounds() || activeSelectionBounds;
   if (!activeMap || !bounds) {
     return false;
   }
@@ -272,75 +262,9 @@ export async function zoomToSelection() {
   return true;
 }
 
-function hasFocusedLegendSelection(context) {
-  return Boolean(context?.map && context.focusedLegendValue && modeSupportsLegendFocus(context.colorMode));
-}
-
-async function exactFocusedLegendBounds(context, focusedValue) {
-  if (!hasFocusedLegendSelection(context) || !focusedValue) {
-    return null;
-  }
-  const source = context.mapSources[0];
-  const url = source?.asset?.public_url;
-  const field = context.colorMode?.field;
-  if (!url || !field) {
-    return null;
-  }
-  const cacheKey = exactLegendBoundsCacheKey(source, field, focusedValue);
-  if (exactLegendBoundsCache.has(cacheKey)) {
-    return exactLegendBoundsCache.get(cacheKey);
-  }
-  let flatgeobuf;
-  try {
-    flatgeobuf = await loadFlatgeobuf();
-  } catch {
-    return null;
-  }
-
-  const spatialHint = context.uniqueColorFields?.has(field) ? boundsToFlatgeobufBbox(focusedLegendBounds()) : null;
-  const hintedBounds = spatialHint
-    ? await streamExactLegendBounds(flatgeobuf, url, field, focusedValue, context, spatialHint)
-    : null;
-  if (hintedBounds) {
-    exactLegendBoundsCache.set(cacheKey, hintedBounds);
-    return hintedBounds;
-  }
-  const fullBounds = await streamExactLegendBounds(flatgeobuf, url, field, focusedValue, context);
-  if (fullBounds) {
-    exactLegendBoundsCache.set(cacheKey, fullBounds);
-  }
-  return fullBounds;
-}
-
-async function streamExactLegendBounds(flatgeobuf, url, field, focusedValue, context, spatialHint = null) {
-  let bounds = null;
-  try {
-    const features = spatialHint ? flatgeobuf.deserialize(url, spatialHint) : flatgeobuf.deserialize(url);
-    for await (const feature of features) {
-      if (context !== activeColorContext || focusedValue !== context.focusedLegendValue) {
-        return null;
-      }
-      if (!featureMatchesFieldValue(feature, field, focusedValue)) {
-        continue;
-      }
-      bounds = combineTwoBounds(bounds, boundsFromFeatureGeometry(feature.geometry));
-    }
-  } catch {
-    return null;
-  }
-  return bounds;
-}
-
-function exactLegendBoundsCacheKey(source, field, focusedValue) {
-  const asset = source?.asset || {};
-  return [asset.public_url || "", asset.canonical_path || "", source?.selectedLayer || "", field, focusedValue].join(
-    "\u001f"
-  );
-}
-
 function focusedLegendBounds() {
   const context = activeColorContext;
-  if (!hasFocusedLegendSelection(context)) {
+  if (!context?.map || !context.focusedLegendValue || !modeSupportsLegendFocus(context.colorMode)) {
     return null;
   }
   const cachedBounds = context.colorMode?.boundsByValue?.get(context.focusedLegendValue);
@@ -374,25 +298,11 @@ function focusedRenderedLegendBounds(context) {
 }
 
 function featureMatchesLegendFocus(feature, context) {
-  return featureMatchesFieldValue(feature, context.colorMode?.field, context.focusedLegendValue);
-}
-
-function featureMatchesFieldValue(feature, field, focusedValue) {
+  const field = context.colorMode?.field;
   if (!field) {
     return false;
   }
-  return normalizedValue(feature?.properties?.[field]) === focusedValue;
-}
-
-function boundsToFlatgeobufBbox(bounds) {
-  if (!Array.isArray(bounds) || bounds.length !== 2) {
-    return null;
-  }
-  const [[minX, minY], [maxX, maxY]] = bounds;
-  if (![minX, minY, maxX, maxY].every(Number.isFinite)) {
-    return null;
-  }
-  return { minX, minY, maxX, maxY };
+  return normalizedValue(feature?.properties?.[field]) === context.focusedLegendValue;
 }
 
 function clearActiveMap() {
@@ -441,13 +351,6 @@ function loadDependencies() {
     ]);
   }
   return dependencyPromise;
-}
-
-function loadFlatgeobuf() {
-  if (!flatgeobufPromise) {
-    flatgeobufPromise = loadScript(FLATGEOBUF_JS, "flatgeobuf").then(() => window.flatgeobuf);
-  }
-  return flatgeobufPromise;
 }
 
 function loadCss(href) {
@@ -855,7 +758,6 @@ function refreshColorSample(context) {
     return;
   }
   const samples = sampleFieldValues(context, context.colorField);
-  rememberUniqueValueField(context, context.colorField, samples);
   const mode = inferColorMode(context.colorField, samples.values);
   mode.boundsByValue = samples.boundsByValue;
   const signature = colorModeSignature(mode);
@@ -872,7 +774,6 @@ function refreshColorSample(context) {
 function sampleFieldValues(context, field) {
   const values = [];
   const boundsByValue = new Map();
-  const countsByValue = new Map();
   let seen = 0;
   const random = seededRandom(hashString(field));
   for (const source of context.mapSources) {
@@ -884,7 +785,6 @@ function sampleFieldValues(context, field) {
         }
         seen += 1;
         const item = { raw: properties[field], text: normalizedValue(properties[field]) };
-        countsByValue.set(item.text, (countsByValue.get(item.text) || 0) + 1);
         const bounds = boundsFromFeatureGeometry(feature.geometry);
         if (bounds && item.text) {
           boundsByValue.set(item.text, combineTwoBounds(boundsByValue.get(item.text), bounds));
@@ -900,18 +800,7 @@ function sampleFieldValues(context, field) {
       }
     }
   }
-  return { values, boundsByValue, countsByValue, seen };
-}
-
-function rememberUniqueValueField(context, field, samples) {
-  const totalRows = context.mapSources.length === 1 ? Number(context.mapSources[0]?.asset?.row_count || 0) : 0;
-  if (!field || !Number.isFinite(totalRows) || totalRows <= 0 || samples.seen !== totalRows) {
-    return;
-  }
-  const counts = samples.countsByValue;
-  if (counts?.size === totalRows && [...counts.values()].every((count) => count === 1)) {
-    context.uniqueColorFields.add(field);
-  }
+  return { values, boundsByValue };
 }
 
 function querySourceLayerFeatures(map, source, layer) {
@@ -1046,11 +935,7 @@ function applyColorMode(context) {
 function notifyColorLegend(context) {
   const mode = context.colorMode;
   const values = legendValuesForMode(mode);
-  const legendValues =
-    context.focusedLegendValue && !values.includes(context.focusedLegendValue)
-      ? [context.focusedLegendValue, ...values]
-      : values;
-  if (!mode || !legendValues.length) {
+  if (!mode || !values.length) {
     context.onColorLegendChange(null);
     return;
   }
@@ -1058,7 +943,7 @@ function notifyColorLegend(context) {
     type: mode.type,
     field: mode.field,
     focusedValue: context.focusedLegendValue || "",
-    entries: legendValues.map((value) => ({
+    entries: values.map((value) => ({
       value,
       color: legendColorForValue(mode, value, context.basemap),
     })),
@@ -1087,7 +972,11 @@ function setPaintColor(map, layerId, property, color) {
 }
 
 function syncFocusedLegendValue(context) {
-  if (!modeSupportsLegendFocus(context.colorMode) || !context.focusedLegendValue) {
+  if (
+    !modeSupportsLegendFocus(context.colorMode) ||
+    !context.focusedLegendValue ||
+    !legendValuesForMode(context.colorMode).includes(context.focusedLegendValue)
+  ) {
     context.focusedLegendValue = "";
   }
 }
@@ -1120,7 +1009,7 @@ function layerFilter(geometryType, mode, focusedValue) {
 }
 
 function modeSupportsLegendFocus(mode) {
-  return Boolean(mode?.field && ["categorical", "numeric", "temporal"].includes(mode?.type));
+  return Boolean(mode?.field && legendValuesForMode(mode).length);
 }
 
 function legendValuesForMode(mode) {
