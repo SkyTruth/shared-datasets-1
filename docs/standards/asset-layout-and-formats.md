@@ -237,6 +237,9 @@ vector/table artifact and must be preserved in PMTiles feature properties.
 Do not generate this column by default for every asset; first evaluate provider
 IDs and group/search needs, and leave `generated_group_id` absent when no
 curator-approved grouping field exists.
+Agents must present provider ID candidates and grouping/search field candidates
+before generating `shared_datasets_group_id`; if the current request has not
+selected a grouping field, stop at the options step.
 Generated group IDs are geometry-addressed within the asset: they are stable for
 unchanged collective group geometry, including source-name or label changes, but
 they are not persistent business/entity IDs across material source geometry

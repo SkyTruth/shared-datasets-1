@@ -108,7 +108,7 @@ This is a format conversion from the local source shapefiles `WCMC008_CoralReef2
 
 The local source package contains 17,504 polygon features and 925 point features. The source metadata states that the dataset was collected from 1954-2009, version 4.1 was released in March 2021, and corrections are made on an ad hoc basis.
 
-No provider row-level external ID is documented for the polygon layer. `METADATA_I` is a low-cardinality metadata grouping value, not a unique feature identifier. Use `NAME` for human-readable search/filter workflows. If this asset is rebuilt with generated shared-datasets group IDs, `NAME` should be the curated grouping field and `shared_datasets_group_id` must be written as a native property in both the FGB and PMTiles artifacts.
+No provider row-level external ID is documented for the polygon layer. `METADATA_I` is a low-cardinality metadata grouping value, not a unique feature identifier. `NAME` is a likely human-readable search/filter and grouping candidate, but it is not pre-approved for generated IDs. If this asset is rebuilt with generated shared-datasets group IDs, present the candidate field options to the curator first; after the curator selects the grouping field, `shared_datasets_group_id` must be written as a native property in both the FGB and PMTiles artifacts.
 
 ## Properties / columns
 

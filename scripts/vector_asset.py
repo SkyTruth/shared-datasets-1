@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,8 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
+GROUP_ID_VRT_SOURCE_LAYER = "source"
+GROUP_ID_VRT_MAP_LAYER = "group_ids"
 PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
 POINT_DROPPING_TIPPECANOE_ARGS = {
     "--cluster-distance",
@@ -53,6 +56,27 @@ POINT_DROPPING_TIPPECANOE_ARGS = {
 }
 STANDARD_PMTILES_MAXZOOM = 8
 AUTO_MAXZOOM = "auto"
+STREAMED_TIPPECANOE_INPUT = "<ogr2ogr-geojsonseq-stdout>"
+
+
+class VectorAssetError(ValueError):
+    """Raised when vector artifact generation cannot complete."""
+
+
+@dataclass(frozen=True)
+class SimpleCommand:
+    argv: list[str]
+    kind: str = "command"
+
+
+@dataclass(frozen=True)
+class PipelineCommand:
+    source: list[str]
+    sink: list[str]
+    kind: str = "pipeline"
+
+
+BuildCommand = SimpleCommand | PipelineCommand
 
 
 @dataclass(frozen=True)
@@ -92,7 +116,7 @@ class VectorBuildPlan:
     group_id_fail_on_ambiguous_geometry: bool
     title: str
     description: str
-    commands: list[list[str]]
+    commands: list[BuildCommand]
 
 
 @dataclass(frozen=True)
@@ -295,6 +319,14 @@ def tool_paths(*, ogr2ogr_bin: str, tippecanoe_bin: str, pmtiles_bin: str) -> di
     }
 
 
+def command(argv: Sequence[str]) -> SimpleCommand:
+    return SimpleCommand(list(argv))
+
+
+def pipeline(source: Sequence[str], sink: Sequence[str]) -> PipelineCommand:
+    return PipelineCommand(list(source), list(sink))
+
+
 def build_plan(
     *,
     source: Path,
@@ -382,9 +414,9 @@ def build_plan(
     ensure_local_output_path(output, label="output directory", allow_repo_output=allow_repo_output)
 
     fgb_path = output / f"{asset_slug}.fgb"
-    group_id_source_path = build / f"{asset_slug}-group-id-source.geojson" if group_id_field_tuple else None
-    group_id_input_path = build / f"{asset_slug}-grouped.geojson" if group_id_field_tuple else None
-    tippecanoe_input_path = build / f"{asset_slug}.geojson"
+    group_id_source_path = build / f"{asset_slug}-group-id-map.csv" if group_id_field_tuple else None
+    group_id_input_path = build / f"{asset_slug}-group-id-source.vrt" if group_id_field_tuple else None
+    tippecanoe_input_path = STREAMED_TIPPECANOE_INPUT
     mbtiles_path = build / f"{asset_slug}.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
     pmtiles_profile_path = output / "pmtiles-profile.json"
@@ -407,39 +439,46 @@ def build_plan(
         str(fgb_path),
         str(fgb_source_path),
     ]
-    if source_layer and group_id_input_path is None:
+    if group_id_field_tuple:
+        fgb_command.extend(
+            [
+                "-t_srs",
+                "EPSG:4326",
+                "-dialect",
+                "SQLite",
+                "-sql",
+                group_id_join_sql(),
+            ]
+        )
+    elif source_layer:
         fgb_command.append(source_layer)
 
-    commands: list[list[str]] = []
+    commands: list[BuildCommand] = []
     if group_id_field_tuple and group_id_source_path and group_id_input_path:
-        group_source_command = [
-            ogr2ogr_bin,
-            "-f",
-            "GeoJSON",
-            "-t_srs",
-            "EPSG:4326",
-            str(group_id_source_path),
-            str(source),
-        ]
-        if source_layer:
-            group_source_command.append(source_layer)
         group_id_command = [
             sys.executable,
             str(REPO_ROOT / "scripts" / "shared_dataset_group_ids.py"),
-            str(group_id_source_path),
+            str(source),
+            "--ogr-source",
             "--asset-slug",
             asset_slug,
-            "--out",
+            "--out-map",
+            str(group_id_source_path),
+            "--out-vrt",
             str(group_id_input_path),
+            "--ogr2ogr-bin",
+            ogr2ogr_bin,
         ]
+        if source_layer:
+            group_id_command.extend(["--source-layer", source_layer])
         for field in group_id_field_tuple:
             group_id_command.extend(["--grouping-field", field])
         if group_id_token_length is not None:
             group_id_command.extend(["--token-length", str(group_id_token_length)])
         if group_id_fail_on_ambiguous_geometry:
             group_id_command.append("--fail-on-ambiguous-geometry")
-        commands.extend([group_source_command, group_id_command])
-    commands.append(fgb_command)
+        commands.append(command(group_id_command))
+    commands.append(command(fgb_command))
 
     plan = VectorBuildPlan(
         source=str(source),
@@ -492,12 +531,12 @@ def build_plan(
     return plan
 
 
-def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int, *, profile: FgbProfile | None = None) -> list[list[str]]:
+def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbProfile | None = None) -> list[BuildCommand]:
     synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
     tile_source_command = [
         plan.ogr2ogr_bin,
         "-f",
-        "GeoJSON",
+        "GeoJSONSeq",
         "-t_srs",
         "EPSG:4326",
         "-nln",
@@ -509,7 +548,7 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int, *, profile: FgbProfile
         tile_source_command.extend(["-simplify", str(plan.tile_simplify)])
     if synthetic_sql is not None:
         tile_source_command.extend(["-dialect", "SQLite", "-sql", synthetic_sql])
-    tile_source_command.extend([plan.tippecanoe_input_path, plan.fgb_path])
+    tile_source_command.extend(["/vsistdout/", plan.fgb_path])
 
     tippecanoe_command = [
         plan.tippecanoe_bin,
@@ -530,7 +569,6 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int, *, profile: FgbProfile
         plan.description,
     ]
     tippecanoe_command.extend(plan.tippecanoe_extra_args)
-    tippecanoe_command.append(plan.tippecanoe_input_path)
 
     mbtiles_command = [
         plan.ogr2ogr_bin,
@@ -563,8 +601,8 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int, *, profile: FgbProfile
 
     convert_command = [plan.pmtiles_bin, "convert", plan.mbtiles_path, plan.pmtiles_path]
     if plan.pmtiles_engine == "gdal-mbtiles":
-        return [mbtiles_command, convert_command]
-    return [tile_source_command, tippecanoe_command]
+        return [command(mbtiles_command), command(convert_command)]
+    return [pipeline(tile_source_command, tippecanoe_command)]
 
 
 def sql_identifier(value: str) -> str:
@@ -573,6 +611,17 @@ def sql_identifier(value: str) -> str:
 
 def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def group_id_join_sql() -> str:
+    source = sql_identifier(GROUP_ID_VRT_SOURCE_LAYER)
+    map_layer = sql_identifier(GROUP_ID_VRT_MAP_LAYER)
+    column = sql_identifier(GENERATED_GROUP_ID_COLUMN)
+    return (
+        f"SELECT {source}.*, {map_layer}.{column} "
+        f"FROM {source} LEFT JOIN {map_layer} "
+        f"ON {source}.rowid = CAST({map_layer}.rowid AS INTEGER)"
+    )
 
 
 def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | None = None) -> str | None:
@@ -584,15 +633,81 @@ def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | 
     )
 
 
+def dry_run_payload(plan: VectorBuildPlan) -> dict[str, Any]:
+    payload = asdict(plan)
+    if plan.maxzoom is None:
+        payload["pmtiles_commands_after_profile"] = [
+            asdict(build_command) for build_command in pmtiles_commands(plan, "<auto>")
+        ]
+    return payload
+
+
 def run_command(command: Sequence[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def pipe_text(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return value.decode("utf-8", errors="replace").strip()
+
+
+def display_command(command: Sequence[str]) -> str:
+    return shlex.join(str(part) for part in command)
+
+
+def run_pipeline(source_command: Sequence[str], sink_command: Sequence[str]) -> None:
+    source = subprocess.Popen(
+        source_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if source.stdout is None:
+        raise VectorAssetError(f"pipeline source did not expose stdout: {display_command(source_command)}")
+    try:
+        sink = subprocess.Popen(
+            sink_command,
+            stdin=source.stdout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except Exception:
+        source.kill()
+        source.wait()
+        raise
+    source.stdout.close()
+    sink_stdout, sink_stderr = sink.communicate()
+    source_stderr = source.stderr.read() if source.stderr is not None else b""
+    source_returncode = source.wait()
+    if source_returncode != 0 or sink.returncode != 0:
+        details = [
+            "PMTiles streaming pipeline failed.",
+            f"source command: {display_command(source_command)}",
+            f"sink command: {display_command(sink_command)}",
+        ]
+        if source_returncode != 0:
+            details.append(f"source exited {source_returncode}: {pipe_text(source_stderr) or 'no stderr'}")
+        if sink.returncode != 0:
+            details.append(f"sink exited {sink.returncode}: {pipe_text(sink_stderr) or 'no stderr'}")
+        sink_stdout_text = pipe_text(sink_stdout)
+        if sink_stdout_text:
+            details.append(f"sink stdout: {sink_stdout_text}")
+        raise VectorAssetError(" ".join(details))
+
+
+def run_build_command(build_command: BuildCommand) -> None:
+    if isinstance(build_command, PipelineCommand):
+        run_pipeline(build_command.source, build_command.sink)
+        return
+    run_command(build_command.argv)
 
 
 def remove_existing_outputs(plan: VectorBuildPlan, *, keep_mbtiles: bool) -> None:
     paths = [
         Path(plan.fgb_path),
         Path(plan.pmtiles_path),
-        Path(plan.tippecanoe_input_path),
         Path(plan.pmtiles_profile_path),
     ]
     if plan.group_id_source_path:
@@ -624,7 +739,7 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
     if plan.maxzoom is not None:
         pre_profile_commands = plan.commands[: -len(pmtiles_commands(plan, plan.maxzoom))]
     for command in pre_profile_commands:
-        run_command(command)
+        run_build_command(command)
     profile = profile_fgb(Path(plan.fgb_path), ogr2ogr_bin=plan.ogr2ogr_bin)
     recommendation = resolve_maxzoom(plan, profile)
     if recommendation.status != "recommended" or recommendation.maxzoom is None:
@@ -633,10 +748,10 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
 
     actual_pmtiles_commands = pmtiles_commands(plan, recommendation.maxzoom, profile=profile)
     for command in actual_pmtiles_commands:
-        run_command(command)
+        run_build_command(command)
 
     if not keep_mbtiles:
-        intermediates = [Path(plan.mbtiles_path), Path(plan.tippecanoe_input_path)]
+        intermediates = [Path(plan.mbtiles_path)]
         if plan.group_id_source_path:
             intermediates.append(Path(plan.group_id_source_path))
         if plan.group_id_input_path:
@@ -1041,7 +1156,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         allow_point_dropping=args.allow_point_dropping,
     )
     if args.dry_run:
-        print(json.dumps(asdict(plan), indent=2, sort_keys=True))
+        print(json.dumps(dry_run_payload(plan), indent=2, sort_keys=True))
         return 0
     result = run_build(plan, overwrite=args.overwrite, keep_mbtiles=args.keep_mbtiles)
     print(json.dumps({"plan": asdict(plan), "validation": asdict(result)}, indent=2, sort_keys=True))
@@ -1144,6 +1259,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help=(
             "Curator-selected field used to generate shared_datasets_group_id before FGB creation. "
+            "Run publishing_concierge.py or an equivalent profile and get an explicit field choice before using. "
             "Repeat for composite grouping fields."
         ),
     )

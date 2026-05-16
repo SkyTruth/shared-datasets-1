@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import io
 import json
 import os
 import re
@@ -301,6 +302,25 @@ def read_geojson_rows(source: Path, *, limit: int | None = None) -> list[dict[st
     return rows
 
 
+def read_ogr_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    if not shutil.which("ogr2ogr"):
+        return []
+    command = ["ogr2ogr", "-f", "CSV", "/vsistdout/", str(source)]
+    if limit is not None:
+        command.extend(["-limit", str(limit)])
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return []
+    reader = csv.DictReader(io.StringIO(completed.stdout))
+    return [{str(key): value for key, value in row.items() if key is not None} for row in reader]
+
+
 def ogrinfo_field_names(source: Path) -> list[str]:
     if not shutil.which("ogrinfo"):
         return []
@@ -364,6 +384,17 @@ def recommend_curator_field_options(source: Path, canonical_format: str) -> Cura
         return CuratorFieldOptions([], [], [f"Could not profile source attributes: {exc}"])
 
     if canonical_format == "fgb":
+        rows = read_ogr_rows(source, limit=PROFILE_ROW_LIMIT)
+        if rows:
+            options = profile_rows(rows)
+            return CuratorFieldOptions(
+                options.id_field_candidates,
+                options.group_field_candidates,
+                [
+                    *options.notes,
+                    "OGR attribute sampling is advisory; curator must choose grouping fields before generated IDs are built.",
+                ],
+            )
         if os.environ.get("SHARED_DATASETS_PROFILE_WITH_GDAL") == "1":
             field_names = ogrinfo_field_names(source)
             if field_names:

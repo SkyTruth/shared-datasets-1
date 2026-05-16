@@ -101,7 +101,8 @@ The build sequence is standardized as:
 1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
 2. Profile the generated FGB to choose PMTiles maxzoom from source hints and
    measured geometry detail.
-3. `ogr2ogr` to temporary GeoJSON in EPSG:4326 for tiling.
+3. Stream EPSG:4326 GeoJSONSeq from `ogr2ogr` directly into Tippecanoe for the
+   default PMTiles path; no full tiling GeoJSON is written.
 4. `tippecanoe` direct PMTiles output with explicit min/max zoom metadata.
 5. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
    property sample when those tools exist.
@@ -138,9 +139,11 @@ tools resolved from `PATH`; the helper records their versions in the build plan.
 The helper rejects Tippecanoe `--exclude-all` because it creates geometry-only
 display tiles and leaves catalog feature-inspector clicks with no properties.
 
-Generated group IDs are opt-in. When a curator chooses group-level addressing
-for an asset that lacks a useful provider row ID, pass one or more
-`--group-id-field FIELD` flags:
+Generated group IDs are opt-in. Do not pick a grouping field inside the build
+step. First run the publishing concierge or another attribute profile and show
+the curator provider ID candidates plus grouping/search candidates. Only after
+the curator chooses group-level addressing for an asset that lacks a useful
+provider row ID should you pass one or more `--group-id-field FIELD` flags:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.shp \

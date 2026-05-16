@@ -105,7 +105,8 @@ The standard vector build is:
    scale/resolution hints plus measured geometry detail. Auto maxzoom is the
    default, biases toward detailed presentation, and caps at zoom 12 unless a
    documented high-zoom override is passed.
-3. Write temporary EPSG:4326 GeoJSON for tiling.
+3. Stream EPSG:4326 GeoJSONSeq from `ogr2ogr` directly into Tippecanoe for the
+   default PMTiles path. The helper does not materialize a full tiling GeoJSON.
 4. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
    description, and min/max zoom. Lower than zoom 8 requires source/profile
    evidence or a documented override.
@@ -113,12 +114,14 @@ The standard vector build is:
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
 
-Generated group IDs are opt-in. When a curator chooses group-level addressing
-for an asset that lacks a useful provider row ID, pass `--group-id-field FIELD`
-to `scripts/vector_asset.py build`, repeating the flag for composite grouping
-fields. The helper writes `shared_datasets_group_id` before FGB creation and
-validates that the property survives into decoded PMTiles features. If
-Tippecanoe `--include` filters are used, include `shared_datasets_group_id`.
+Generated group IDs are opt-in. Present provider ID candidates and
+grouping/search field candidates before adding `--group-id-field`. When a
+curator chooses group-level addressing for an asset that lacks a useful provider
+row ID, pass `--group-id-field FIELD` to `scripts/vector_asset.py build`,
+repeating the flag for composite grouping fields. The helper writes
+`shared_datasets_group_id` before FGB creation and validates that the property
+survives into decoded PMTiles features. If Tippecanoe `--include` filters are
+used, include `shared_datasets_group_id`.
 
 For corrective PMTiles-only rebuilds on a versioned asset, replace the
 `latest/*.pmtiles` object and the PMTiles object under the matching canonical
@@ -127,8 +130,8 @@ new dated release directory that contains only PMTiles unless PMTiles is the
 canonical format; release-index dates should correspond to releases that include
 the canonical asset file.
 
-`--tile-simplify` is for dense display tiles only. It is applied to the
-temporary tiling input and does not simplify the canonical FGB.
+`--tile-simplify` is for dense display tiles only. It is applied in the streamed
+PMTiles conversion and does not simplify the canonical FGB.
 
 To run a read-only maxzoom acceptance check against an existing canonical FGB,
 download the object with `scripts/gcs_asset.py download` and profile the local

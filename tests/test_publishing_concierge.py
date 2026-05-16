@@ -178,6 +178,49 @@ class PublishingConciergeTests(unittest.TestCase):
         read_rows.assert_called_once_with(source, limit=publishing_concierge.PROFILE_ROW_LIMIT)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
 
+    def test_curator_field_options_profile_ogr_vector_source_before_group_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.fgb"
+            source.write_text("placeholder")
+
+            with mock.patch.object(publishing_concierge.shutil, "which", return_value="/usr/bin/ogr2ogr"), mock.patch.object(
+                publishing_concierge.subprocess,
+                "run",
+                return_value=mock.Mock(
+                    returncode=0,
+                    stdout="source_id,NAME,GIS_AREA_K\nA1,North Reef,10\nA2,North Reef,11\nA3,South Reef,12\n",
+                    stderr="",
+                ),
+            ) as run:
+                plan = publishing_concierge.build_plan(
+                    source=source,
+                    asset_slug="example",
+                    title="Example",
+                    category="300-infrastructure-industrial",
+                    subcategory="330-offshore-platforms",
+                    owner="SkyTruth",
+                    source_name="Example source",
+                    license_text="Example license",
+                    citation="Example citation",
+                    update_cadence="manual",
+                    canonical_format=None,
+                    access_tier="public",
+                    bucket="example-bucket",
+                    release_date=None,
+                    with_pmtiles=False,
+                    categories_path=categories,
+                    docs_dir=root / "docs/assets",
+                )
+
+        self.assertEqual(run.call_args.args[0][:3], ["ogr2ogr", "-f", "CSV"])
+        self.assertIn("-limit", run.call_args.args[0])
+        self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
+        self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
+        self.assertTrue(any("curator must choose grouping fields" in note for note in plan.curator_field_options.notes))
+
     def test_curator_field_options_skip_large_geojson_feature_collection_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
