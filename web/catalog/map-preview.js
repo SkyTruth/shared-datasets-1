@@ -281,9 +281,8 @@ async function exactFocusedLegendBounds(context, focusedValue) {
     return null;
   }
   const source = context.mapSources[0];
-  const url = source?.asset?.public_url;
   const field = context.colorMode?.field;
-  if (!url || !field) {
+  if (!field) {
     return null;
   }
   const cacheKey = exactLegendBoundsCacheKey(source, field, focusedValue);
@@ -294,6 +293,15 @@ async function exactFocusedLegendBounds(context, focusedValue) {
   try {
     flatgeobuf = await loadFlatgeobuf();
   } catch {
+    return null;
+  }
+  let url;
+  try {
+    url = await resolveFlatgeobufUrl(source?.asset);
+  } catch {
+    return null;
+  }
+  if (!url) {
     return null;
   }
 
@@ -315,7 +323,7 @@ async function exactFocusedLegendBounds(context, focusedValue) {
 async function streamExactLegendBounds(flatgeobuf, url, field, focusedValue, context, spatialHint = null) {
   let bounds = null;
   try {
-    const features = spatialHint ? flatgeobuf.deserialize(url, spatialHint) : flatgeobuf.deserialize(url);
+    const features = await flatgeobufFeatureStream(flatgeobuf, url, spatialHint);
     for await (const feature of features) {
       if (context !== activeColorContext || focusedValue !== context.focusedLegendValue) {
         return null;
@@ -331,11 +339,59 @@ async function streamExactLegendBounds(flatgeobuf, url, field, focusedValue, con
   return bounds;
 }
 
+async function flatgeobufFeatureStream(flatgeobuf, url, spatialHint = null) {
+  if (spatialHint) {
+    return flatgeobuf.deserialize(url, spatialHint);
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`FlatGeobuf request returned HTTP ${response.status}.`);
+  }
+  if (!response.body) {
+    throw new Error("FlatGeobuf response did not include a readable stream.");
+  }
+  return flatgeobuf.deserialize(response.body);
+}
+
+async function resolveFlatgeobufUrl(asset) {
+  const publicUrl = String(asset?.public_url || "").trim();
+  if (!flatgeobufNeedsSigner(asset)) {
+    return publicUrl;
+  }
+  const slug = String(asset?.slug || "").trim();
+  if (!slug) {
+    return "";
+  }
+  const params = new URLSearchParams({
+    slug,
+    format: "fgb",
+    version: String(asset?.date || "latest"),
+  });
+  const response = await fetch(`/api/download-url?${params.toString()}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `FlatGeobuf download URL returned HTTP ${response.status}.`);
+  }
+  return String(payload.download_url || "").trim();
+}
+
+function flatgeobufNeedsSigner(asset) {
+  return String(asset?.access_tier || "").toLowerCase() === "private";
+}
+
 function exactLegendBoundsCacheKey(source, field, focusedValue) {
   const asset = source?.asset || {};
-  return [asset.public_url || "", asset.canonical_path || "", source?.selectedLayer || "", field, focusedValue].join(
-    "\u001f"
-  );
+  return [
+    asset.canonical_path || asset.slug || "",
+    asset.date || "latest",
+    source?.selectedLayer || "",
+    field,
+    focusedValue,
+  ].join("\u001f");
 }
 
 function focusedLegendBounds() {
