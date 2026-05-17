@@ -368,6 +368,9 @@ jobs:
                   check=True,
               )
           PY
+            uv run python scripts/gcs_asset.py delete "${SOURCE_URI}" \
+              --generation "${SOURCE_GENERATION}" \
+              --confirm DELETE
           fi
 
   reviewed_pr_plans:
@@ -975,6 +978,54 @@ jobs:
                   check=True,
               )
               subprocess.run(args + ["--dataset-path", str(dataset_path)], check=True)
+          PY
+
+      - name: Delete promoted scratch source objects
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import shlex
+          import subprocess
+          import sys
+
+          plan = json.load(open("publish-plan.json"))
+          seen = set()
+          promotions = []
+          for promotion in plan["promotions"]:
+              key = (promotion["source_uri"], promotion["source_generation"])
+              if key in seen:
+                  continue
+              seen.add(key)
+              promotions.append(promotion)
+
+          for index, promotion in enumerate(promotions, start=1):
+              print(f"Deleting promoted scratch source {index} of {len(promotions)}: {promotion['source_uri']}")
+              args = [
+                  "uv",
+                  "run",
+                  "python",
+                  "scripts/gcs_asset.py",
+                  "delete",
+                  promotion["source_uri"],
+                  "--generation",
+                  promotion["source_generation"],
+                  "--confirm",
+                  "DELETE",
+              ]
+              print("running:", " ".join(shlex.quote(part) for part in args))
+              subprocess.run(args, check=True)
+              exists = subprocess.run(
+                  ["uv", "run", "python", "scripts/gcs_asset.py", "exists", promotion["source_uri"]],
+                  check=False,
+              )
+              if exists.returncode == 0:
+                  print(f"deleted scratch source still exists: {promotion['source_uri']}", file=sys.stderr)
+                  sys.exit(1)
+              if exists.returncode != 1:
+                  print(f"could not verify scratch source absence: {promotion['source_uri']}", file=sys.stderr)
+                  sys.exit(exists.returncode)
           PY
 
       - name: Delete approved canonical objects

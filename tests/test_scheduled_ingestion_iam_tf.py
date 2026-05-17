@@ -156,6 +156,20 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertIn("github_readonly_service_account", outputs_tf)
         self.assertIn('variable "github_readonly_workload_identity_pool_provider_id"', variables_tf)
 
+    def test_publisher_can_cleanup_pending_publish_scratch_only(self):
+        iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
+        block = terraform_resource_block(
+            iam_tf,
+            "google_storage_bucket_iam_member",
+            "shared_datasets_publisher_pending_publish_cleanup_user",
+        )
+
+        self.assertIn('role   = "roles/storage.objectUser"', block)
+        self.assertIn("pending_publish_cleanup", block)
+        self.assertIn("_scratch/pending-publishes/", iam_tf)
+        self.assertIn("_scratch/cleanup-audit/", iam_tf)
+        self.assertNotIn("_scratch/*", block)
+
 
 if __name__ == "__main__":
     unittest.main()

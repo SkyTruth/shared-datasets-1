@@ -25,8 +25,9 @@ Canonical writes are controlled. Humans and general-purpose agents should stage
 manual publish bytes under `_scratch/pending-publishes/` and promote approved
 objects only through an explicit PR with a fenced publish or delete plan. After
 that PR merges, the GitHub `Approved dataset mutation` workflow promotes the
-planned objects under the `shared-datasets-production` environment. Do not use
-standalone workflow dispatch or single-object fallback inputs to bypass a PR.
+planned objects under the `shared-datasets-production` environment and deletes
+the promoted scratch source objects after successful promotion checks. Do not
+use standalone workflow dispatch or single-object fallback inputs to bypass a PR.
 Direct local writes to `latest/`, `releases/`, dataset README files, or
 `_catalog/` are reserved for the approved publisher identity or documented
 break-glass response.
@@ -192,6 +193,12 @@ flow through a reviewed PR containing a fenced `shared-datasets-delete-plan` so
 the approved workflow can delete with generation preconditions under the
 publisher identity. Prefix deletes, wildcards, and generation-less deletes are
 invalid.
+
+The scheduled `Scratch cleanup audit` workflow is the only standing automated
+prefix cleanup. It warns Slack at 60 days of no object changes in a
+`_scratch/pending-publishes/{asset-slug}/{proposal-id}/` prefix, deletes warned
+prefixes after 90 unchanged days, and deletes prefixes that contain a staged data
+file matching a canonical release object by filename, size, and CRC32C.
 
 ```bash
 uv run python scripts/gcs_asset.py delete gs://$SHARED_DATASETS_BUCKET/path/to/object \

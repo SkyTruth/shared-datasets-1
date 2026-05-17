@@ -92,13 +92,41 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
 
         promote_index = apply_step.index("name: Promote approved staged objects")
         summary_index = apply_step.index("name: Send dataset upload summary")
+        scratch_cleanup_index = apply_step.index("name: Delete promoted scratch source objects")
         delete_index = apply_step.index("name: Delete approved canonical objects")
 
         self.assertLess(promote_index, summary_index)
-        self.assertLess(summary_index, delete_index)
+        self.assertLess(summary_index, scratch_cleanup_index)
+        self.assertLess(scratch_cleanup_index, delete_index)
         self.assertIn("scripts/dataset_alerts.py", apply_step[summary_index:delete_index])
         self.assertIn("upload-summary", apply_step[summary_index:delete_index])
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", apply_step[summary_index:delete_index])
+
+    def test_promotion_deletes_reviewed_scratch_sources_after_success(self):
+        workflow = WORKFLOW.read_text()
+        step = workflow.split("name: Delete promoted scratch source objects", 1)[1].split(
+            "name: Delete approved canonical objects",
+            1,
+        )[0]
+
+        self.assertIn('promotion["source_uri"]', step)
+        self.assertIn('promotion["source_generation"]', step)
+        self.assertIn('"delete"', step)
+        self.assertIn('"--confirm"', step)
+        self.assertIn('"DELETE"', step)
+
+    def test_manual_non_dry_run_promotion_deletes_scratch_source(self):
+        workflow = WORKFLOW.read_text()
+        step = workflow.split("name: Promote staged object", 1)[1].split(
+            "reviewed_pr_plans:",
+            1,
+        )[0]
+
+        delete_index = step.index('scripts/gcs_asset.py delete "${SOURCE_URI}"')
+        dry_run_index = step.index('if [[ "${DRY_RUN}" == "true" ]]')
+        self.assertGreater(delete_index, dry_run_index)
+        self.assertIn('--generation "${SOURCE_GENERATION}"', step)
+        self.assertIn("--confirm DELETE", step)
 
     def test_catalog_json_publish_plan_is_idempotent_after_catalog_web_deploy(self):
         workflow = WORKFLOW.read_text()

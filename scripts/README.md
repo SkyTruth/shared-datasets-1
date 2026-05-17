@@ -183,7 +183,10 @@ The helper does not upload anything. Stage manual publish candidates under
 `scripts/gcs_asset.py upload`, then reference those staged objects from an
 explicit PR with a fenced publish plan. After the PR merges, the approved GitHub
 publisher workflow promotes the reviewed canonical objects so no-clobber and
-generation preconditions stay enforced.
+generation preconditions stay enforced, then deletes the promoted scratch source
+objects with their source-generation preconditions. Remaining pending-publish
+prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
+`Scratch cleanup audit` workflow.
 
 Publishing concierge planning lives in:
 

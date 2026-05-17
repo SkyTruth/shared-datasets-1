@@ -1,0 +1,87 @@
+name: Scratch cleanup audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Audit only; do not write warning markers or delete scratch objects."
+        required: true
+        type: boolean
+        default: true
+  schedule:
+    - cron: "30 15 * * 1"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: scratch-cleanup-audit
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate publisher auth configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Audit and clean scratch pending publishes
+        env:
+          DRY_RUN_INPUT: ${{ inputs.dry_run || 'false' }}
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            --bucket "${SHARED_DATASETS_BUCKET}"
+            --summary-path "${GITHUB_STEP_SUMMARY}"
+          )
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN_INPUT}" == "true" ]]; then
+            args+=(--dry-run --no-send-slack)
+          else
+            args+=(--apply --send-slack --strict-slack)
+          fi
+
+          uv run python scripts/scratch_cleanup.py "${args[@]}"

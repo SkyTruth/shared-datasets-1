@@ -329,8 +329,15 @@ variables `GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER` and
 `GCP_READONLY_SERVICE_ACCOUNT` to the Terraform outputs
 `github_readonly_workload_identity_provider` and
 `github_readonly_service_account`.
-The publisher also has read-only access to `_scratch/pending-publishes/` so the
-approved workflow can copy reviewed staged bytes into canonical prefixes.
+The publisher also has read access to `_scratch/pending-publishes/` so the
+approved workflow can copy reviewed staged bytes into canonical prefixes. After
+successful promotion, the same workflow deletes the promoted scratch source
+objects with generation preconditions. A separate `Scratch cleanup audit`
+workflow runs weekly in the protected production environment: it warns Slack
+when a pending-publish prefix has had no object changes for 60 days, deletes
+warned prefixes after 90 days if no object in the prefix changed, and deletes
+pending-publish prefixes that already contain a data file matching a canonical
+release object by filename, size, and CRC32C.
 The Terraform `scratch_writer_members` variable preserves the current
 scratch-only writer and should be overridden with the approved scratch-only
 group or service account when that identity is ready, before removing any

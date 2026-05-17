@@ -37,6 +37,12 @@ locals {
     "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')",
     "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/')",
   ])
+  pending_publish_cleanup_condition = join(" || ", [
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')",
+    "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/')",
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/cleanup-audit/')",
+    "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/cleanup-audit/')",
+  ])
 
   shared_datasets_publisher_principal = "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
 
@@ -155,6 +161,20 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
     title       = "pending_publish_sources_read_only"
     description = "Allow approved publisher reads from staged pending-publish objects only."
     expression  = local.pending_publish_source_condition
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
+resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_publish_cleanup_user" {
+  bucket = var.bucket_name
+  role   = "roles/storage.objectUser"
+  member = module.shared_datasets_publisher_service_account.member
+
+  condition {
+    title       = "pending_publish_cleanup"
+    description = "Allow approved publisher cleanup of pending-publish scratch objects and cleanup warning markers."
+    expression  = local.pending_publish_cleanup_condition
   }
 
   depends_on = [google_storage_bucket.shared_bucket]
