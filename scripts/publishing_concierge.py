@@ -9,19 +9,23 @@ import datetime as dt
 import io
 import json
 import os
+import random
 import re
 import shutil
 import shlex
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from collections import Counter
+from dataclasses import asdict, dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 import yaml
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
+GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 VECTOR_SOURCE_EXTENSIONS = {".shp", ".gpkg", ".geojson", ".json", ".fgb"}
 FORMAT_EXTENSIONS = {
@@ -43,11 +47,49 @@ FORMAT_FILE_EXTENSIONS = {
     "zarr": "zarr",
 }
 SUPPORTED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
-PROFILE_ROW_LIMIT = 1000
+PROFILE_RANDOM_SAMPLE_SIZE = int(os.environ.get("SHARED_DATASETS_PROFILE_SAMPLE_SIZE", "10000"))
+PROFILE_RANDOM_SEED = int(os.environ.get("SHARED_DATASETS_PROFILE_RANDOM_SEED", "0"))
+PROFILE_WITH_GDAL_ENV = "SHARED_DATASETS_PROFILE_WITH_GDAL"
+OGR_PROFILE_TIMEOUT_SECONDS = int(os.environ.get("SHARED_DATASETS_OGR_PROFILE_TIMEOUT_SECONDS", "30"))
 MAX_IN_MEMORY_GEOJSON_BYTES = 5 * 1024 * 1024
-ID_FIELD_RE = re.compile(r"(^id$|_id$|^id_|uuid|guid|external.?id|ext.?id|source.?id|objectid|mrgid|wdpaid)", re.IGNORECASE)
-GROUP_FIELD_RE = re.compile(r"(^name$|name$|title|label|site|region|zone|area_name|place|locality|unit)", re.IGNORECASE)
-MEASUREMENT_FIELD_RE = re.compile(r"(area|length|shape|perimeter|lat|lon|longitude|latitude|date|time|rank|zoom|count)$", re.IGNORECASE)
+ID_FIELD_RE = re.compile(
+    r"(^id$|_id$|^id_|uuid|guid|external.?id|ext.?id|source.?id|objectid|mrgid|wdpaid|primkey|primary.?key|(^|_)key$)",
+    re.IGNORECASE,
+)
+GROUP_FIELD_RE = re.compile(
+    r"(^name$|name$|title|label|site|region|zone|area_name|place|locality|unit|country|layer|type|class|status|category|basin|province)",
+    re.IGNORECASE,
+)
+MEASUREMENT_FIELD_RE = re.compile(
+    r"(area|length|shape|perimeter|lat|lon|longitude|latitude|rank|zoom|count|width|height|depth|elev|elevation)$",
+    re.IGNORECASE,
+)
+TEMPORAL_FIELD_RE = re.compile(r"(date|time|year|disc|prod)$", re.IGNORECASE)
+LOW_INFORMATION_FIELD_RE = re.compile(
+    r"(sourceinfo|otherinfo|fieldinfo|comment|comments|note|notes|description|remark|remarks|citation|reference|url|link)",
+    re.IGNORECASE,
+)
+CODE_FIELD_RE = re.compile(r"(^|_)?(fips|cow|cont|iso)?code$|_code$", re.IGNORECASE)
+NUMERIC_IDENTIFIER_FIELD_RE = re.compile(r"(num|number)$", re.IGNORECASE)
+SENTINEL_VALUES = {
+    "not reported",
+    "not available",
+    "not applicable",
+    "unknown",
+    "unspecified",
+    "unreported",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "nil",
+    "no data",
+    "nodata",
+    "-9999",
+    "-9999.0",
+    "-999",
+    "-999.0",
+}
 
 
 class ConciergeError(ValueError):
@@ -55,14 +97,68 @@ class ConciergeError(ValueError):
 
 
 @dataclass(frozen=True)
+class TopValueExample:
+    value: str
+    count: int
+    percent: float
+    is_sentinel: bool = False
+
+
+@dataclass(frozen=True)
+class FieldProfile:
+    name: str
+    datatype: str
+    distinct_values: int
+    distinction_percent: float
+    non_empty_values: int
+    empty_values: int
+    emptiness_percent: float
+    top_value_count: int
+    domination_percent: float
+    skew_ratio: float | None
+    duplicate_value_count: int
+    duplicate_row_count: int
+    sentinel_value_count: int
+    sentinel_value_percent: float
+    top_examples: list[TopValueExample]
+    average_value_length: float | None = None
+    role_hint: str = "unlikely"
+    hidden_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class FieldRecommendation:
     field: str
     reason: str
+    role: str = "candidate"
+    datatype: str | None = None
     distinct_values: int | None = None
     non_empty_values: int | None = None
+    empty_values: int | None = None
+    distinction_percent: float | None = None
+    emptiness_percent: float | None = None
+    domination_percent: float | None = None
+    skew_ratio: float | None = None
     duplicate_value_count: int | None = None
     duplicate_row_count: int | None = None
+    sentinel_value_count: int | None = None
+    sentinel_value_percent: float | None = None
+    top_examples: list[TopValueExample] = dataclass_field(default_factory=list)
+    concerns: list[str] = dataclass_field(default_factory=list)
     confidence: str = "medium"
+
+
+@dataclass(frozen=True)
+class GeneratedRowIdOption:
+    available: bool
+    column: str = GENERATED_ROW_ID_COLUMN
+    algorithm: str = GENERATED_ROW_ID_ALGORITHM
+    reason: str = (
+        "Last-resort per-row geometry-address fallback when no provider ext_id and no curator-approved grouping field is suitable."
+    )
+    warning: str = (
+        "Not a provider or entity ID; stable only while canonical geometry and duplicate-geometry source order remain unchanged."
+    )
 
 
 @dataclass(frozen=True)
@@ -70,6 +166,13 @@ class CuratorFieldOptions:
     id_field_candidates: list[FieldRecommendation]
     group_field_candidates: list[FieldRecommendation]
     notes: list[str]
+    generated_row_id_option: GeneratedRowIdOption = dataclass_field(default_factory=lambda: GeneratedRowIdOption(False))
+    total_rows: int | None = None
+    total_columns: int | None = None
+    profiled_row_count: int | None = None
+    profile_scope: str = "unavailable"
+    hidden_unlikely_count: int = 0
+    all_fields_profile: list[FieldProfile] = dataclass_field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -166,6 +269,121 @@ def field_is_group_like(field: str) -> bool:
     return bool(GROUP_FIELD_RE.search(normalized)) and not field_is_measurement(normalized)
 
 
+def field_is_temporal(field: str, datatype: str | None = None) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(TEMPORAL_FIELD_RE.search(normalized)) or datatype in {"date", "datetime"}
+
+
+def field_is_low_information(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    if normalized in {"source_layer", "layer_name"} or normalized.endswith("_id"):
+        return False
+    return bool(LOW_INFORMATION_FIELD_RE.search(normalized)) or normalized.endswith("source")
+
+
+def field_is_code_like(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(CODE_FIELD_RE.search(normalized))
+
+
+def field_is_numeric_identifier_like(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(NUMERIC_IDENTIFIER_FIELD_RE.search(normalized))
+
+
+def normalize_profile_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return " ".join(str(value).strip().split())
+
+
+def normalized_for_matching(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip().lower())
+
+
+def value_is_sentinel(value: str) -> bool:
+    normalized = normalized_for_matching(value)
+    if not normalized:
+        return False
+    if normalized in SENTINEL_VALUES:
+        return True
+    try:
+        numeric = float(normalized.replace(",", ""))
+    except ValueError:
+        return False
+    return numeric in {-9999.0, -999.0}
+
+
+def percent(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round((numerator / denominator) * 100, 2)
+
+
+def ratio(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value, 2)
+
+
+def looks_like_bool(value: str) -> bool:
+    return normalized_for_matching(value) in {"true", "false", "t", "f", "yes", "no", "y", "n", "0", "1"}
+
+
+def looks_like_int(value: str) -> bool:
+    return bool(re.fullmatch(r"[+-]?\d+", value.replace(",", "")))
+
+
+def looks_like_float(value: str) -> bool:
+    try:
+        float(value.replace(",", ""))
+    except ValueError:
+        return False
+    return True
+
+
+def looks_like_datetime(value: str) -> bool:
+    candidate = value.strip()
+    if "T" not in candidate and " " not in candidate:
+        return False
+    normalized = candidate.replace("Z", "+00:00")
+    try:
+        dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return True
+
+
+def looks_like_date(value: str) -> bool:
+    candidate = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
+        return False
+    try:
+        dt.date.fromisoformat(candidate)
+    except ValueError:
+        return False
+    return True
+
+
+def infer_datatype(values: Iterable[str]) -> str:
+    samples = [value for value in values if value and not value_is_sentinel(value)]
+    if not samples:
+        return "empty"
+    if all(looks_like_bool(value) for value in samples):
+        return "boolean"
+    if all(looks_like_int(value) for value in samples):
+        return "integer"
+    if all(looks_like_float(value) for value in samples):
+        return "float"
+    if all(looks_like_datetime(value) for value in samples):
+        return "datetime"
+    if all(looks_like_date(value) for value in samples):
+        return "date"
+    return "string"
+
+
 def duplicate_counts(values: list[str]) -> tuple[int, int]:
     counts: dict[str, int] = {}
     for value in values:
@@ -174,113 +392,389 @@ def duplicate_counts(values: list[str]) -> tuple[int, int]:
     return len(repeated), sum(repeated)
 
 
-def profile_rows(rows: Sequence[dict[str, Any]]) -> CuratorFieldOptions:
+def field_profile_from_counts(
+    name: str,
+    counts: Counter[str],
+    *,
+    empty_values: int,
+    profiled_row_count: int,
+    type_samples: Sequence[str],
+    total_value_length: int,
+) -> FieldProfile:
+    non_empty = sum(counts.values())
+    distinct = len(counts)
+    duplicate_value_count = sum(1 for count in counts.values() if count > 1)
+    duplicate_row_count = sum(count for count in counts.values() if count > 1)
+    top_values = counts.most_common(5)
+    top_count = top_values[0][1] if top_values else 0
+    expected_top_count = non_empty / distinct if distinct else None
+    skew_ratio = (top_count / expected_top_count) if expected_top_count else None
+    sentinel_count = sum(count for value, count in counts.items() if value_is_sentinel(value))
+    top_examples = [
+        TopValueExample(
+            value=value,
+            count=count,
+            percent=percent(count, profiled_row_count),
+            is_sentinel=value_is_sentinel(value),
+        )
+        for value, count in top_values
+    ]
+    average_value_length = round(total_value_length / non_empty, 2) if non_empty else None
+    profile = FieldProfile(
+        name=name,
+        datatype=infer_datatype(type_samples),
+        distinct_values=distinct,
+        distinction_percent=percent(distinct, profiled_row_count),
+        non_empty_values=non_empty,
+        empty_values=empty_values,
+        emptiness_percent=percent(empty_values, profiled_row_count),
+        top_value_count=top_count,
+        domination_percent=percent(top_count, profiled_row_count),
+        skew_ratio=ratio(skew_ratio),
+        duplicate_value_count=duplicate_value_count,
+        duplicate_row_count=duplicate_row_count,
+        sentinel_value_count=sentinel_count,
+        sentinel_value_percent=percent(sentinel_count, profiled_row_count),
+        top_examples=top_examples,
+        average_value_length=average_value_length,
+    )
+    role_hint, hidden_reason = classify_field_profile(profile)
+    return FieldProfile(
+        name=profile.name,
+        datatype=profile.datatype,
+        distinct_values=profile.distinct_values,
+        distinction_percent=profile.distinction_percent,
+        non_empty_values=profile.non_empty_values,
+        empty_values=profile.empty_values,
+        emptiness_percent=profile.emptiness_percent,
+        top_value_count=profile.top_value_count,
+        domination_percent=profile.domination_percent,
+        skew_ratio=profile.skew_ratio,
+        duplicate_value_count=profile.duplicate_value_count,
+        duplicate_row_count=profile.duplicate_row_count,
+        sentinel_value_count=profile.sentinel_value_count,
+        sentinel_value_percent=profile.sentinel_value_percent,
+        top_examples=profile.top_examples,
+        average_value_length=profile.average_value_length,
+        role_hint=role_hint,
+        hidden_reason=hidden_reason,
+    )
+
+
+def build_field_profiles(rows: Sequence[dict[str, Any]]) -> list[FieldProfile]:
     if not rows:
-        return CuratorFieldOptions([], [], ["No rows were available for field profiling."])
-    fields = list(rows[0].keys())
-    row_count = len(rows)
-    id_candidates: list[FieldRecommendation] = []
-    group_candidates: list[FieldRecommendation] = []
-    for field in fields:
-        values = [
-            " ".join(str(row.get(field) or "").strip().split())
-            for row in rows
-            if str(row.get(field) or "").strip()
-        ]
-        distinct = len(set(values))
-        duplicate_value_count, duplicate_row_count = duplicate_counts(values)
-        non_empty = len(values)
-        id_like = field_is_id_like(field)
-        group_like = field_is_group_like(field)
-        if id_like and distinct and distinct == non_empty and non_empty >= max(1, row_count * 0.8):
-            id_candidates.append(
-                FieldRecommendation(
-                    field=field,
-                    reason="ID-like field name with unique non-empty values.",
-                    distinct_values=distinct,
-                    non_empty_values=non_empty,
-                    duplicate_value_count=duplicate_value_count,
-                    duplicate_row_count=duplicate_row_count,
-                    confidence="high",
-                )
-            )
-        elif id_like and distinct:
-            id_candidates.append(
-                FieldRecommendation(
-                    field=field,
-                    reason="ID-like field name, but values are not unique enough for a provider row ID.",
-                    distinct_values=distinct,
-                    non_empty_values=non_empty,
-                    duplicate_value_count=duplicate_value_count,
-                    duplicate_row_count=duplicate_row_count,
-                    confidence="low",
-                )
-            )
-        if group_like and distinct > 1:
-            group_candidates.append(
-                FieldRecommendation(
-                    field=field,
-                    reason="Human-readable grouping/search field.",
-                    distinct_values=distinct,
-                    non_empty_values=non_empty,
-                    duplicate_value_count=duplicate_value_count,
-                    duplicate_row_count=duplicate_row_count,
-                    confidence="high" if distinct < non_empty else "medium",
-                )
-            )
-        elif not id_like and not field_is_measurement(field) and 1 < distinct < non_empty:
-            group_candidates.append(
-                FieldRecommendation(
-                    field=field,
-                    reason="Non-measurement field with repeated values that may be useful for grouping/filtering.",
-                    distinct_values=distinct,
-                    non_empty_values=non_empty,
-                    duplicate_value_count=duplicate_value_count,
-                    duplicate_row_count=duplicate_row_count,
-                    confidence="medium",
-                )
-            )
+        return []
+    field_names: list[str] = []
+    seen_fields: set[str] = set()
+    counts_by_field: dict[str, Counter[str]] = {}
+    empty_by_field: dict[str, int] = {}
+    samples_by_field: dict[str, list[str]] = {}
+    length_by_field: dict[str, int] = {}
+
+    for row_index, row in enumerate(rows):
+        for field in row.keys():
+            if field in seen_fields:
+                continue
+            seen_fields.add(field)
+            field_names.append(field)
+            counts_by_field[field] = Counter()
+            empty_by_field[field] = row_index
+            samples_by_field[field] = []
+            length_by_field[field] = 0
+        for field in field_names:
+            value = normalize_profile_value(row.get(field))
+            if not value:
+                empty_by_field[field] += 1
+                continue
+            counts_by_field[field][value] += 1
+            length_by_field[field] += len(value)
+            if len(samples_by_field[field]) < 1000:
+                samples_by_field[field].append(value)
+
+    profiled_row_count = len(rows)
+    return [
+        field_profile_from_counts(
+            field,
+            counts_by_field[field],
+            empty_values=empty_by_field[field],
+            profiled_row_count=profiled_row_count,
+            type_samples=samples_by_field[field],
+            total_value_length=length_by_field[field],
+        )
+        for field in field_names
+    ]
+
+
+def profile_row_iter(
+    rows: Iterable[dict[str, Any]],
+    *,
+    sample_size: int = PROFILE_RANDOM_SAMPLE_SIZE,
+    random_seed: int = PROFILE_RANDOM_SEED,
+) -> tuple[list[dict[str, Any]], int, str]:
+    sample: list[dict[str, Any]] = []
+    rng = random.Random(random_seed)
+    total_rows = 0
+    for row in rows:
+        total_rows += 1
+        row_copy = dict(row)
+        if len(sample) < sample_size:
+            sample.append(row_copy)
+            continue
+        replacement_index = rng.randrange(total_rows)
+        if replacement_index < sample_size:
+            sample[replacement_index] = row_copy
+    profile_scope = "full" if total_rows <= sample_size else "random_sample"
+    return sample, total_rows, profile_scope
+
+
+def recommendation_concerns(profile: FieldProfile, *, provider: bool) -> list[str]:
+    concerns: list[str] = []
+    if profile.empty_values:
+        concerns.append(f"{profile.empty_values:,} empty value(s)")
+    if profile.sentinel_value_count:
+        concerns.append(f"{profile.sentinel_value_count:,} sentinel-like value(s)")
+    if profile.duplicate_value_count and provider:
+        concerns.append(
+            f"{profile.duplicate_value_count:,} duplicate value(s) across {profile.duplicate_row_count:,} row(s)"
+        )
+    if profile.domination_percent >= 25:
+        top = profile.top_examples[0] if profile.top_examples else None
+        if top:
+            concerns.append(f"top value {top.value!r} has {top.count:,} row(s)")
+    if profile.skew_ratio is not None and profile.skew_ratio >= 50:
+        concerns.append(f"high skew ratio {profile.skew_ratio:g}")
+    if not provider and profile.distinction_percent > 95:
+        concerns.append("near-row-unique; usually search-only, not grouping")
+    if not provider and (profile.distinction_percent <= 1 or profile.distinct_values <= 5):
+        concerns.append("very low distinction; treat as filter/facet, not generated group ID")
+    return concerns
+
+
+def provider_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
+    if profile.distinct_values <= 1 or field_is_measurement(profile.name):
+        return None
+    id_like = field_is_id_like(profile.name)
+    if not id_like:
+        return None
+    concerns = recommendation_concerns(profile, provider=True)
+    if profile.emptiness_percent >= 10:
+        confidence = "low"
+        reason = "ID-like field name, but too many rows are empty for a provider row ID."
+    elif profile.distinction_percent >= 95:
+        confidence = "high"
+        if profile.duplicate_value_count:
+            reason = "ID-like field with near-row-unique values; duplicate values need curator review."
+        else:
+            reason = "ID-like field with row-unique non-empty values."
+    elif profile.distinction_percent >= 80:
+        confidence = "medium"
+        reason = "ID-like field with high distinction, but not row-unique."
+    else:
+        confidence = "low"
+        reason = "ID-like field name, but values are not unique enough for a provider row ID."
+    return FieldRecommendation(
+        field=profile.name,
+        role="provider ext_id candidate",
+        reason=reason,
+        datatype=profile.datatype,
+        distinct_values=profile.distinct_values,
+        non_empty_values=profile.non_empty_values,
+        empty_values=profile.empty_values,
+        distinction_percent=profile.distinction_percent,
+        emptiness_percent=profile.emptiness_percent,
+        domination_percent=profile.domination_percent,
+        skew_ratio=profile.skew_ratio,
+        duplicate_value_count=profile.duplicate_value_count,
+        duplicate_row_count=profile.duplicate_row_count,
+        sentinel_value_count=profile.sentinel_value_count,
+        sentinel_value_percent=profile.sentinel_value_percent,
+        top_examples=profile.top_examples,
+        concerns=concerns,
+        confidence=confidence,
+    )
+
+
+def grouping_role(profile: FieldProfile) -> str | None:
+    if profile.distinct_values <= 1:
+        return None
+    if field_is_measurement(profile.name) or profile.datatype == "float":
+        return None
+    if field_is_id_like(profile.name) and profile.distinction_percent >= 60:
+        return None
+    if field_is_low_information(profile.name):
+        return None
+    if field_is_code_like(profile.name):
+        return None
+    group_like = field_is_group_like(profile.name)
+    temporal = field_is_temporal(profile.name, profile.datatype)
+    if profile.emptiness_percent >= 10 and not group_like:
+        return None
+    if profile.sentinel_value_percent >= 10 and not group_like:
+        return None
+    if profile.datatype == "integer" and not temporal:
+        if not group_like or field_is_numeric_identifier_like(profile.name):
+            return None
+    if group_like or temporal or profile.datatype in {"string", "integer", "date", "datetime", "boolean"}:
+        if profile.distinction_percent <= 1 or profile.distinct_values <= 5:
+            return "filter field"
+        if profile.distinction_percent <= 60:
+            return "grouping/search candidate"
+        if profile.distinction_percent <= 95:
+            return "search candidate"
+        return "row-like search field"
+    return None
+
+
+def group_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
+    role = grouping_role(profile)
+    if not role:
+        return None
+    concerns = recommendation_concerns(profile, provider=False)
+    if profile.domination_percent >= 50:
+        confidence = "low"
+        reason = "Candidate field, but the top value dominates the rows."
+    elif role == "filter field":
+        confidence = "medium"
+        reason = "Low-cardinality field that may be useful as a filter/facet."
+    elif role == "search candidate":
+        confidence = "medium"
+        reason = "High-cardinality field that may be useful for search; use grouping only with curator approval."
+    elif role == "row-like search field":
+        confidence = "low"
+        reason = "Near-row-unique field; likely search-only rather than a generated group ID."
+    else:
+        confidence = "high" if field_is_group_like(profile.name) else "medium"
+        reason = "Human-readable grouping/search field with repeated values."
+    return FieldRecommendation(
+        field=profile.name,
+        role=role,
+        reason=reason,
+        datatype=profile.datatype,
+        distinct_values=profile.distinct_values,
+        non_empty_values=profile.non_empty_values,
+        empty_values=profile.empty_values,
+        distinction_percent=profile.distinction_percent,
+        emptiness_percent=profile.emptiness_percent,
+        domination_percent=profile.domination_percent,
+        skew_ratio=profile.skew_ratio,
+        duplicate_value_count=profile.duplicate_value_count,
+        duplicate_row_count=profile.duplicate_row_count,
+        sentinel_value_count=profile.sentinel_value_count,
+        sentinel_value_percent=profile.sentinel_value_percent,
+        top_examples=profile.top_examples,
+        concerns=concerns,
+        confidence=confidence,
+    )
+
+
+def classify_field_profile(profile: FieldProfile) -> tuple[str, str | None]:
+    if provider_recommendation(profile):
+        return "provider ext_id candidate", None
+    role = grouping_role(profile)
+    if role:
+        return role, None
+    if profile.distinct_values <= 1:
+        return "unlikely", "single-value or empty field"
+    if field_is_measurement(profile.name) or profile.datatype == "float":
+        return "unlikely", "measurement/coordinate field"
+    if field_is_low_information(profile.name):
+        return "unlikely", "free-text source or notes field"
+    if profile.sentinel_value_percent >= 10:
+        return "unlikely", "sentinel-dominated field"
+    if field_is_id_like(profile.name) and profile.distinction_percent < 80:
+        return "unlikely", "ID-like name but low distinction"
+    return "unlikely", "does not match provider ID or grouping/search heuristics"
+
+
+def profile_rows(
+    rows: Sequence[dict[str, Any]],
+    *,
+    total_rows: int | None = None,
+    profile_scope: str = "full",
+    generated_row_id_available: bool = False,
+) -> CuratorFieldOptions:
+    if not rows:
+        return CuratorFieldOptions(
+            [],
+            [],
+            ["No rows were available for field profiling."],
+            total_rows=total_rows or 0,
+            total_columns=0,
+            profiled_row_count=0,
+            profile_scope=profile_scope,
+        )
+    total = total_rows if total_rows is not None else len(rows)
+    profiles = build_field_profiles(rows)
+    id_candidates = [candidate for profile in profiles if (candidate := provider_recommendation(profile))]
+    group_candidates = [candidate for profile in profiles if (candidate := group_recommendation(profile))]
 
     id_candidates.sort(key=lambda candidate: (candidate.confidence != "high", -(candidate.distinct_values or 0), candidate.field.lower()))
     group_candidates.sort(
         key=lambda candidate: (
             candidate.confidence != "high",
             candidate.field.lower() != "name",
+            candidate.role == "filter field",
             -(candidate.distinct_values or 0),
             candidate.field.lower(),
         )
     )
-    notes = [f"Profiled {row_count} sampled row(s) from source attributes."]
+    profiled_row_count = len(rows)
+    if profile_scope == "random_sample":
+        notes = [
+            f"Profiled a deterministic random sample of {profiled_row_count:,} row(s) from {total:,} total source row(s).",
+            "Column statistics are sample estimates; rerun with a larger SHARED_DATASETS_PROFILE_SAMPLE_SIZE if needed.",
+        ]
+    else:
+        notes = [f"Profiled all {profiled_row_count:,} source row(s)."]
+    hidden_unlikely_count = max(0, len(profiles) - len({candidate.field for candidate in [*id_candidates, *group_candidates]}))
+    notes.append(
+        f"{len(profiles):,} column(s) scanned; {hidden_unlikely_count:,} hidden as unlikely in the default decision table."
+    )
     if not id_candidates:
         notes.append("No high-likelihood provider row ID field was found.")
     if not group_candidates:
         notes.append("No high-likelihood grouping/search field was found.")
-    return CuratorFieldOptions(id_candidates[:8], group_candidates[:8], notes)
+    if generated_row_id_available:
+        notes.append(
+            f"Fallback {GENERATED_ROW_ID_COLUMN} is available only after the curator rejects provider IDs and generated group IDs."
+        )
+    return CuratorFieldOptions(
+        id_candidates[:8],
+        group_candidates[:8],
+        notes,
+        generated_row_id_option=GeneratedRowIdOption(generated_row_id_available),
+        total_rows=total,
+        total_columns=len(profiles),
+        profiled_row_count=profiled_row_count,
+        profile_scope=profile_scope,
+        hidden_unlikely_count=hidden_unlikely_count,
+        all_fields_profile=profiles,
+    )
 
 
 def read_csv_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
+    rows = []
+    for row in iter_csv_rows(source):
+        rows.append(row)
+        if limit is not None and len(rows) >= limit:
+            break
+    return rows
+
+
+def iter_csv_rows(source: Path) -> Iterator[dict[str, Any]]:
     with source.open(newline="") as handle:
         reader = csv.DictReader(handle)
-        rows = []
         for row in reader:
-            rows.append(dict(row))
-            if limit is not None and len(rows) >= limit:
-                break
-        return rows
+            yield dict(row)
 
 
 def read_geojson_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     if source.suffix.lower() == ".ndgeojson":
         rows = []
-        with source.open() as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                feature = json.loads(line)
-                if isinstance(feature, dict) and isinstance(feature.get("properties"), dict):
-                    rows.append(dict(feature["properties"]))
-                    if limit is not None and len(rows) >= limit:
-                        break
+        for row in iter_ndgeojson_rows(source):
+            rows.append(row)
+            if limit is not None and len(rows) >= limit:
+                break
         return rows
 
     text = source.read_text()
@@ -302,23 +796,106 @@ def read_geojson_rows(source: Path, *, limit: int | None = None) -> list[dict[st
     return rows
 
 
+def iter_ndgeojson_rows(source: Path) -> Iterator[dict[str, Any]]:
+    with source.open() as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            feature = json.loads(line)
+            if isinstance(feature, dict) and isinstance(feature.get("properties"), dict):
+                yield dict(feature["properties"])
+
+
 def read_ogr_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
     if not shutil.which("ogr2ogr"):
         return []
     command = ["ogr2ogr", "-f", "CSV", "/vsistdout/", str(source)]
     if limit is not None:
         command.extend(["-limit", str(limit)])
-    completed = subprocess.run(
-        command,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=OGR_PROFILE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return []
     if completed.returncode != 0 or not completed.stdout.strip():
         return []
     reader = csv.DictReader(io.StringIO(completed.stdout))
     return [{str(key): value for key, value in row.items() if key is not None} for row in reader]
+
+
+def profile_iterable_rows(
+    rows: Iterable[dict[str, Any]],
+    *,
+    generated_row_id_available: bool = False,
+) -> CuratorFieldOptions:
+    sampled_rows, total_rows, profile_scope = profile_row_iter(rows)
+    return profile_rows(
+        sampled_rows,
+        total_rows=total_rows,
+        profile_scope=profile_scope,
+        generated_row_id_available=generated_row_id_available,
+    )
+
+
+def profile_ogr_rows(source: Path, *, timeout_seconds: int = OGR_PROFILE_TIMEOUT_SECONDS) -> CuratorFieldOptions:
+    if not shutil.which("ogr2ogr"):
+        return CuratorFieldOptions(
+            [],
+            [],
+            [
+                "Vector source schema was not profiled with GDAL during planning; set SHARED_DATASETS_PROFILE_WITH_GDAL=1 "
+                "or profile the canonical artifact after conversion.",
+            ],
+        )
+    command = ["ogr2ogr", "-f", "CSV", "/vsistdout/", str(source)]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return CuratorFieldOptions(
+            [],
+            [],
+            [f"Could not profile source attributes with ogr2ogr: timed out after {timeout_seconds} second(s)."],
+        )
+    if completed.returncode != 0:
+        return CuratorFieldOptions(
+            [],
+            [],
+            [f"Could not profile source attributes with ogr2ogr: {completed.stderr.strip() or f'exit code {completed.returncode}'}"],
+        )
+    if not completed.stdout.strip():
+        return CuratorFieldOptions([], [], ["Could not profile source attributes with ogr2ogr: no CSV rows were emitted."])
+    reader = csv.DictReader(io.StringIO(completed.stdout))
+    rows = ({str(key): value for key, value in row.items() if key is not None} for row in reader)
+    options = profile_iterable_rows(rows, generated_row_id_available=True)
+    return CuratorFieldOptions(
+        options.id_field_candidates,
+        options.group_field_candidates,
+        [
+            *options.notes,
+            "OGR attribute profiling uses all rows when at or below the sample threshold; larger sources use a deterministic random sample.",
+            "Curator must choose grouping fields before generated IDs are built.",
+        ],
+        generated_row_id_option=options.generated_row_id_option,
+        total_rows=options.total_rows,
+        total_columns=options.total_columns,
+        profiled_row_count=options.profiled_row_count,
+        profile_scope=options.profile_scope,
+        hidden_unlikely_count=options.hidden_unlikely_count,
+        all_fields_profile=options.all_fields_profile,
+    )
 
 
 def ogrinfo_field_names(source: Path) -> list[str]:
@@ -360,15 +937,24 @@ def recommend_schema_fields(field_names: Sequence[str]) -> CuratorFieldOptions:
         notes.append("No high-likelihood provider row ID field name was found.")
     if not group_candidates:
         notes.append("No high-likelihood grouping/search field name was found.")
-    return CuratorFieldOptions(id_candidates[:8], group_candidates[:8], notes)
+    return CuratorFieldOptions(
+        id_candidates[:8],
+        group_candidates[:8],
+        notes,
+        generated_row_id_option=GeneratedRowIdOption(True),
+        total_columns=len(field_names),
+        profile_scope="schema_only",
+        hidden_unlikely_count=max(0, len(field_names) - len({candidate.field for candidate in [*id_candidates, *group_candidates]})),
+    )
 
 
 def recommend_curator_field_options(source: Path, canonical_format: str) -> CuratorFieldOptions:
+    is_vector_fgb = canonical_format == "fgb"
     try:
         if source.suffix.lower() == ".csv":
-            return profile_rows(read_csv_rows(source, limit=PROFILE_ROW_LIMIT))
+            return profile_iterable_rows(iter_csv_rows(source), generated_row_id_available=is_vector_fgb)
         if source.suffix.lower() == ".ndgeojson":
-            return profile_rows(read_geojson_rows(source, limit=PROFILE_ROW_LIMIT))
+            return profile_iterable_rows(iter_ndgeojson_rows(source), generated_row_id_available=is_vector_fgb)
         if source.suffix.lower() in {".geojson", ".json"}:
             if source.stat().st_size > MAX_IN_MEMORY_GEOJSON_BYTES:
                 return CuratorFieldOptions(
@@ -379,33 +965,27 @@ def recommend_curator_field_options(source: Path, canonical_format: str) -> Cura
                         "profile the canonical artifact after conversion.",
                     ],
                 )
-            return profile_rows(read_geojson_rows(source, limit=PROFILE_ROW_LIMIT))
+            return profile_rows(read_geojson_rows(source, limit=None), generated_row_id_available=is_vector_fgb)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, csv.Error) as exc:
         return CuratorFieldOptions([], [], [f"Could not profile source attributes: {exc}"])
 
     if canonical_format == "fgb":
-        rows = read_ogr_rows(source, limit=PROFILE_ROW_LIMIT)
-        if rows:
-            options = profile_rows(rows)
-            return CuratorFieldOptions(
-                options.id_field_candidates,
-                options.group_field_candidates,
-                [
-                    *options.notes,
-                    "OGR attribute sampling is advisory; curator must choose grouping fields before generated IDs are built.",
-                ],
-            )
-        if os.environ.get("SHARED_DATASETS_PROFILE_WITH_GDAL") == "1":
+        if os.environ.get(PROFILE_WITH_GDAL_ENV) == "1":
+            options = profile_ogr_rows(source)
+            if options.profile_scope != "unavailable" or options.id_field_candidates or options.group_field_candidates:
+                return options
             field_names = ogrinfo_field_names(source)
             if field_names:
                 return recommend_schema_fields(field_names)
+            return options
         return CuratorFieldOptions(
             [],
             [],
             [
-                "Vector source schema was not profiled with GDAL during planning; set SHARED_DATASETS_PROFILE_WITH_GDAL=1 "
+                f"Vector source schema was not profiled with GDAL during planning; set {PROFILE_WITH_GDAL_ENV}=1 "
                 "or profile the canonical artifact after conversion.",
             ],
+            generated_row_id_option=GeneratedRowIdOption(True),
         )
     return CuratorFieldOptions(
         [],
@@ -723,7 +1303,17 @@ def run_catalog_check() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "The JSON plan includes curator_field_options with a compact decision table for likely provider ext_id "
+            "and grouping/search/filter candidates, plus the last-resort shared_datasets_row_id fallback option. "
+            "Exact stats are computed for local sources at or below "
+            f"{PROFILE_RANDOM_SAMPLE_SIZE:,} rows; larger sources use a deterministic random sample. Override the "
+            "sample size with SHARED_DATASETS_PROFILE_SAMPLE_SIZE."
+        ),
+    )
     parser.add_argument("source", type=Path, help="Local source file or directory to inspect.")
     parser.add_argument("--asset-slug", help="Lowercase kebab-case asset slug. Inferred from source name when omitted.")
     parser.add_argument("--title", help="Human-readable dataset title. Inferred from slug when omitted.")
@@ -805,7 +1395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload = asdict(plan)
         if args.write_draft_doc:
             payload["draft_doc_written"] = plan.asset_doc_path
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        print(json.dumps(payload, indent=2))
         if args.run_catalog_check:
             return run_catalog_check()
         return 0

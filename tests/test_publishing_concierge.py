@@ -137,46 +137,130 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].confidence, "high")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].distinct_values, 2)
+        self.assertFalse(plan.curator_field_options.generated_row_id_option.available)
         self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
 
-    def test_curator_field_options_limits_csv_profile_rows(self):
+    def test_field_profile_reports_decision_table_statistics(self):
+        options = publishing_concierge.profile_rows(
+            [
+                {"source_id": "A1", "NAME": "North Reef", "DISC": "-9999"},
+                {"source_id": "A2", "NAME": "North Reef", "DISC": "1999"},
+                {"source_id": "A3", "NAME": "South Reef", "DISC": ""},
+            ]
+        )
+
+        self.assertEqual(options.total_rows, 3)
+        self.assertEqual(options.total_columns, 3)
+        provider = options.id_field_candidates[0]
+        self.assertEqual(provider.field, "source_id")
+        self.assertEqual(provider.datatype, "string")
+        self.assertEqual(provider.distinction_percent, 100.0)
+        self.assertEqual(provider.emptiness_percent, 0.0)
+        self.assertEqual(provider.domination_percent, 33.33)
+        self.assertEqual(provider.skew_ratio, 1.0)
+        self.assertEqual(provider.top_examples[0].value, "A1")
+
+        name = options.group_field_candidates[0]
+        self.assertEqual(name.field, "NAME")
+        self.assertEqual(name.distinction_percent, 66.67)
+        self.assertEqual(name.domination_percent, 66.67)
+        self.assertEqual(name.skew_ratio, 1.33)
+        self.assertTrue(any("top value" in concern for concern in name.concerns))
+
+        disc_profile = next(profile for profile in options.all_fields_profile if profile.name == "DISC")
+        self.assertEqual(disc_profile.datatype, "integer")
+        self.assertEqual(disc_profile.empty_values, 1)
+        self.assertEqual(disc_profile.sentinel_value_count, 1)
+
+    def test_petrodata_like_recommendations_keep_table_compact(self):
+        rows = []
+        for index in range(102):
+            rows.append(
+                {
+                    "PRIMKEY": "AL001PET" if index in {0, 1, 2} else f"PET{index:03d}",
+                    "NAME": "West Siberian Basin" if index < 20 else f"Basin {index % 12}",
+                    "COUNTRY": "Russia" if index < 30 else ["United States", "Brazil", "Canada"][index % 3],
+                    "RESINFO": ["oil and gas", "gas", "oil"][index % 3],
+                    "source_layer": "onshore" if index < 80 else "offshore",
+                    "LAT": str(1.0 + index),
+                    "LONG": str(2.0 + index),
+                    "SOURCEINFO": f"Long reference text {index % 5}",
+                }
+            )
+
+        options = publishing_concierge.profile_rows(rows)
+
+        provider = options.id_field_candidates[0]
+        self.assertEqual(provider.field, "PRIMKEY")
+        self.assertEqual(provider.confidence, "high")
+        self.assertTrue(any("duplicate value" in concern for concern in provider.concerns))
+        group_fields = [candidate.field for candidate in options.group_field_candidates]
+        self.assertIn("NAME", group_fields)
+        self.assertIn("COUNTRY", group_fields)
+        self.assertIn("RESINFO", group_fields)
+        self.assertIn("source_layer", group_fields)
+        self.assertNotIn("LAT", group_fields)
+        self.assertNotIn("LONG", group_fields)
+        self.assertNotIn("SOURCEINFO", group_fields)
+
+    def test_coral_like_name_fields_surface_domination_warning(self):
+        rows = (
+            [{"NAME": "Not Reported", "ORIG_NAME": "Not Reported"} for _ in range(900)]
+            + [{"NAME": f"Reef {index}", "ORIG_NAME": f"Original Reef {index}"} for index in range(100)]
+        )
+
+        options = publishing_concierge.profile_rows(rows)
+
+        by_field = {candidate.field: candidate for candidate in options.group_field_candidates}
+        self.assertIn("NAME", by_field)
+        self.assertIn("ORIG_NAME", by_field)
+        self.assertGreaterEqual(by_field["NAME"].domination_percent or 0, 80)
+        self.assertGreaterEqual(by_field["NAME"].skew_ratio or 0, 25)
+        self.assertTrue(any("top value" in concern for concern in by_field["NAME"].concerns))
+        self.assertTrue(any(example.value == "Not Reported" and example.is_sentinel for example in by_field["NAME"].top_examples))
+
+    def test_curator_field_options_profiles_full_csv_under_sample_threshold(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             categories = root / "categories.yaml"
             categories.write_text(CATEGORIES_YAML)
             source = root / "example.csv"
-            source.write_text("source_id,NAME\nA1,North Reef\n")
+            source.write_text("source_id,NAME\nA1,North Reef\nA2,North Reef\n")
 
-            with mock.patch.object(
-                publishing_concierge,
-                "read_csv_rows",
-                return_value=[
-                    {"source_id": "A1", "NAME": "North Reef"},
-                    {"source_id": "A2", "NAME": "North Reef"},
-                ],
-            ) as read_rows:
-                plan = publishing_concierge.build_plan(
-                    source=source,
-                    asset_slug="example",
-                    title="Example",
-                    category="300-infrastructure-industrial",
-                    subcategory="330-offshore-platforms",
-                    owner="SkyTruth",
-                    source_name="Example source",
-                    license_text="Example license",
-                    citation="Example citation",
-                    update_cadence="manual",
-                    canonical_format=None,
-                    access_tier="public",
-                    bucket="example-bucket",
-                    release_date=None,
-                    with_pmtiles=False,
-                    categories_path=categories,
-                    docs_dir=root / "docs/assets",
-                )
+            plan = publishing_concierge.build_plan(
+                source=source,
+                asset_slug="example",
+                title="Example",
+                category="300-infrastructure-industrial",
+                subcategory="330-offshore-platforms",
+                owner="SkyTruth",
+                source_name="Example source",
+                license_text="Example license",
+                citation="Example citation",
+                update_cadence="manual",
+                canonical_format=None,
+                access_tier="public",
+                bucket="example-bucket",
+                release_date=None,
+                with_pmtiles=False,
+                categories_path=categories,
+                docs_dir=root / "docs/assets",
+            )
 
-        read_rows.assert_called_once_with(source, limit=publishing_concierge.PROFILE_ROW_LIMIT)
+        self.assertEqual(plan.curator_field_options.profile_scope, "full")
+        self.assertEqual(plan.curator_field_options.total_rows, 2)
+        self.assertEqual(plan.curator_field_options.profiled_row_count, 2)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
+
+    def test_profile_row_iter_uses_deterministic_random_sample_not_first_rows(self):
+        rows = [{"source_id": f"A{index}", "NAME": f"Name {index}"} for index in range(25)]
+
+        sample, total_rows, profile_scope = publishing_concierge.profile_row_iter(rows, sample_size=10, random_seed=7)
+
+        self.assertEqual(total_rows, 25)
+        self.assertEqual(profile_scope, "random_sample")
+        self.assertEqual(len(sample), 10)
+        self.assertNotEqual([row["source_id"] for row in sample], [f"A{index}" for index in range(10)])
 
     def test_curator_field_options_profile_ogr_vector_source_before_group_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,7 +270,11 @@ class PublishingConciergeTests(unittest.TestCase):
             source = root / "example.fgb"
             source.write_text("placeholder")
 
-            with mock.patch.object(publishing_concierge.shutil, "which", return_value="/usr/bin/ogr2ogr"), mock.patch.object(
+            with mock.patch.dict(publishing_concierge.os.environ, {"SHARED_DATASETS_PROFILE_WITH_GDAL": "1"}), mock.patch.object(
+                publishing_concierge.shutil,
+                "which",
+                return_value="/usr/bin/ogr2ogr",
+            ), mock.patch.object(
                 publishing_concierge.subprocess,
                 "run",
                 return_value=mock.Mock(
@@ -216,10 +304,50 @@ class PublishingConciergeTests(unittest.TestCase):
                 )
 
         self.assertEqual(run.call_args.args[0][:3], ["ogr2ogr", "-f", "CSV"])
-        self.assertIn("-limit", run.call_args.args[0])
+        self.assertNotIn("-limit", run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs["timeout"], publishing_concierge.OGR_PROFILE_TIMEOUT_SECONDS)
+        self.assertEqual(plan.curator_field_options.profile_scope, "full")
+        self.assertTrue(plan.curator_field_options.generated_row_id_option.available)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
-        self.assertTrue(any("curator must choose grouping fields" in note for note in plan.curator_field_options.notes))
+        self.assertTrue(any("Curator must choose grouping fields" in note for note in plan.curator_field_options.notes))
+
+    def test_curator_field_options_do_not_profile_ogr_without_opt_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.fgb"
+            source.write_text("placeholder")
+
+            with mock.patch.dict(publishing_concierge.os.environ, {}, clear=True), mock.patch.object(
+                publishing_concierge.subprocess,
+                "run",
+            ) as run:
+                plan = publishing_concierge.build_plan(
+                    source=source,
+                    asset_slug="example",
+                    title="Example",
+                    category="300-infrastructure-industrial",
+                    subcategory="330-offshore-platforms",
+                    owner="SkyTruth",
+                    source_name="Example source",
+                    license_text="Example license",
+                    citation="Example citation",
+                    update_cadence="manual",
+                    canonical_format=None,
+                    access_tier="public",
+                    bucket="example-bucket",
+                    release_date=None,
+                    with_pmtiles=False,
+                    categories_path=categories,
+                    docs_dir=root / "docs/assets",
+                )
+
+        run.assert_not_called()
+        self.assertEqual(plan.curator_field_options.profile_scope, "unavailable")
+        self.assertTrue(plan.curator_field_options.generated_row_id_option.available)
+        self.assertTrue(any("not profiled with GDAL" in note for note in plan.curator_field_options.notes))
 
     def test_curator_field_options_skip_large_geojson_feature_collection_profile(self):
         with tempfile.TemporaryDirectory() as tmp:

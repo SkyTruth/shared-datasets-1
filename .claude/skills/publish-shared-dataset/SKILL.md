@@ -125,14 +125,27 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
 ```
 
 - Generated group IDs are opt-in. Before adding `--group-id-field`, present the
-  curator with provider ID candidates and grouping/search field candidates from
-  `publishing_concierge.py` or an equivalent profile. If the current request did
-  not explicitly choose the grouping field, stop after presenting options. When
-  the curator chooses group-level addressing for an asset that lacks a useful
-  provider row ID, add `--group-id-field FIELD` to the vector build, repeating
-  the flag for composite grouping fields. Do not generate
-  `shared_datasets_group_id` from a guessed field, even when an existing asset
-  doc names a likely field.
+  curator with the standard provider-ID and grouping/search decision table from
+  `publishing_concierge.py` or an equivalent profile. The table must include
+  file row/column counts and, for displayed candidates, datatype, distinction
+  (`distinct values / profiled rows`), emptiness, domination, skew ratio,
+  top-value examples, and concerns. Show only likely provider `ext_id` options
+  and likely grouping/search/filter options by default; keep the full per-field
+  profile in JSON or notes for inspection. Run exact stats on all local rows
+  when the source is small enough. When exact full-column counters would be too
+  expensive, use a deterministic random sample of about 10,000 rows, never the
+  first N rows, and label the output as sampled. If a suitable provider ID
+  exists, prefer it and do not generate an ID. If no provider ID exists and the
+  current request did not explicitly choose a grouping field, stop after
+  presenting options. When the curator chooses group-level addressing for an
+  asset that lacks a useful provider row ID, add `--group-id-field FIELD` to the
+  vector build, repeating the flag for composite grouping fields. For vector
+  assets, if no provider ID or grouping field is suitable and the curator
+  explicitly asks for row-level addressing, use `--generate-row-id` to add the
+  last-resort `shared_datasets_row_id` column. Do not generate
+  `shared_datasets_group_id`
+  or `shared_datasets_row_id` from a guessed decision, even when an existing
+  asset doc names a likely field.
 - Local downloads, generated artifacts, and scratch files must follow
   `docs/standards/local-temp-workspaces.md`.
 - The default vector work directory is
@@ -208,15 +221,28 @@ For normal asset metadata changes:
      generated `shared_datasets_group_id` column. Record the column, algorithm,
      grouping fields, token length, group count, blank group count when
      applicable, and stability note.
-   During dataset creation, present the curator with likely provider-ID
-   candidates and likely grouping/search fields from `publishing_concierge.py`.
-   Do not generate `shared_datasets_group_id` until the curator-selected
-   grouping field is known.
+   - `generated_row_id`: required when the canonical artifact has a generated
+     `shared_datasets_row_id` column. Record the column, algorithm, token
+     length, generated row count, duplicate geometry counts when present,
+     stability note, and warning that this is not a provider/entity/group ID.
+   During dataset creation, present the curator with the standard decision
+   table from `publishing_concierge.py`: likely provider-ID candidates and
+   likely grouping/search/filter fields with distinction, emptiness, domination,
+   skew ratio, examples, and concerns. Do not generate
+   `shared_datasets_group_id` until the curator-selected grouping field is
+   known. For vector assets, use `shared_datasets_row_id` only when the curator
+   explicitly rejects provider and grouping options but still requires row-level
+   addresses.
    If `generated_group_id` is present, `shared_datasets_group_id` must be a
    native property/column in the canonical FGB/table and must be preserved in
    PMTiles feature properties. For vector builds, pass
    `--group-id-field FIELD` to `scripts/vector_asset.py build`; the helper
    automatically validates that the column survives both artifacts.
+   If `generated_row_id` is present, `shared_datasets_row_id` must be a native
+   property/column in the canonical FGB/table and must be preserved in PMTiles
+   feature properties. For vector builds, pass `--generate-row-id` to
+   `scripts/vector_asset.py build`; the helper automatically validates that the
+   column survives both artifacts.
 6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
    band semantics, dtype, nodata, units, scale/offset, and sampling where
    applicable.

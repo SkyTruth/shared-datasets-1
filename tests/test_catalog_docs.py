@@ -216,6 +216,50 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertIn("generated_group_id:", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
 
+    def test_generated_row_id_metadata_is_validated(self):
+        metadata = {
+            "column": "shared_datasets_row_id",
+            "algorithm": "shared-datasets-row-id:v1",
+            "token_length": 8,
+            "row_count": 123,
+            "duplicate_geometry_digest_count": 2,
+            "duplicate_geometry_row_count": 4,
+            "stability": "Stable while canonical geometry and duplicate-geometry source order stay unchanged.",
+            "warning": "Last-resort row address; not a provider/entity/group ID.",
+        }
+
+        catalog_docs.validate_generated_row_id(metadata, path=Path("docs/assets/example.md"), row_count=123)
+
+        bad = dict(metadata)
+        bad["warning"] = ""
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "generated_row_id.warning"):
+            catalog_docs.validate_generated_row_id(bad, path=Path("docs/assets/example.md"), row_count=123)
+
+    def test_generated_group_and_row_id_metadata_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = STRICT_DOC.replace(
+                "files:\n",
+                """generated_row_id:
+  column: shared_datasets_row_id
+  algorithm: shared-datasets-row-id:v1
+  token_length: 8
+  row_count: 12345
+  stability: Stable while canonical geometry and duplicate-geometry source order stay unchanged.
+  warning: Last-resort row address; not a provider/entity/group ID.
+files:\n""",
+            )
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc)
+            categories = catalog_docs.load_categories(categories_path)
+            rows = catalog_docs.load_catalog_rows(catalog_path)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "mutually exclusive"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                    catalog_rows=rows,
+                    allow_legacy=False,
+                )
+
     def test_legacy_generate_backfills_frontmatter_from_catalog_and_files_table(self):
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), LEGACY_DOC)

@@ -61,6 +61,15 @@ generated_group_id:
   group_count: "{integer generated group count}"
   blank_group_count: "{optional integer blank/null groups assigned per feature}"
   stability: "{geometry-addressed stability note, including any identical-geometry ambiguity review}"
+generated_row_id:
+  column: "shared_datasets_row_id"
+  algorithm: "shared-datasets-row-id:v1"
+  token_length: "{base62 token length, minimum 8}"
+  row_count: "{integer generated row ID count}"
+  duplicate_geometry_digest_count: "{optional count of repeated geometry digests}"
+  duplicate_geometry_row_count: "{optional rows carrying repeated geometry digests}"
+  stability: "{row-address stability note; stable while canonical geometry and duplicate-geometry source order stay unchanged}"
+  warning: "{required warning that this is not a provider/entity/group ID}"
 source_resolution_meters: "{optional source resolution for PMTiles auto maxzoom}"
 source_scale_denominator: "{optional source scale denominator for PMTiles auto maxzoom}"
 pmtiles_maxzoom: "{optional explicit PMTiles maxzoom}"
@@ -102,6 +111,10 @@ artifact after conversion. For identifier candidates, count distinct and
 duplicate values over non-empty values in the canonical artifact.
 If `generated_group_id` is present, `shared_datasets_group_id` must be a native
 property/column in the canonical file and PMTiles feature properties.
+If `generated_row_id` is present, `shared_datasets_row_id` must be a native
+property/column in the canonical file and PMTiles feature properties, and must
+be documented as a last-resort row address rather than a provider/entity/group
+ID.
 
 ## Raster metadata
 

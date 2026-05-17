@@ -53,6 +53,8 @@ REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
+GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
+GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 
 
 class CatalogSiteError(ValueError):
@@ -110,6 +112,7 @@ class CatalogAsset:
     data_profile: dict[str, Any] | None
     search_fields: list[dict[str, Any]]
     generated_group_id: dict[str, Any] | None
+    generated_row_id: dict[str, Any] | None
     source_url: str | None
     public_url: str
     pmtiles_path: str | None
@@ -457,6 +460,71 @@ def optional_generated_group_id(metadata: dict[str, Any], *, row_count: int | No
     if blank_group_count is not None:
         normalized["blank_group_count"] = blank_group_count
     notes = str(raw_group_id.get("notes") or "").strip()
+    if notes:
+        normalized["notes"] = notes
+    return normalized
+
+
+def optional_generated_row_id(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
+    raw_row_id = metadata.get("generated_row_id")
+    if raw_row_id in (None, ""):
+        return None
+    if metadata.get("generated_group_id") not in (None, ""):
+        raise CatalogSiteError(f"{doc_path}: generated_group_id and generated_row_id are mutually exclusive")
+    if not isinstance(raw_row_id, dict):
+        raise CatalogSiteError(f"{doc_path}: generated_row_id must be a mapping")
+    column = str(raw_row_id.get("column") or "").strip()
+    if column != GENERATED_ROW_ID_COLUMN:
+        raise CatalogSiteError(f"{doc_path}: generated_row_id.column must be {GENERATED_ROW_ID_COLUMN}")
+    algorithm = str(raw_row_id.get("algorithm") or "").strip()
+    if algorithm != GENERATED_ROW_ID_ALGORITHM:
+        raise CatalogSiteError(f"{doc_path}: generated_row_id.algorithm must be {GENERATED_ROW_ID_ALGORITHM}")
+    token_length = profile_int(
+        raw_row_id.get("token_length"),
+        label="generated_row_id.token_length",
+        doc_path=doc_path,
+        required=True,
+    )
+    if token_length is not None and token_length < 8:
+        raise CatalogSiteError(f"{doc_path}: generated_row_id.token_length must be at least 8")
+    generated_row_count = profile_int(
+        raw_row_id.get("row_count"),
+        label="generated_row_id.row_count",
+        doc_path=doc_path,
+        required=True,
+        row_count=row_count,
+    )
+    duplicate_geometry_row_count = profile_int(
+        raw_row_id.get("duplicate_geometry_row_count"),
+        label="generated_row_id.duplicate_geometry_row_count",
+        doc_path=doc_path,
+        row_count=row_count,
+    )
+    duplicate_geometry_digest_count = profile_int(
+        raw_row_id.get("duplicate_geometry_digest_count"),
+        label="generated_row_id.duplicate_geometry_digest_count",
+        doc_path=doc_path,
+        row_count=row_count,
+    )
+    stability = str(raw_row_id.get("stability") or "").strip()
+    if not stability:
+        raise CatalogSiteError(f"{doc_path}: generated_row_id.stability is required")
+    warning = str(raw_row_id.get("warning") or "").strip()
+    if not warning:
+        raise CatalogSiteError(f"{doc_path}: generated_row_id.warning is required")
+    normalized: dict[str, Any] = {
+        "column": column,
+        "algorithm": algorithm,
+        "token_length": token_length,
+        "row_count": generated_row_count,
+        "stability": stability,
+        "warning": warning,
+    }
+    if duplicate_geometry_row_count is not None:
+        normalized["duplicate_geometry_row_count"] = duplicate_geometry_row_count
+    if duplicate_geometry_digest_count is not None:
+        normalized["duplicate_geometry_digest_count"] = duplicate_geometry_digest_count
+    notes = str(raw_row_id.get("notes") or "").strip()
     if notes:
         normalized["notes"] = notes
     return normalized
@@ -888,6 +956,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
         generated_group_id=optional_generated_group_id(doc_metadata, row_count=row_count, doc_path=doc_path),
+        generated_row_id=optional_generated_row_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,

@@ -239,13 +239,61 @@ IDs and group/search needs, and leave `generated_group_id` absent when no
 curator-approved grouping field exists.
 Agents must present provider ID candidates and grouping/search field candidates
 before generating `shared_datasets_group_id`; if the current request has not
-selected a grouping field, stop at the options step.
+selected a grouping field, stop at the options step. Use the standard decision
+table from `scripts/publishing_concierge.py` or an equivalent profile. It must
+show file row and column counts, then compact sections for likely provider
+`ext_id` options and likely grouping/search/filter options. For displayed
+candidate fields, include datatype, distinction (`distinct values / profiled
+rows`), emptiness, domination, skew ratio
+(`top-value count / (non-empty rows / distinct values)`), top-value examples,
+and concerns. Distinction is a different signal by role: provider IDs should be
+near row-unique, while grouping fields are often most useful at middle
+cardinality; very low-cardinality fields are usually filters, and
+near-row-unique fields are usually search-only. When local full-row profiling is
+practical, compute exact stats. If exact profiling is too expensive, use a
+deterministic random sample of about 10,000 rows and clearly mark stats as
+sample estimates; do not use first-N-row samples for this decision.
 Generated group IDs are geometry-addressed within the asset: they are stable for
 unchanged collective group geometry, including source-name or label changes, but
 they are not persistent business/entity IDs across material source geometry
 changes. If multiple grouping values share identical collective geometry, the
 helper reports that ambiguity because those groups intentionally receive the
 same generated ID unless a curator chooses an explicit stable disambiguator.
+
+For vector assets, use `generated_row_id` only as the explicit last-resort
+row-addressing fallback when no provider ID is suitable and no curator-approved
+grouping field exists. The generated native column is
+`shared_datasets_row_id`, produced with `shared-datasets-row-id:v1`. It is not a
+provider ID, entity ID, or group ID. It must not be listed in
+`data_profile.identity_candidates`, and it must not be combined with
+`generated_group_id` for the same asset.
+
+The row-ID algorithm is deterministic for the same asset slug, OGR feature
+order, and geometry bytes after the standard OGR normalization step:
+
+1. Stream source features with `ogr2ogr -f GeoJSONSeq -t_srs EPSG:4326`.
+2. Normalize each GeoJSON geometry by sorting object keys, preserving array and
+   ring order, requiring finite coordinates, rounding numeric coordinates with
+   Python `.15g`, and normalizing negative zero to zero.
+3. Compute `geometry_digest = sha256(canonical_json(normalized_geometry))`,
+   where canonical JSON uses sorted keys, ASCII output, and no insignificant
+   whitespace.
+4. For duplicate geometry digests, assign a zero-based
+   `geometry_duplicate_ordinal` in streamed source feature order; unique
+   geometries use ordinal `0`.
+5. Build the row preimage as canonical JSON containing exactly
+   `algorithm`, `asset_slug`, `geometry_digest`, and
+   `geometry_duplicate_ordinal`.
+6. Hash that preimage with SHA-256, encode as fixed-length base62, and choose
+   the shortest token length whose birthday-bound collision probability is at
+   or below `2e-10`, with minimum length `8`. If an automatic token length
+   produces a real token collision, increment length and retry; if an explicit
+   token length collides, fail.
+
+Because duplicate geometries are disambiguated by source feature order,
+`shared_datasets_row_id` is stable only while canonical geometry and duplicate
+geometry ordering remain unchanged. Document this limitation in
+`generated_row_id.stability` and include duplicate-geometry counts when present.
 
 Use `templates/dataset_README.template.md` for important assets and
 `templates/dataset_README.minimal.template.md` for small/simple assets.

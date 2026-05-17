@@ -133,6 +133,41 @@ class SharedDatasetGroupIdTests(unittest.TestCase):
             self.assertIn("<SrcLayer>source_layer</SrcLayer>", vrt_path.read_text())
             self.assertIn(str(map_path), vrt_path.read_text())
 
+    def test_row_id_generation_hashes_each_geometry_without_grouping(self):
+        features = [feature("Alpha", 0), feature("Alpha", 2)]
+
+        output, result = group_ids.add_row_ids(features, asset_slug="example-asset")
+
+        ids = [item["properties"][group_ids.DEFAULT_ROW_ID_COLUMN] for item in output]
+        self.assertEqual(result.row_count, 2)
+        self.assertEqual(result.token_length, 8)
+        self.assertEqual(len(set(ids)), 2)
+        self.assertNotIn(group_ids.DEFAULT_ROW_ID_COLUMN, features[0]["properties"])
+        self.assertEqual(group_ids.result_summary(result)["algorithm"], group_ids.ROW_ID_ALGORITHM)
+
+    def test_row_id_generation_disambiguates_duplicate_geometries_by_source_order(self):
+        features = [feature("Alpha", 0), feature("Beta", 0), feature("Gamma", 1)]
+
+        result = group_ids.build_row_ids(features, asset_slug="example-asset")
+
+        self.assertEqual(result.row_count, 3)
+        self.assertEqual(result.duplicate_geometry_digest_count, 1)
+        self.assertEqual(result.duplicate_geometry_row_count, 2)
+        self.assertEqual(len(set(result.row_tokens)), 3)
+        self.assertTrue(any("geometry_duplicate_ordinal" in warning for warning in result.warnings))
+
+    def test_row_id_generation_is_deterministic(self):
+        features = [feature("Alpha", 0), feature("Beta", 0), feature("Gamma", 1)]
+
+        one = group_ids.build_row_ids(features, asset_slug="example-asset")
+        two = group_ids.build_row_ids(features, asset_slug="example-asset")
+
+        self.assertEqual(one.row_tokens, two.row_tokens)
+
+    def test_row_id_rejects_explicit_short_token_length(self):
+        with self.assertRaisesRegex(group_ids.GroupIdError, "at least 8"):
+            group_ids.build_row_ids([feature("Alpha", 0)], asset_slug="example-asset", token_length=1)
+
 
 if __name__ == "__main__":
     unittest.main()

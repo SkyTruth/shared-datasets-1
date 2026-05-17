@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate deterministic shared-datasets group identifiers for vector features.
+"""Generate deterministic shared-datasets generated identifiers for vectors.
 
 This helper works on GeoJSON-like features. It does not publish or mutate
 canonical Cloud Storage objects; use the reviewed dataset publish workflow for
@@ -24,9 +24,11 @@ from xml.sax.saxutils import escape
 
 
 ALGORITHM = "shared-datasets-group-id:v1"
+ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 COLLISION_PROBABILITY_THRESHOLD = 2e-10
 DEFAULT_COLUMN = "shared_datasets_group_id"
+DEFAULT_ROW_ID_COLUMN = "shared_datasets_row_id"
 MIN_TOKEN_LENGTH = 8
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -75,6 +77,17 @@ class RowGroupIdResult:
     groups: tuple[GroupSummary, ...]
     identical_preimage_group_count: int = 0
     ambiguous_identical_geometry_groups: tuple[GeometryAmbiguity, ...] = ()
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class RowIdResult:
+    row_tokens: tuple[str, ...]
+    token_length: int
+    row_count: int
+    column: str
+    duplicate_geometry_digest_count: int = 0
+    duplicate_geometry_row_count: int = 0
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -168,6 +181,23 @@ def group_preimage(*, asset_slug: str, geometry_digests: Sequence[str]) -> str:
     return canonical_json(payload)
 
 
+def row_preimage(*, asset_slug: str, geometry_digest_value: str, duplicate_ordinal: int = 0) -> str:
+    payload = {
+        "algorithm": ROW_ID_ALGORITHM,
+        "asset_slug": asset_slug,
+        "geometry_digest": geometry_digest_value,
+        "geometry_duplicate_ordinal": duplicate_ordinal,
+    }
+    return canonical_json(payload)
+
+
+def validate_row_id_inputs(asset_slug: str, column: str) -> None:
+    if not SLUG_RE.fullmatch(asset_slug):
+        raise GroupIdError(f"asset_slug must be lowercase kebab-case: {asset_slug!r}")
+    if not column.strip():
+        raise GroupIdError("column must be non-empty")
+
+
 def validate_group_inputs(asset_slug: str, grouping_fields: Sequence[str], column: str) -> tuple[str, ...]:
     if not SLUG_RE.fullmatch(asset_slug):
         raise GroupIdError(f"asset_slug must be lowercase kebab-case: {asset_slug!r}")
@@ -226,6 +256,13 @@ def token_collisions(groups: Sequence[GroupSummary]) -> dict[str, set[str]]:
     by_token: dict[str, set[str]] = {}
     for group in groups:
         by_token.setdefault(group.token, set()).add(group.preimage)
+    return {token: preimages for token, preimages in by_token.items() if len(preimages) > 1}
+
+
+def row_token_collisions(tokens_and_preimages: Sequence[tuple[str, str]]) -> dict[str, set[str]]:
+    by_token: dict[str, set[str]] = {}
+    for token, preimage in tokens_and_preimages:
+        by_token.setdefault(token, set()).add(preimage)
     return {token: preimages for token, preimages in by_token.items() if len(preimages) > 1}
 
 
@@ -294,6 +331,109 @@ def build_group_summaries(
             )
         )
     return tuple(summaries)
+
+
+def collect_row_id_inputs(features: Iterable[dict[str, Any]]) -> tuple[list[str], list[int], int, int]:
+    geometry_digests: list[str] = []
+    duplicate_ordinals: list[int] = []
+    seen_by_digest: dict[str, int] = {}
+    for feature in features:
+        digest = geometry_digest(feature.get("geometry"))
+        ordinal = seen_by_digest.get(digest, 0)
+        seen_by_digest[digest] = ordinal + 1
+        geometry_digests.append(digest)
+        duplicate_ordinals.append(ordinal)
+    duplicate_counts = [count for count in seen_by_digest.values() if count > 1]
+    return geometry_digests, duplicate_ordinals, len(duplicate_counts), sum(duplicate_counts)
+
+
+def row_tokens_for_length(
+    *,
+    asset_slug: str,
+    geometry_digests: Sequence[str],
+    duplicate_ordinals: Sequence[int],
+    token_length: int,
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
+    tokens: list[str] = []
+    tokens_and_preimages: list[tuple[str, str]] = []
+    for digest, ordinal in zip(geometry_digests, duplicate_ordinals, strict=True):
+        preimage = row_preimage(
+            asset_slug=asset_slug,
+            geometry_digest_value=digest,
+            duplicate_ordinal=ordinal,
+        )
+        token = base62_token(hashlib.sha256(preimage.encode("utf-8")).digest(), token_length)
+        tokens.append(token)
+        tokens_and_preimages.append((token, preimage))
+    return tuple(tokens), tuple(tokens_and_preimages)
+
+
+def build_row_ids(
+    features: Iterable[dict[str, Any]],
+    *,
+    asset_slug: str,
+    column: str = DEFAULT_ROW_ID_COLUMN,
+    token_length: int | None = None,
+) -> RowIdResult:
+    validate_row_id_inputs(asset_slug, column)
+    geometry_digests, duplicate_ordinals, duplicate_digest_count, duplicate_row_count = collect_row_id_inputs(features)
+    row_count = len(geometry_digests)
+    resolved_length = token_length or token_length_for_group_count(row_count)
+    if resolved_length < MIN_TOKEN_LENGTH:
+        raise GroupIdError(f"token_length must be at least {MIN_TOKEN_LENGTH}")
+
+    while True:
+        row_tokens, tokens_and_preimages = row_tokens_for_length(
+            asset_slug=asset_slug,
+            geometry_digests=geometry_digests,
+            duplicate_ordinals=duplicate_ordinals,
+            token_length=resolved_length,
+        )
+        collisions = row_token_collisions(tokens_and_preimages)
+        if not collisions:
+            break
+        if token_length is not None:
+            raise GroupIdError(
+                f"token_length {token_length} produced {len(collisions)} true hash-prefix collision(s); "
+                "increase token_length"
+            )
+        resolved_length += 1
+
+    warnings: list[str] = []
+    if duplicate_row_count:
+        warnings.append(
+            f"{duplicate_row_count} row(s) across {duplicate_digest_count} duplicate geometry digest(s) "
+            "received deterministic geometry_duplicate_ordinal disambiguators in source feature order"
+        )
+
+    return RowIdResult(
+        row_tokens=row_tokens,
+        token_length=resolved_length,
+        row_count=row_count,
+        column=column,
+        duplicate_geometry_digest_count=duplicate_digest_count,
+        duplicate_geometry_row_count=duplicate_row_count,
+        warnings=tuple(warnings),
+    )
+
+
+def add_row_ids(
+    features: Sequence[dict[str, Any]],
+    *,
+    asset_slug: str,
+    column: str = DEFAULT_ROW_ID_COLUMN,
+    token_length: int | None = None,
+) -> tuple[list[dict[str, Any]], RowIdResult]:
+    output_features = [copy.deepcopy(feature) for feature in features]
+    result = build_row_ids(
+        output_features,
+        asset_slug=asset_slug,
+        column=column,
+        token_length=token_length,
+    )
+    for index, token in enumerate(result.row_tokens):
+        feature_properties(output_features[index])[column] = token
+    return output_features, result
 
 
 def build_row_group_ids(
@@ -470,7 +610,7 @@ def load_ogr_features(source: Path, *, source_layer: str | None = None, ogr2ogr_
     return list(iter_ogr_features(source, source_layer=source_layer, ogr2ogr_bin=ogr2ogr_bin))
 
 
-def write_group_id_map_csv(path: Path, result: RowGroupIdResult) -> None:
+def write_group_id_map_csv(path: Path, result: RowGroupIdResult | RowIdResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -503,7 +643,22 @@ def write_group_id_vrt(
     path.write_text(text)
 
 
-def result_summary(result: RowGroupIdResult | GroupIdResult) -> dict[str, Any]:
+def result_summary(result: RowGroupIdResult | GroupIdResult | RowIdResult) -> dict[str, Any]:
+    if isinstance(result, RowIdResult):
+        return {
+            "algorithm": ROW_ID_ALGORITHM,
+            "column": result.column,
+            "row_count": result.row_count,
+            "duplicate_geometry_digest_count": result.duplicate_geometry_digest_count,
+            "duplicate_geometry_row_count": result.duplicate_geometry_row_count,
+            "token_length": result.token_length,
+            "collision_probability": collision_probability(result.row_count, result.token_length),
+            "warnings": list(result.warnings),
+            "stability": (
+                "Per-row geometry-addressed fallback ID. The preimage is asset_slug, canonical OGR EPSG:4326 "
+                "geometry digest, and geometry_duplicate_ordinal for duplicate geometries in source feature order."
+            ),
+        }
     return {
         "algorithm": ALGORITHM,
         "column": result.column,
@@ -525,11 +680,24 @@ def result_summary(result: RowGroupIdResult | GroupIdResult) -> dict[str, Any]:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Add deterministic shared-datasets group IDs to GeoJSON features.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Add deterministic shared-datasets group IDs, or last-resort per-row geometry IDs, "
+            "to GeoJSON features or OGR-readable sources."
+        )
+    )
     parser.add_argument("source", type=Path, help="GeoJSON features or an OGR-readable source when --ogr-source is set.")
     parser.add_argument("--asset-slug", required=True)
-    parser.add_argument("--grouping-field", action="append", required=True, help="Grouping field; repeat for composite groups.")
-    parser.add_argument("--column", default=DEFAULT_COLUMN)
+    parser.add_argument("--grouping-field", action="append", help="Grouping field; repeat for composite groups.")
+    parser.add_argument(
+        "--row-id",
+        action="store_true",
+        help=(
+            "Generate one shared_datasets_row_id per feature from canonical geometry. "
+            "Use only as the explicit fallback when no provider ID or grouping field is suitable."
+        ),
+    )
+    parser.add_argument("--column", help="Output column. Defaults to shared_datasets_group_id or shared_datasets_row_id by mode.")
     parser.add_argument("--token-length", type=int)
     parser.add_argument(
         "--fail-on-ambiguous-geometry",
@@ -552,19 +720,33 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    grouping_fields = tuple(args.grouping_field or ())
+    if args.row_id and grouping_fields:
+        raise GroupIdError("--row-id cannot be combined with --grouping-field")
+    if not args.row_id and not grouping_fields:
+        raise GroupIdError("--grouping-field is required unless --row-id is set")
+    column = args.column or (DEFAULT_ROW_ID_COLUMN if args.row_id else DEFAULT_COLUMN)
     if args.ogr_source:
         if args.out_map is None:
             raise GroupIdError("--out-map is required with --ogr-source")
         source_layer = args.source_layer or discover_ogr_layer_name(args.source, ogrinfo_bin=args.ogrinfo_bin)
         features = iter_ogr_features(args.source, source_layer=source_layer, ogr2ogr_bin=args.ogr2ogr_bin)
-        result = build_row_group_ids(
-            features,
-            asset_slug=args.asset_slug,
-            grouping_fields=args.grouping_field,
-            column=args.column,
-            token_length=args.token_length,
-            fail_on_ambiguous_geometry=args.fail_on_ambiguous_geometry,
-        )
+        if args.row_id:
+            result = build_row_ids(
+                features,
+                asset_slug=args.asset_slug,
+                column=column,
+                token_length=args.token_length,
+            )
+        else:
+            result = build_row_group_ids(
+                features,
+                asset_slug=args.asset_slug,
+                grouping_fields=grouping_fields,
+                column=column,
+                token_length=args.token_length,
+                fail_on_ambiguous_geometry=args.fail_on_ambiguous_geometry,
+            )
         write_group_id_map_csv(args.out_map, result)
         summary = result_summary(result)
         summary["row_count"] = len(result.row_tokens)
@@ -579,15 +761,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.out is None:
         raise GroupIdError("--out is required unless --ogr-source is set")
     features, feature_collection = load_geojson_features(args.source)
-    result = add_group_ids(
-        features,
-        asset_slug=args.asset_slug,
-        grouping_fields=args.grouping_field,
-        column=args.column,
-        token_length=args.token_length,
-        fail_on_ambiguous_geometry=args.fail_on_ambiguous_geometry,
-    )
-    write_geojson_features(args.out, result.features, feature_collection=feature_collection)
+    if args.row_id:
+        output_features, result = add_row_ids(
+            features,
+            asset_slug=args.asset_slug,
+            column=column,
+            token_length=args.token_length,
+        )
+        write_geojson_features(args.out, output_features, feature_collection=feature_collection)
+    else:
+        result = add_group_ids(
+            features,
+            asset_slug=args.asset_slug,
+            grouping_fields=grouping_fields,
+            column=column,
+            token_length=args.token_length,
+            fail_on_ambiguous_geometry=args.fail_on_ambiguous_geometry,
+        )
+        write_geojson_features(args.out, result.features, feature_collection=feature_collection)
     print(json.dumps(result_summary(result), indent=2, sort_keys=True))
     return 0
 

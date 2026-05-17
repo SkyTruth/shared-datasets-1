@@ -80,6 +80,7 @@ FRONTMATTER_KEYS = [
     "data_profile",
     "search_fields",
     "generated_group_id",
+    "generated_row_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -97,6 +98,7 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "data_profile",
     "search_fields",
     "generated_group_id",
+    "generated_row_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -116,6 +118,8 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
+GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
+GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 
 REQUIRED_SCALAR_FIELDS = [
     "asset_slug",
@@ -606,6 +610,50 @@ def validate_generated_group_id(value: Any, *, path: Path, row_count: int | None
         raise CatalogDocsError(f"{path}: generated_group_id.stability is required")
 
 
+def validate_generated_row_id(value: Any, *, path: Path, row_count: int | None) -> None:
+    if value in (None, ""):
+        return
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: generated_row_id must be a mapping")
+    column = as_text(value.get("column")).strip()
+    if column != GENERATED_ROW_ID_COLUMN:
+        raise CatalogDocsError(f"{path}: generated_row_id.column must be {GENERATED_ROW_ID_COLUMN}")
+    algorithm = as_text(value.get("algorithm")).strip()
+    if algorithm != GENERATED_ROW_ID_ALGORITHM:
+        raise CatalogDocsError(f"{path}: generated_row_id.algorithm must be {GENERATED_ROW_ID_ALGORITHM}")
+    token_length = profile_int(
+        value.get("token_length"),
+        label="generated_row_id.token_length",
+        path=path,
+        required=True,
+    )
+    if token_length is not None and token_length < 8:
+        raise CatalogDocsError(f"{path}: generated_row_id.token_length must be at least 8")
+    profile_int(
+        value.get("row_count"),
+        label="generated_row_id.row_count",
+        path=path,
+        required=True,
+        row_count=row_count,
+    )
+    profile_int(
+        value.get("duplicate_geometry_row_count"),
+        label="generated_row_id.duplicate_geometry_row_count",
+        path=path,
+        row_count=row_count,
+    )
+    profile_int(
+        value.get("duplicate_geometry_digest_count"),
+        label="generated_row_id.duplicate_geometry_digest_count",
+        path=path,
+        row_count=row_count,
+    )
+    if not as_text(value.get("stability")).strip():
+        raise CatalogDocsError(f"{path}: generated_row_id.stability is required")
+    if not as_text(value.get("warning")).strip():
+        raise CatalogDocsError(f"{path}: generated_row_id.warning is required")
+
+
 def validate_data_profile(path: Path, metadata: dict[str, Any], *, row_count: int | None) -> None:
     profile = metadata.get("data_profile")
     if profile in (None, ""):
@@ -648,7 +696,10 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
     validate_data_profile(path, metadata, row_count=row_count)
     validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
+    if metadata.get("generated_group_id") not in (None, "") and metadata.get("generated_row_id") not in (None, ""):
+        raise CatalogDocsError(f"{path}: generated_group_id and generated_row_id are mutually exclusive")
     validate_generated_group_id(metadata.get("generated_group_id"), path=path, row_count=row_count)
+    validate_generated_row_id(metadata.get("generated_row_id"), path=path, row_count=row_count)
     if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):
         try:
             resolution = float(metadata["source_resolution_meters"])

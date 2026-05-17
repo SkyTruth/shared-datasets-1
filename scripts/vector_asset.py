@@ -42,6 +42,9 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
+GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
+GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GROUP_ID_VRT_SOURCE_LAYER = "source"
 GROUP_ID_VRT_MAP_LAYER = "group_ids"
 PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
@@ -114,6 +117,10 @@ class VectorBuildPlan:
     group_id_fields: tuple[str, ...]
     group_id_token_length: int | None
     group_id_fail_on_ambiguous_geometry: bool
+    generate_row_id: bool
+    row_id_token_length: int | None
+    generated_id_column: str | None
+    generated_id_algorithm: str | None
     title: str
     description: str
     commands: list[BuildCommand]
@@ -355,6 +362,8 @@ def build_plan(
     group_id_fields: Sequence[str] = (),
     group_id_token_length: int | None = None,
     group_id_fail_on_ambiguous_geometry: bool = False,
+    generate_row_id: bool = False,
+    row_id_token_length: int | None = None,
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
@@ -390,13 +399,19 @@ def build_plan(
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
     group_id_field_tuple = tuple(dict.fromkeys(field.strip() for field in group_id_fields if field.strip()))
+    if generate_row_id and group_id_field_tuple:
+        raise ValueError("--generate-row-id cannot be combined with --group-id-field")
     if group_id_token_length is not None and group_id_token_length < 8:
         raise ValueError("group ID token length must be at least 8")
+    if row_id_token_length is not None and row_id_token_length < 8:
+        raise ValueError("row ID token length must be at least 8")
+    generated_id_column = GENERATED_GROUP_ID_COLUMN if group_id_field_tuple else GENERATED_ROW_ID_COLUMN if generate_row_id else None
+    generated_id_algorithm = GENERATED_GROUP_ID_ALGORITHM if group_id_field_tuple else GENERATED_ROW_ID_ALGORITHM if generate_row_id else None
     required_property_tuple = tuple(
         dict.fromkeys(
             [
                 *(property_name.strip() for property_name in required_properties if property_name.strip()),
-                *([GENERATED_GROUP_ID_COLUMN] if group_id_field_tuple else []),
+                *([generated_id_column] if generated_id_column else []),
             ]
         )
     )
@@ -414,8 +429,14 @@ def build_plan(
     ensure_local_output_path(output, label="output directory", allow_repo_output=allow_repo_output)
 
     fgb_path = output / f"{asset_slug}.fgb"
-    group_id_source_path = build / f"{asset_slug}-group-id-map.csv" if group_id_field_tuple else None
-    group_id_input_path = build / f"{asset_slug}-group-id-source.vrt" if group_id_field_tuple else None
+    group_id_source_path = None
+    group_id_input_path = None
+    if group_id_field_tuple:
+        group_id_source_path = build / f"{asset_slug}-group-id-map.csv"
+        group_id_input_path = build / f"{asset_slug}-group-id-source.vrt"
+    elif generate_row_id:
+        group_id_source_path = build / f"{asset_slug}-row-id-map.csv"
+        group_id_input_path = build / f"{asset_slug}-row-id-source.vrt"
     tippecanoe_input_path = STREAMED_TIPPECANOE_INPUT
     mbtiles_path = build / f"{asset_slug}.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
@@ -439,7 +460,7 @@ def build_plan(
         str(fgb_path),
         str(fgb_source_path),
     ]
-    if group_id_field_tuple:
+    if generated_id_column:
         fgb_command.extend(
             [
                 "-t_srs",
@@ -447,15 +468,15 @@ def build_plan(
                 "-dialect",
                 "SQLite",
                 "-sql",
-                group_id_join_sql(),
+                generated_id_join_sql(generated_id_column),
             ]
         )
     elif source_layer:
         fgb_command.append(source_layer)
 
     commands: list[BuildCommand] = []
-    if group_id_field_tuple and group_id_source_path and group_id_input_path:
-        group_id_command = [
+    if generated_id_column and group_id_source_path and group_id_input_path:
+        generated_id_command = [
             sys.executable,
             str(REPO_ROOT / "scripts" / "shared_dataset_group_ids.py"),
             str(source),
@@ -470,14 +491,19 @@ def build_plan(
             ogr2ogr_bin,
         ]
         if source_layer:
-            group_id_command.extend(["--source-layer", source_layer])
-        for field in group_id_field_tuple:
-            group_id_command.extend(["--grouping-field", field])
-        if group_id_token_length is not None:
-            group_id_command.extend(["--token-length", str(group_id_token_length)])
-        if group_id_fail_on_ambiguous_geometry:
-            group_id_command.append("--fail-on-ambiguous-geometry")
-        commands.append(command(group_id_command))
+            generated_id_command.extend(["--source-layer", source_layer])
+        if generate_row_id:
+            generated_id_command.append("--row-id")
+            if row_id_token_length is not None:
+                generated_id_command.extend(["--token-length", str(row_id_token_length)])
+        else:
+            for field in group_id_field_tuple:
+                generated_id_command.extend(["--grouping-field", field])
+            if group_id_token_length is not None:
+                generated_id_command.extend(["--token-length", str(group_id_token_length)])
+            if group_id_fail_on_ambiguous_geometry:
+                generated_id_command.append("--fail-on-ambiguous-geometry")
+        commands.append(command(generated_id_command))
     commands.append(command(fgb_command))
 
     plan = VectorBuildPlan(
@@ -522,6 +548,10 @@ def build_plan(
         group_id_fields=group_id_field_tuple,
         group_id_token_length=group_id_token_length,
         group_id_fail_on_ambiguous_geometry=group_id_fail_on_ambiguous_geometry,
+        generate_row_id=generate_row_id,
+        row_id_token_length=row_id_token_length,
+        generated_id_column=generated_id_column,
+        generated_id_algorithm=generated_id_algorithm,
         title=dataset_title,
         description=dataset_description,
         commands=commands,
@@ -613,15 +643,19 @@ def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def group_id_join_sql() -> str:
+def generated_id_join_sql(column_name: str) -> str:
     source = sql_identifier(GROUP_ID_VRT_SOURCE_LAYER)
     map_layer = sql_identifier(GROUP_ID_VRT_MAP_LAYER)
-    column = sql_identifier(GENERATED_GROUP_ID_COLUMN)
+    column = sql_identifier(column_name)
     return (
         f"SELECT {source}.*, {map_layer}.{column} "
         f"FROM {source} LEFT JOIN {map_layer} "
         f"ON {source}.rowid = CAST({map_layer}.rowid AS INTEGER)"
     )
+
+
+def group_id_join_sql() -> str:
+    return generated_id_join_sql(GENERATED_GROUP_ID_COLUMN)
 
 
 def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | None = None) -> str | None:
@@ -811,6 +845,13 @@ def write_pmtiles_profile(
     payload = profile_payload(profile, recommendation)
     payload["asset_slug"] = plan.asset_slug
     payload["minzoom"] = plan.minzoom
+    if plan.generated_id_column and plan.generated_id_algorithm:
+        payload["generated_id"] = {
+            "column": plan.generated_id_column,
+            "algorithm": plan.generated_id_algorithm,
+            "grouping_fields": list(plan.group_id_fields),
+            "row_id": plan.generate_row_id,
+        }
     if plan.required_properties:
         payload["required_properties"] = list(plan.required_properties)
     synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
@@ -1150,6 +1191,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
         group_id_fields=args.group_id_field,
         group_id_token_length=args.group_id_token_length,
         group_id_fail_on_ambiguous_geometry=args.group_id_fail_on_ambiguous_geometry,
+        generate_row_id=args.generate_row_id,
+        row_id_token_length=args.row_id_token_length,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
@@ -1250,7 +1293,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help=(
             "Property that must be present in the generated FGB schema and decoded PMTiles features. "
-            f"Use --required-property {GENERATED_GROUP_ID_COLUMN} when generating shared group IDs."
+            f"Use --required-property {GENERATED_GROUP_ID_COLUMN} for shared group IDs or "
+            f"{GENERATED_ROW_ID_COLUMN} for fallback row IDs."
         ),
     )
     build_parser.add_argument(
@@ -1275,6 +1319,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Fail group ID generation when multiple grouping values share identical collective geometry "
             "and would receive the same generated ID."
         ),
+    )
+    build_parser.add_argument(
+        "--generate-row-id",
+        action="store_true",
+        help=(
+            f"Generate last-resort {GENERATED_ROW_ID_COLUMN} values before FGB creation. "
+            "Use only after the curator confirms there is no suitable provider ID or grouping field."
+        ),
+    )
+    build_parser.add_argument(
+        "--row-id-token-length",
+        type=int,
+        help="Optional base62 token length for generated shared_datasets_row_id values; defaults to policy calculation.",
     )
     build_parser.add_argument(
         "--pmtiles-engine",

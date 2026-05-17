@@ -155,6 +155,61 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(plan.commands[1].argv[plan.commands[1].argv.index("-sql") + 1], vector_asset.group_id_join_sql())
         self.assertIn(plan.group_id_input_path, plan.commands[1].argv)
 
+    def test_row_id_generation_adds_native_column_without_grouping_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work",
+                generate_row_id=True,
+            )
+
+        self.assertTrue(plan.generate_row_id)
+        self.assertEqual(plan.group_id_fields, ())
+        self.assertEqual(plan.generated_id_column, vector_asset.GENERATED_ROW_ID_COLUMN)
+        self.assertEqual(plan.generated_id_algorithm, vector_asset.GENERATED_ROW_ID_ALGORITHM)
+        self.assertIn(vector_asset.GENERATED_ROW_ID_COLUMN, plan.required_properties)
+        self.assertIn("shared_dataset_group_ids.py", plan.commands[0].argv[1])
+        self.assertIn("--row-id", plan.commands[0].argv)
+        self.assertNotIn("--grouping-field", plan.commands[0].argv)
+        self.assertIn("-sql", plan.commands[1].argv)
+        self.assertEqual(
+            plan.commands[1].argv[plan.commands[1].argv.index("-sql") + 1],
+            vector_asset.generated_id_join_sql(vector_asset.GENERATED_ROW_ID_COLUMN),
+        )
+        self.assertIn(plan.group_id_input_path, plan.commands[1].argv)
+
+    def test_row_id_and_group_id_modes_are_mutually_exclusive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "cannot be combined"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    group_id_fields=("NAME",),
+                    generate_row_id=True,
+                )
+
+    def test_tippecanoe_include_must_preserve_required_row_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "would omit required"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    generate_row_id=True,
+                    tippecanoe_extra_args=("--include", "NAME"),
+                )
+
     def test_group_id_strict_ambiguity_flag_is_passed_to_helper(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"

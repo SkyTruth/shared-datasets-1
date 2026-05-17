@@ -115,13 +115,26 @@ The standard vector build is:
    are present for the catalog inspector.
 
 Generated group IDs are opt-in. Present provider ID candidates and
-grouping/search field candidates before adding `--group-id-field`. When a
-curator chooses group-level addressing for an asset that lacks a useful provider
-row ID, pass `--group-id-field FIELD` to `scripts/vector_asset.py build`,
-repeating the flag for composite grouping fields. The helper writes
+grouping/search field candidates before adding `--group-id-field`. Use the
+standard concierge decision table: row/column counts plus likely provider
+`ext_id` options and likely grouping/search/filter options, each with datatype,
+distinction, emptiness, domination, skew ratio, top examples, and concerns. Run
+exact stats on all local rows when practical; if that is too expensive, use a
+deterministic random sample of about 10,000 rows, not a first-N-row sample. When
+a curator chooses group-level addressing for an asset that lacks a useful
+provider row ID, pass `--group-id-field FIELD` to `scripts/vector_asset.py
+build`, repeating the flag for composite grouping fields. The helper writes
 `shared_datasets_group_id` before FGB creation and validates that the property
 survives into decoded PMTiles features. If Tippecanoe `--include` filters are
 used, include `shared_datasets_group_id`.
+
+If no provider ID or grouping field is suitable and the curator explicitly
+requires row-level addresses, pass `--generate-row-id` instead. This writes
+`shared_datasets_row_id` using `shared-datasets-row-id:v1`: canonical OGR
+EPSG:4326 geometry hashes per feature, duplicate geometries disambiguated by
+source feature order, and the same base62 collision policy as group IDs. This is
+a last-resort row address, not a provider/entity/group ID, and must not be
+combined with `--group-id-field`.
 
 For corrective PMTiles-only rebuilds on a versioned asset, replace the
 `latest/*.pmtiles` object and the PMTiles object under the matching canonical

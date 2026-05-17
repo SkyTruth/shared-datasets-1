@@ -212,11 +212,18 @@ Dataset metadata and local files:
   steward, update expectations, intended consumers, shared-datasets rationale,
   alternatives considered, and deprecation or exit policy.
 - For every new vector/table asset or new ingestion pipeline that publishes
-  vector/table data, evaluate provider ID candidates, high-value
-  `search_fields`, and generated group-ID need before publish. Prefer verified
-  source/provider IDs. Generate `shared_datasets_group_id` only when the asset
-  needs group-level addressing and a curator has chosen the grouping field; do
-  not infer and publish generated IDs from guessed fields.
+  vector/table data, present the standard provider-ID and grouping/search
+  decision table before publish. The table must report row/column counts and
+  candidate field datatype, distinction, emptiness, domination, skew ratio,
+  top-value examples, and concerns. Prefer verified source/provider IDs. If no
+  provider ID is suitable, prefer curator-approved generated group IDs from
+  meaningful grouping fields. Generate `shared_datasets_group_id` only when the
+  asset needs group-level addressing and a curator has chosen the grouping
+  field. For vector assets, if neither provider IDs nor grouping fields are
+  suitable and row-level addressing is still required, the curator may
+  explicitly choose the last-resort `shared_datasets_row_id` fallback. Do not
+  infer and publish any generated ID from guessed fields or without that
+  decision point.
 - Asset `status` must be one of `active`, `deprecated`, `superseded`, or
   `retired`. These are consumer-guidance states, not deletion states. Deprecated,
   superseded, and retired assets remain readable and citable, keep their README,
