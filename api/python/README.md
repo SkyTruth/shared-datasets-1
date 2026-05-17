@@ -73,12 +73,13 @@ for common SkyTruth consumer projects:
 ```text
 Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
 30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
-Monitor:      shared-datasets-reader@skytruth-monitor.iam.gserviceaccount.com
 SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
 ```
 
 Run the backend job/service as the reader service account for its project, then
-use `fetch_dataset(...)` without any credential setup code.
+use `fetch_dataset(...)` without any credential setup code. If another project
+needs a repo-provisioned reader account, add it through shared-datasets
+Terraform or grant its existing runtime identity bucket read access instead.
 
 To resolve without downloading:
 

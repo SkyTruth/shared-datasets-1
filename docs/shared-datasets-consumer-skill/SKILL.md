@@ -1,26 +1,70 @@
 ---
 name: shared-datasets-consumer
-description: Use when driving shared-datasets-1 adoption in downstream SkyTruth repos, especially scanning for hardcoded shared dataset URLs, replacing direct GCS PMTiles links with tiered tiles.skytruth.org URLs and signed-cookie private PMTiles access, using the Python resolver SDK for backend fetches, preserving resolved dataset identity, and opening small focused PRs.
+description: >-
+  Use when integrating shared-datasets-1 into the current SkyTruth consumer repo
+  or app, including catalog.json-driven layer/search/config/citation/release
+  metadata, replacing direct GCS or hardcoded PMTiles URLs, using access_tier
+  and tiered tiles.skytruth.org PMTiles URLs, adding signed-cookie private
+  PMTiles access, installing or using the Python SDK for backend GCS fetch or
+  resolve flows, preserving DatasetRef.resolved_id lineage, or preparing small
+  focused consumer adoption PRs.
 ---
 
 # Shared Datasets Consumer Integration
 
-Use this skill to make another SkyTruth project adopt shared-datasets-1 with
-the smallest safe change. The main job is adoption, not redesign: find
-hardcoded shared dataset access paths, replace them with the stable shared
-access contract, and package each consumer change as a small focused PR.
+Use this skill when the current SkyTruth consumer repo or app needs to adopt
+shared-datasets-1 with the smallest safe change. The main job is adoption, not
+redesign: find hardcoded shared dataset access paths, replace them with the
+stable shared access contract, and package each consumer change as a small
+focused PR.
+
+Before changing this consumer repo or app, re-check the current shared catalog
+and the upstream shared-datasets-1 Terraform/docs if the change depends on a
+specific asset list, access tier, browser origin, service account, or signing
+grant. Treat the values below as the verified upstream repo/live state at the
+time this skill was last reviewed, not as a replacement for catalog-driven
+behavior.
+
+Terminology in this skill:
+
+- "this repo" or "this app" means the current workspace being changed.
+- "upstream shared-datasets-1 repo" means the separate shared catalog,
+  SDK/docs, and Terraform control-plane repository.
+
+## Shared-Datasets Sources
+
+Use these upstream shared-datasets-1 sources from this consumer repo or app:
+
+```text
+Canonical repo: https://github.com/SkyTruth/shared-datasets-1
+Machine catalog: https://tiles.skytruth.org/_catalog/web/catalog.json
+Catalog CSV: https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv
+Consumer guide: docs/consumer-guide.md
+PMTiles CDN details: docs/pmtiles-cdn.md
+Python SDK README: api/python/README.md
+Terraform config: terraform/envs/prod/variables.tf and terraform/envs/prod/production.auto.tfvars
+```
+
+If a local checkout of the upstream shared-datasets-1 repo is available, prefer
+its current files.
+Otherwise use the GitHub paths above plus the public catalog URLs. Do not guess
+current asset access tiers, browser CORS origins, reader service accounts, or
+signer grants from memory.
 
 ## Adoption Workflow
 
-Use this workflow when moving downstream repos off direct shared bucket URLs.
+Use this workflow when moving this repo or app off direct shared bucket URLs or
+adding shared-datasets catalog access.
 
-1. Scan the consuming repo for hardcoded shared dataset URLs, PMTiles paths,
+1. Scan this repo or app for hardcoded shared dataset URLs, PMTiles paths,
    dataset slugs, and ad hoc GCS access.
 2. Classify each hit by runtime surface:
    - Browser map PMTiles should use tiered `tiles.skytruth.org` URLs.
    - Private browser PMTiles need a backend signed-cookie session endpoint.
-   - Browser or service catalog discovery should use
-     `https://tiles.skytruth.org/_catalog/` or an app-owned backend/config API.
+   - Browser or service catalog discovery should treat
+     `https://tiles.skytruth.org/_catalog/web/catalog.json` as the critical
+     machine-readable source of truth, either fetched directly from the public
+     catalog route or served through an app-owned backend/config API.
    - Backend/server downloads or authenticated catalog resolution should use
      the Python SDK.
    - Unrelated references, docs, tests, and comments should only change when
@@ -28,7 +72,7 @@ Use this workflow when moving downstream repos off direct shared bucket URLs.
 3. Make the smallest coherent replacement. Prefer a tiny helper such as
    `sharedPmtilesUrl("<slug>", "<access-tier>")` over broad map-layer
    refactors.
-4. Keep PRs focused by repo, surface, and dataset. Do not combine unrelated UI,
+4. Keep PRs focused by surface and dataset. Do not combine unrelated UI,
    infrastructure, dependency, or formatting changes with adoption work.
 5. In the PR description, call out the old hardcoded access path, the new shared
    access path, and the focused validation that was run.
@@ -51,18 +95,21 @@ Start here. Do not add more machinery than the consumer actually needs.
 3. Public catalog reads should use
    `https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv` or
    `https://tiles.skytruth.org/_catalog/web/catalog.json`, not anonymous direct
-   `storage.googleapis.com` bucket URLs.
+   `storage.googleapis.com` bucket URLs. Prefer `catalog.json` for browser and
+   service layer configuration because it is the machine-readable source of
+   truth for PMTiles URLs, access tiers, docs URLs, release metadata, bounds,
+   and geometry metadata.
 4. For credentials, prefer runtime identity: Cloud Run, jobs, or CI should run
    as an established runtime or reader service account that already has bucket
    read access. Do not create service account JSON keys.
 5. For browser map layers that may use private shared-dataset PMTiles, resolve
    the PMTiles URL from the shared catalog `access_tier`, add a signed-cookie
-   session endpoint in the consuming backend, and make PMTiles range requests
+   session endpoint in this app's backend, and make PMTiles range requests
    with browser credentials included.
 
 ## Catalog Discovery
 
-Use this when the consuming repo needs search, layer config, citations, schema
+Use this when this repo or app needs search, layer config, citations, schema
 notes, or release metadata.
 
 Public catalog reads use:
@@ -75,7 +122,33 @@ https://tiles.skytruth.org/_catalog/web/docs/assets/{asset-slug}.md
 https://tiles.skytruth.org/_catalog/releases/{asset-slug}.json
 ```
 
-Do not build new consumer behavior on anonymous direct
+`https://tiles.skytruth.org/_catalog/web/catalog.json` is the critical
+machine-readable source of truth for this repo's browser and service config. Use
+it when generating layer lists, PMTiles URLs, access decisions, docs links,
+release metadata, bounds, or geometry metadata. Use the CSV when a backend or
+SDK workflow specifically needs the tabular catalog contract.
+
+Minimum `catalog.json` contract for consumers:
+
+- Read the top-level `assets` array; do not infer assets from bucket paths.
+- For layer/config rows, use `slug`, `title`, `status`, `access_tier`,
+  `available_formats`, `canonical_format`, `has_pmtiles`, `pmtiles_url`,
+  `docs_url`, `release_index_url`, `latest_release`, `last_updated`,
+  `citation`, `license`, `bounds`, and `geometry_type` when present.
+- Use `pmtiles_url` for browser PMTiles. It is already the tiered
+  `tiles.skytruth.org` URL. Only reconstruct a URL when `pmtiles_url` is absent
+  and the app has explicitly validated `access_tier` and `slug`.
+- Resolve relative `docs_url` and `release_index_url` values against
+  `https://tiles.skytruth.org/_catalog/web/`.
+- Use only `status="active"` for default production layer lists. If a UI
+  intentionally shows `deprecated`, `superseded`, or `retired` assets, display
+  `consumer_guidance`.
+- Reject missing or unknown `access_tier` values. Do not silently default an
+  asset to public.
+- Treat `latest_release.date` as the freshest release date when present;
+  otherwise use `last_updated`.
+
+Do not build new behavior in this repo or app on anonymous direct
 `https://storage.googleapis.com/skytruth-shared-datasets-1/_catalog/...` reads.
 Those direct bucket URLs are diagnostic or transitional only. Browser apps
 should use `tiles.skytruth.org/_catalog/`, a docs site, or an app-owned config
@@ -89,7 +162,7 @@ defaulting private assets to public.
 
 ## Frontend PMTiles
 
-Use this when the consuming repo needs browser PMTiles and already knows the
+Use this when this repo or app needs browser PMTiles and already knows the
 asset slug, or can resolve the slug from the shared catalog.
 
 Use these URL shapes:
@@ -137,13 +210,15 @@ The access tier is part of the stable URL contract. Use the same
 `tiles.skytruth.org` URL in redirect mode and CDN mode; do not switch consumers
 back to `storage.googleapis.com` for CDN rollout or fallback behavior.
 
-Do not assume every PMTiles asset is public. The catalog includes private
-PMTiles; as of May 12, 2026, examples include `global-coral-reefs`,
-`iucn-mammal-ranges`, `iucn-reptile-ranges`,
-`acled-europe-central-asia-aggregated-weekly-admin1`, and
-`acled-middle-east-aggregated-weekly-admin1`. If a consumer derives layers from
-the catalog, preserve `citation` in service-facing metadata and parse
-`access_tier` to emit:
+Do not assume every PMTiles asset is public. The live catalog should be the
+source of truth. Verified against the checked-in and live catalog on
+2026-05-17, the private PMTiles fixtures are
+`acled-europe-central-asia-aggregated-weekly-admin1`,
+`acled-middle-east-aggregated-weekly-admin1`, `global-coral-reefs`,
+`iucn-mammal-ranges`, and `iucn-reptile-ranges`. Use them as test fixtures, not
+as a hardcoded production allowlist. If a consumer derives layers from the
+catalog, preserve `citation` in service-facing metadata and parse `access_tier`
+to emit:
 
 ```ts
 `${SHARED_PMTILES_BASE_URL}/${accessTier}/${assetSlug}.pmtiles`
@@ -164,155 +239,40 @@ consumers should still keep the stable tiered `tiles.skytruth.org` URL.
 
 ## Private PMTiles Signed-Cookie Pattern
 
-Use this pattern for every downstream repo that may display private shared
-PMTiles, including 30x30.
+Use this pattern when this repo or app may display private shared
+PMTiles. Before implementing or reviewing private PMTiles, read
+[Private PMTiles Signed Cookies](references/private-pmtiles-signed-cookies.md).
 
-### Shared-Datasets Prerequisites
+Minimum consumer contract:
 
-Before deploying a new consumer, identify the backend or UI runtime service
-account that serves the consumer's session endpoint. Grant that service account
-access to the shared signing-key secret from `shared-datasets-1`; do not create
-or distribute a service account key file.
+- Public PMTiles use `pmtiles_url` directly and do not need a cookie.
+- Private PMTiles use the same `pmtiles_url` shape only after the consumer
+  backend grants a browser session.
+- This app's backend exposes a route such as
+  `GET /api/pmtiles/session?tier=private`, authenticates and authorizes the
+  user, signs the private PMTiles prefix, sets `Cloud-CDN-Cookie`, and returns
+  `Cache-Control: no-store`.
+- The signer is the service account running the cookie endpoint, not
+  necessarily the reader service account used for backend data downloads.
+- Every PMTiles byte-range request for private layers must include
+  `credentials: "include"` so the browser sends the cross-site cookie to
+  `tiles.skytruth.org`.
+- Browser code must never receive GCS credentials, service account keys, raw
+  signing key bytes, or full signed cookie values.
 
-Current shared signing material:
+Upstream shared-datasets-1 infrastructure changes are separate from this repo's
+PR. For a new private-PMTiles environment, open an upstream
+shared-datasets-1 PR that adds the exact browser origin to
+`pmtiles_cdn_allowed_origins` and grants this app's endpoint runtime service
+account access to the signing-key secret. Let the protected shared-datasets-1
+production workflow apply after merge; do not run a local
+production Terraform apply.
 
-```text
-Secret: projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest
-Cloud CDN key name: shared-datasets-pmtiles-v1
-Signed prefix: https://tiles.skytruth.org/pmtiles/private/
-```
-
-In shared-datasets Terraform, add the consumer signer principal to the signer
-allowlist used by `google_secret_manager_secret_iam_member.pmtiles_cdn_cookie_signers`.
-The Cerulean rollout used:
-
-```hcl
-cerulean_pmtiles_cookie_signer_service_accounts = [
-  "serviceAccount:734798842681-compute@developer.gserviceaccount.com",
-]
-```
-
-That shared-datasets Terraform change must land through a reviewed PR and the
-protected production workflow after merge, not a local apply.
-
-For another repo, use that repo's real runtime service account instead. The
-30x30 reader service account is
-`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`, but the signer
-should be the service account actually running the endpoint that issues the
-cookie. HTTPS SkyTruth subdomains are allowed by
-`pmtiles_cdn_allowed_origin_regexes` only while the temporary Cloud Run
-redirector serves `/pmtiles/*`. CDN backend-bucket mode cannot use regex
-origins: external URL-map CORS regexes are not allowed, and Cloud Armor edge
-policies on backend buckets cannot evaluate request-header expressions. Add
-each browser origin to `pmtiles_cdn_allowed_origins` as an exact origin before
-deploying private PMTiles in that environment. Credentialed CORS cannot use
-`*`.
-
-The current exact CDN allowlist is `http://localhost:3000`,
-`https://localhost:3000`, `https://feature-three.cerulean.skytruth.org`,
-`https://test.cerulean.skytruth.org`,
-`https://develop.cerulean.skytruth.org`, `https://cerulean.skytruth.org`, and
-`https://30x30.skytruth.org`, and `https://monitor.skytruth.org`.
-
-The shared bucket CORS origins use the same exact list because backend-bucket
-CDN range responses can otherwise inherit wildcard CORS headers from GCS, which
-browsers reject when PMTiles requests include credentials.
-
-### Consumer Backend Endpoint
-
-Add an endpoint like:
-
-```text
-GET /api/pmtiles/session?tier=public
-GET /api/pmtiles/session?tier=private
-```
-
-Required behavior:
-
-- `tier=public` returns `204` without a cookie.
-- `tier=private` requires an authenticated user session.
-- For the first rollout, allow only SkyTruth or admin users unless the consumer
-  has a more specific entitlement model.
-- Read
-  `projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest`.
-- Decode the secret value from base64url to the raw 16-byte Cloud CDN key.
-- Sign `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
-  URLs.
-- Use HMAC-SHA1 and key name `shared-datasets-pmtiles-v1`.
-- Set `Cache-Control: no-store`.
-- Never log or return the key bytes or full cookie value.
-
-The cookie must be named `Cloud-CDN-Cookie` and set with:
-
-```text
-Domain=.skytruth.org
-Path=/pmtiles
-Secure
-HttpOnly
-SameSite=None
-Max-Age=3600
-Expires=<1 hour from now>
-```
-
-Cloud CDN signed-cookie policy fields must be in this order:
-
-```text
-URLPrefix=<base64url-prefix>:Expires=<unix-seconds>:KeyName=shared-datasets-pmtiles-v1:Signature=<base64url-hmac>
-```
-
-Keep base64url padding characters if the runtime's encoder emits them. The key
-used for HMAC is the decoded raw 16-byte key, not the encoded secret text.
-
-### Consumer Frontend Loading
-
-Before enabling private shared AOI layers, call:
-
-```ts
-await fetch("/api/pmtiles/session?tier=private", {
-  credentials: "include"
-});
-```
-
-Only add the private layer if the response is successful. Public layers may skip
-the call or call `tier=public`, which should return `204`.
-
-PMTiles byte-range requests must include credentials so the browser sends the
-cross-site cookie to `tiles.skytruth.org`. Add `credentials: "include"` to the
-PMTiles fetch/load options. If the PMTiles library hides byte-range fetches,
-wrap or subclass its fetch source so every header, directory, and tile range
-request includes:
-
-```ts
-fetch(url, {
-  headers: { range: "bytes=start-end" },
-  credentials: "include"
-});
-```
-
-In a browser trace, private PMTiles requests to `tiles.skytruth.org` should carry
-the `Cloud-CDN-Cookie` cookie. Do not try to send GCS credentials from browser
-code.
-
-Keep CSP `connect-src` allowing `https://tiles.skytruth.org`. Remove direct
-`storage.googleapis.com` dependencies only for shared-dataset PMTiles access;
-do not remove `storage.googleapis.com` if the app still uses it for unrelated
-features.
-
-### Rollout Order For A Consumer Repo
-
-1. Scan for direct shared bucket PMTiles URLs and hardcoded public-only helpers.
-2. Change config generation to emit
-   `https://tiles.skytruth.org/pmtiles/{access_tier}/{slug}.pmtiles`.
-3. Bump any config cache key.
-4. Add `/api/pmtiles/session`.
-5. Add `credentials: "include"` to every PMTiles range request path.
-6. Ensure private layers call the session endpoint before mounting.
-7. Confirm CSP and CORS origins allow `https://tiles.skytruth.org`.
-8. Run the repo's lint, type, and build checks.
-9. Deploy to test, then develop, then production.
-10. For new private-PMTiles environments, open the matching shared-datasets PR
-    for exact-origin CORS and signer-secret IAM, then let the protected
-    production workflow apply after merge.
+Roll out in this order: replace direct PMTiles URLs with catalog-derived
+`pmtiles_url`, bump any layer-config cache key, add the session endpoint, add
+credentialed PMTiles range fetches, call the session endpoint before mounting
+private layers, verify CSP/CORS, then run this repo's lint, type, test,
+and build checks.
 
 ## WDPA MPA Identity
 
@@ -326,7 +286,7 @@ unless an explicit alias or backfill plan exists.
 Use this when backend/server code needs the actual data file, a canonical
 `gs://` URI, or catalog-driven format resolution.
 
-If the consuming project has backend/server code and a runtime service account,
+If this project has backend/server code and a runtime service account,
 install the SDK with the GCS extra. The package is installed from GitHub for
 now, not PyPI. `SkyTruth/shared-datasets-1` is public, so unauthenticated public
 HTTPS installs are acceptable:
@@ -387,17 +347,24 @@ should be enough.
 The only required IAM setup is:
 
 ```text
-Grant the consuming runtime service account roles/storage.objectViewer on gs://skytruth-shared-datasets-1.
+Grant this repo/app runtime service account `roles/storage.objectViewer` on
+`gs://skytruth-shared-datasets-1`.
 ```
 
-Prefer a repo-provisioned reader service account when that is the consuming
-repo's established deployment model:
+Prefer a repo-provisioned reader service account when that is this repo's
+established deployment model:
 
 ```text
 Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
 30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
 SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
 ```
+
+Those three accounts are the current production reader accounts verified in
+Terraform and live IAM on 2026-05-17. Do not assume a Monitor reader account
+exists; if Monitor or another project needs a repo-provisioned reader, add it
+through the upstream shared-datasets-1 Terraform review path or grant the
+existing runtime identity instead.
 
 Otherwise grant the existing runtime service account `roles/storage.objectViewer`
 on the shared bucket. Run backend jobs/services as the chosen runtime identity,
@@ -434,12 +401,17 @@ Look for:
 
 ```text
 storage.googleapis.com/skytruth-shared-datasets-1
+gs://skytruth-shared-datasets-1
 tiles.skytruth.org/pmtiles/
 tiles.skytruth.org/_catalog/
+catalog.json
+shared-datasets-catalog.csv
 .pmtiles
 access_tier
 Cloud-CDN-Cookie
 pmtiles/session
+skytruth_shared_datasets
+skytruth-shared-datasets
 wdpa
 WDPAID
 ```
@@ -449,7 +421,7 @@ map-layer behavior.
 
 ## Minimum Patch Checklist
 
-- Apply only the checklist items for surfaces that exist in the consuming repo.
+- Apply only the checklist items for surfaces that exist in this repo or app.
   Backend-only adopters should not add PMTiles helpers, frontend env vars, or
   browser URL changes.
 - Add a configurable PMTiles base URL with default
@@ -458,7 +430,8 @@ map-layer behavior.
   `sharedPmtilesUrl("<slug>", "<access-tier>")` or an equivalent catalog-driven
   tiered URL.
 - If the repo reads the shared catalog, parse `access_tier` and do not preserve
-  old direct GCS `pmtiles_url` overrides for shared-dataset layers.
+  old direct GCS `pmtiles_url` overrides for shared-dataset layers. Use
+  `catalog.json` as the machine-readable source for browser/service config.
 - If the repo reads public catalog files, use `https://tiles.skytruth.org/_catalog/`
   or an app-owned backend/config API rather than direct
   `storage.googleapis.com` bucket URLs.
@@ -481,10 +454,10 @@ map-layer behavior.
 ## Private PMTiles Rules
 
 Private PMTiles are active catalog concepts, not a future placeholder. Browser
-clients still must not receive GCS credentials. The consuming backend issues a
+clients still must not receive GCS credentials. This app's backend issues a
 Cloud CDN signed cookie only for users allowed to access the private tier.
 
-Signed-cookie support belongs in the consuming backend, not in static frontend
+Signed-cookie support belongs in this app's backend, not in static frontend
 configuration. The backend signs the allowed tier prefix,
 `https://tiles.skytruth.org/pmtiles/private/`, and sets `Cloud-CDN-Cookie` with
 a short TTL. Browser PMTiles fetches must send credentials so the cross-site
@@ -499,8 +472,9 @@ Add focused tests that prove:
   `https://tiles.skytruth.org/pmtiles/private/...`.
 - Catalog-derived PMTiles URLs use `access_tier`; tests should include at least
   one public and one private fixture row.
-- Public catalog reads use `https://tiles.skytruth.org/_catalog/...` or an
-  app-owned API, not direct public GCS URLs.
+- Browser/service config reads use
+  `https://tiles.skytruth.org/_catalog/web/catalog.json` or an app-owned API,
+  not direct public GCS URLs.
 - PMTiles layer source configuration does not hardcode
   `storage.googleapis.com`.
 - The PMTiles base URL is configurable by environment.
@@ -516,9 +490,9 @@ Add focused tests that prove:
 
 ## Non-Goals
 
-Do not implement Cloud CDN infrastructure in the consuming project.
-Do not store Cloud CDN signing keys in the consuming repo or Terraform state.
+Do not implement Cloud CDN infrastructure in this project.
+Do not store Cloud CDN signing keys in this repo or Terraform state.
 Do not create service account keys.
 Do not expose GCS credentials to the browser.
-Do not mirror PMTiles into the consuming project.
+Do not mirror PMTiles into this project.
 Do not make broad UI rewrites while doing the minimal shared-datasets adoption.
