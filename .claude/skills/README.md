@@ -20,3 +20,4 @@ Current skills:
 - `repo-alert-commit-messages`
 - `shared-datasets-compliance-audit`
 - `static-catalog-web-preview`
+- `sync-docs-with-code`

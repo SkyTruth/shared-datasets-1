@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Docs With Code"
+  short_description: "Keep repo docs aligned with shipped code"
+  default_prompt: "Use $sync-docs-with-code to find and fix documentation drift after recent code changes."

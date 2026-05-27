@@ -34,6 +34,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Asset layout, formats, and README requirements | `docs/standards/asset-layout-and-formats.md` |
 | Dataset README templates | `templates/dataset_README.template.md`, `templates/dataset_README.minimal.template.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
+| Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
 | Tiered PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
@@ -77,11 +78,15 @@ When instructions conflict, follow this order:
 │       │   └── SKILL.md
 │       ├── publish-shared-dataset/
 │       │   └── SKILL.md
+│       ├── protected-terraform-apply/
+│       │   └── SKILL.md
 │       ├── repo-alert-commit-messages/
 │       │   └── SKILL.md
 │       ├── shared-datasets-compliance-audit/
 │       │   └── SKILL.md
-│       └── static-catalog-web-preview/
+│       ├── static-catalog-web-preview/
+│       │   └── SKILL.md
+│       └── sync-docs-with-code/
 │           └── SKILL.md
 ├── catalog/
 │   ├── categories.yaml

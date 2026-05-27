@@ -68,6 +68,7 @@ Current repo-local skills:
 - `.claude/skills/repo-alert-commit-messages/SKILL.md`
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
 - `.claude/skills/static-catalog-web-preview/SKILL.md`
+- `.claude/skills/sync-docs-with-code/SKILL.md`
 
 High-priority triggers:
 
@@ -89,6 +90,9 @@ High-priority triggers:
   walkthroughs.
 - Use `static-catalog-web-preview` before building, updating, QAing, or
   deploying the static catalog web preview under `_catalog/web/`.
+- Use `sync-docs-with-code` before keeping repository docs aligned with code,
+  generated outputs, workflows, Terraform, ingestion jobs, APIs, or repo-local
+  skills.
 
 Keep skill examples repo-relative and maintainer-neutral. Avoid usernames,
 home-directory paths, shell-profile assumptions, and machine-local environment
@@ -159,6 +163,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
 | Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
+| Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Bucket/repo compliance audits | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Repo-alert commit messages | `.claude/skills/repo-alert-commit-messages/SKILL.md` |
 | Python environment alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
