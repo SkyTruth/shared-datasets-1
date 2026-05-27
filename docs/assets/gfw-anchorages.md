@@ -22,7 +22,8 @@ citation: Global Fishing Watch (2026). Global Anchorages dataset, Version 2. htt
 notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-02-02; source rows 166497; published rows
   166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
   pmtiles sha256 54d8a622cf6f426aa78dc9cbffae89a57212f5c428e6fd2218e414718f8e8cdd; PMTiles rebuilt 2026-05-04 at maxzoom 12
-  with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points
+  with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points; source CSV preserved
+  under sources/ for provenance with sha256 0842d18e484cb2d7f809cdd4ba78b99e1d979c49b2798d86a0ffb9172b68552e
 row_count: 166496
 data_profile:
   field_count: 10
@@ -50,6 +51,10 @@ files:
   format: pmtiles
   role: release
   purpose: Dated map-tile release
+- path: sources/named_anchorages_v2_pipe_v3_202601.csv
+  format: csv
+  role: source
+  purpose: Original Global Fishing Watch source CSV; noncanonical because it stores point geometry as `lon` and `lat` columns
 ---
 
 # Global Fishing Watch Anchorages
@@ -88,6 +93,7 @@ The source CSV contains 166,497 rows. This shared asset publishes 166,496 valid 
 | `latest/gfw-anchorages.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point dataset |
 | `releases/2026-02-02/gfw-anchorages.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/2026-02-02/gfw-anchorages.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `sources/named_anchorages_v2_pipe_v3_202601.csv` | `csv` | `source` | Original Global Fishing Watch source CSV; noncanonical because it stores point geometry as `lon` and `lat` columns |
 <!-- END GENERATED files-table -->
 
 ## Schema notes
@@ -117,6 +123,8 @@ The PMTiles artifact is generated with Tippecanoe from the same filtered point f
 
 Manually converted from `named_anchorages_v2_pipe_v3_202601.csv` on 2026-04-30 using GDAL, Tippecanoe, and PMTiles tooling. Source release date is tracked as 2026-02-02 based on the Global Fishing Watch Data Download Portal last update date.
 
+The original source CSV is preserved under `sources/named_anchorages_v2_pipe_v3_202601.csv` for provenance. It is not the canonical analytical file because it stores point geometry as `lon` and `lat` columns; use the FlatGeobuf for spatial analysis.
+
 The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The point-only FGB profile resolves to maxzoom 12. The rebuild used Tippecanoe no feature limit/no tile size limit/drop-rate 1; the old zoom 0 PMTiles tile decoded to 109 points, while the rebuilt zoom 0 tile decodes to all 166,496 published points.
 
 Output summary:
@@ -124,6 +132,7 @@ Output summary:
 - Source rows: 166,497
 - Published point features: 166,496
 - Omitted invalid coordinate rows: 1
+- Source CSV SHA-256: `0842d18e484cb2d7f809cdd4ba78b99e1d979c49b2798d86a0ffb9172b68552e`
 - FGB SHA-256: `9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351`
 - PMTiles SHA-256: `54d8a622cf6f426aa78dc9cbffae89a57212f5c428e6fd2218e414718f8e8cdd`
 
