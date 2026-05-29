@@ -13,21 +13,25 @@ class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
         workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
         return workflow, workflow.get("on") or workflow.get(True)
 
-    def test_publish_workflow_triggers_on_package_version_files(self):
-        _workflow, trigger = self.load_workflow()
+    def test_publish_workflow_triggers_on_package_content_files(self):
+        workflow, trigger = self.load_workflow()
 
         self.assertIn("workflow_dispatch", trigger)
         self.assertEqual(trigger["push"]["branches"], ["main"])
         self.assertEqual(
             set(trigger["push"]["paths"]),
             {
+                "api/typescript/src/**",
+                "api/typescript/README.md",
                 "api/typescript/package.json",
                 "api/typescript/package-lock.json",
+                "api/typescript/tsconfig.json",
                 ".github/workflows/publish-typescript-sdk.yml",
             },
         )
+        self.assertEqual(workflow["permissions"]["contents"], "write")
 
-    def test_publish_workflow_only_publishes_greater_registry_version(self):
+    def test_publish_workflow_bumps_before_publish_when_needed(self):
         workflow, _trigger = self.load_workflow()
         steps = workflow["jobs"]["publish"]["steps"]
         steps_by_name = {step["name"]: step for step in steps}
@@ -36,7 +40,15 @@ class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(check_step["id"], "release-version")
         self.assertIn('npm", ["view", pkg.name, "version", "--json"]', check_step["run"])
         self.assertIn("compareSemver(pkg.version, publishedVersion)", check_step["run"])
+        self.assertIn("should_bump=${shouldBump}", check_step["run"])
+        self.assertIn("target_version=${targetVersion}", check_step["run"])
         self.assertIn("should_publish=${shouldPublish}", check_step["run"])
+
+        bump_step = steps_by_name["Bump package metadata"]
+        self.assertEqual(bump_step["if"], "steps.release-version.outputs.should_bump == 'true'")
+        self.assertIn("npm version --no-git-tag-version", bump_step["run"])
+        self.assertIn("git commit -m", bump_step["run"])
+        self.assertIn("git push", bump_step["run"])
 
         for step_name in ("Install dependencies", "Test package", "Verify package contents", "Publish package"):
             self.assertEqual(
