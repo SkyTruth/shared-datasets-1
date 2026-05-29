@@ -563,19 +563,37 @@ RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
 ## TypeScript SDK release
 
 The TypeScript helpers live under `api/typescript/` and publish as
-`@skytruth/shared-datasets`. The package is prepared for npm publication, but
-consumer docs should not assume `npm install @skytruth/shared-datasets` works
-until a release has actually been published.
+`@skytruth/shared-datasets`. The initial `0.1.0` release has been published to
+npm.
 
-First-time and follow-up releases use the manual `Publish TypeScript SDK`
-workflow. Run it from `main` only after the package version has been updated as
-needed and CI is green. The workflow requires the repository secret `NPM_TOKEN`,
-uses Node 22, runs `npm ci`, `npm test`, `npm pack --dry-run`, and then
-publishes with npm provenance:
+The initial release was published manually by an npm maintainer because npm
+trusted-publisher configuration requires the package to already exist. From
+`api/typescript/`, use an authenticated npm session and publish the scoped
+package as public only for a new package bootstrap:
 
 ```bash
-npm publish --access public --provenance
+npm publish --access public
 ```
+
+Trusted Publishing is configured for follow-up releases; do not create a
+long-lived `NPM_TOKEN` for this workflow. Follow-up releases use the manual
+`Publish TypeScript SDK` workflow. Run it from `main` only after the package
+version has been updated as needed and CI is green. The workflow uses Node 24,
+runs `npm ci`, `npm test`, `npm pack --dry-run`, and then publishes through
+npm's GitHub Actions OIDC handshake:
+
+```bash
+npm publish --access public
+```
+
+The npm trusted-publisher settings should remain:
+
+- Publisher: GitHub Actions
+- Organization or user: `SkyTruth`
+- Repository: `shared-datasets-1`
+- Workflow filename: `publish-typescript-sdk.yml`
+- Environment name: leave blank unless the workflow gains a GitHub environment
+- Allowed actions: `npm publish`
 
 After the workflow succeeds, verify the registry version:
 
@@ -583,8 +601,8 @@ After the workflow succeeds, verify the registry version:
 npm view @skytruth/shared-datasets version
 ```
 
-Before the first npm release, TypeScript consumers may use a local path only for
-development and integration testing:
+TypeScript consumers may use a local path only for development and integration
+testing against unreleased local changes:
 
 ```bash
 npm install ../shared-datasets-1/api/typescript

@@ -76,10 +76,11 @@ TypeScript SDK for backend GCS downloads.
 Use this when the consumer repo has browser PMTiles, private PMTiles, or a
 backend route that issues PMTiles cookies.
 
-The TypeScript package is intended for public npm distribution as
-`@skytruth/shared-datasets`. If `npm install @skytruth/shared-datasets` returns
-404, the upstream package has not been published yet; use a local-path install
-only for development and do not commit that local path to production consumers.
+The TypeScript package is published on npm as `@skytruth/shared-datasets`. If
+`npm install @skytruth/shared-datasets` returns 404, verify the registry, scope,
+and package name before using a local-path install. Use local-path installs only
+for development against unreleased local changes, and do not commit that local
+path to production consumers.
 
 Browser-safe imports:
 

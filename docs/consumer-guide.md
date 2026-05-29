@@ -113,16 +113,14 @@ helpers for private PMTiles cookie issuance.
 Use the [TypeScript SDK](../api/typescript/README.md) for browser PMTiles and
 backend PMTiles session routes.
 
-The package is prepared for public npm distribution. Before first public
-consumer use, maintainers must publish it through the manual TypeScript SDK
-publish workflow. After publication:
+The package is published on npm:
 
 ```bash
 npm install @skytruth/shared-datasets
 ```
 
-Until that first release exists, use a local path only for development and do
-not commit local-path installs to production consumers:
+Use a local path only for development against unreleased local changes. Do not
+commit local-path installs to production consumers:
 
 ```bash
 npm install ../shared-datasets-1/api/typescript

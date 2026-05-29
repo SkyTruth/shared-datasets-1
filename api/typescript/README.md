@@ -17,22 +17,21 @@ The package name is:
 @skytruth/shared-datasets
 ```
 
-The package is prepared for public npm distribution. After the first release is
-published, consumers install it with:
+The package is published on npm. Consumers install it with:
 
 ```bash
 npm install @skytruth/shared-datasets
 ```
 
-Before the first npm release, use a local path only for development and
-integration testing:
+Use a local path only for package development and integration testing against
+unreleased local changes:
 
 ```bash
 npm install ../shared-datasets-1/api/typescript
 ```
 
-Do not commit local-path installs to production consumers. After publishing,
-verify the registry version before relying on the npm install path:
+Do not commit local-path installs to production consumers. Verify the registry
+version before changing production consumers:
 
 ```bash
 npm view @skytruth/shared-datasets version
@@ -315,7 +314,7 @@ cache behavior.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `npm install @skytruth/shared-datasets` returns 404 | The first npm release has not been published yet. | Use a local path only for development, or publish the package before production use. |
+| `npm install @skytruth/shared-datasets` returns 404 | The registry, scope, or package name is wrong, or npm has a transient registry issue. | Verify `npm view @skytruth/shared-datasets version` and use the public npm registry. |
 | Browser bundle includes `node:crypto` | The server entrypoint was imported into client code. | Move signing helpers behind a backend route and import browser helpers from the main entrypoint only. |
 | Private PMTiles session succeeds but tiles fail | The PMTiles library's internal range requests are missing credentials. | Configure or wrap its fetch implementation so all PMTiles requests use `credentials: "include"`. |
 | Private PMTiles return `401` or `403` | User is unauthenticated, unauthorized, or the signed cookie is missing/expired. | Re-call the session endpoint and verify the backend authorization path. |

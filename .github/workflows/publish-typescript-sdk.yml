@@ -8,7 +8,7 @@ permissions:
   id-token: write
 
 env:
-  NODE_VERSION: "22"
+  NODE_VERSION: "24"
 
 jobs:
   publish:
@@ -30,16 +30,6 @@ jobs:
           cache: npm
           cache-dependency-path: api/typescript/package-lock.json
 
-      - name: Validate npm publish token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${NPM_TOKEN}" ]]; then
-            echo "Missing required repository secret: NPM_TOKEN" >&2
-            exit 1
-          fi
-
       - name: Install dependencies
         working-directory: api/typescript
         run: npm ci
@@ -54,6 +44,4 @@ jobs:
 
       - name: Publish package
         working-directory: api/typescript
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: npm publish --access public
