@@ -42,6 +42,7 @@ Add an endpoint like:
 ```text
 GET /api/pmtiles/session?tier=public
 GET /api/pmtiles/session?tier=private
+DELETE /api/pmtiles/session
 ```
 
 Use the TypeScript SDK server helpers for cookie signing rather than
@@ -70,11 +71,18 @@ Required behavior:
 - Sign `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
   URLs.
 - Use HMAC-SHA1 and key name `shared-datasets-pmtiles-v1`.
+- Set every `Set-Cookie` header returned by `getPrivatePmtilesSessionCookies`;
+  the helper returns an array that clears the legacy path and sets the private
+  signed cookie.
+- `DELETE` clears every cookie returned by `getExpiredPmtilesCookies` and
+  returns `204`.
+- For both helper calls, send the returned string array as separate
+  `Set-Cookie` headers; do not comma-join it into one header value.
 - Set `Cache-Control: no-store`.
 - Never log or return the key bytes, HMAC input, HMAC output, unsigned policy,
   full cookie value, or signed URL.
 
-The cookie must be named `Cloud-CDN-Cookie` and set with:
+The private session cookie must be named `Cloud-CDN-Cookie` and set with:
 
 ```text
 Domain=.skytruth.org
@@ -117,6 +125,15 @@ if (!result.ok) {
 
 Only add the private layer if the result is successful. Public layers may skip
 the call or use `accessTier: "public"`, which does not contact the endpoint.
+
+On app sign-out, call the same endpoint with `clearPmtilesCdnSession` before or
+alongside the app's own session cleanup so private CDN cookies are expired:
+
+```ts
+import { clearPmtilesCdnSession } from "@skytruth/shared-datasets";
+
+await clearPmtilesCdnSession({ endpoint: "/api/pmtiles/session" });
+```
 
 PMTiles byte-range requests must include credentials so the browser sends the
 cross-site cookie to `tiles.skytruth.org`. If the PMTiles library hides

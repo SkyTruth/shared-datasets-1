@@ -256,8 +256,10 @@ Add focused tests that prove the surfaces touched:
 - Private signed-cookie PMTiles reject anonymous users, set `Cache-Control:
   no-store`, set `Cloud-CDN-Cookie` for authorized users, send browser fetch
   credentials, and do not expose GCS credentials.
-- Backend Python code that needs data files uses `fetch_dataset(...)` or
-  `resolve_dataset(...)`, not service account keys.
+- Backend Python code that needs data files uses `fetch_dataset(...)`, not
+  service account keys.
+- Backend Python code that needs only metadata, a durable `gs://` URI, or a
+  browser-facing URL uses `resolve_dataset(...)`.
 - Backend Python code that requests `version="latest"` and records lineage
   persists `ref.resolved_id`.
 

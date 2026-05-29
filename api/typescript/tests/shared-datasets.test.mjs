@@ -46,13 +46,19 @@ const catalogFixture = {
     {
       access_tier: ' public ',
       citation: ' Example citation ',
+      consumer_guidance: ' Keep this layer visible by default. ',
       description: ' Example description ',
+      docs_url: ' docs/assets/example-public-layer.md ',
       has_pmtiles: true,
       last_updated: ' 2026-01-15 ',
+      latest_release: { date: '2026-01-15' },
+      license: ' Example license ',
       pmtiles_url: ' https://tiles.skytruth.org/pmtiles/public/example-public-layer.pmtiles ',
+      release_index_url: ' ../releases/example-public-layer.json ',
       slug: ' Example-Public-Layer ',
       source: ' Example source ',
       source_url: ' https://example.test/source ',
+      status: ' active ',
       title: ' Example public layer '
     },
     {
@@ -386,10 +392,16 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
   assert.deepEqual(refs['example-public-layer'], {
     accessTier: 'public',
     citation: 'Example citation',
+    consumerGuidance: 'Keep this layer visible by default.',
     description: 'Example description',
+    docsUrl: 'docs/assets/example-public-layer.md',
     lastUpdated: '2026-01-15',
+    latestRelease: { date: '2026-01-15' },
+    license: 'Example license',
+    releaseIndexUrl: '../releases/example-public-layer.json',
     source: 'Example source',
     sourceUrl: 'https://example.test/source',
+    status: 'active',
     title: 'Example public layer',
     url: 'https://tiles.skytruth.org/pmtiles/public/example-public-layer.pmtiles'
   });

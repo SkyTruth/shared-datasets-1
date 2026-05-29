@@ -11,9 +11,15 @@ export type SharedDatasetPmtilesRef = {
 type SharedDatasetCatalogMetadata = {
   title: string | null;
   description: string | null;
+  status: string | null;
+  consumerGuidance: string | null;
   citation: string | null;
+  license: string | null;
   source: string | null;
   sourceUrl: string | null;
+  docsUrl: string | null;
+  releaseIndexUrl: string | null;
+  latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
 };
 
@@ -25,13 +31,19 @@ export type SharedDatasetsCatalogAsset = {
   asset_slug?: string | null;
   available_formats?: string[] | string | null;
   citation?: string | null;
+  consumer_guidance?: string | null;
   description?: string | null;
+  docs_url?: string | null;
   has_pmtiles?: boolean | string | null;
   last_updated?: string | null;
+  latest_release?: Record<string, unknown> | null;
+  license?: string | null;
   pmtiles_url?: string | null;
+  release_index_url?: string | null;
   slug?: string | null;
   source?: string | null;
   source_url?: string | null;
+  status?: string | null;
   title?: string | null;
 };
 
@@ -60,6 +72,11 @@ const cleanCatalogString = (value: string | null | undefined) => {
   const cleanedValue = value?.trim();
   return cleanedValue ? cleanedValue : null;
 };
+
+const cleanCatalogObject = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 export const normalizeSharedDatasetAssetSlug = (
   value: string | null | undefined
@@ -112,9 +129,15 @@ const getCatalogSharedDatasetRef = (
       url,
       title: cleanCatalogString(asset.title),
       description: cleanCatalogString(asset.description),
+      status: cleanCatalogString(asset.status),
+      consumerGuidance: cleanCatalogString(asset.consumer_guidance),
       citation: cleanCatalogString(asset.citation),
+      license: cleanCatalogString(asset.license),
       source: cleanCatalogString(asset.source),
       sourceUrl: cleanCatalogString(asset.source_url),
+      docsUrl: cleanCatalogString(asset.docs_url),
+      releaseIndexUrl: cleanCatalogString(asset.release_index_url),
+      latestRelease: cleanCatalogObject(asset.latest_release),
       lastUpdated: cleanCatalogString(asset.last_updated)
     }
   ];

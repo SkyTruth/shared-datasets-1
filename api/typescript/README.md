@@ -130,15 +130,26 @@ type SharedDatasetCatalogRef = {
   url: string;
   title: string | null;
   description: string | null;
+  status: string | null;
+  consumerGuidance: string | null;
   citation: string | null;
+  license: string | null;
   source: string | null;
   sourceUrl: string | null;
+  docsUrl: string | null;
+  releaseIndexUrl: string | null;
+  latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
 };
 ```
 
 Catalog resolution throws `SharedDatasetCatalogResolutionError` when catalog
 data is missing, malformed, or cannot resolve a requested PMTiles asset.
+These helpers return PMTiles-capable assets only. For full catalog screens or
+default production layer lists, use `status === "active"` and preserve the
+license, citation, source, docs, and release metadata returned with each ref; if
+your app needs non-PMTiles assets or fields outside this type, fetch and parse
+the catalog JSON directly.
 
 ## Browser PMTiles Fetching
 
@@ -209,6 +220,9 @@ The endpoint should:
 5. Load the CDN signing key from the consumer application's secret store.
 6. Set all cookie headers returned by `getPrivatePmtilesSessionCookies`.
 7. Clear cookies on sign-out using `getExpiredPmtilesCookies`.
+
+Both cookie helpers return arrays. Send each returned string as a separate
+`Set-Cookie` header; do not comma-join the array into one header value.
 
 Example:
 

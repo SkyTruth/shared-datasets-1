@@ -29,8 +29,8 @@ consumers, pin a tag or commit SHA instead of `main`.
 
 | Scenario | Install |
 |---|---|
-| Public catalog and browser URL resolution only | `pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
-| Authenticated GCS catalog loading or data downloads | `pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
+| Public catalog and browser URL resolution with `Catalog.load().resolve(..., access="public")` | `pip install "skytruth-shared-datasets @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
+| Authenticated GCS catalog loading, `resolve_dataset(...)`, or data downloads | `pip install "skytruth-shared-datasets[gcs] @ git+https://github.com/SkyTruth/shared-datasets-1.git@main#subdirectory=api/python"` |
 | Runtime installer lacks `git` | `pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/<tag-or-sha>.zip#subdirectory=api/python"` |
 | Local development in this repository | `pip install -e "api/python[gcs]"` |
 
@@ -91,8 +91,8 @@ version from the cache path.
 
 ## Resolve Without Downloading
 
-Use `resolve_dataset` when code needs metadata, a canonical GCS URI, or a
-browser-facing PMTiles URL but not local bytes:
+Use `resolve_dataset` when backend code has ADC and needs metadata, a canonical
+GCS URI, or a browser-facing PMTiles URL but not local bytes:
 
 ```python
 from skytruth_shared_datasets import resolve_dataset
@@ -108,6 +108,18 @@ print(ref.cache_path)   # None; resolve_dataset does not download bytes
 PMTiles latest URLs default to the tiered shared CDN URL. Exact dated PMTiles
 release references keep their exact object identity and are not a promise of
 anonymous public access.
+
+For public catalog and browser URL resolution without the `gcs` extra or ADC,
+load the public catalog and resolve through `Catalog` explicitly:
+
+```python
+from skytruth_shared_datasets import Catalog
+
+catalog = Catalog.load()
+ref = catalog.resolve("wdpa-marine", "pmtiles", access="public")
+
+print(ref.url)  # https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
+```
 
 ## Catalog API
 
@@ -142,8 +154,8 @@ Primary helpers:
 
 | API | Purpose |
 |---|---|
-| `fetch_dataset(slug, format="...", version="latest", access="gcs")` | Resolve and download one dataset object, returning a `DatasetRef` with `cache_path`. |
-| `resolve_dataset(slug, format="...", version="latest")` | Resolve metadata and URLs without downloading bytes. |
+| `fetch_dataset(slug, format="...", version="latest")` | Resolve and download one dataset object through authenticated GCS, returning a `DatasetRef` with `cache_path`. |
+| `resolve_dataset(slug, format="...", version="latest")` | Resolve metadata and URLs through authenticated GCS without downloading bytes. |
 | `Catalog.load()` | Load catalog CSV from the public CDN, a URL, a local path, or a `gs://` URI converted to HTTPS. |
 | `Catalog.load_gcs()` | Load the catalog from GCS using ADC and the optional `google-cloud-storage` dependency. |
 | `Catalog.search(...)` | Filter assets by category, status, format, or access tier. |
