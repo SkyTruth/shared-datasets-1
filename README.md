@@ -576,11 +576,16 @@ npm publish --access public
 ```
 
 Trusted Publishing is configured for follow-up releases; do not create a
-long-lived `NPM_TOKEN` for this workflow. Follow-up releases use the manual
-`Publish TypeScript SDK` workflow. Run it from `main` only after the package
-version has been updated as needed and CI is green. The workflow uses Node 24,
-runs `npm ci`, `npm test`, `npm pack --dry-run`, and then publishes through
-npm's GitHub Actions OIDC handshake:
+long-lived `NPM_TOKEN` for this workflow. Follow-up releases use the
+`Publish TypeScript SDK` workflow. It runs automatically on pushes to `main`
+that change `api/typescript/package.json`, `api/typescript/package-lock.json`,
+or the workflow file, and it can still be run manually from `main`. Before
+publishing, the workflow compares `api/typescript/package.json` to the current
+npm registry version. It publishes only when the repo version is greater, skips
+when that version is already published, and fails if the repo version is lower.
+When publishing, the workflow uses Node 24, runs `npm ci`, `npm test`,
+`npm pack --dry-run`, and then publishes through npm's GitHub Actions OIDC
+handshake:
 
 ```bash
 npm publish --access public
