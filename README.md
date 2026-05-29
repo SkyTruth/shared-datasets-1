@@ -36,6 +36,9 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
+| Python SDK usage | `api/python/README.md` |
+| TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
+| TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
 | Tiered PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
@@ -556,6 +559,38 @@ RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
   tests/test_sea_ice_daily.py \
   tests/test_eamlis_monthly.py
 ```
+
+## TypeScript SDK release
+
+The TypeScript helpers live under `api/typescript/` and publish as
+`@skytruth/shared-datasets`. The package is prepared for npm publication, but
+consumer docs should not assume `npm install @skytruth/shared-datasets` works
+until a release has actually been published.
+
+First-time and follow-up releases use the manual `Publish TypeScript SDK`
+workflow. Run it from `main` only after the package version has been updated as
+needed and CI is green. The workflow requires the repository secret `NPM_TOKEN`,
+uses Node 22, runs `npm ci`, `npm test`, `npm pack --dry-run`, and then
+publishes with npm provenance:
+
+```bash
+npm publish --access public --provenance
+```
+
+After the workflow succeeds, verify the registry version:
+
+```bash
+npm view @skytruth/shared-datasets version
+```
+
+Before the first npm release, TypeScript consumers may use a local path only for
+development and integration testing:
+
+```bash
+npm install ../shared-datasets-1/api/typescript
+```
+
+Do not commit local-path installs to production consumer repos.
 
 ## GCS asset CLI
 

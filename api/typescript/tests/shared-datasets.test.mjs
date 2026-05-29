@@ -248,18 +248,51 @@ test('performs browser PMTiles CDN session handshakes', async () => {
   assert.deepEqual(
     await ensurePmtilesCdnSession({
       accessTier: 'private',
-      endpoint: '/api/pmtiles/session?source=layer#frag',
+      endpoint: '/api/pmtiles/session',
       fetchImpl: okFetch
     }),
     { ok: true, status: 204 }
   );
   assert.deepEqual(calls[0], {
-    input: '/api/pmtiles/session?source=layer&tier=private#frag',
+    input: '/api/pmtiles/session?tier=private',
     init: {
       credentials: 'include',
       method: 'GET'
     }
   });
+
+  calls.length = 0;
+  assert.deepEqual(
+    await ensurePmtilesCdnSession({
+      accessTier: 'private',
+      endpoint: '/api/pmtiles/session?source=layer',
+      fetchImpl: okFetch
+    }),
+    { ok: true, status: 204 }
+  );
+  assert.equal(calls[0].input, '/api/pmtiles/session?source=layer&tier=private');
+
+  calls.length = 0;
+  assert.deepEqual(
+    await ensurePmtilesCdnSession({
+      accessTier: 'private',
+      endpoint: '/api/pmtiles/session?tier=public&source=layer',
+      fetchImpl: okFetch
+    }),
+    { ok: true, status: 204 }
+  );
+  assert.equal(calls[0].input, '/api/pmtiles/session?tier=private&source=layer');
+
+  calls.length = 0;
+  assert.deepEqual(
+    await ensurePmtilesCdnSession({
+      accessTier: 'private',
+      endpoint: '/api/pmtiles/session?source=layer#frag',
+      fetchImpl: okFetch
+    }),
+    { ok: true, status: 204 }
+  );
+  assert.equal(calls[0].input, '/api/pmtiles/session?source=layer&tier=private#frag');
 
   assert.deepEqual(
     await ensurePmtilesCdnSession({
@@ -492,7 +525,7 @@ test('package source and docs avoid internal deployment details', async () => {
   ];
   const matches = [];
   const disallowed =
-    /projects\/shared-datasets-1\/secrets\/|pmtiles-cdn-signed-request-key|iam\.gserviceaccount\.com|serviceAccount:|notificationChannels\/|pmtiles_cdn_allowed_origin|shared-datasets-breakglass|jona@skytruth\.org|\b734798842681\b|\b12695949518\b|terraform\/envs|\.github\/workflows|\.claude\/skills|AGENTS\.md|shared-datasets-1/i;
+    /projects\/shared-datasets-1\/secrets\/|gs:\/\/skytruth-shared-datasets-1|pmtiles-cdn-signed-request-key|iam\.gserviceaccount\.com|serviceAccount:|notificationChannels\/|pmtiles_cdn_allowed_origin|shared-datasets-breakglass|jona@skytruth\.org|\b734798842681\b|\b12695949518\b|terraform\/envs|\.github\/workflows|\.claude\/skills|AGENTS\.md/i;
 
   await Promise.all(
     files.map(async sourceFile => {

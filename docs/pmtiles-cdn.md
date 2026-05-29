@@ -240,6 +240,12 @@ Any consumer that may display private PMTiles should expose
 - Returns `Cache-Control: no-store`.
 - Never logs or returns the key or cookie value.
 
+Consumer TypeScript apps should use `@skytruth/shared-datasets/server` for the
+cookie helpers and the browser-safe `@skytruth/shared-datasets` entrypoint for
+session and PMTiles fetch helpers. See the
+[TypeScript SDK README](../api/typescript/README.md) for install and entrypoint
+details.
+
 Map PMTiles fetches must use `credentials: "include"` when signed cookies are
 required so the browser sends the cross-site cookie to `tiles.skytruth.org`.
 
@@ -256,17 +262,18 @@ browser URLs for shared-dataset PMTiles. If the consumer config response is
 cached, bump its cache key as part of the change.
 
 Before mounting a private PMTiles layer, the frontend should call the session
-endpoint:
+endpoint, preferably through `ensurePmtilesCdnSession`:
 
 ```ts
-await fetch("/api/pmtiles/session?tier=private", {
-  credentials: "include"
+const result = await ensurePmtilesCdnSession({
+  accessTier: "private",
+  endpoint: "/api/pmtiles/session"
 });
 ```
 
-Only mount the private layer after a successful response. If the PMTiles
-library hides byte-range requests, wrap its source or protocol implementation
-so header, directory, and tile range requests all include browser credentials.
+Only mount the private layer after a successful result. If the PMTiles library
+hides byte-range requests, wrap its source or protocol implementation so header,
+directory, and tile range requests use `getPmtilesFetchCredentials(url)`.
 
 For WDPA MPA layers, consumers should use the site ID field as the feature
 identity and should not bind UI behavior to `WDPAID`.
@@ -318,25 +325,26 @@ Apply this recipe to any downstream repo, including 30x30:
    pmtiles/session
    ```
 
-2. Replace direct browser PMTiles URLs with tiered CDN URLs from the catalog:
+2. Replace direct browser PMTiles URLs with catalog `pmtiles_url` or tiered CDN
+   URLs. TypeScript consumers should prefer the SDK catalog helpers when they
+   read catalog JSON:
 
    ```ts
-   const SHARED_PMTILES_BASE_URL =
-     process.env.NEXT_PUBLIC_SHARED_PMTILES_BASE_URL ??
-     "https://tiles.skytruth.org/pmtiles";
+   import { resolveSharedDatasetPmtilesRef } from "@skytruth/shared-datasets";
 
-   const pmtilesUrl =
-     `${SHARED_PMTILES_BASE_URL}/${accessTier}/${assetSlug}.pmtiles`;
+   const ref = await resolveSharedDatasetPmtilesRef(assetSlug);
+   const pmtilesUrl = ref.url;
    ```
 
 3. If the app has a config API, parse catalog `access_tier`, reject missing or
    unknown tiers, and bump any Redis or process cache key.
 4. Add a backend session endpoint with the behavior in
    [Consumer Runtime Contract](#consumer-runtime-contract).
-5. Add `credentials: "include"` to every PMTiles fetch path, including internal
-   range fetches used by PMTiles libraries.
-6. Before enabling a private layer, call
-   `/api/pmtiles/session?tier=private`; public layers do not require a cookie.
+5. Use `getPmtilesFetchCredentials(url)` or an equivalent credentialed fetch
+   wrapper for every PMTiles fetch path, including internal range fetches used
+   by PMTiles libraries.
+6. Before enabling a private layer, call `ensurePmtilesCdnSession`; public
+   layers do not require a cookie.
 7. Keep `https://tiles.skytruth.org` in CSP `connect-src`.
 8. Add or update tests for public URL generation, private URL generation,
    anonymous private rejection, authorized cookie issuance, no-store response

@@ -44,6 +44,18 @@ GET /api/pmtiles/session?tier=public
 GET /api/pmtiles/session?tier=private
 ```
 
+Use the TypeScript SDK server helpers for cookie signing rather than
+reimplementing the Cloud CDN policy format:
+
+```ts
+import {
+  decodePmtilesCdnSigningKey,
+  getExpiredPmtilesCookies,
+  getPrivatePmtilesSessionCookies
+} from "@skytruth/shared-datasets/server";
+import { getPmtilesTier } from "@skytruth/shared-datasets";
+```
+
 Required behavior:
 
 - `tier=public` returns `204` without a cookie.
@@ -85,16 +97,26 @@ used for HMAC is the decoded raw 16-byte key, not the encoded secret text.
 
 ## App Frontend Loading
 
-Before enabling private shared layers, call:
+Use the TypeScript SDK browser helpers before enabling private shared layers:
 
 ```ts
-await fetch("/api/pmtiles/session?tier=private", {
-  credentials: "include"
+import {
+  ensurePmtilesCdnSession,
+  getPmtilesFetchCredentials
+} from "@skytruth/shared-datasets";
+
+const result = await ensurePmtilesCdnSession({
+  accessTier: "private",
+  endpoint: "/api/pmtiles/session"
 });
+
+if (!result.ok) {
+  throw new Error("Private PMTiles access was not granted.");
+}
 ```
 
-Only add the private layer if the response is successful. Public layers may skip
-the call or call `tier=public`, which should return `204`.
+Only add the private layer if the result is successful. Public layers may skip
+the call or use `accessTier: "public"`, which does not contact the endpoint.
 
 PMTiles byte-range requests must include credentials so the browser sends the
 cross-site cookie to `tiles.skytruth.org`. If the PMTiles library hides
@@ -104,7 +126,7 @@ directory, and tile range request includes:
 ```ts
 fetch(url, {
   headers: { range: "bytes=start-end" },
-  credentials: "include"
+  credentials: getPmtilesFetchCredentials(url)
 });
 ```
 

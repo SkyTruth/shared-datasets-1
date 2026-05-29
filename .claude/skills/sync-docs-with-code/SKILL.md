@@ -1,6 +1,6 @@
 ---
 name: sync-docs-with-code
-description: Use when keeping repository documentation aligned with current code after merged PRs, release work, scheduled maintenance, or explicit docs-drift requests. Inspect implementation, tests, CLIs, workflows, Terraform, schemas, generated outputs, and repo conventions first; then update authoritative docs, regenerate derived docs when applicable, validate checks, and report remaining code/docs mismatches. In shared-datasets-1, applies to README.md, AGENTS.md, docs/, docs/assets/, ingestion READMEs, api/python/README.md, templates, repo-local skills, catalog generation, and GitHub workflow documentation.
+description: Use when keeping repository documentation aligned with current code after merged PRs, release work, scheduled maintenance, or explicit docs-drift requests. Inspect implementation, tests, CLIs, workflows, Terraform, schemas, generated outputs, and repo conventions first; then update authoritative docs, regenerate derived docs when applicable, validate checks, and report remaining code/docs mismatches. In shared-datasets-1, applies to README.md, AGENTS.md, docs/, docs/assets/, ingestion READMEs, api/python/README.md, api/typescript/README.md, templates, repo-local skills, catalog generation, and GitHub workflow documentation.
 ---
 
 # Sync Docs With Code
@@ -28,7 +28,11 @@ evidence. Treat docs as user-facing contracts.
    - Use `docs/standards/*` for durable dataset rules.
    - Use `docs/assets/{asset-slug}.md` for asset metadata and bucket README
      content; do not hand-edit `catalog/shared-datasets-catalog.csv`.
-   - Use `api/python/README.md` for SDK and CLI usage.
+   - Use `api/python/README.md` for Python SDK and CLI usage.
+   - Use `api/typescript/README.md` for TypeScript SDK usage and package
+     contents.
+   - Use `.github/workflows/publish-typescript-sdk.yml` plus `README.md` for
+     TypeScript SDK npm release behavior.
    - Use `ingestion/*/README.md` for job-specific behavior.
    - Use `AGENTS.md` and `.claude/skills/*/SKILL.md` for agent workflow rules.
    - Use `templates/*` when generated bucket README structure changes.

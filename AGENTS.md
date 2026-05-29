@@ -164,6 +164,9 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
 | Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |
+| Python SDK usage | `api/python/README.md` |
+| TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
+| TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
 | Bucket/repo compliance audits | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Repo-alert commit messages | `.claude/skills/repo-alert-commit-messages/SKILL.md` |
 | Python environment alignment | `.claude/skills/align-virtual-environment/SKILL.md` |

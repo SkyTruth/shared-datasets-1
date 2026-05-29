@@ -28,8 +28,12 @@ const withQueryParam = (endpoint: string, key: string, value: string) => {
   const hashIndex = endpoint.indexOf('#');
   const base = hashIndex >= 0 ? endpoint.slice(0, hashIndex) : endpoint;
   const hash = hashIndex >= 0 ? endpoint.slice(hashIndex) : '';
-  const separator = base.includes('?') ? '&' : '?';
-  return `${base}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}${hash}`;
+  const queryIndex = base.indexOf('?');
+  const path = queryIndex >= 0 ? base.slice(0, queryIndex) : base;
+  const query = queryIndex >= 0 ? base.slice(queryIndex + 1) : '';
+  const params = new URLSearchParams(query);
+  params.set(key, value);
+  return `${path}?${params.toString()}${hash}`;
 };
 
 export const ensurePmtilesCdnSession = async ({
