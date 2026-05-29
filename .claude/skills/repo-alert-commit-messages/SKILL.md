@@ -99,6 +99,10 @@ Collect any `emoji:` values from recent fenced `repo-alert` blocks, including
 the current `HEAD` message when amending. Do not reuse any of those emojis. If
 the most obvious emoji is already present in those 30 messages, choose a fresh
 association that still fits the staged functionality.
+Prefer a fresh, memorable association over the most literal possible symbol
+when both are honest fits for the staged functionality. Adjacent metaphors,
+tooling vibes, or outcome-oriented emojis are welcome; keep the choice legible,
+not random or cute for its own sake.
 
 5. Append one or more fenced blocks exactly like:
 
@@ -113,7 +117,9 @@ why_excited: Manual publishes are faster, more repeatable, and easier to review.
 
 Fields:
 
-- `emoji`: one visual emoji that nods to the functionality.
+- `emoji`: one visual emoji that nods to the functionality or its impact.
+  The emoji does not need to be the literal object named by the feature; a
+  slightly creative association is allowed when it remains easy to explain.
   Do not use map or globe emojis, including `🗺️`, `🌍`, `🌎`, `🌏`, or `🌐`;
   these are overused in this repository and are not valid repo-alert choices.
   Do not use any emoji found in `repo-alert` blocks from the last 30 commit
