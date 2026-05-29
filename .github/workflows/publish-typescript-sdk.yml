@@ -5,13 +5,16 @@ on:
     branches:
       - main
     paths:
+      - "api/typescript/src/**"
+      - "api/typescript/README.md"
       - "api/typescript/package.json"
       - "api/typescript/package-lock.json"
+      - "api/typescript/tsconfig.json"
       - ".github/workflows/publish-typescript-sdk.yml"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
@@ -28,6 +31,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Allow package metadata bump
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -47,6 +58,15 @@ jobs:
 
           const outputPath = process.env.GITHUB_OUTPUT;
           const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const eventPath = process.env.GITHUB_EVENT_PATH;
+          const eventName = process.env.GITHUB_EVENT_NAME;
+          const releasePatterns = [
+            "api/typescript/src/",
+            "api/typescript/README.md",
+            "api/typescript/package.json",
+            "api/typescript/package-lock.json",
+            "api/typescript/tsconfig.json"
+          ];
 
           const parseSemver = (version) => {
             const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/);
@@ -95,6 +115,40 @@ jobs:
             return comparePrerelease(parsedLeft.prerelease, parsedRight.prerelease);
           };
 
+          const bumpVersion = (version, bumpType) => {
+            const parsed = parseSemver(version);
+            if (bumpType === "major") {
+              return `${parsed.major + 1}.0.0`;
+            }
+            if (bumpType === "minor") {
+              return `${parsed.major}.${parsed.minor + 1}.0`;
+            }
+            return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}`;
+          };
+
+          const readEvent = () => {
+            if (!eventPath || !fs.existsSync(eventPath)) return {};
+            return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+          };
+
+          const changedFiles = (event) => {
+            const files = new Set();
+            for (const commit of event.commits || []) {
+              for (const field of ["added", "modified", "removed"]) {
+                for (const file of commit[field] || []) {
+                  files.add(file);
+                }
+              }
+            }
+            return [...files];
+          };
+
+          const requestedBumpType = (event) => {
+            const messages = (event.commits || []).map((commit) => commit.message || "").join("\n");
+            const match = messages.match(/(?:typescript-sdk-release|typescript-sdk-bump):\s*(major|minor|patch)|\[typescript-sdk:(major|minor|patch)\]/i);
+            return (match?.[1] || match?.[2] || "minor").toLowerCase();
+          };
+
           let publishedVersion = "";
           try {
             publishedVersion = JSON.parse(
@@ -111,22 +165,40 @@ jobs:
             }
           }
 
+          const event = readEvent();
+          const packageContentChanged =
+            eventName === "push" &&
+            changedFiles(event).some((file) => releasePatterns.some((pattern) => file === pattern || file.startsWith(pattern)));
           const comparison = publishedVersion ? compareSemver(pkg.version, publishedVersion) : 1;
-          if (comparison < 0) {
-            throw new Error(`${pkg.name} package.json version ${pkg.version} is lower than published npm version ${publishedVersion}`);
-          }
-
-          const shouldPublish = comparison > 0;
+          const shouldBump = comparison <= 0 && packageContentChanged;
+          const bumpType = shouldBump ? requestedBumpType(event) : "";
+          const bumpBaseVersion =
+            publishedVersion && compareSemver(publishedVersion, pkg.version) >= 0 ? publishedVersion : pkg.version;
+          const targetVersion = shouldBump ? bumpVersion(bumpBaseVersion, bumpType) : pkg.version;
+          const shouldPublish = shouldBump || comparison > 0;
           fs.appendFileSync(outputPath, `package_name=${pkg.name}\n`);
           fs.appendFileSync(outputPath, `local_version=${pkg.version}\n`);
           fs.appendFileSync(outputPath, `published_version=${publishedVersion || "none"}\n`);
+          fs.appendFileSync(outputPath, `target_version=${targetVersion}\n`);
+          fs.appendFileSync(outputPath, `should_bump=${shouldBump}\n`);
           fs.appendFileSync(outputPath, `should_publish=${shouldPublish}\n`);
           console.log(
-            shouldPublish
-              ? `Publishing ${pkg.name} ${pkg.version}; published version is ${publishedVersion || "none"}.`
-              : `Skipping publish; ${pkg.name} ${pkg.version} is already published.`
+            shouldBump
+              ? `Bumping ${pkg.name} from ${pkg.version} to ${targetVersion} before publish; published version is ${publishedVersion || "none"}.`
+              : shouldPublish
+                ? `Publishing ${pkg.name} ${pkg.version}; published version is ${publishedVersion || "none"}.`
+                : `Skipping publish; no package-content change requires a new version and ${pkg.name} ${pkg.version} is already published.`
           );
           NODE
+
+      - name: Bump package metadata
+        if: steps.release-version.outputs.should_bump == 'true'
+        working-directory: api/typescript
+        run: |
+          npm version --no-git-tag-version "${{ steps.release-version.outputs.target_version }}"
+          git add package.json package-lock.json
+          git commit -m "Bump TypeScript SDK to ${{ steps.release-version.outputs.target_version }} [skip ci]"
+          git push
 
       - name: Install dependencies
         if: steps.release-version.outputs.should_publish == 'true'

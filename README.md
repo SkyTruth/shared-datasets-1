@@ -581,11 +581,19 @@ npm publish --access public
 Trusted Publishing is configured for follow-up releases; do not create a
 long-lived `NPM_TOKEN` for this workflow. Follow-up releases use the
 `Publish TypeScript SDK` workflow. It runs automatically on pushes to `main`
-that change `api/typescript/package.json`, `api/typescript/package-lock.json`,
-or the workflow file, and it can still be run manually from `main`. Before
-publishing, the workflow compares `api/typescript/package.json` to the current
-npm registry version. It publishes only when the repo version is greater, skips
-when that version is already published, and fails if the repo version is lower.
+that change publishable package content under `api/typescript/src/`,
+`api/typescript/README.md`, `api/typescript/package.json`,
+`api/typescript/package-lock.json`, `api/typescript/tsconfig.json`, or the
+workflow file, and it can still be run manually from `main`. Before publishing,
+the workflow compares `api/typescript/package.json` to the current npm registry
+version. If the repo version is not ahead of npm and publishable package content
+changed, the workflow bumps `package.json` and `package-lock.json`, commits the
+metadata update back to `main`, and publishes that version. Automatic bumps are
+minor by default; use a commit message trailer such as
+`typescript-sdk-release: patch`, `typescript-sdk-release: minor`, or
+`typescript-sdk-release: major` when a package-content change needs a specific
+semver level.
+
 When publishing, the workflow uses Node 24, runs `npm ci`, `npm test`,
 `npm pack --dry-run`, and then publishes through npm's GitHub Actions OIDC
 handshake:
