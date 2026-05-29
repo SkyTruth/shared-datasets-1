@@ -262,11 +262,10 @@ Minimum consumer contract:
 
 Upstream shared-datasets-1 infrastructure changes are separate from this repo's
 PR. For a new private-PMTiles environment, open an upstream
-shared-datasets-1 PR that adds the exact browser origin to
-`pmtiles_cdn_allowed_origins` and grants this app's endpoint runtime service
-account access to the signing-key secret. Let the protected shared-datasets-1
-production workflow apply after merge; do not run a local
-production Terraform apply.
+shared-datasets-1 PR that adds the exact browser origin to the credentialed CDN
+CORS allowlist and grants this app's endpoint runtime service account access to
+the signing-key secret. Let the protected shared-datasets-1 production workflow
+apply after merge; do not run a local production Terraform apply.
 
 Roll out in this order: replace direct PMTiles URLs with catalog-derived
 `pmtiles_url`, bump any layer-config cache key, add the session endpoint, add
@@ -352,19 +351,10 @@ Grant this repo/app runtime service account `roles/storage.objectViewer` on
 ```
 
 Prefer a repo-provisioned reader service account when that is this repo's
-established deployment model:
-
-```text
-Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
-30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
-SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
-```
-
-Those three accounts are the current production reader accounts verified in
-Terraform and live IAM on 2026-05-17. Do not assume a Monitor reader account
-exists; if Monitor or another project needs a repo-provisioned reader, add it
-through the upstream shared-datasets-1 Terraform review path or grant the
-existing runtime identity instead.
+established deployment model. Use the upstream infrastructure outputs or
+internal maintainer runbook for exact principal names. Do not assume a reader
+account exists for a new project; add one through the upstream shared-datasets-1
+Terraform review path or grant the existing runtime identity instead.
 
 Otherwise grant the existing runtime service account `roles/storage.objectViewer`
 on the shared bucket. Run backend jobs/services as the chosen runtime identity,

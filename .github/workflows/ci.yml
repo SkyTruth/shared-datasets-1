@@ -14,6 +14,7 @@ env:
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
 
 jobs:
   tests:
@@ -37,8 +38,19 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: api/typescript/package-lock.json
+
       - name: Sync dependencies
         run: uv sync --locked --all-groups
+
+      - name: Install TypeScript package dependencies
+        working-directory: api/typescript
+        run: npm ci
 
       - name: Check dataset admission evidence
         if: github.event_name == 'pull_request'
@@ -66,6 +78,10 @@ jobs:
         run: |
           mkdir -p test-results
           uv run pytest --junitxml=test-results/pytest.xml
+
+      - name: Run TypeScript package tests
+        working-directory: api/typescript
+        run: npm test
 
       - name: Upload test results
         if: failure()

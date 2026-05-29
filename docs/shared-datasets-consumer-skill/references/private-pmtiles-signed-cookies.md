@@ -11,56 +11,26 @@ service account access to the shared signing-key secret from the upstream
 `shared-datasets-1` project; do not create or distribute a service account key
 file.
 
-Current shared signing material:
+Shared signing material:
 
 ```text
-Secret: projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest
+Secret: configured PMTiles CDN signing-key secret in the upstream project
 Cloud CDN key name: shared-datasets-pmtiles-v1
 Signed prefix: https://tiles.skytruth.org/pmtiles/private/
 ```
 
 In the upstream shared-datasets-1 Terraform, add this app's signer principal to
 the signer allowlist used by
-`google_secret_manager_secret_iam_member.pmtiles_cdn_cookie_signers` in
-`terraform/envs/prod/pmtiles_cdn.tf`. The signer members come from the
-historically named `cerulean_pmtiles_cookie_signer_service_accounts` variable in
-`terraform/envs/prod/variables.tf` and
-`terraform/envs/prod/production.auto.tfvars`.
+the PMTiles CDN cookie-signer IAM binding. For this repo or app, use its real
+runtime service account. A reader service account is not automatically the
+signer; the signer should be the service account actually running the endpoint
+that issues the cookie.
 
-The Cerulean rollout used:
-
-```hcl
-cerulean_pmtiles_cookie_signer_service_accounts = [
-  "serviceAccount:734798842681-compute@developer.gserviceaccount.com",
-]
-```
-
-For this repo or app, use its real runtime service account. The 30x30 reader
-service account is
-`shared-datasets-reader@x30-399415.iam.gserviceaccount.com`, but the signer
-should be the service account actually running the endpoint that issues the
-cookie.
-
-CDN backend-bucket mode requires exact browser origins in
-`pmtiles_cdn_allowed_origins`; credentialed CORS cannot use `*`,
-`https://*.skytruth.org`, or the redirector-only
-`pmtiles_cdn_allowed_origin_regexes` regex list. Add each browser origin before
-deploying private PMTiles in that environment.
-
-Verified on 2026-05-17, the exact CDN allowlist was:
-
-```text
-http://localhost:3000
-https://localhost:3000
-https://feature-three.cerulean.skytruth.org
-https://test.cerulean.skytruth.org
-https://develop.cerulean.skytruth.org
-https://cerulean.skytruth.org
-https://30x30.skytruth.org
-https://monitor.skytruth.org
-```
-
-Re-check Terraform before relying on that list.
+CDN backend-bucket mode requires exact browser origins; credentialed CORS
+cannot use `*`, `https://*.skytruth.org`, or redirector-only regex lists. Add
+each browser origin before deploying private PMTiles in that environment.
+Re-check the upstream infrastructure review materials before relying on any
+origin list.
 
 Any upstream shared-datasets-1 Terraform change must land through a reviewed PR
 and the protected production workflow after merge, not a local apply.
@@ -82,8 +52,8 @@ Required behavior:
   a more specific entitlement model.
 - Unknown `tier` returns `400`.
 - Unauthorized private users return `401` or `403`.
-- Authorized private users read
-  `projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest`.
+- Authorized private users read the configured PMTiles CDN signing key from the
+  backend secret store.
 - Decode the secret value from base64url to the raw 16-byte Cloud CDN key.
 - Sign `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
   URLs.
@@ -96,12 +66,12 @@ The cookie must be named `Cloud-CDN-Cookie` and set with:
 
 ```text
 Domain=.skytruth.org
-Path=/pmtiles
+Path=/pmtiles/private
 Secure
 HttpOnly
 SameSite=None
-Max-Age=3600
-Expires=<1 hour from now>
+Max-Age=86400
+Expires=<24 hours from now>
 ```
 
 Cloud CDN signed-cookie policy fields must be in this order:

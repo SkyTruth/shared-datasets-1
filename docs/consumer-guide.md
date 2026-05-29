@@ -1,7 +1,7 @@
 ---
 title: SkyTruth Shared Datasets Consumer Guide
-description: How downstream applications discover, fetch, cite, and display shared SkyTruth datasets, including PMTiles CDN signed cookies and the Python SDK.
-last_updated: 2026-05-12
+description: How downstream applications discover, fetch, cite, and display shared SkyTruth datasets, including PMTiles CDN signed cookies and the Python and TypeScript SDKs.
+last_updated: 2026-05-29
 audience: SkyTruth application developers, data pipeline owners, and map frontend maintainers
 ---
 
@@ -15,7 +15,8 @@ for consumers.
 
 This guide is for downstream applications and data pipelines. It explains the
 consumer contract, the PMTiles CDN and signed-cookie model, and the Git-hosted
-Python SDK. Maintainer-only publishing and infrastructure procedures live in
+Python and TypeScript SDKs. Maintainer-only publishing and infrastructure
+procedures live in
 [GCP asset operations](./gcp-asset-operations.md),
 [PMTiles browser access](./pmtiles-cdn.md), and
 [catalog web preview](./catalog-web-preview.md).
@@ -26,8 +27,8 @@ Choose the smallest integration that matches your runtime.
 
 | Scenario | Do this |
 |---|---|
-| Browser displays known public PMTiles | Build `https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles`. No SDK or cookie is required. |
-| Browser may display private PMTiles | Build the tiered CDN URL, add a backend `/api/pmtiles/session` endpoint, and send PMTiles range requests with `credentials: "include"`. |
+| Browser displays known public PMTiles | Build `https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles`, or use the TypeScript helper package for catalog-derived URLs. No cookie is required. |
+| Browser may display private PMTiles | Use the TypeScript helper package, add a backend `/api/pmtiles/session` endpoint, and send PMTiles range requests with `credentials: "include"`. |
 | Backend needs a data file | Install `skytruth-shared-datasets[gcs]` from GitHub and call `fetch_dataset(slug, format)` under a runtime service account. |
 | Backend needs a URI or browser URL but not bytes | Call `resolve_dataset(slug, format)` and use the returned `DatasetRef`. |
 | App needs search or layer config | Fetch the public catalog from `https://tiles.skytruth.org/_catalog/`, or have a backend load the catalog with ADC and expose an app-owned config API. Preserve `access_tier`, `citation`, and `last_updated`. |
@@ -134,7 +135,7 @@ For application code, use one of these sources:
 | Source | Best for | Notes |
 |---|---|---|
 | Catalog CSV | Python SDK, backend services, simple scripts, CI checks | Stable contract, easy to parse. Load from `tiles.skytruth.org/_catalog/`, GCS with ADC, or the repo checkout. |
-| Catalog JSON | Browser apps and service config APIs | Includes web-friendly fields such as `pmtiles_url`, docs URLs, optional bounds, geometry type, and release metadata. Serve it from `tiles.skytruth.org/_catalog/`, your app, or a docs site, not from direct public GCS. |
+| Catalog JSON | Browser apps, TypeScript helpers, and service config APIs | Includes web-friendly fields such as `pmtiles_url`, docs URLs, optional bounds, geometry type, and release metadata. Serve it from `tiles.skytruth.org/_catalog/`, your app, or a docs site, not from direct public GCS. |
 | Asset Markdown docs | Human-readable schema, source notes, caveats, citations | Use for docs pages and analyst-facing context. |
 
 Important catalog fields:
@@ -217,8 +218,8 @@ The private serving contract is:
 Signed prefix: https://tiles.skytruth.org/pmtiles/private/
 Cookie name:   Cloud-CDN-Cookie
 Key name:      shared-datasets-pmtiles-v1
-Secret:        projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest
-TTL:           1 hour
+Signing key:   loaded by the backend from its configured secret store
+TTL:           24 hours
 ```
 
 The cookie is scoped to the private PMTiles prefix, not to an individual asset.
@@ -255,12 +256,12 @@ Cookie attributes:
 
 ```text
 Domain=.skytruth.org
-Path=/pmtiles
+Path=/pmtiles/private
 Secure
 HttpOnly
 SameSite=None
-Max-Age=3600
-Expires=<1 hour from now>
+Max-Age=86400
+Expires=<24 hours from now>
 ```
 
 Set `Cache-Control: no-store` on the session response. Never log or return the
@@ -357,23 +358,11 @@ Credentialed PMTiles requests require exact allowed origins. Wildcards such as
 `*` and literal wildcard domains such as `https://*.skytruth.org` do not work
 with credentialed browser requests.
 
-Current shared-datasets CDN configuration allows these origins:
-
-```text
-http://localhost:3000
-https://localhost:3000
-https://feature-three.cerulean.skytruth.org
-https://test.cerulean.skytruth.org
-https://develop.cerulean.skytruth.org
-https://cerulean.skytruth.org
-https://30x30.skytruth.org
-https://monitor.skytruth.org
-```
-
-If your frontend origin is not listed, request a shared-datasets Terraform PR to
-add the exact origin to `pmtiles_cdn_allowed_origins`. Deploy that change
-through the protected production workflow before relying on private PMTiles in
-that environment.
+The exact CDN allowed-origin list is operational infrastructure, not a consumer
+contract. If your frontend origin is not already approved, request a
+shared-datasets infrastructure PR that adds the exact origin through the
+protected production workflow before relying on private PMTiles in that
+environment.
 
 ### CDN Troubleshooting
 
@@ -382,11 +371,37 @@ that environment.
 | Public PMTiles URL returns `404` | Slug is wrong, asset is not active, asset has no PMTiles, or tier does not match catalog. | Resolve from catalog instead of building from stale config. |
 | Private PMTiles returns `403` | Missing, expired, malformed, or unauthorized cookie. | Re-call the session endpoint and verify the PMTiles range request includes credentials. |
 | Browser says credentials are not allowed by CORS | Origin is not exactly allowlisted or response inherited non-credentialed CORS headers. | Add the exact origin in shared-datasets Terraform and redeploy. |
-| Cookie exists but is not sent | Cookie domain/path/SameSite/Secure settings are wrong, or request is not HTTPS. | Use `Domain=.skytruth.org`, `Path=/pmtiles`, `SameSite=None`, `Secure`, and HTTPS. |
+| Cookie exists but is not sent | Cookie domain/path/SameSite/Secure settings are wrong, or request is not HTTPS. | Use `Domain=.skytruth.org`, `Path=/pmtiles/private`, `SameSite=None`, `Secure`, and HTTPS. |
 | PMTiles library still fails after session succeeds | Internal byte-range requests are missing `credentials: "include"`. | Override the PMTiles fetch implementation. |
 | Private layer works locally but not in deployment | Deployment origin is missing from the CDN allowlist. | Add the deployed origin exactly. |
 
-## Git And SDK
+## Git And SDKs
+
+The TypeScript package is distributed as `@skytruth/shared-datasets` on npm.
+Use it for browser-safe catalog JSON parsing, PMTiles URL credential selection,
+browser CDN session requests, access-tier lookups, and server-only Cloud CDN
+cookie signing helpers. The main entrypoint is browser-safe:
+
+```ts
+import {
+  ensurePmtilesCdnSession,
+  getPmtilesFetchCredentials,
+  resolveSharedDatasetPmtilesRef
+} from "@skytruth/shared-datasets";
+```
+
+The server entrypoint is for backend routes only:
+
+```ts
+import {
+  decodePmtilesCdnSigningKey,
+  getPrivatePmtilesSessionCookies
+} from "@skytruth/shared-datasets/server";
+```
+
+The TypeScript package does not own application authentication, routes, secret
+stores, logging, UI behavior, or HTTP error translation. Keep those in the
+consumer application.
 
 The Python SDK is distributed from the `SkyTruth/shared-datasets-1` GitHub
 repository, not PyPI. Use it for backend services, batch jobs, scheduled
@@ -441,24 +456,17 @@ The consuming runtime service account needs:
 roles/storage.objectViewer on gs://skytruth-shared-datasets-1
 ```
 
-The shared-datasets Terraform configuration can provision project-specific
-reader service accounts named `shared-datasets-reader`. Current configured
-consumer identities include:
-
-```text
-Cerulean:     shared-datasets-reader@cerulean-338116.iam.gserviceaccount.com
-30x30:        shared-datasets-reader@x30-399415.iam.gserviceaccount.com
-SkyTruthTech: shared-datasets-reader@skytruth-tech.iam.gserviceaccount.com
-```
-
-If your project has an existing runtime identity, it is also acceptable to grant
-that identity bucket read access. Run the service, job, or CI workflow as the
-chosen identity, then use the SDK without credential setup code.
+The shared-datasets infrastructure can provision project-scoped reader service
+accounts when a consumer project needs one. If your project has an existing
+runtime identity, it is also acceptable to grant that identity bucket read
+access. Use the approved internal infrastructure outputs or maintainer runbook
+for exact principal names. Run the service, job, or CI workflow as the chosen
+identity, then use the SDK without credential setup code.
 
 Private PMTiles cookie signing needs a separate grant:
 
 ```text
-roles/secretmanager.secretAccessor on projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key
+roles/secretmanager.secretAccessor on the PMTiles CDN signing-key secret
 ```
 
 Grant that only to the backend runtime that issues cookies.
@@ -614,7 +622,7 @@ Use this when a logged-in user may view private shared PMTiles.
 1. Resolve `asset_slug` and `access_tier` from the catalog.
 2. Add an authorized backend session endpoint.
 3. Grant the backend runtime service account access to the signing-key secret.
-4. Add the frontend origin to `pmtiles_cdn_allowed_origins`.
+4. Request an approved exact-origin CORS update for the frontend origin.
 5. Before mounting a private layer, call the session endpoint with
    `credentials: "include"`.
 6. Ensure every PMTiles range request also uses `credentials: "include"`.
@@ -676,12 +684,12 @@ Backend SDK:
 
 Private cookie signing:
 
-- The signer runtime has `roles/secretmanager.secretAccessor` on the signing
-  key secret.
+- The signer runtime has `roles/secretmanager.secretAccessor` on the configured
+  signing-key secret.
 - The secret value is decoded before HMAC use.
 - The signed prefix is exactly `https://tiles.skytruth.org/pmtiles/private/`.
 - The policy fields are ordered `URLPrefix`, `Expires`, `KeyName`, `Signature`.
-- The cookie uses `Domain=.skytruth.org`, `Path=/pmtiles`, `Secure`,
+- The cookie uses `Domain=.skytruth.org`, `Path=/pmtiles/private`, `Secure`,
   `HttpOnly`, and `SameSite=None`.
 - Secret material and cookie values are not logged.
 - Deployed browser origins are exactly allowlisted for credentialed CORS.
@@ -742,13 +750,14 @@ Do:
 - Pin the SDK dependency for production.
 - Record `DatasetRef.resolved_id` for reproducible runs.
 - Keep PMTiles browser access on `tiles.skytruth.org`.
-- Scope private cookies to `/pmtiles` and a short TTL.
+- Scope private cookies to `/pmtiles/private` and a 24-hour TTL.
 - Request exact-origin CORS updates before deploying private PMTiles to a new
   frontend domain.
 
 ## References
 
 - [PMTiles browser access](./pmtiles-cdn.md)
+- TypeScript helpers: `@skytruth/shared-datasets` on npm
 - [Python SDK README](https://github.com/SkyTruth/shared-datasets-1/tree/main/api/python)
 - [Catalog web preview](./catalog-web-preview.md)
 - [GCP asset operations](./gcp-asset-operations.md)

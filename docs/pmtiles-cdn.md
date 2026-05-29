@@ -58,12 +58,9 @@ The production Terraform stack owns:
   controlled by `shared_bucket_public_object_viewer_enabled`. Keep it enabled
   while managed-folder grants are first applied; set it to `false` only after
   public managed-folder coverage has been planned, applied, and verified.
-- A Secret Manager secret container named `pmtiles-cdn-signed-request-key`.
+- A Secret Manager secret container for the PMTiles CDN signing key.
 - Optional `roles/secretmanager.secretAccessor` grants for consumer runtime
-  service accounts listed in
-  `cerulean_pmtiles_cookie_signer_service_accounts`. The variable name is
-  Cerulean-specific for historical reasons; use it for additional approved
-  signer runtimes unless it is renamed in a separate Terraform cleanup.
+  service accounts listed in the PMTiles cookie-signer allowlist.
 
 The raw Cloud CDN signing key value is intentionally not managed by Terraform.
 Do not put signed request key material into Terraform variables, resources,
@@ -82,13 +79,10 @@ As of May 12, 2026:
   remains freely readable after direct public GCS access is removed.
 - The backend bucket has signed request key
   `shared-datasets-pmtiles-v1`.
-- Secret Manager secret `pmtiles-cdn-signed-request-key` has enabled version
-  `1`.
-- Cloud CDN fill service account
-  `service-12695949518@cloud-cdn-fill.iam.gserviceaccount.com` has
-  `roles/storage.objectViewer` on `gs://skytruth-shared-datasets-1`.
-- Cerulean runtime service account
-  `734798842681-compute@developer.gserviceaccount.com` has
+- The PMTiles CDN signing-key secret has an enabled version.
+- The Cloud CDN fill service account has `roles/storage.objectViewer` on
+  `gs://skytruth-shared-datasets-1`.
+- Approved consumer runtime service accounts have
   `roles/secretmanager.secretAccessor` on the signing-key secret.
 
 Managed-folder `allUsers` grants for direct GCS reads are a temporary
@@ -149,19 +143,23 @@ version for authorized consumer cookie-signing runtimes:
 
 ```bash
 WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
+GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?}"
+PMTILES_CDN_BACKEND_BUCKET="${PMTILES_CDN_BACKEND_BUCKET:?}"
+PMTILES_CDN_SIGNING_KEY_NAME="${PMTILES_CDN_SIGNING_KEY_NAME:-shared-datasets-pmtiles-v1}"
+PMTILES_CDN_SIGNING_SECRET_ID="${PMTILES_CDN_SIGNING_SECRET_ID:?}"
 KEY_FILE="$WORK_ROOT/_scratch/pmtiles-cdn-key-$(date -u +%Y%m%dT%H%M%SZ).txt"
 mkdir -p "$(dirname "$KEY_FILE")"
 umask 077
 head -c 16 /dev/urandom | base64 | tr +/ -_ > "$KEY_FILE"
 
-gcloud compute backend-buckets add-signed-url-key shared-datasets-pmtiles-cdn \
-  --key-name=shared-datasets-pmtiles-v1 \
+gcloud compute backend-buckets add-signed-url-key "$PMTILES_CDN_BACKEND_BUCKET" \
+  --key-name="$PMTILES_CDN_SIGNING_KEY_NAME" \
   --key-file="$KEY_FILE" \
-  --project=shared-datasets-1
+  --project="$GOOGLE_CLOUD_PROJECT"
 
-gcloud secrets versions add pmtiles-cdn-signed-request-key \
+gcloud secrets versions add "$PMTILES_CDN_SIGNING_SECRET_ID" \
   --data-file="$KEY_FILE" \
-  --project=shared-datasets-1
+  --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
 Delete `$KEY_FILE` after the key has been installed and verified. Because this
@@ -172,53 +170,35 @@ After adding the key, confirm that the Google-managed Cloud CDN fill service
 account exists:
 
 ```bash
-PROJECT_NUMBER=$(gcloud projects describe shared-datasets-1 \
+PROJECT_NUMBER=$(gcloud projects describe "$GOOGLE_CLOUD_PROJECT" \
   --format='value(projectNumber)')
 
 gcloud iam service-accounts describe \
   service-${PROJECT_NUMBER}@cloud-cdn-fill.iam.gserviceaccount.com \
-  --project=shared-datasets-1
+  --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
 Then set `pmtiles_cdn_grant_fill_service_account=true` in Terraform so the
 service account can read PMTiles after public GCS access is removed. Open a PR
 and let the protected workflow apply after review and merge.
 
-Grant consumer runtime access to the signing secret in the same PR. The
-Cerulean rollout used the current UI runtime service account:
+Grant consumer runtime access to the signing secret in the same PR. Use the
+runtime service account that serves the cookie endpoint. Do not assume the
+repo-provisioned reader account is the signer unless that account actually runs
+the endpoint.
+HTTPS SkyTruth subdomains can be allowed by regex only while the temporary
+Cloud Run redirector serves `/pmtiles/*`. The external Cloud CDN backend-bucket
+URL map cannot use URL-map CORS regexes, and Cloud Armor edge policies on
+backend buckets cannot evaluate request-header expressions, so CDN mode
+requires exact browser origins in the credentialed CDN CORS allowlist. Add each
+non-local browser origin explicitly before CDN cutover. Credentialed CORS must
+not use `*` or a literal `https://*.skytruth.org` origin. The exact CDN
+allowlist is operational infrastructure; use internal Terraform outputs or
+maintainer runbooks to verify it.
 
-```hcl
-cerulean_pmtiles_cookie_signer_service_accounts = [
-  "serviceAccount:734798842681-compute@developer.gserviceaccount.com",
-]
-```
-
-For another repo such as 30x30, replace that member with the runtime service
-account that serves the cookie endpoint. Do not assume the repo-provisioned
-reader account is the signer unless that account actually runs the endpoint.
-HTTPS SkyTruth subdomains are allowed through the
-`pmtiles_cdn_allowed_origin_regexes` value only while the temporary Cloud Run
-redirector serves `/pmtiles/*`. The external Cloud CDN backend-bucket URL map
-cannot use URL-map CORS regexes, and Cloud Armor edge policies on backend
-buckets cannot evaluate request-header expressions, so CDN mode requires exact
-browser origins in `pmtiles_cdn_allowed_origins`. Add each non-local browser
-origin explicitly before CDN cutover. Credentialed CORS must not use `*` or a
-literal `https://*.skytruth.org` origin.
-
-The current exact CDN allowlist is:
-
-- `http://localhost:3000`
-- `https://localhost:3000`
-- `https://feature-three.cerulean.skytruth.org`
-- `https://test.cerulean.skytruth.org`
-- `https://develop.cerulean.skytruth.org`
-- `https://cerulean.skytruth.org`
-- `https://30x30.skytruth.org`
-- `https://monitor.skytruth.org`
-
-The shared bucket CORS origins use the same exact list so backend-bucket CDN
-range responses do not inherit a wildcard `Access-Control-Allow-Origin` from
-GCS when requests include credentials.
+The shared bucket CORS origins should use the same exact list so backend-bucket
+CDN range responses do not inherit a wildcard `Access-Control-Allow-Origin`
+from GCS when requests include credentials.
 
 Keep redirector regexes free of capture groups when possible; Cloud Armor
 rejected capture groups during testing, and non-capturing groups are portable.
@@ -249,13 +229,14 @@ Any consumer that may display private PMTiles should expose
 - Returns `204` without a cookie for `tier=public`.
 - Requires an authenticated session for `tier=private`.
 - Allows private PMTiles to SkyTruth or admin users for the first rollout.
-- Reads
-  `projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest`.
+- Reads the configured PMTiles CDN signing key from the consumer backend's
+  secret store.
 - Signs `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
   object URLs.
 - Uses key name `shared-datasets-pmtiles-v1`.
-- Sets `Cloud-CDN-Cookie` with `Domain=.skytruth.org`, `Path=/pmtiles`,
-  `Secure`, `HttpOnly`, `SameSite=None`, and a 1-hour TTL.
+- Sets `Cloud-CDN-Cookie` with `Domain=.skytruth.org`,
+  `Path=/pmtiles/private`,
+  `Secure`, `HttpOnly`, `SameSite=None`, and a 24-hour TTL.
 - Returns `Cache-Control: no-store`.
 - Never logs or returns the key or cookie value.
 
@@ -318,15 +299,9 @@ CDN signed-cookie rollout:
 8. Verify public anonymous access and private signed-cookie access before
    declaring cutover complete.
 
-Use the current Cerulean UI runtime service account for this rollout:
-
-```text
-serviceAccount:734798842681-compute@developer.gserviceaccount.com
-```
-
-For later consumer rollouts, record the consumer runtime service account, exact
-origin, changed repo files, and validation results before asking shared-datasets
-to remove public origin access or switch serving mode.
+For consumer rollouts, record the approved consumer runtime service account,
+exact origin, changed repo files, and validation results before asking
+shared-datasets to remove public origin access or switch serving mode.
 
 ## Consumer Patch Recipe
 
@@ -371,10 +346,10 @@ Apply this recipe to any downstream repo, including 30x30:
 The signed cookie must be scoped to:
 
 ```text
-Domain=.skytruth.org; Path=/pmtiles; Secure; HttpOnly; SameSite=None
+Domain=.skytruth.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None
 ```
 
-Use a one-hour TTL for the first rollout. Do not log the secret bytes, HMAC
+Use a 24-hour TTL. Do not log the secret bytes, HMAC
 input key, HMAC output, or final cookie value.
 
 ## Validation

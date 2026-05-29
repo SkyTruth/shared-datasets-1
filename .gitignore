@@ -2,6 +2,7 @@
 .venv/
 .python-version
 .uv-cache/
+node_modules/
 
 # Python bytecode and test/build artifacts
 __pycache__/

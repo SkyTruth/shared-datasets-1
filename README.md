@@ -39,7 +39,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Tiered PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
-| Access protocols / APIs | `api/` and `docs/` |
+| Access protocols / APIs | `api/python/`, `api/typescript/`, and `docs/` |
 
 When instructions conflict, follow this order:
 
@@ -111,6 +111,8 @@ When instructions conflict, follow this order:
 │   └── cron_run.template.json
 ├── terraform/
 ├── api/
+│   ├── python/
+│   └── typescript/
 └── .github/
     └── PULL_REQUEST_TEMPLATE.md
 ```
@@ -359,9 +361,8 @@ extra deny backstop with `canonical_mutation_deny_policy_enabled=true`.
 
 `_scratch/` is noncanonical. Do not cite scratch objects as durable shared
 dataset paths, and do not treat scratch staging as approval to publish. Emergency
-break-glass mutation is reserved for
-`shared-datasets-breakglass@skytruth.org` and must record changed paths,
-generations, and rationale.
+break-glass mutation is reserved for the approved break-glass identity and must
+record changed paths, generations, and rationale.
 
 ### Generated catalog and asset docs
 

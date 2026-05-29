@@ -22,7 +22,7 @@ from scripts.slack_notify import notify
 
 
 PROD_DIR = REPO_ROOT / "terraform" / "envs" / "prod"
-SLACK_CHANNEL = "projects/shared-datasets-1/notificationChannels/6831586092945135667"
+SLACK_CHANNEL = os.environ.get("SHARED_DATASETS_TERRAFORM_NOTIFICATION_CHANNEL", "")
 DEFAULT_TERRAFORM = "/tmp/terraform-1.8.5/terraform" if Path("/tmp/terraform-1.8.5/terraform").exists() else "terraform"
 
 
@@ -79,7 +79,8 @@ def parse_var_args(var_args: Sequence[str]) -> dict[str, str]:
 
 def default_vars(existing: dict[str, str], *, runner: Any = subprocess.run) -> dict[str, str]:
     values = dict(existing)
-    values.setdefault("cron_alert_notification_channels", f'["{SLACK_CHANNEL}"]')
+    if SLACK_CHANNEL:
+        values.setdefault("cron_alert_notification_channels", f'["{SLACK_CHANNEL}"]')
     if "wdpa_monthly_image" not in values:
         values["wdpa_monthly_image"] = current_cloud_run_image("wdpa-monthly", runner=runner)
     if "sea_ice_daily_image" not in values:
