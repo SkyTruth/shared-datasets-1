@@ -56,17 +56,21 @@ search_fields:
   distinct_values: 345
   notes: Useful human-readable filter
 localized_names:
+  storage: localization_csv_v1
+  join_key: ext_id
+  localization_file: latest/example-asset-localizations.csv
   property_template: name_{locale_code}
   locale_code_format: bcp47_field_safe
-  fallback_locale: en
-  fallback_field: name_en
+  fallback_field: name
   translations:
   - locale_code: en
     field: name_en
+    review_state_field: name_en_review_state
     label: English
     review_state: source_provided
   - locale_code: es
     field: name_es
+    review_state_field: name_es_review_state
     label: Spanish
     review_state: machine_translated
 generated_group_id:
@@ -87,6 +91,10 @@ files:
   format: pmtiles
   role: companion
   purpose: Map tiles
+- path: latest/example-asset-localizations.csv
+  format: csv
+  role: localization
+  purpose: Feature display-name localizations joined into PMTiles
 - path: releases/YYYY-MM-DD/example-asset.fgb
   format: fgb
   role: release
@@ -214,8 +222,12 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["localized_name_locales"], ["en", "es"])
         self.assertEqual(asset["localized_name_review_states"], ["en:source_provided", "es:machine_translated"])
         self.assertEqual(asset["localized_names"]["available_locales"], ["en", "es"])
-        self.assertEqual(asset["localized_names"]["fallback_field"], "name_en")
+        self.assertEqual(asset["localized_names"]["storage"], "localization_csv_v1")
+        self.assertEqual(asset["localized_names"]["join_key"], "ext_id")
+        self.assertEqual(asset["localized_names"]["localization_file"], "latest/example-asset-localizations.csv")
+        self.assertEqual(asset["localized_names"]["fallback_field"], "name")
         self.assertEqual(asset["localized_names"]["translations"][1]["field"], "name_es")
+        self.assertEqual(asset["localized_names"]["translations"][1]["review_state_field"], "name_es_review_state")
         self.assertEqual(asset["localized_names"]["translations"][1]["review_state"], "machine_translated")
         self.assertEqual(asset["generated_group_id"]["column"], "shared_datasets_group_id")
         self.assertEqual(asset["generated_group_id"]["algorithm"], "shared-datasets-group-id:v1")

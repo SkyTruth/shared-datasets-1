@@ -178,6 +178,50 @@ Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
 explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles
 with GDAL and converts them with `pmtiles convert`.
 
+## Localized PMTiles sidecars
+
+Localized PMTiles use a same-asset CSV sidecar rather than localized columns in
+the canonical FGB. The FGB must have a unique nonblank `ext_id`; the
+localization CSV must have `ext_id`, fallback `name`, `name_review_state`, and
+optional `name_{locale_code}` / `name_{locale_code}_review_state` pairs.
+
+Seed missing rows from a freshly built FGB without overwriting existing
+translations:
+
+```bash
+uv run python scripts/localized_vector_asset.py seed-localizations \
+  --fgb "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.fgb" \
+  --ext-id-field ext_id \
+  --fallback-name-field source_name \
+  --localizations "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset-localizations.csv"
+```
+
+Validate the sidecar against the asset doc and FGB coverage:
+
+```bash
+uv run python scripts/localized_vector_asset.py validate-localizations \
+  --fgb ./example-asset.fgb \
+  --localizations ./example-asset-localizations.csv \
+  --asset-doc docs/assets/example-asset.md
+```
+
+Build PMTiles from the unchanged FGB geometry plus localization CSV:
+
+```bash
+uv run python scripts/localized_vector_asset.py build-pmtiles \
+  --fgb ./example-asset.fgb \
+  --localizations ./example-asset-localizations.csv \
+  --asset-slug example-asset \
+  --output ./example-asset.pmtiles
+```
+
+The helper streams FGB features through `ogr2ogr`, overlays `name` and declared
+nonblank `name_*` properties from the CSV, and sends the result to Tippecanoe.
+Review-state fields stay in the CSV and catalog metadata by default. For PR
+descriptions, `draft-publish-plan` can draft the data-object promotion list,
+including the translation-only shape that leaves `latest/{asset-slug}.fgb`
+unchanged.
+
 The helper does not upload anything. Stage manual publish candidates under
 `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` with
 `scripts/gcs_asset.py upload`, then reference those staged objects from an

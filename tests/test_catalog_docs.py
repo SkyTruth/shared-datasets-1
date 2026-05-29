@@ -71,17 +71,21 @@ search_fields:
   distinct_values: 345
   notes: Useful human-readable filter
 localized_names:
+  storage: localization_csv_v1
+  join_key: ext_id
+  localization_file: latest/example-asset-localizations.csv
   property_template: name_{locale_code}
   locale_code_format: bcp47_field_safe
-  fallback_locale: en
-  fallback_field: name_en
+  fallback_field: name
   translations:
   - locale_code: en
     field: name_en
+    review_state_field: name_en_review_state
     label: English
     review_state: source_provided
   - locale_code: es
     field: name_es
+    review_state_field: name_es_review_state
     label: Spanish
     review_state: machine_translated
 generated_group_id:
@@ -102,6 +106,10 @@ files:
   format: pmtiles
   role: companion
   purpose: Web map tiles
+- path: latest/example-asset-localizations.csv
+  format: csv
+  role: localization
+  purpose: Feature display-name localizations joined into PMTiles
 ---
 
 # Example Asset
@@ -232,23 +240,34 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertIn("row_count: 12345", rendered)
         self.assertIn("search_fields:", rendered)
         self.assertIn("localized_names:", rendered)
-        self.assertIn("fallback_field: name_en", rendered)
+        self.assertIn("fallback_field: name", rendered)
+        self.assertIn("storage: localization_csv_v1", rendered)
         self.assertIn("generated_group_id:", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
+        self.assertIn("| `latest/example-asset-localizations.csv` | `csv` | `localization` | Feature display-name localizations joined into PMTiles |", rendered)
 
     def test_localized_names_metadata_is_validated(self):
         metadata = {
+            "storage": "localization_csv_v1",
+            "join_key": "ext_id",
+            "localization_file": "latest/example-asset-localizations.csv",
             "property_template": "name_{locale_code}",
             "locale_code_format": "bcp47_field_safe",
-            "fallback_locale": "en",
-            "fallback_field": "name_en",
+            "fallback_field": "name",
             "translations": [
-                {"locale_code": "en", "field": "name_en", "label": "English", "review_state": "source_provided"},
+                {
+                    "locale_code": "en",
+                    "field": "name_en",
+                    "review_state_field": "name_en_review_state",
+                    "label": "English",
+                    "review_state": "source_provided",
+                },
                 {
                     "locale_code": "pt_br",
                     "field": "name_pt_br",
+                    "review_state_field": "name_pt_br_review_state",
                     "label": "Brazilian Portuguese",
-                    "review_state": "human_reviewed",
+                    "review_state": "mixed",
                 },
             ],
         }
@@ -258,20 +277,44 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(catalog_docs.localized_name_locales({"localized_names": normalized}), ["en", "pt_br"])
         self.assertEqual(
             catalog_docs.localized_name_review_states({"localized_names": normalized}),
-            ["en:source_provided", "pt_br:human_reviewed"],
+            ["en:source_provided", "pt_br:mixed"],
         )
         bad_locale = dict(metadata)
-        bad_locale["translations"] = [{"locale_code": "pt-BR", "field": "name_pt_br", "review_state": "machine_translated"}]
+        bad_locale["translations"] = [
+            {
+                "locale_code": "pt-BR",
+                "field": "name_pt_br",
+                "review_state_field": "name_pt_br_review_state",
+                "review_state": "machine_translated",
+            }
+        ]
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "field-safe BCP 47"):
             catalog_docs.normalize_localized_names(bad_locale, path=Path("docs/assets/example.md"))
         bad_field = dict(metadata)
-        bad_field["translations"] = [{"locale_code": "es", "field": "spanish_name", "review_state": "machine_translated"}]
+        bad_field["translations"] = [
+            {
+                "locale_code": "es",
+                "field": "spanish_name",
+                "review_state_field": "spanish_name_review_state",
+                "review_state": "machine_translated",
+            }
+        ]
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "name_es"):
             catalog_docs.normalize_localized_names(bad_field, path=Path("docs/assets/example.md"))
         duplicate_locale = dict(metadata)
         duplicate_locale["translations"] = [
-            {"locale_code": "en", "field": "name_en", "review_state": "source_provided"},
-            {"locale_code": "en", "field": "name_en", "review_state": "machine_translated"},
+            {
+                "locale_code": "en",
+                "field": "name_en",
+                "review_state_field": "name_en_review_state",
+                "review_state": "source_provided",
+            },
+            {
+                "locale_code": "en",
+                "field": "name_en",
+                "review_state_field": "name_en_review_state",
+                "review_state": "machine_translated",
+            },
         ]
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "duplicated"):
             catalog_docs.normalize_localized_names(duplicate_locale, path=Path("docs/assets/example.md"))
@@ -280,11 +323,20 @@ class CatalogDocsTests(unittest.TestCase):
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "fallback_field"):
             catalog_docs.normalize_localized_names(bad_fallback, path=Path("docs/assets/example.md"))
         missing_review_state = dict(metadata)
-        missing_review_state["translations"] = [{"locale_code": "fr", "field": "name_fr"}]
+        missing_review_state["translations"] = [
+            {"locale_code": "fr", "field": "name_fr", "review_state_field": "name_fr_review_state"}
+        ]
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "review_state is required"):
             catalog_docs.normalize_localized_names(missing_review_state, path=Path("docs/assets/example.md"))
         bad_review_state = dict(metadata)
-        bad_review_state["translations"] = [{"locale_code": "fr", "field": "name_fr", "review_state": "draft"}]
+        bad_review_state["translations"] = [
+            {
+                "locale_code": "fr",
+                "field": "name_fr",
+                "review_state_field": "name_fr_review_state",
+                "review_state": "draft",
+            }
+        ]
         with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "review_state must be one of"):
             catalog_docs.normalize_localized_names(bad_review_state, path=Path("docs/assets/example.md"))
 

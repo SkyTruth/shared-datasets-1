@@ -53,23 +53,27 @@ const catalogFixture = {
       last_updated: ' 2026-01-15 ',
       latest_release: { date: '2026-01-15' },
       localized_names: {
+        storage: 'localization_csv_v1',
+        join_key: 'ext_id',
+        localization_file: 'latest/example-public-layer-localizations.csv',
         property_template: 'name_{locale_code}',
         locale_code_format: 'bcp47_field_safe',
-        fallback_locale: 'en',
-        fallback_field: 'name_en',
+        fallback_field: 'name',
         available_locales: ['en', 'es'],
         translations: [
           {
             locale_code: 'en',
             field: 'name_en',
+            review_state_field: 'name_en_review_state',
             label: 'English',
             review_state: 'source_provided'
           },
           {
             locale_code: 'es',
             field: 'name_es',
+            review_state_field: 'name_es_review_state',
             label: 'Spanish',
-            review_state: 'machine_translated'
+            review_state: 'mixed'
           }
         ]
       },
@@ -420,23 +424,27 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
     latestRelease: { date: '2026-01-15' },
     license: 'Example license',
     localizedNames: {
+      storage: 'localization_csv_v1',
+      join_key: 'ext_id',
+      localization_file: 'latest/example-public-layer-localizations.csv',
       property_template: 'name_{locale_code}',
       locale_code_format: 'bcp47_field_safe',
-      fallback_locale: 'en',
-      fallback_field: 'name_en',
+      fallback_field: 'name',
       available_locales: ['en', 'es'],
       translations: [
         {
           locale_code: 'en',
           field: 'name_en',
+          review_state_field: 'name_en_review_state',
           label: 'English',
           review_state: 'source_provided'
         },
         {
           locale_code: 'es',
           field: 'name_es',
+          review_state_field: 'name_es_review_state',
           label: 'Spanish',
-          review_state: 'machine_translated'
+          review_state: 'mixed'
         }
       ]
     },

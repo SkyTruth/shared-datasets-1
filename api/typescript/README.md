@@ -124,11 +124,13 @@ const refs = resolveSharedDatasetPmtilesRefsFromCatalogJson(catalogJson, [
 
 When a PMTiles layer needs localized labels or feature-inspector display names,
 use `ref.localizedNames` to choose the declared `name_${locale_code}` property.
-Prefer the requested locale when present, then `fallback_field`, then a
-consumer-owned generic label fallback. Do not hardcode source-native
-translation fields; the shared-datasets contract is the normalized `name_*`
-field set declared by catalog metadata. Use `review_state` to show or filter
-confidence for source-provided, machine-translated, and human-reviewed labels.
+Prefer the requested locale when present, then `fallback_field` (`name` for the
+sidecar CSV contract), then a consumer-owned generic label fallback. Do not
+hardcode source-native fields; localized source data lives in the same-asset
+`{asset-slug}-localizations.csv` sidecar keyed by `ext_id`, while PMTiles
+features expose `name` and declared nonblank `name_*` properties. Use aggregate
+`review_state` to show or filter confidence for source-provided,
+machine-translated, human-reviewed, and mixed labels.
 
 Each resolved ref includes:
 
@@ -149,6 +151,9 @@ type SharedDatasetCatalogRef = {
   latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
   localizedNames: {
+    storage?: string | null;
+    join_key?: string | null;
+    localization_file?: string | null;
     property_template?: string | null;
     locale_code_format?: string | null;
     fallback_locale?: string | null;
@@ -157,18 +162,21 @@ type SharedDatasetCatalogRef = {
     translations?: Array<{
       locale_code: string;
       field: string;
+      review_state_field?: string | null;
       label?: string | null;
-      review_state: "source_provided" | "machine_translated" | "human_reviewed";
+      review_state: "source_provided" | "machine_translated" | "human_reviewed" | "mixed";
     }>;
   } | null;
 };
 ```
 
-`localizedNames` is `null` when the asset does not declare translated display
-name fields. When present, `available_locales` is the compact list to expose in
-layer settings, while `translations[].field` gives the PMTiles feature property
-name to read for labels and popups, and `translations[].review_state` gives the
-current confidence state for that locale.
+`localizedNames` is `null` when the asset does not declare localized display
+name metadata. When present, `storage`, `join_key`, and `localization_file`
+describe the authoritative localization CSV sidecar. `available_locales` is the
+compact list to expose in layer settings, while `translations[].field` gives the
+PMTiles feature property name to read for labels and popups, and
+`translations[].review_state` gives the current aggregate confidence state for
+that locale.
 
 Catalog resolution throws `SharedDatasetCatalogResolutionError` when catalog
 data is missing, malformed, or cannot resolve a requested PMTiles asset.

@@ -11,16 +11,21 @@ export type SharedDatasetPmtilesRef = {
 export type SharedDatasetLocalizedNameReviewState =
   | 'source_provided'
   | 'machine_translated'
-  | 'human_reviewed';
+  | 'human_reviewed'
+  | 'mixed';
 
 export type SharedDatasetLocalizedNameTranslation = {
   locale_code: string;
   field: string;
+  review_state_field?: string | null;
   label?: string | null;
   review_state: SharedDatasetLocalizedNameReviewState;
 };
 
 export type SharedDatasetLocalizedNames = {
+  storage?: string | null;
+  join_key?: string | null;
+  localization_file?: string | null;
   property_template?: string | null;
   locale_code_format?: string | null;
   fallback_locale?: string | null;

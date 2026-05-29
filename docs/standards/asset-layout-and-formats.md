@@ -229,45 +229,60 @@ when they come from the source and have been checked for uniqueness. Use
 sites, regions, or source grouping labels; these fields do not need to be
 unique.
 
-### Localized Name Fields
+### Localized Name Sidecars
 
-`name_${locale_code}` is the official shared-datasets storage contract for
-translated feature display names in vector and table assets. Datasets without
-translated display names omit this metadata. Any dataset that publishes
-translated display names must declare `localized_names` in the asset-doc
-frontmatter and must store consumer-facing translation fields as native
-properties/columns named with this pattern:
+Localized PMTiles display names use a same-asset CSV sidecar keyed by a stable
+canonical FGB `ext_id` column. Datasets without localized display names omit
+this metadata. Any dataset that publishes localized display names must declare
+`localized_names` in the asset-doc frontmatter and must stage a localization
+CSV at `latest/{asset-slug}-localizations.csv`:
 
 ```yaml
 localized_names:
+  storage: localization_csv_v1
+  join_key: ext_id
+  localization_file: latest/example-asset-localizations.csv
   property_template: name_{locale_code}
   locale_code_format: bcp47_field_safe
-  fallback_locale: en
-  fallback_field: name_en
+  fallback_field: name
   translations:
-  - locale_code: en
-    field: name_en
-    label: English
-    review_state: source_provided
   - locale_code: es
     field: name_es
+    review_state_field: name_es_review_state
     label: Spanish
-    review_state: machine_translated
+    review_state: mixed
 ```
 
-Locale codes use lower-case, ASCII, field-safe BCP 47 tags with hyphens
-normalized to underscores, such as `en`, `es`, `pt_br`, `es_419`, or
-`zh_hans`. Each `field` must exactly equal `name_${locale_code}`. If a source
-uses different translation columns, preserve those source-native fields only
-when useful, but add normalized `name_*` fields as the shared-datasets consumer
-contract. Each translation must declare `review_state` as `source_provided`,
-`machine_translated`, or `human_reviewed`. Use `source_provided` only for names
-supplied by the authoritative upstream source, `machine_translated` for
-unreviewed generated translations, and `human_reviewed` after human curator
-review or correction. `fallback_field`, when present, must name one of the
-declared translation fields. For assets with PMTiles companions, every declared
-`name_*` field must be preserved in PMTiles feature properties; review state
-lives in catalog metadata, not feature properties.
+The localization CSV schema is:
+
+```csv
+ext_id,name,name_review_state,name_es,name_es_review_state
+```
+
+`ext_id`, `name`, and `name_review_state` are required. Optional locale pairs
+use `name_${locale_code}` and `name_${locale_code}_review_state`. Locale codes
+use lower-case, ASCII, field-safe BCP 47 tags with hyphens normalized to
+underscores, such as `en`, `es`, `pt_br`, `es_419`, or `zh_hans`. Per-value
+review states must be `source_provided`, `machine_translated`, or
+`human_reviewed`; the asset-doc aggregate `review_state` may also be `mixed`
+when a locale has values from more than one state.
+
+The canonical FGB must contain a unique nonblank `ext_id` column. The
+localization CSV must contain one unique nonblank row for every current FGB
+`ext_id`. The fallback `name` value is required for every row. Blank localized
+values must have blank review states, and nonblank localized values must have a
+review state. PMTiles generation joins the canonical FGB to the localization
+CSV and writes `ext_id`, `name`, and declared nonblank `name_*` values into
+feature properties. Per-value review-state fields stay in the CSV and catalog
+metadata by default; they are not written into PMTiles properties.
+
+Translation-only updates rebuild the PMTiles archive from the unchanged FGB and
+the updated localization CSV. PMTiles cannot be patched in place because
+properties are embedded inside tile payloads. For versioned assets, a
+translation-only release should copy the byte-identical current FGB into the
+new release directory, publish the updated localization CSV under release and
+`latest/`, publish the rebuilt PMTiles under release and `latest/`, and rebuild
+the release index after promotion.
 
 Use `generated_group_id` only when an asset needs generated group-level
 addressing and lacks a useful provider row ID. The generated native column is

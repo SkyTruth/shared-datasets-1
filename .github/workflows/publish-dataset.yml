@@ -874,6 +874,38 @@ jobs:
                   )
           PY
 
+      - name: Rebuild promoted release index
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import json
+          import subprocess
+
+          plan = json.load(open("publish-plan.json"))
+          asset_slug = plan["asset_slug"]
+          with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+              asset_exists = any(row.get("asset_slug") == asset_slug for row in csv.DictReader(file_obj))
+          if not asset_exists:
+              print(f"Skipping release-index rebuild because {asset_slug!r} is not a catalog asset.")
+              raise SystemExit(0)
+
+          subprocess.run(
+              [
+                  "uv",
+                  "run",
+                  "python",
+                  "scripts/gcs_asset.py",
+                  "release-index",
+                  "rebuild",
+                  "--asset-slug",
+                  asset_slug,
+              ],
+              check=True,
+          )
+          PY
+
       - name: Send dataset upload summary
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         env:

@@ -91,16 +91,33 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         apply_step = workflow.split("apply-approved-pr-plans:", 1)[1]
 
         promote_index = apply_step.index("name: Promote approved staged objects")
+        release_index_index = apply_step.index("name: Rebuild promoted release index")
         summary_index = apply_step.index("name: Send dataset upload summary")
         scratch_cleanup_index = apply_step.index("name: Delete promoted scratch source objects")
         delete_index = apply_step.index("name: Delete approved canonical objects")
 
         self.assertLess(promote_index, summary_index)
+        self.assertLess(promote_index, release_index_index)
+        self.assertLess(release_index_index, summary_index)
         self.assertLess(summary_index, scratch_cleanup_index)
         self.assertLess(scratch_cleanup_index, delete_index)
         self.assertIn("scripts/dataset_alerts.py", apply_step[summary_index:delete_index])
         self.assertIn("upload-summary", apply_step[summary_index:delete_index])
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", apply_step[summary_index:delete_index])
+
+    def test_approved_promotion_rebuilds_release_index_for_catalog_assets(self):
+        workflow = WORKFLOW.read_text()
+        step = workflow.split("name: Rebuild promoted release index", 1)[1].split(
+            "name: Send dataset upload summary",
+            1,
+        )[0]
+
+        self.assertIn("catalog/shared-datasets-catalog.csv", step)
+        self.assertIn("asset_exists", step)
+        self.assertIn('"release-index"', step)
+        self.assertIn('"rebuild"', step)
+        self.assertIn('"--asset-slug"', step)
+        self.assertIn("Skipping release-index rebuild", step)
 
     def test_promotion_deletes_reviewed_scratch_sources_after_success(self):
         workflow = WORKFLOW.read_text()

@@ -107,9 +107,9 @@ Rules:
 - Use catalog `pmtiles_url` when available; it is already the tiered
   `tiles.skytruth.org` URL.
 - Preserve catalog `localizedNames`/`localized_names` metadata in PMTiles layer
-  config when present; labels and feature inspectors should read declared
-  `name_${locale_code}` properties instead of source-native translation fields,
-  and should use `review_state` for confidence cues.
+  config when present; labels and feature inspectors should read `name` or
+  declared `name_${locale_code}` PMTiles properties instead of source-native
+  fields, and should use aggregate `review_state` for confidence cues.
 - Reject missing or unknown `access_tier`; do not silently default to public.
 - Public PMTiles do not need a cookie.
 - Private PMTiles require the session endpoint before mounting the layer.

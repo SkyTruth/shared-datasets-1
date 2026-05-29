@@ -70,7 +70,12 @@ where relevant:
 | `pmtiles_url` | Browser-facing PMTiles URL in the catalog JSON. |
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
-| `localized_names`, `localized_name_locales`, and `localized_name_review_states` | Declared `name_${locale_code}` translation fields, available locale codes, and per-locale review confidence when an asset publishes translated display names. |
+| `localized_names`, `localized_name_locales`, and `localized_name_review_states` | Localization sidecar metadata, declared PMTiles `name_${locale_code}` fields, available locale codes, and aggregate review confidence when an asset publishes localized display names. |
+
+Localized PMTiles consumers still read `name` and declared `name_${locale_code}`
+feature properties from PMTiles. Canonical FGB consumers should rely on
+`ext_id` for joins and should not expect localized name columns in the FGB; the
+localization source is the same-asset `{asset-slug}-localizations.csv` sidecar.
 
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display
