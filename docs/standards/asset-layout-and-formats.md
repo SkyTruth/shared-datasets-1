@@ -229,6 +229,46 @@ when they come from the source and have been checked for uniqueness. Use
 sites, regions, or source grouping labels; these fields do not need to be
 unique.
 
+### Localized Name Fields
+
+`name_${locale_code}` is the official shared-datasets storage contract for
+translated feature display names in vector and table assets. Datasets without
+translated display names omit this metadata. Any dataset that publishes
+translated display names must declare `localized_names` in the asset-doc
+frontmatter and must store consumer-facing translation fields as native
+properties/columns named with this pattern:
+
+```yaml
+localized_names:
+  property_template: name_{locale_code}
+  locale_code_format: bcp47_field_safe
+  fallback_locale: en
+  fallback_field: name_en
+  translations:
+  - locale_code: en
+    field: name_en
+    label: English
+    review_state: source_provided
+  - locale_code: es
+    field: name_es
+    label: Spanish
+    review_state: machine_translated
+```
+
+Locale codes use lower-case, ASCII, field-safe BCP 47 tags with hyphens
+normalized to underscores, such as `en`, `es`, `pt_br`, `es_419`, or
+`zh_hans`. Each `field` must exactly equal `name_${locale_code}`. If a source
+uses different translation columns, preserve those source-native fields only
+when useful, but add normalized `name_*` fields as the shared-datasets consumer
+contract. Each translation must declare `review_state` as `source_provided`,
+`machine_translated`, or `human_reviewed`. Use `source_provided` only for names
+supplied by the authoritative upstream source, `machine_translated` for
+unreviewed generated translations, and `human_reviewed` after human curator
+review or correction. `fallback_field`, when present, must name one of the
+declared translation fields. For assets with PMTiles companions, every declared
+`name_*` field must be preserved in PMTiles feature properties; review state
+lives in catalog metadata, not feature properties.
+
 Use `generated_group_id` only when an asset needs generated group-level
 addressing and lacks a useful provider row ID. The generated native column is
 `shared_datasets_group_id`, produced with `shared-datasets-group-id:v1`.

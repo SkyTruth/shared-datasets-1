@@ -17,14 +17,14 @@ CATEGORIES = """categories:
       "110-boundaries": "Boundaries."
 """
 
-CATALOG = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,CC BY-NC 4.0,Example citation,Example notes
+CATALOG = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,localized_name_locales,localized_name_review_states,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,en;es,en:source_provided;es:machine_translated,true,false,false,Example source,CC BY-NC 4.0,Example citation,Example notes
 """
 
 MIXED_ACCESS_CATALOG = CATALOG + (
     "private-asset,Private Asset,100-geographic-reference,110-boundaries,active,,,,,private,SkyTruth,manual,"
     "gs://example-bucket/100-geographic-reference/110-boundaries/private-asset/latest/private-asset.fgb,"
-    "fgb,fgb;pmtiles,README.md,true,false,false,Private source,Internal terms,Private citation,Private notes\n"
+    "fgb,fgb;pmtiles,README.md,en;es,en:source_provided;es:machine_translated,true,false,false,Private source,Internal terms,Private citation,Private notes\n"
 )
 
 DOC = """---
@@ -55,6 +55,20 @@ search_fields:
 - field: source_name
   distinct_values: 345
   notes: Useful human-readable filter
+localized_names:
+  property_template: name_{locale_code}
+  locale_code_format: bcp47_field_safe
+  fallback_locale: en
+  fallback_field: name_en
+  translations:
+  - locale_code: en
+    field: name_en
+    label: English
+    review_state: source_provided
+  - locale_code: es
+    field: name_es
+    label: Spanish
+    review_state: machine_translated
 generated_group_id:
   column: shared_datasets_group_id
   algorithm: shared-datasets-group-id:v1
@@ -197,6 +211,12 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["data_profile"]["most_unique_field"]["field"], "source_id")
         self.assertEqual(asset["search_fields"][0]["field"], "source_name")
         self.assertEqual(asset["search_fields"][0]["distinct_values"], 345)
+        self.assertEqual(asset["localized_name_locales"], ["en", "es"])
+        self.assertEqual(asset["localized_name_review_states"], ["en:source_provided", "es:machine_translated"])
+        self.assertEqual(asset["localized_names"]["available_locales"], ["en", "es"])
+        self.assertEqual(asset["localized_names"]["fallback_field"], "name_en")
+        self.assertEqual(asset["localized_names"]["translations"][1]["field"], "name_es")
+        self.assertEqual(asset["localized_names"]["translations"][1]["review_state"], "machine_translated")
         self.assertEqual(asset["generated_group_id"]["column"], "shared_datasets_group_id")
         self.assertEqual(asset["generated_group_id"]["algorithm"], "shared-datasets-group-id:v1")
         self.assertEqual(asset["generated_group_id"]["grouping_fields"], ["source_name"])
@@ -239,7 +259,7 @@ class CatalogSiteTests(unittest.TestCase):
             "Replaced by normalized source,2026-05-08,example-asset,Use example-asset for new work,"
             "public,SkyTruth,manual,"
             "gs://example-bucket/100-geographic-reference/110-boundaries/old-asset/latest/old-asset.fgb,"
-            "fgb,fgb,README.md,false,false,false,Old source,Old terms,Old citation,Old notes\n"
+            "fgb,fgb,README.md,en;es,en:source_provided;es:machine_translated,false,false,false,Old source,Old terms,Old citation,Old notes\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
             catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), catalog)
@@ -331,6 +351,68 @@ class CatalogSiteTests(unittest.TestCase):
             (docs_dir / "example-asset.md").write_text(bad_doc)
 
             with self.assertRaisesRegex(catalog_site.CatalogSiteError, "field is required"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_localized_names_rejects_stale_catalog_locale_summary(self):
+        stale_catalog = CATALOG.replace("README.md,en;es,en:source_provided;es:machine_translated,true", "README.md,en,en:source_provided;es:machine_translated,true")
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), stale_catalog)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "localized_name_locales"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_localized_names_rejects_stale_catalog_review_state_summary(self):
+        stale_catalog = CATALOG.replace("en:source_provided;es:machine_translated", "en:source_provided")
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), stale_catalog)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "localized_name_review_states"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_localized_names_rejects_malformed_locale(self):
+        bad_doc = DOC.replace("locale_code: es", "locale_code: es-MX", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "field-safe BCP 47"):
+                catalog_site.build_catalog_payload(
+                    catalog_path=catalog_path,
+                    categories_path=categories_path,
+                    docs_dir=docs_dir,
+                    bucket="example-bucket",
+                    site_prefix="_catalog/web",
+                    generated_at="2026-05-01T00:00:00Z",
+                )
+
+    def test_localized_names_rejects_invalid_review_state(self):
+        bad_doc = DOC.replace("review_state: machine_translated", "review_state: draft", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(bad_doc)
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "review_state must be one of"):
                 catalog_site.build_catalog_payload(
                     catalog_path=catalog_path,
                     categories_path=categories_path,

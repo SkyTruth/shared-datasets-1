@@ -52,6 +52,27 @@ const catalogFixture = {
       has_pmtiles: true,
       last_updated: ' 2026-01-15 ',
       latest_release: { date: '2026-01-15' },
+      localized_names: {
+        property_template: 'name_{locale_code}',
+        locale_code_format: 'bcp47_field_safe',
+        fallback_locale: 'en',
+        fallback_field: 'name_en',
+        available_locales: ['en', 'es'],
+        translations: [
+          {
+            locale_code: 'en',
+            field: 'name_en',
+            label: 'English',
+            review_state: 'source_provided'
+          },
+          {
+            locale_code: 'es',
+            field: 'name_es',
+            label: 'Spanish',
+            review_state: 'machine_translated'
+          }
+        ]
+      },
       license: ' Example license ',
       pmtiles_url: ' https://tiles.skytruth.org/pmtiles/public/example-public-layer.pmtiles ',
       release_index_url: ' ../releases/example-public-layer.json ',
@@ -398,6 +419,27 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
     lastUpdated: '2026-01-15',
     latestRelease: { date: '2026-01-15' },
     license: 'Example license',
+    localizedNames: {
+      property_template: 'name_{locale_code}',
+      locale_code_format: 'bcp47_field_safe',
+      fallback_locale: 'en',
+      fallback_field: 'name_en',
+      available_locales: ['en', 'es'],
+      translations: [
+        {
+          locale_code: 'en',
+          field: 'name_en',
+          label: 'English',
+          review_state: 'source_provided'
+        },
+        {
+          locale_code: 'es',
+          field: 'name_es',
+          label: 'Spanish',
+          review_state: 'machine_translated'
+        }
+      ]
+    },
     releaseIndexUrl: '../releases/example-public-layer.json',
     source: 'Example source',
     sourceUrl: 'https://example.test/source',

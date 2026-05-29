@@ -70,6 +70,20 @@ search_fields:
 - field: source_name
   distinct_values: 345
   notes: Useful human-readable filter
+localized_names:
+  property_template: name_{locale_code}
+  locale_code_format: bcp47_field_safe
+  fallback_locale: en
+  fallback_field: name_en
+  translations:
+  - locale_code: en
+    field: name_en
+    label: English
+    review_state: source_provided
+  - locale_code: es
+    field: name_es
+    label: Spanish
+    review_state: machine_translated
 generated_group_id:
   column: shared_datasets_group_id
   algorithm: shared-datasets-group-id:v1
@@ -111,6 +125,8 @@ Example schema.
 | Name | Type | Description |
 |---|---|---|
 | `id` | integer | Identifier. |
+| `name_en` | string | English display name. |
+| `name_es` | string | Spanish display name. |
 
 ## Update notes
 
@@ -163,8 +179,8 @@ Manual.
 """
 
 
-CATALOG_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
-example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,true,false,false,Example source,Example license,Example citation,Example notes
+CATALOG_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,localized_name_locales,localized_name_review_states,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-asset,Example Asset,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb,fgb,fgb;pmtiles,README.md,en;es,en:source_provided;es:machine_translated,true,false,false,Example source,Example license,Example citation,Example notes
 """
 
 
@@ -201,6 +217,8 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertEqual(row["access_tier"], "public")
         self.assertEqual(row["citation"], "Example citation")
         self.assertEqual(row["lifecycle_reason"], "")
+        self.assertEqual(row["localized_name_locales"], "en;es")
+        self.assertEqual(row["localized_name_review_states"], "en:source_provided;es:machine_translated")
         self.assertEqual(row["has_pmtiles"], "true")
         self.assertNotIn("admission", row)
         self.assertEqual(docs[0].metadata["admission"]["steward"], "SkyTruth data team")
@@ -213,8 +231,62 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertIn("geometry_type: Polygon", rendered)
         self.assertIn("row_count: 12345", rendered)
         self.assertIn("search_fields:", rendered)
+        self.assertIn("localized_names:", rendered)
+        self.assertIn("fallback_field: name_en", rendered)
         self.assertIn("generated_group_id:", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
+
+    def test_localized_names_metadata_is_validated(self):
+        metadata = {
+            "property_template": "name_{locale_code}",
+            "locale_code_format": "bcp47_field_safe",
+            "fallback_locale": "en",
+            "fallback_field": "name_en",
+            "translations": [
+                {"locale_code": "en", "field": "name_en", "label": "English", "review_state": "source_provided"},
+                {
+                    "locale_code": "pt_br",
+                    "field": "name_pt_br",
+                    "label": "Brazilian Portuguese",
+                    "review_state": "human_reviewed",
+                },
+            ],
+        }
+
+        normalized = catalog_docs.normalize_localized_names(metadata, path=Path("docs/assets/example.md"))
+
+        self.assertEqual(catalog_docs.localized_name_locales({"localized_names": normalized}), ["en", "pt_br"])
+        self.assertEqual(
+            catalog_docs.localized_name_review_states({"localized_names": normalized}),
+            ["en:source_provided", "pt_br:human_reviewed"],
+        )
+        bad_locale = dict(metadata)
+        bad_locale["translations"] = [{"locale_code": "pt-BR", "field": "name_pt_br", "review_state": "machine_translated"}]
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "field-safe BCP 47"):
+            catalog_docs.normalize_localized_names(bad_locale, path=Path("docs/assets/example.md"))
+        bad_field = dict(metadata)
+        bad_field["translations"] = [{"locale_code": "es", "field": "spanish_name", "review_state": "machine_translated"}]
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "name_es"):
+            catalog_docs.normalize_localized_names(bad_field, path=Path("docs/assets/example.md"))
+        duplicate_locale = dict(metadata)
+        duplicate_locale["translations"] = [
+            {"locale_code": "en", "field": "name_en", "review_state": "source_provided"},
+            {"locale_code": "en", "field": "name_en", "review_state": "machine_translated"},
+        ]
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "duplicated"):
+            catalog_docs.normalize_localized_names(duplicate_locale, path=Path("docs/assets/example.md"))
+        bad_fallback = dict(metadata)
+        bad_fallback["fallback_field"] = "name_fr"
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "fallback_field"):
+            catalog_docs.normalize_localized_names(bad_fallback, path=Path("docs/assets/example.md"))
+        missing_review_state = dict(metadata)
+        missing_review_state["translations"] = [{"locale_code": "fr", "field": "name_fr"}]
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "review_state is required"):
+            catalog_docs.normalize_localized_names(missing_review_state, path=Path("docs/assets/example.md"))
+        bad_review_state = dict(metadata)
+        bad_review_state["translations"] = [{"locale_code": "fr", "field": "name_fr", "review_state": "draft"}]
+        with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "review_state must be one of"):
+            catalog_docs.normalize_localized_names(bad_review_state, path=Path("docs/assets/example.md"))
 
     def test_generated_row_id_metadata_is_validated(self):
         metadata = {

@@ -40,6 +40,8 @@ CATALOG_COLUMNS = [
     "canonical_format",
     "available_formats",
     "metadata_paths",
+    "localized_name_locales",
+    "localized_name_review_states",
     "has_pmtiles",
     "has_geojson",
     "has_csv",
@@ -79,6 +81,7 @@ FRONTMATTER_KEYS = [
     "row_count",
     "data_profile",
     "search_fields",
+    "localized_names",
     "generated_group_id",
     "generated_row_id",
     "source_resolution_meters",
@@ -97,6 +100,7 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "row_count",
     "data_profile",
     "search_fields",
+    "localized_names",
     "generated_group_id",
     "generated_row_id",
     "source_resolution_meters",
@@ -120,6 +124,11 @@ GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+LOCALIZED_NAMES_PROPERTY_TEMPLATE = "name_{locale_code}"
+LOCALIZED_NAMES_LOCALE_CODE_FORMAT = "bcp47_field_safe"
+LOCALIZED_NAME_REVIEW_STATES = {"source_provided", "machine_translated", "human_reviewed"}
+FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
+BODY_LOCALIZED_NAME_FIELD_RE = re.compile(r"`name_[a-z]{2,3}(?:_[a-z0-9]{2,8})*`")
 
 REQUIRED_SCALAR_FIELDS = [
     "asset_slug",
@@ -366,8 +375,14 @@ def normalize_metadata(
         metadata["admission"] = raw["admission"]
 
     for key in OPTIONAL_DISCOVERY_FIELDS:
+        if key == "localized_names":
+            continue
         if key in raw:
             metadata[key] = raw[key]
+    if "localized_names" in raw:
+        localized_names = normalize_localized_names(raw["localized_names"], path=path)
+        if localized_names:
+            metadata["localized_names"] = localized_names
 
     available_formats = normalize_list(raw.get("available_formats"))
     if not available_formats and catalog_row and allow_legacy:
@@ -571,6 +586,121 @@ def validate_search_fields(value: Any, *, path: Path, row_count: int | None) -> 
             raise CatalogDocsError(f"{path}: {context}.notes must be non-empty when provided")
 
 
+def normalize_locale_code(value: Any, *, path: Path, context: str) -> str:
+    locale_code = as_text(value).strip()
+    if not locale_code:
+        raise CatalogDocsError(f"{path}: {context} is required")
+    if locale_code != locale_code.lower() or "-" in locale_code or not FIELD_SAFE_LOCALE_RE.fullmatch(locale_code):
+        raise CatalogDocsError(
+            f"{path}: {context} must be a field-safe BCP 47 locale code such as en, pt_br, or zh_hans"
+        )
+    return locale_code
+
+
+def normalize_localized_names(value: Any, *, path: Path) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: localized_names must be a mapping")
+    property_template = as_text(value.get("property_template")).strip()
+    if property_template != LOCALIZED_NAMES_PROPERTY_TEMPLATE:
+        raise CatalogDocsError(
+            f"{path}: localized_names.property_template must be {LOCALIZED_NAMES_PROPERTY_TEMPLATE!r}"
+        )
+    locale_code_format = as_text(value.get("locale_code_format")).strip()
+    if locale_code_format != LOCALIZED_NAMES_LOCALE_CODE_FORMAT:
+        raise CatalogDocsError(
+            f"{path}: localized_names.locale_code_format must be {LOCALIZED_NAMES_LOCALE_CODE_FORMAT!r}"
+        )
+    raw_translations = value.get("translations")
+    if not isinstance(raw_translations, list) or not raw_translations:
+        raise CatalogDocsError(f"{path}: localized_names.translations must be a non-empty list")
+
+    translations: list[dict[str, str]] = []
+    seen_locales: set[str] = set()
+    seen_fields: set[str] = set()
+    for index, raw_translation in enumerate(raw_translations, start=1):
+        context = f"localized_names.translations[{index}]"
+        if not isinstance(raw_translation, dict):
+            raise CatalogDocsError(f"{path}: {context} must be a mapping")
+        locale_code = normalize_locale_code(raw_translation.get("locale_code"), path=path, context=f"{context}.locale_code")
+        field = as_text(raw_translation.get("field")).strip()
+        expected_field = f"name_{locale_code}"
+        if field != expected_field:
+            raise CatalogDocsError(f"{path}: {context}.field must be {expected_field!r}")
+        if locale_code in seen_locales:
+            raise CatalogDocsError(f"{path}: localized_names locale_code {locale_code!r} is duplicated")
+        if field in seen_fields:
+            raise CatalogDocsError(f"{path}: localized_names field {field!r} is duplicated")
+        seen_locales.add(locale_code)
+        seen_fields.add(field)
+        translation = {"locale_code": locale_code, "field": field}
+        if "label" in raw_translation:
+            label = as_text(raw_translation.get("label")).strip()
+            if not label:
+                raise CatalogDocsError(f"{path}: {context}.label must be non-empty when provided")
+            translation["label"] = label
+        review_state = as_text(raw_translation.get("review_state")).strip()
+        if not review_state:
+            raise CatalogDocsError(f"{path}: {context}.review_state is required")
+        if review_state not in LOCALIZED_NAME_REVIEW_STATES:
+            allowed = ", ".join(sorted(LOCALIZED_NAME_REVIEW_STATES))
+            raise CatalogDocsError(f"{path}: {context}.review_state must be one of: {allowed}")
+        translation["review_state"] = review_state
+        translations.append(translation)
+
+    normalized: dict[str, Any] = {
+        "property_template": property_template,
+        "locale_code_format": locale_code_format,
+    }
+    fallback_locale = as_text(value.get("fallback_locale")).strip()
+    fallback_field = as_text(value.get("fallback_field")).strip()
+    if fallback_locale:
+        fallback_locale = normalize_locale_code(fallback_locale, path=path, context="localized_names.fallback_locale")
+        if fallback_locale not in seen_locales:
+            raise CatalogDocsError(f"{path}: localized_names.fallback_locale must refer to a declared translation")
+        normalized["fallback_locale"] = fallback_locale
+    if fallback_field:
+        if fallback_field not in seen_fields:
+            raise CatalogDocsError(f"{path}: localized_names.fallback_field must refer to a declared translation field")
+        normalized["fallback_field"] = fallback_field
+        matched_locale = next(translation["locale_code"] for translation in translations if translation["field"] == fallback_field)
+        if fallback_locale and matched_locale != fallback_locale:
+            raise CatalogDocsError(f"{path}: localized_names.fallback_field must match localized_names.fallback_locale")
+    normalized["translations"] = translations
+    return normalized
+
+
+def localized_name_locales(metadata: dict[str, Any]) -> list[str]:
+    localized_names = metadata.get("localized_names")
+    if not isinstance(localized_names, dict):
+        return []
+    translations = localized_names.get("translations")
+    if not isinstance(translations, list):
+        return []
+    return [translation["locale_code"] for translation in translations if isinstance(translation, dict) and translation.get("locale_code")]
+
+
+def localized_name_review_states(metadata: dict[str, Any]) -> list[str]:
+    localized_names = metadata.get("localized_names")
+    if not isinstance(localized_names, dict):
+        return []
+    translations = localized_names.get("translations")
+    if not isinstance(translations, list):
+        return []
+    return [
+        f"{translation['locale_code']}:{translation['review_state']}"
+        for translation in translations
+        if isinstance(translation, dict) and translation.get("locale_code") and translation.get("review_state")
+    ]
+
+
+def validate_localized_names(value: Any, *, path: Path) -> None:
+    if value in (None, ""):
+        return
+    normalize_localized_names(value, path=path)
+
+
 def validate_generated_group_id(value: Any, *, path: Path, row_count: int | None) -> None:
     if value in (None, ""):
         return
@@ -696,6 +826,7 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
     validate_data_profile(path, metadata, row_count=row_count)
     validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
+    validate_localized_names(metadata.get("localized_names"), path=path)
     if metadata.get("generated_group_id") not in (None, "") and metadata.get("generated_row_id") not in (None, ""):
         raise CatalogDocsError(f"{path}: generated_group_id and generated_row_id are mutually exclusive")
     validate_generated_group_id(metadata.get("generated_group_id"), path=path, row_count=row_count)
@@ -735,6 +866,8 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
 
 
 def validate_body(path: Path, metadata: dict[str, Any], body: str) -> None:
+    if BODY_LOCALIZED_NAME_FIELD_RE.search(body) and not metadata.get("localized_names"):
+        raise CatalogDocsError(f"{path}: localized_names is required when translated name_* fields are documented")
     if metadata.get("status") != "active":
         return
     missing = [section for section in REQUIRED_SECTIONS if section not in body]
@@ -809,6 +942,8 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "canonical_format": metadata["canonical_format"],
         "available_formats": ";".join(formats),
         "metadata_paths": ";".join(metadata["metadata_paths"]),
+        "localized_name_locales": ";".join(localized_name_locales(metadata)),
+        "localized_name_review_states": ";".join(localized_name_review_states(metadata)),
         "has_pmtiles": str("pmtiles" in formats).lower(),
         "has_geojson": str("geojson" in formats).lower(),
         "has_csv": str("csv" in formats).lower(),

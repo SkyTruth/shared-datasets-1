@@ -218,12 +218,15 @@ breaking existing paths.
    raster or array data, and CSV only for non-geometry tables.
 5. For vector/table assets, use the publishing concierge output and canonical
    artifact profile to identify provider ID candidates and high-value
-   `search_fields`. Prefer real source IDs. If no useful provider row ID exists
-   and the asset needs group-level addressing, choose the curator-approved
-   grouping field before generating `shared_datasets_group_id`. For vector
-   assets, if neither a provider ID nor grouping field is suitable and row-level
-   addresses are still required, explicitly choose the last-resort
-   `shared_datasets_row_id` fallback.
+   `search_fields`. Prefer real source IDs. If the asset publishes translated
+   display names, store the consumer-facing fields as `name_${locale_code}`
+   columns such as `name_en`, declare them in `localized_names`, and record each
+   locale's `review_state` as `source_provided`, `machine_translated`, or
+   `human_reviewed`. If no useful provider row ID exists and the asset needs
+   group-level addressing, choose the curator-approved grouping field before generating
+   `shared_datasets_group_id`. For vector assets, if neither a provider ID nor
+   grouping field is suitable and row-level addresses are still required,
+   explicitly choose the last-resort `shared_datasets_row_id` fallback.
 6. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
 7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. When a generated group ID is approved, pass `--group-id-field FIELD` so the helper writes and validates `shared_datasets_group_id`. When the row-ID fallback is approved, pass `--generate-row-id` so the helper writes and validates `shared_datasets_row_id`.
 8. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.

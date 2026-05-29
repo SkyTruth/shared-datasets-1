@@ -259,7 +259,13 @@ https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles
 Do not emit direct
 `https://storage.googleapis.com/skytruth-shared-datasets-1/.../*.pmtiles`
 browser URLs for shared-dataset PMTiles. If the consumer config response is
-cached, bump its cache key as part of the change.
+cached, bump its cache key as part of the change. PMTiles layer/config responses
+should also preserve catalog `localized_names` metadata when present so browser
+labels, popups, and feature inspectors can choose the declared
+`name_${locale_code}` property instead of hardcoding source-native translation
+fields. Use each translation entry's `review_state` to distinguish
+source-provided names from machine translations and human-reviewed translations
+in user-facing confidence cues.
 
 Before mounting a private PMTiles layer, the frontend should call the session
 endpoint, preferably through `ensurePmtilesCdnSession`:
@@ -334,10 +340,16 @@ Apply this recipe to any downstream repo, including 30x30:
 
    const ref = await resolveSharedDatasetPmtilesRef(assetSlug);
    const pmtilesUrl = ref.url;
+   const localizedNames = ref.localizedNames;
+   const reviewStates = localizedNames?.translations?.map(
+     ({ locale_code, review_state }) => `${locale_code}:${review_state}`
+   );
    ```
 
 3. If the app has a config API, parse catalog `access_tier`, reject missing or
-   unknown tiers, and bump any Redis or process cache key.
+   unknown tiers, preserve `localizedNames` for PMTiles layer labels when
+   present, preserve per-locale review states for confidence cues, and bump any
+   Redis or process cache key.
 4. Add a backend session endpoint with the behavior in
    [Consumer Runtime Contract](#consumer-runtime-contract).
 5. Use `getPmtilesFetchCredentials(url)` or an equivalent credentialed fetch

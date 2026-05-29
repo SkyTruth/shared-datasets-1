@@ -55,6 +55,10 @@ GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+LOCALIZED_NAMES_PROPERTY_TEMPLATE = "name_{locale_code}"
+LOCALIZED_NAMES_LOCALE_CODE_FORMAT = "bcp47_field_safe"
+LOCALIZED_NAME_REVIEW_STATES = {"source_provided", "machine_translated", "human_reviewed"}
+FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 
 
 class CatalogSiteError(ValueError):
@@ -95,6 +99,8 @@ class CatalogAsset:
     canonical_format: str
     available_formats: list[str]
     metadata_paths: list[str]
+    localized_name_locales: list[str]
+    localized_name_review_states: list[str]
     has_pmtiles: bool
     has_geojson: bool
     has_csv: bool
@@ -111,6 +117,7 @@ class CatalogAsset:
     row_count: int | None
     data_profile: dict[str, Any] | None
     search_fields: list[dict[str, Any]]
+    localized_names: dict[str, Any] | None
     generated_group_id: dict[str, Any] | None
     generated_row_id: dict[str, Any] | None
     source_url: str | None
@@ -404,6 +411,106 @@ def optional_search_fields(metadata: dict[str, Any], *, row_count: int | None, d
     return [
         normalize_search_field(value, index=index, doc_path=doc_path, row_count=row_count)
         for index, value in enumerate(raw_fields, start=1)
+    ]
+
+
+def normalize_locale_code(value: Any, *, context: str, doc_path: Path) -> str:
+    locale_code = str(value or "").strip()
+    if not locale_code:
+        raise CatalogSiteError(f"{doc_path}: {context} is required")
+    if locale_code != locale_code.lower() or "-" in locale_code or not FIELD_SAFE_LOCALE_RE.fullmatch(locale_code):
+        raise CatalogSiteError(
+            f"{doc_path}: {context} must be a field-safe BCP 47 locale code such as en, pt_br, or zh_hans"
+        )
+    return locale_code
+
+
+def optional_localized_names(metadata: dict[str, Any], *, doc_path: Path) -> dict[str, Any] | None:
+    raw_names = metadata.get("localized_names")
+    if raw_names in (None, ""):
+        return None
+    if not isinstance(raw_names, dict):
+        raise CatalogSiteError(f"{doc_path}: localized_names must be a mapping")
+    property_template = str(raw_names.get("property_template") or "").strip()
+    if property_template != LOCALIZED_NAMES_PROPERTY_TEMPLATE:
+        raise CatalogSiteError(
+            f"{doc_path}: localized_names.property_template must be {LOCALIZED_NAMES_PROPERTY_TEMPLATE!r}"
+        )
+    locale_code_format = str(raw_names.get("locale_code_format") or "").strip()
+    if locale_code_format != LOCALIZED_NAMES_LOCALE_CODE_FORMAT:
+        raise CatalogSiteError(
+            f"{doc_path}: localized_names.locale_code_format must be {LOCALIZED_NAMES_LOCALE_CODE_FORMAT!r}"
+        )
+    raw_translations = raw_names.get("translations")
+    if not isinstance(raw_translations, list) or not raw_translations:
+        raise CatalogSiteError(f"{doc_path}: localized_names.translations must be a non-empty list")
+
+    translations: list[dict[str, str]] = []
+    seen_locales: set[str] = set()
+    seen_fields: set[str] = set()
+    for index, raw_translation in enumerate(raw_translations, start=1):
+        context = f"localized_names.translations[{index}]"
+        if not isinstance(raw_translation, dict):
+            raise CatalogSiteError(f"{doc_path}: {context} must be a mapping")
+        locale_code = normalize_locale_code(raw_translation.get("locale_code"), context=f"{context}.locale_code", doc_path=doc_path)
+        field = str(raw_translation.get("field") or "").strip()
+        expected_field = f"name_{locale_code}"
+        if field != expected_field:
+            raise CatalogSiteError(f"{doc_path}: {context}.field must be {expected_field!r}")
+        if locale_code in seen_locales:
+            raise CatalogSiteError(f"{doc_path}: localized_names locale_code {locale_code!r} is duplicated")
+        if field in seen_fields:
+            raise CatalogSiteError(f"{doc_path}: localized_names field {field!r} is duplicated")
+        seen_locales.add(locale_code)
+        seen_fields.add(field)
+        translation = {"locale_code": locale_code, "field": field}
+        label = str(raw_translation.get("label") or "").strip()
+        if label:
+            translation["label"] = label
+        elif "label" in raw_translation:
+            raise CatalogSiteError(f"{doc_path}: {context}.label must be non-empty when provided")
+        review_state = str(raw_translation.get("review_state") or "").strip()
+        if not review_state:
+            raise CatalogSiteError(f"{doc_path}: {context}.review_state is required")
+        if review_state not in LOCALIZED_NAME_REVIEW_STATES:
+            allowed = ", ".join(sorted(LOCALIZED_NAME_REVIEW_STATES))
+            raise CatalogSiteError(f"{doc_path}: {context}.review_state must be one of: {allowed}")
+        translation["review_state"] = review_state
+        translations.append(translation)
+
+    normalized: dict[str, Any] = {
+        "property_template": property_template,
+        "locale_code_format": locale_code_format,
+    }
+    fallback_locale = str(raw_names.get("fallback_locale") or "").strip()
+    fallback_field = str(raw_names.get("fallback_field") or "").strip()
+    if fallback_locale:
+        fallback_locale = normalize_locale_code(fallback_locale, context="localized_names.fallback_locale", doc_path=doc_path)
+        if fallback_locale not in seen_locales:
+            raise CatalogSiteError(f"{doc_path}: localized_names.fallback_locale must refer to a declared translation")
+        normalized["fallback_locale"] = fallback_locale
+    if fallback_field:
+        if fallback_field not in seen_fields:
+            raise CatalogSiteError(f"{doc_path}: localized_names.fallback_field must refer to a declared translation field")
+        matched_locale = next(translation["locale_code"] for translation in translations if translation["field"] == fallback_field)
+        if fallback_locale and matched_locale != fallback_locale:
+            raise CatalogSiteError(f"{doc_path}: localized_names.fallback_field must match localized_names.fallback_locale")
+        normalized["fallback_field"] = fallback_field
+    normalized["available_locales"] = [translation["locale_code"] for translation in translations]
+    normalized["translations"] = translations
+    return normalized
+
+
+def localized_name_review_states(localized_names: dict[str, Any] | None) -> list[str]:
+    if not localized_names:
+        return []
+    translations = localized_names.get("translations")
+    if not isinstance(translations, list):
+        return []
+    return [
+        f"{translation['locale_code']}:{translation['review_state']}"
+        for translation in translations
+        if isinstance(translation, dict) and translation.get("locale_code") and translation.get("review_state")
     ]
 
 
@@ -922,6 +1029,15 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
     effective_last_updated = latest_release_date or last_updated
     latest_version = next((version for version in versions if version.date == latest_release_date), versions[0] if versions else None)
     row_count = optional_int(doc_metadata, "row_count", doc_path=doc_path)
+    localized_names = optional_localized_names(doc_metadata, doc_path=doc_path)
+    localized_name_locales = localized_names["available_locales"] if localized_names else []
+    localized_name_review_state_values = localized_name_review_states(localized_names)
+    catalog_localized_name_locales = split_semicolon(row.get("localized_name_locales", ""))
+    if localized_name_locales != catalog_localized_name_locales:
+        raise CatalogSiteError(f"{doc_path}: localized_name_locales must match localized_names translations")
+    catalog_localized_name_review_states = split_semicolon(row.get("localized_name_review_states", ""))
+    if localized_name_review_state_values != catalog_localized_name_review_states:
+        raise CatalogSiteError(f"{doc_path}: localized_name_review_states must match localized_names translations")
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -939,6 +1055,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         canonical_format=canonical_format,
         available_formats=formats,
         metadata_paths=metadata_paths,
+        localized_name_locales=localized_name_locales,
+        localized_name_review_states=localized_name_review_state_values,
         has_pmtiles="pmtiles" in formats,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,
@@ -955,6 +1073,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         row_count=row_count,
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
+        localized_names=localized_names,
         generated_group_id=optional_generated_group_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         generated_row_id=optional_generated_row_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),

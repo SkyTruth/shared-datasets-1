@@ -8,6 +8,27 @@ export type SharedDatasetPmtilesRef = {
   url: string;
 };
 
+export type SharedDatasetLocalizedNameReviewState =
+  | 'source_provided'
+  | 'machine_translated'
+  | 'human_reviewed';
+
+export type SharedDatasetLocalizedNameTranslation = {
+  locale_code: string;
+  field: string;
+  label?: string | null;
+  review_state: SharedDatasetLocalizedNameReviewState;
+};
+
+export type SharedDatasetLocalizedNames = {
+  property_template?: string | null;
+  locale_code_format?: string | null;
+  fallback_locale?: string | null;
+  fallback_field?: string | null;
+  available_locales?: string[];
+  translations?: SharedDatasetLocalizedNameTranslation[];
+};
+
 type SharedDatasetCatalogMetadata = {
   title: string | null;
   description: string | null;
@@ -21,6 +42,7 @@ type SharedDatasetCatalogMetadata = {
   releaseIndexUrl: string | null;
   latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
+  localizedNames: SharedDatasetLocalizedNames | null;
 };
 
 export type SharedDatasetCatalogRef = SharedDatasetPmtilesRef &
@@ -37,6 +59,7 @@ export type SharedDatasetsCatalogAsset = {
   has_pmtiles?: boolean | string | null;
   last_updated?: string | null;
   latest_release?: Record<string, unknown> | null;
+  localized_names?: SharedDatasetLocalizedNames | null;
   license?: string | null;
   pmtiles_url?: string | null;
   release_index_url?: string | null;
@@ -77,6 +100,9 @@ const cleanCatalogObject = (value: unknown) =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+
+const cleanCatalogLocalizedNames = (value: unknown) =>
+  cleanCatalogObject(value) as SharedDatasetLocalizedNames | null;
 
 export const normalizeSharedDatasetAssetSlug = (
   value: string | null | undefined
@@ -138,7 +164,8 @@ const getCatalogSharedDatasetRef = (
       docsUrl: cleanCatalogString(asset.docs_url),
       releaseIndexUrl: cleanCatalogString(asset.release_index_url),
       latestRelease: cleanCatalogObject(asset.latest_release),
-      lastUpdated: cleanCatalogString(asset.last_updated)
+      lastUpdated: cleanCatalogString(asset.last_updated),
+      localizedNames: cleanCatalogLocalizedNames(asset.localized_names)
     }
   ];
 };

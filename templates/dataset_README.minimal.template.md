@@ -52,6 +52,16 @@ search_fields:
   - field: "{curated search/filter field such as NAME}"
     distinct_values: "{optional integer distinct non-empty values}"
     notes: "{optional reason this is useful for search/filtering}"
+localized_names:
+  property_template: "name_{locale_code}"
+  locale_code_format: "bcp47_field_safe"
+  fallback_locale: "{optional fallback locale code such as en}"
+  fallback_field: "{optional fallback field such as name_en}"
+  translations:
+    - locale_code: "{field-safe BCP 47 locale code such as en or pt_br}"
+      field: "name_{locale_code}"
+      label: "{optional human-readable language label}"
+      review_state: "{source_provided | machine_translated | human_reviewed}"
 generated_group_id:
   column: "shared_datasets_group_id"
   algorithm: "shared-datasets-group-id:v1"
@@ -110,6 +120,11 @@ If `generated_row_id` is present, `shared_datasets_row_id` must be a native
 property/column in the canonical file and PMTiles feature properties, and must
 be documented as a last-resort row address rather than a provider/entity/group
 ID.
+If the asset publishes translated display names, store the consumer-facing
+fields as `name_${locale_code}` native properties/columns, declare them in
+`localized_names`, include per-locale `review_state`, and preserve them in
+PMTiles feature properties when PMTiles are published. Delete `localized_names`
+when the asset has no translated display-name fields.
 
 ## Raster metadata
 

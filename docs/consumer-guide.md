@@ -70,6 +70,7 @@ where relevant:
 | `pmtiles_url` | Browser-facing PMTiles URL in the catalog JSON. |
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
+| `localized_names`, `localized_name_locales`, and `localized_name_review_states` | Declared `name_${locale_code}` translation fields, available locale codes, and per-locale review confidence when an asset publishes translated display names. |
 
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display

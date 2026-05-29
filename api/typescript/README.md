@@ -73,7 +73,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
-| Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, and source metadata in consumer-owned config. |
+| Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
 
 Use the Python SDK instead when backend code needs to download canonical data
 files or resolve durable `gs://` object identities with Application Default
@@ -122,6 +122,14 @@ const refs = resolveSharedDatasetPmtilesRefsFromCatalogJson(catalogJson, [
 ]);
 ```
 
+When a PMTiles layer needs localized labels or feature-inspector display names,
+use `ref.localizedNames` to choose the declared `name_${locale_code}` property.
+Prefer the requested locale when present, then `fallback_field`, then a
+consumer-owned generic label fallback. Do not hardcode source-native
+translation fields; the shared-datasets contract is the normalized `name_*`
+field set declared by catalog metadata. Use `review_state` to show or filter
+confidence for source-provided, machine-translated, and human-reviewed labels.
+
 Each resolved ref includes:
 
 ```ts
@@ -140,16 +148,35 @@ type SharedDatasetCatalogRef = {
   releaseIndexUrl: string | null;
   latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
+  localizedNames: {
+    property_template?: string | null;
+    locale_code_format?: string | null;
+    fallback_locale?: string | null;
+    fallback_field?: string | null;
+    available_locales?: string[];
+    translations?: Array<{
+      locale_code: string;
+      field: string;
+      label?: string | null;
+      review_state: "source_provided" | "machine_translated" | "human_reviewed";
+    }>;
+  } | null;
 };
 ```
+
+`localizedNames` is `null` when the asset does not declare translated display
+name fields. When present, `available_locales` is the compact list to expose in
+layer settings, while `translations[].field` gives the PMTiles feature property
+name to read for labels and popups, and `translations[].review_state` gives the
+current confidence state for that locale.
 
 Catalog resolution throws `SharedDatasetCatalogResolutionError` when catalog
 data is missing, malformed, or cannot resolve a requested PMTiles asset.
 These helpers return PMTiles-capable assets only. For full catalog screens or
 default production layer lists, use `status === "active"` and preserve the
-license, citation, source, docs, and release metadata returned with each ref; if
-your app needs non-PMTiles assets or fields outside this type, fetch and parse
-the catalog JSON directly.
+license, citation, source, docs, release, and localized-name metadata returned
+with each ref; if your app needs non-PMTiles assets or fields outside this
+type, fetch and parse the catalog JSON directly.
 
 ## Browser PMTiles Fetching
 

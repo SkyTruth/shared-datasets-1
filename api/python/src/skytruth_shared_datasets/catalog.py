@@ -89,6 +89,8 @@ class CatalogAsset:
     canonical_format: str
     available_formats: tuple[str, ...]
     metadata_paths: tuple[str, ...]
+    localized_name_locales: tuple[str, ...]
+    localized_name_review_states: Mapping[str, str]
     last_updated: str
     source: str
     license: str
@@ -121,6 +123,10 @@ class CatalogAsset:
             canonical_format=canonical_format,
             available_formats=available_formats,
             metadata_paths=_split_semicolon(row.get("metadata_paths", "")),
+            localized_name_locales=_split_semicolon(row.get("localized_name_locales", "")),
+            localized_name_review_states=MappingProxyType(
+                _split_locale_review_states(row.get("localized_name_review_states", ""))
+            ),
             last_updated=row.get("last_updated", ""),
             source=row.get("source", ""),
             license=row.get("license", ""),
@@ -652,6 +658,16 @@ def _is_url(value: str) -> bool:
 
 def _split_semicolon(value: str | None) -> tuple[str, ...]:
     return tuple(part.strip() for part in (value or "").split(";") if part.strip())
+
+
+def _split_locale_review_states(value: str | None) -> dict[str, str]:
+    states: dict[str, str] = {}
+    for entry in _split_semicolon(value):
+        locale, separator, review_state = entry.partition(":")
+        if not separator or not locale.strip() or not review_state.strip():
+            continue
+        states[locale.strip()] = review_state.strip()
+    return states
 
 
 def _required(row: Mapping[str, str | None], field: str) -> str:

@@ -35,9 +35,9 @@ from skytruth_shared_datasets import (  # noqa: E402
 from skytruth_shared_datasets import cli as sdk_cli  # noqa: E402
 
 
-FIXTURE_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
-example-vector,Example Vector,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,true,true,false,Example source,Example license,Example citation,Example notes
-example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,Stale source,2026-05-08,,Use example-vector for new work,public,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,false,false,true,Example table source,Example license,Example table citation,Deprecated table
+FIXTURE_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,localized_name_locales,localized_name_review_states,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
+example-vector,Example Vector,100-geographic-reference,110-boundaries,active,,,,,public,SkyTruth,manual,gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson,README.md,en;es,en:source_provided;es:machine_translated,true,true,false,Example source,Example license,Example citation,Example notes
+example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups,deprecated,Stale source,2026-05-08,,Use example-vector for new work,public,SkyTruth,manual,gs://example-bucket/700-non-geographic-reference/730-units-codes-lookups/example-table/latest/example-table.csv,csv,csv,README.md,,,false,false,true,Example table source,Example license,Example table citation,Deprecated table
 """
 
 
@@ -91,6 +91,13 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(catalog.get("example-vector").title, "Example Vector")
         self.assertEqual(catalog.get("example-vector").citation, "Example citation")
+        self.assertEqual(catalog.get("example-vector").localized_name_locales, ("en", "es"))
+        self.assertEqual(
+            dict(catalog.get("example-vector").localized_name_review_states),
+            {"en": "source_provided", "es": "machine_translated"},
+        )
+        self.assertEqual(catalog.get("example-table").localized_name_locales, ())
+        self.assertEqual(dict(catalog.get("example-table").localized_name_review_states), {})
         self.assertEqual(catalog.get("example-table").lifecycle_reason, "Stale source")
         self.assertEqual(catalog.get("example-table").consumer_guidance, "Use example-vector for new work")
         self.assertEqual(catalog.source, str(path))
