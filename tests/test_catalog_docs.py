@@ -460,7 +460,56 @@ files:\n""",
                     allow_legacy=False,
                 )
 
-                self.assertEqual(docs[0].metadata["status"], status)
+            self.assertEqual(docs[0].metadata["status"], status)
+
+    def test_feature_metadata_sidecar_metadata_is_validated(self):
+        doc_text = STRICT_DOC.replace(
+            "generated_group_id:\n",
+            "feature_metadata:\n"
+            "  storage: metadata_sidecar_v1\n"
+            "  index_backend: firestore\n"
+            "  feature_id_column: feature_id\n"
+            "  feature_hash_column: feature_hash\n"
+            "  sidecar_file: latest/example-asset.metadata.ndjson.gz\n"
+            "  schema_file: latest/example-asset.schema.json\n"
+            "  manifest_file: latest/example-asset.manifest.json\n"
+            "  provenance_default: true\n"
+            "generated_group_id:\n",
+        ).replace(
+            "- path: latest/example-asset-localizations.csv\n"
+            "  format: csv\n"
+            "  role: localization\n"
+            "  purpose: Feature display-name localizations joined into PMTiles\n",
+            "- path: latest/example-asset-localizations.csv\n"
+            "  format: csv\n"
+            "  role: localization\n"
+            "  purpose: Feature display-name localizations joined into PMTiles\n"
+            "- path: latest/example-asset.metadata.ndjson.gz\n"
+            "  format: ndjson_gzip\n"
+            "  role: metadata\n"
+            "  purpose: Canonical feature metadata sidecar keyed by feature_id\n"
+            "- path: latest/example-asset.schema.json\n"
+            "  format: json\n"
+            "  role: metadata\n"
+            "  purpose: Release feature schema\n"
+            "- path: latest/example-asset.manifest.json\n"
+            "  format: json\n"
+            "  role: metadata\n"
+            "  purpose: Release manifest\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text=doc_text)
+            docs = catalog_docs.read_asset_docs(
+                docs_dir=docs_dir,
+                categories=catalog_docs.load_categories(categories_path),
+                catalog_rows=catalog_docs.load_catalog_rows(catalog_path),
+                allow_legacy=False,
+            )
+
+        rendered = catalog_docs.render_asset_doc(docs[0])
+        self.assertEqual(docs[0].metadata["feature_metadata"]["index_backend"], "firestore")
+        self.assertIn("feature_metadata:", rendered)
+        self.assertIn("latest/example-asset.metadata.ndjson.gz", rendered)
 
     def test_rejects_unknown_lifecycle_status(self):
         with tempfile.TemporaryDirectory() as tmp:

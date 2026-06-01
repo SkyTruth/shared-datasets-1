@@ -72,12 +72,21 @@ Node crypto and should stay behind the consumer application's backend boundary.
 |---|---|---|
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
+| Browser click needs full feature attributes | App backend route to the metadata API | PMTiles expose `feature_id`; the backend calls the IAP-protected metadata service and returns app-shaped data. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
 
 Use the Python SDK instead when backend code needs to download canonical data
 files or resolve durable `gs://` object identities with Application Default
 Credentials.
+
+Release-oriented vector PMTiles are intentionally lightweight and should not be
+treated as the source of full feature attributes. Use the PMTiles `feature_id`
+property to request metadata through an app-owned backend route that calls:
+
+```http
+POST /v1/assets/{asset_slug}/releases/{release}:lookup
+```
 
 ## Catalog Helpers
 

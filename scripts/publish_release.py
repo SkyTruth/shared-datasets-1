@@ -15,10 +15,16 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
+from scripts import release_feature_model
 from scripts.raster_asset import validate_cog
 
 
-SINGLE_OBJECT_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog"}
+DATA_OBJECT_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog"}
+SUPPORTING_RELEASE_FORMATS = {"metadata", "schema", "manifest"}
+SINGLE_OBJECT_FORMATS = DATA_OBJECT_FORMATS | SUPPORTING_RELEASE_FORMATS
+SUPPORTING_RELEASE_FORMAT_ORDER = ("metadata", "schema", "manifest")
+VECTOR_CANONICAL_FORMATS = {"fgb", "geojson", "ndgeojson"}
+REQUIRED_VECTOR_BUNDLE_FORMATS = ("fgb", "pmtiles", "metadata", "schema", "manifest")
 FORMAT_EXTENSIONS = {
     "fgb": ".fgb",
     "pmtiles": ".pmtiles",
@@ -26,6 +32,9 @@ FORMAT_EXTENSIONS = {
     "ndgeojson": ".ndgeojson",
     "csv": ".csv",
     "cog": ".tif",
+    "metadata": ".metadata.ndjson.gz",
+    "schema": ".schema.json",
+    "manifest": ".manifest.json",
 }
 EXTENSION_FORMATS = {
     ".fgb": "fgb",
@@ -151,7 +160,7 @@ def build_publish_plan(
     canonical_format = normalize_format(row.get("canonical_format", ""))
     if canonical_format == "zarr":
         raise PublishReleaseError("publish-release v1 does not support zarr prefix assets")
-    if canonical_format not in SINGLE_OBJECT_FORMATS:
+    if canonical_format not in DATA_OBJECT_FORMATS:
         raise PublishReleaseError(f"unsupported canonical format for publish-release v1: {canonical_format!r}")
 
     bucket_name, canonical_object = split_gs_uri(required(row, "canonical_path"))
@@ -166,17 +175,26 @@ def build_publish_plan(
     available_formats = normalize_available_formats(row, canonical_format)
     if any(format_name == "zarr" for format_name in available_formats):
         raise PublishReleaseError("publish-release v1 does not support zarr assets")
-    unsupported = [format_name for format_name in available_formats if format_name not in SINGLE_OBJECT_FORMATS]
+    unsupported = [format_name for format_name in available_formats if format_name not in DATA_OBJECT_FORMATS]
     if unsupported:
         raise PublishReleaseError(f"unsupported catalog format(s) for publish-release v1: {', '.join(unsupported)}")
 
     local_artifacts = discover_artifacts(asset_slug, publish_dir, artifact_overrides or {})
     if canonical_format not in local_artifacts:
         raise PublishReleaseError(f"canonical artifact is required: {canonical_format}")
+    vector_release = canonical_format in VECTOR_CANONICAL_FORMATS
+    if vector_release:
+        missing_bundle = [format_name for format_name in REQUIRED_VECTOR_BUNDLE_FORMATS if format_name not in local_artifacts]
+        if missing_bundle:
+            raise PublishReleaseError(
+                "vector releases require the complete feature metadata bundle: "
+                + ", ".join(REQUIRED_VECTOR_BUNDLE_FORMATS)
+                + f"; missing: {', '.join(missing_bundle)}"
+            )
 
     allow_stale = {normalize_format(format_name) for format_name in allow_stale_formats}
-    expected_formats = set(available_formats)
-    unexpected = sorted(set(local_artifacts) - expected_formats)
+    expected_formats = set(available_formats) | ({"pmtiles"} if vector_release else set())
+    unexpected = sorted(set(local_artifacts) - expected_formats - SUPPORTING_RELEASE_FORMATS)
     if unexpected:
         raise PublishReleaseError(f"artifact format(s) are not listed for this asset: {', '.join(unexpected)}")
     stale_formats = tuple(format_name for format_name in available_formats if format_name not in local_artifacts)
@@ -198,11 +216,16 @@ def build_publish_plan(
     schema_compatibility: dict[str, Any] | None = None
     validate_cog_fn = cog_validator or validate_cog
 
-    for format_name in available_formats:
+    data_format_order = tuple(dict.fromkeys((*available_formats, *(("pmtiles",) if vector_release else ()))))
+    publish_format_order = (
+        *data_format_order,
+        *(format_name for format_name in SUPPORTING_RELEASE_FORMAT_ORDER if format_name in local_artifacts),
+    )
+    for format_name in publish_format_order:
         local_path = local_artifacts.get(format_name)
         if local_path is None:
             continue
-        validate_artifact_path(format_name, local_path)
+        validate_artifact_path(asset_slug, format_name, local_path)
         if format_name == "cog":
             try:
                 cog_result = validate_cog_fn(local_path)
@@ -248,6 +271,12 @@ def build_publish_plan(
                 sha256=sha256_file(local_path),
                 content_type=content_type_for(local_path),
             )
+        )
+    if vector_release:
+        validate_vector_release_bundle(
+            asset_slug=asset_slug,
+            release=release.isoformat(),
+            artifacts=artifacts,
         )
 
     assert_object_missing(bucket, object_name_from_uri(run_record_uri), label="run record")
@@ -324,7 +353,10 @@ def execute_publish_plan(
             compatibility_waiver=plan.compatibility_waiver,
         )
 
-    for artifact in plan.artifacts:
+    manifest_artifact = next((artifact for artifact in plan.artifacts if artifact.format == "manifest"), None)
+    non_manifest_artifacts = [artifact for artifact in plan.artifacts if artifact.format != "manifest"]
+
+    for artifact in non_manifest_artifacts:
         blob = bucket.blob(object_name_from_uri(artifact.release_uri))
         blob.metadata = {**metadata, "format": artifact.format}
         try:
@@ -338,7 +370,7 @@ def execute_publish_plan(
         blob.reload()
         release_objects.append(blob_info(artifact.release_uri, blob))
 
-    for artifact in plan.artifacts:
+    for artifact in non_manifest_artifacts:
         blob = bucket.blob(object_name_from_uri(artifact.latest_uri))
         blob.metadata = {**metadata, "format": artifact.format}
         expected_generation = plan.remote_generations.get(artifact.latest_uri)
@@ -352,6 +384,43 @@ def execute_publish_plan(
             raise PublishReleaseError(f"latest object generation changed before upload: {artifact.latest_uri}") from exc
         blob.reload()
         latest_objects.append(blob_info(artifact.latest_uri, blob))
+
+    if manifest_artifact is not None:
+        manifest_payload = final_manifest_payload(
+            plan=plan,
+            manifest_artifact=manifest_artifact,
+            release_objects=release_objects,
+            latest_objects=latest_objects,
+        )
+        manifest_text = json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n"
+        manifest_bytes = manifest_text.encode("utf-8")
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        for uri, generation_match, target in (
+            (manifest_artifact.release_uri, 0, release_objects),
+            (
+                manifest_artifact.latest_uri,
+                plan.remote_generations.get(manifest_artifact.latest_uri)
+                if plan.remote_generations.get(manifest_artifact.latest_uri) is not None
+                else 0,
+                latest_objects,
+            ),
+        ):
+            blob = bucket.blob(object_name_from_uri(uri))
+            blob.metadata = {**metadata, "format": manifest_artifact.format}
+            try:
+                blob.upload_from_string(
+                    manifest_text,
+                    content_type=manifest_artifact.content_type,
+                    if_generation_match=generation_match,
+                )
+            except PreconditionFailed as exc:
+                if uri == manifest_artifact.release_uri:
+                    raise PublishReleaseError(f"refusing to overwrite release object: {uri}") from exc
+                raise PublishReleaseError(f"latest object generation changed before upload: {uri}") from exc
+            blob.reload()
+            info = blob_info(uri, blob)
+            info["sha256"] = manifest_sha256
+            target.append(info)
 
     for metadata_upload in plan.metadata_uploads:
         blob = bucket.blob(object_name_from_uri(metadata_upload.uri))
@@ -473,6 +542,12 @@ def normalize_format(value: str) -> str:
         ".geojson": "geojson",
         ".ndgeojson": "ndgeojson",
         ".csv": "csv",
+        ".metadata.ndjson.gz": "metadata",
+        "metadata-sidecar": "metadata",
+        "metadata_sidecar": "metadata",
+        "sidecar": "metadata",
+        ".schema.json": "schema",
+        ".manifest.json": "manifest",
         "geotiff": "cog",
         "tif": "cog",
         "tiff": "cog",
@@ -510,9 +585,9 @@ def discover_artifacts(
         if not publish_dir.is_dir():
             raise PublishReleaseError(f"publish directory does not exist: {publish_dir}")
         for path in sorted(publish_dir.iterdir()):
-            if not path.is_file() or path.stem != asset_slug:
+            if not path.is_file():
                 continue
-            format_name = EXTENSION_FORMATS.get(path.suffix.lower())
+            format_name = artifact_format_for_path(asset_slug, path)
             if not format_name:
                 continue
             if format_name in artifacts:
@@ -526,16 +601,132 @@ def discover_artifacts(
     return artifacts
 
 
-def validate_artifact_path(format_name: str, path: Path) -> None:
+def validate_artifact_path(asset_slug: str, format_name: str, path: Path) -> None:
     if format_name not in SINGLE_OBJECT_FORMATS:
         raise PublishReleaseError(f"unsupported artifact format for publish-release v1: {format_name}")
     if not path.is_file():
         raise PublishReleaseError(f"artifact does not exist or is not a file: {path}")
-    actual_format = EXTENSION_FORMATS.get(path.suffix.lower())
+    expected_name = f"{asset_slug}{FORMAT_EXTENSIONS[format_name]}"
+    if path.name != expected_name:
+        raise PublishReleaseError(f"artifact filename must be {expected_name!r} for format {format_name!r}: {path}")
+    actual_format = artifact_format_for_path(asset_slug, path)
     if actual_format != format_name:
         raise PublishReleaseError(f"artifact extension does not match format {format_name!r}: {path}")
     if path.stat().st_size <= 0:
         raise PublishReleaseError(f"artifact is empty: {path}")
+
+
+def load_json_artifact(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise PublishReleaseError(f"{label} is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise PublishReleaseError(f"{label} must be a JSON object: {path}")
+    return payload
+
+
+def artifact_by_format(artifacts: Iterable[PublishArtifact]) -> dict[str, PublishArtifact]:
+    return {artifact.format: artifact for artifact in artifacts}
+
+
+def validate_vector_release_bundle(
+    *,
+    asset_slug: str,
+    release: str,
+    artifacts: Iterable[PublishArtifact],
+) -> None:
+    by_format = artifact_by_format(artifacts)
+    missing = [format_name for format_name in REQUIRED_VECTOR_BUNDLE_FORMATS if format_name not in by_format]
+    if missing:
+        raise PublishReleaseError("vector release bundle is missing: " + ", ".join(missing))
+    metadata_path = Path(by_format["metadata"].local_path)
+    schema_path = Path(by_format["schema"].local_path)
+    manifest_path = Path(by_format["manifest"].local_path)
+    validation = release_feature_model.validate_sidecar_records(
+        release_feature_model.read_metadata_sidecar(metadata_path),
+        expected_asset_slug=asset_slug,
+        expected_release=release,
+    )
+    if not validation.valid:
+        raise PublishReleaseError("metadata sidecar validation failed: " + "; ".join(validation.errors))
+    if validation.feature_count <= 0:
+        raise PublishReleaseError("metadata sidecar must contain at least one record")
+    schema = load_json_artifact(schema_path, label="release schema")
+    release_feature_model.validate_release_schema(schema, expected_asset_slug=asset_slug, expected_release=release)
+    manifest = load_json_artifact(manifest_path, label="release manifest")
+    manifest_artifacts = release_feature_model.validate_release_manifest(
+        manifest,
+        expected_asset_slug=asset_slug,
+        expected_release=release,
+        require_generations=False,
+    )
+    for format_name in REQUIRED_VECTOR_BUNDLE_FORMATS:
+        artifact = by_format[format_name]
+        manifest_artifact = manifest_artifacts[format_name]
+        if manifest_artifact.get("path") != artifact.release_uri:
+            raise PublishReleaseError(f"manifest {format_name} artifact path does not match planned release URI")
+        if format_name != "manifest":
+            manifest_sha = str(manifest_artifact.get("sha256") or "").split(":", 1)[-1]
+            if manifest_sha != artifact.sha256:
+                raise PublishReleaseError(f"manifest {format_name} artifact sha256 does not match local file")
+
+
+def final_manifest_payload(
+    *,
+    plan: PublishPlan,
+    manifest_artifact: PublishArtifact,
+    release_objects: list[dict[str, Any]],
+    latest_objects: list[dict[str, Any]],
+) -> dict[str, Any]:
+    template = load_json_artifact(Path(manifest_artifact.local_path), label="release manifest")
+    release_info_by_path = {item["path"]: item for item in release_objects}
+    latest_info_by_path = {item["path"]: item for item in latest_objects}
+    artifacts = []
+    for artifact in plan.artifacts:
+        entry: dict[str, Any] = {
+            "role": artifact.format,
+            "format": artifact.format,
+            "path": artifact.release_uri,
+            "latest_path": artifact.latest_uri,
+            "content_type": artifact.content_type,
+        }
+        release_info = release_info_by_path.get(artifact.release_uri)
+        latest_info = latest_info_by_path.get(artifact.latest_uri)
+        if artifact.format != "manifest":
+            entry.update(
+                {
+                    "sha256": artifact.sha256,
+                    "size": artifact.size,
+                }
+            )
+        if release_info and artifact.format != "manifest":
+            entry["generation"] = release_info.get("generation")
+        if latest_info:
+            entry["latest_generation"] = latest_info.get("generation")
+        artifacts.append({key: value for key, value in entry.items() if value is not None})
+    payload = dict(template)
+    payload["artifacts"] = artifacts
+    payload["index_load_status"] = "tracked in index-loads/"
+    payload["index_status_policy"] = {
+        "mode": "external_index_load_records",
+        "path": f"gs://{plan.bucket}/{plan.asset_root}/index-loads/{plan.release_date}/",
+    }
+    release_feature_model.validate_release_manifest(
+        payload,
+        expected_asset_slug=plan.asset_slug,
+        expected_release=plan.release_date,
+        require_generations=True,
+    )
+    return payload
+
+
+def artifact_format_for_path(asset_slug: str, path: Path) -> str | None:
+    name = path.name
+    for format_name, suffix in FORMAT_EXTENSIONS.items():
+        if name == f"{asset_slug}{suffix}":
+            return format_name
+    return EXTENSION_FORMATS.get(path.suffix.lower())
 
 
 def build_metadata_uploads(

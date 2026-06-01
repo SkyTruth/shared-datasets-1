@@ -16,6 +16,9 @@ Only these canonical or supported formats are approved by default:
 | `geojson` | `.geojson` | Small previews, small interchange files, debugging |
 | `ndgeojson` | `.ndgeojson` | Streamable vector interchange/debugging |
 | `csv` | `.csv` | Non-geometry tables only |
+| `metadata_sidecar_v1` | `.metadata.ndjson.gz` | Canonical feature metadata sidecar keyed by stable `feature_id` |
+| `release_schema_v1` | `.schema.json` | Release feature schema for sidecar/API field validation |
+| `release_manifest_v1` | `.manifest.json` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index status policy |
 
 Rules:
 
@@ -24,6 +27,13 @@ Rules:
   unless clearly documented as noncanonical source/debug content.
 - `.fgb` is the preferred canonical vector format.
 - `.pmtiles` is a serving/display artifact, not the canonical analytical source.
+- For release-oriented vector assets, the conceptual source of truth is the
+  reproducible release feature model plus release manifest. The FGB remains the
+  canonical vector artifact for consumers, but do not treat FGB alone as the
+  only release truth.
+- Release-oriented PMTiles should be intentionally lightweight: geometry plus a
+  stable `feature_id` property only. Full attributes belong in the FGB and
+  metadata sidecar.
 - Shared vector `.pmtiles` display artifacts should use the repo vector
   helper's auto maxzoom policy: generate the canonical FGB first, profile the
   FGB, then choose maxzoom from source scale/resolution metadata and measured
@@ -78,15 +88,24 @@ chunked array products where COG would be a poor access pattern.
   README.md
   latest/
     {asset-slug}.{ext}
+    {asset-slug}.metadata.ndjson.gz # release-oriented vector metadata sidecar
+    {asset-slug}.schema.json        # release-oriented vector schema
+    {asset-slug}.manifest.json      # release-oriented vector manifest
     manifest.json        # only for multi-object assets such as Zarr
   releases/
     YYYY-MM-DD/
       {asset-slug}.{ext}
+      {asset-slug}.metadata.ndjson.gz # release-oriented vector metadata sidecar
+      {asset-slug}.schema.json        # release-oriented vector schema
+      {asset-slug}.manifest.json      # release-oriented vector manifest
       {asset-slug}.zarr/ # only for Zarr and other approved prefix formats
   previews/
     {asset-slug}-preview.png
   runs/
     YYYY-MM-DD.json
+  index-loads/
+    YYYY-MM-DD/
+      {load-id}.json
 ```
 
 Minimum valid asset:
@@ -105,8 +124,50 @@ reproducible downstream model/analysis snapshots.
 Use `runs/YYYY-MM-DD.json` when a scheduled job generated/refreshed the asset, a
 failed run needs documentation, or a backfill occurred.
 
+Use `index-loads/YYYY-MM-DD/{load-id}.json` when a release metadata sidecar is
+loaded into a NoSQL serving index. These records are operational status for the
+rebuildable serving copy; do not rewrite release manifests just to update index
+load state.
+
 Single-object assets, including COGs, may use standard `latest/` and
 `releases/YYYY-MM-DD/` file copies.
+
+## Release-Oriented Vector Metadata
+
+Every vector release must be built from a normalized release feature model
+before publication. That model must assign:
+
+- `feature_id`: stable, unique per feature within an asset release, and stable
+  across releases whenever the source identity remains stable.
+- `feature_hash`: content fingerprint over canonical geometry and published
+  nonvolatile attributes. This changes when feature content changes and must not
+  be used as the feature lookup ID.
+
+Identity strategy priority:
+
+1. Verified source/provider ID field with uniqueness, non-emptiness, stability,
+   datatype, duplicate, skew, and top-value evidence.
+2. Curator-approved composite provider key with the same evidence.
+3. Curator-approved generated per-feature ID. The approving curator is the
+   maintainer uploading the file the first time or setting up the cron job.
+
+`shared_datasets_group_id` and `shared_datasets_row_id` remain separate
+concepts. A group ID is not unique per feature. A generated row ID is a
+last-resort row address and does not replace the release `feature_id` decision.
+
+Required release artifacts for vector releases:
+
+| File | Role |
+|---|---|
+| `{asset-slug}.fgb` | Truth-preserving canonical vector artifact with full attributes, `feature_id`, and `feature_hash`. |
+| `{asset-slug}.pmtiles` | Lightweight display artifact with geometry and `feature_id` only. |
+| `{asset-slug}.metadata.ndjson.gz` | Canonical durable metadata sidecar, one JSON object per `feature_id`. |
+| `{asset-slug}.schema.json` | Field names, types, nullable fields, reserved fields, and projection allowlist. |
+| `{asset-slug}.manifest.json` | Source inputs, artifact paths, checksums, destination generations for non-manifest artifacts, schema version, ID strategy, validation, and note that index status is tracked under `index-loads/`. The manifest does not embed its own object generation. |
+
+The metadata sidecar is canonical and durable in GCS. Firestore is the initial
+serving index for lookup APIs, but it is a rebuildable copy/cache loaded from
+the sidecar.
 
 Multi-object assets, including Zarr, must write immutable data under
 `releases/YYYY-MM-DD/{asset-slug}.zarr/` and update only
@@ -228,6 +289,20 @@ when they come from the source and have been checked for uniqueness. Use
 `search_fields` for high-value search/filter fields such as names, labels,
 sites, regions, or source grouping labels; these fields do not need to be
 unique.
+
+For vector assets, add `feature_metadata` frontmatter:
+
+```yaml
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/example-asset.metadata.ndjson.gz
+  schema_file: latest/example-asset.schema.json
+  manifest_file: latest/example-asset.manifest.json
+  provenance_default: true
+```
 
 ### Localized Name Sidecars
 

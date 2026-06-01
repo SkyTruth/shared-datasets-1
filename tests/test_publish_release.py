@@ -11,6 +11,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from typer.testing import CliRunner
 
 from scripts import publish_release
+from scripts import release_feature_model
 from scripts.gcs_asset import app
 
 
@@ -107,6 +108,68 @@ def write_artifact(tmp_path: Path, name: str, data: bytes = b"dataset bytes") ->
     return path
 
 
+def write_vector_bundle(
+    tmp_path: Path,
+    *,
+    asset_slug: str = "example-asset",
+    release: str = "2026-05-01",
+    bucket_name: str = "test-bucket",
+    asset_root: str | None = None,
+) -> dict[str, Path]:
+    paths = {
+        "fgb": write_artifact(tmp_path, f"{asset_slug}.fgb", b"fgb bytes"),
+        "pmtiles": write_artifact(tmp_path, f"{asset_slug}.pmtiles", b"pmtiles bytes"),
+    }
+    feature = release_feature_model.FeatureRecord(
+        feature_id="src:id:1",
+        feature_hash="sha256:" + "a" * 64,
+        geometry=None,
+        properties={"name": "A"},
+        provenance={"source": "fixture"},
+    )
+    sidecar = tmp_path / f"{asset_slug}.metadata.ndjson.gz"
+    release_feature_model.write_metadata_sidecar(
+        [release_feature_model.sidecar_record(asset_slug=asset_slug, release=release, feature=feature)],
+        sidecar,
+    )
+    schema_payload = release_feature_model.build_release_schema(
+        asset_slug=asset_slug,
+        release=release,
+        fields=[release_feature_model.ReleaseSchemaField("name", "String")],
+    )
+    schema = tmp_path / f"{asset_slug}.schema.json"
+    schema.write_text(json.dumps(schema_payload, sort_keys=True) + "\n")
+    paths["metadata"] = sidecar
+    paths["schema"] = schema
+    root = asset_root or f"100-geographic-reference/110-boundaries/{asset_slug}"
+    release_base = f"gs://{bucket_name}/{root}/releases/{release}/{asset_slug}"
+    artifacts = [
+        {"role": "fgb", "path": f"{release_base}.fgb", "sha256": publish_release.sha256_file(paths["fgb"])},
+        {"role": "pmtiles", "path": f"{release_base}.pmtiles", "sha256": publish_release.sha256_file(paths["pmtiles"])},
+        {"role": "metadata", "path": f"{release_base}.metadata.ndjson.gz", "sha256": publish_release.sha256_file(sidecar)},
+        {"role": "schema", "path": f"{release_base}.schema.json", "sha256": publish_release.sha256_file(schema)},
+        {"role": "manifest", "path": f"{release_base}.manifest.json"},
+    ]
+    manifest = tmp_path / f"{asset_slug}.manifest.json"
+    manifest.write_text(
+        json.dumps(
+            release_feature_model.build_release_manifest(
+                asset_slug=asset_slug,
+                release=release,
+                source_inputs=[],
+                artifacts=artifacts,
+                schema=schema_payload,
+                id_strategy={"strategy": "provider", "field": "id"},
+                validation={"valid": True, "feature_count": 1},
+            ),
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    paths["manifest"] = manifest
+    return paths
+
+
 def skip_schema_compatibility(**_kwargs):
     return None
 
@@ -118,8 +181,7 @@ class PublishReleaseTests(unittest.TestCase):
             catalog = write_catalog(tmp_path)
             publish_dir = tmp_path / "publish"
             publish_dir.mkdir()
-            write_artifact(publish_dir, "example-asset.fgb")
-            write_artifact(publish_dir, "example-asset.pmtiles")
+            write_vector_bundle(publish_dir)
             bucket = FakeBucket()
             bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb").exists = True
             bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb").generation = 7
@@ -136,12 +198,44 @@ class PublishReleaseTests(unittest.TestCase):
 
         self.assertEqual(plan.asset_root, "100-geographic-reference/110-boundaries/example-asset")
         self.assertEqual(plan.release_path, "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/")
-        self.assertEqual([artifact.format for artifact in plan.artifacts], ["fgb", "pmtiles"])
+        self.assertEqual([artifact.format for artifact in plan.artifacts], ["fgb", "pmtiles", "metadata", "schema", "manifest"])
         self.assertEqual(
             plan.remote_generations[
                 "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb"
             ],
             7,
+        )
+
+    def test_plan_includes_release_metadata_sidecar_schema_and_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb;pmtiles")
+            publish_dir = tmp_path / "publish"
+            publish_dir.mkdir()
+            write_vector_bundle(publish_dir)
+
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=publish_dir,
+                catalog_path=catalog,
+                client=FakeClient(FakeBucket()),
+                schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
+            )
+
+        self.assertEqual(
+            [artifact.format for artifact in plan.artifacts],
+            ["fgb", "pmtiles", "metadata", "schema", "manifest"],
+        )
+        sidecar = next(artifact for artifact in plan.artifacts if artifact.format == "metadata")
+        self.assertEqual(
+            sidecar.release_uri,
+            "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.metadata.ndjson.gz",
+        )
+        self.assertEqual(
+            sidecar.latest_uri,
+            "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.metadata.ndjson.gz",
         )
 
     def test_companion_formats_must_be_explicitly_allowed_to_stale(self):
@@ -150,7 +244,7 @@ class PublishReleaseTests(unittest.TestCase):
             catalog = write_catalog(tmp_path)
             artifact = write_artifact(tmp_path, "example-asset.fgb")
 
-            with self.assertRaisesRegex(publish_release.PublishReleaseError, "pmtiles"):
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "complete feature metadata bundle"):
                 publish_release.build_publish_plan(
                     asset_slug="example-asset",
                     release_date="2026-05-01",
@@ -166,7 +260,7 @@ class PublishReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
-            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            artifacts = write_vector_bundle(tmp_path)
             bucket = FakeBucket()
             bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb").exists = True
 
@@ -175,7 +269,7 @@ class PublishReleaseTests(unittest.TestCase):
                     asset_slug="example-asset",
                     release_date="2026-05-01",
                     publish_dir=None,
-                    artifact_overrides={"fgb": artifact},
+                    artifact_overrides=artifacts,
                     catalog_path=catalog,
                     client=FakeClient(bucket),
                     schema_reader=lambda _path: [],
@@ -189,7 +283,7 @@ class PublishReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
-            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            artifacts = write_vector_bundle(tmp_path)
             bucket = FakeBucket()
             latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
             latest.exists = True
@@ -198,7 +292,7 @@ class PublishReleaseTests(unittest.TestCase):
                 asset_slug="example-asset",
                 release_date="2026-05-01",
                 publish_dir=None,
-                artifact_overrides={"fgb": artifact},
+                artifact_overrides=artifacts,
                 catalog_path=catalog,
                 client=FakeClient(bucket),
                 schema_reader=lambda _path: [],
@@ -220,8 +314,10 @@ class PublishReleaseTests(unittest.TestCase):
             )
 
         release = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb")
+        release_manifest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.manifest.json")
         run_record = bucket.blob("100-geographic-reference/110-boundaries/example-asset/runs/2026-05-01.json")
         self.assertEqual(release.uploads[0][1], 0)
+        self.assertEqual(release_manifest.uploads[0][0], "string")
         self.assertEqual(latest.uploads[0][1], 12)
         self.assertEqual(run_record.uploads[0][1], 0)
         payload = json.loads(run_record.text)
@@ -235,12 +331,15 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(schema_updates, [("example-asset", "example-asset.fgb")])
         self.assertEqual(notifications, [("example-asset", 3)])
         self.assertEqual(result.warnings, ())
+        manifest_payload = json.loads(release_manifest.text)
+        manifest_entry = next(item for item in manifest_payload["artifacts"] if item["role"] == "manifest")
+        self.assertNotIn("generation", manifest_entry)
 
     def test_metadata_generation_mismatch_blocks_success_run_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
-            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            artifacts = write_vector_bundle(tmp_path)
             readme = write_artifact(tmp_path, "README.md", b"# Updated docs\n")
             bucket = FakeBucket()
             latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
@@ -253,7 +352,7 @@ class PublishReleaseTests(unittest.TestCase):
                 asset_slug="example-asset",
                 release_date="2026-05-01",
                 publish_dir=None,
-                artifact_overrides={"fgb": artifact},
+                artifact_overrides=artifacts,
                 catalog_path=catalog,
                 client=FakeClient(bucket),
                 readme_path=readme,
@@ -283,7 +382,7 @@ class PublishReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
-            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            artifacts = write_vector_bundle(tmp_path)
             bucket = FakeBucket()
 
             with self.assertRaisesRegex(publish_release.PublishReleaseError, "schema compatibility check failed"):
@@ -291,7 +390,7 @@ class PublishReleaseTests(unittest.TestCase):
                     asset_slug="example-asset",
                     release_date="2026-05-01",
                     publish_dir=None,
-                    artifact_overrides={"fgb": artifact},
+                    artifact_overrides=artifacts,
                     catalog_path=catalog,
                     client=FakeClient(bucket),
                     schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
@@ -313,13 +412,13 @@ class PublishReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             catalog = write_catalog(tmp_path, available_formats="fgb")
-            artifact = write_artifact(tmp_path, "example-asset.fgb")
+            artifacts = write_vector_bundle(tmp_path)
             bucket = FakeBucket()
             plan = publish_release.build_publish_plan(
                 asset_slug="example-asset",
                 release_date="2026-05-01",
                 publish_dir=None,
-                artifact_overrides={"fgb": artifact},
+                artifact_overrides=artifacts,
                 catalog_path=catalog,
                 client=FakeClient(bucket),
                 schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
@@ -361,7 +460,12 @@ class PublishReleaseTests(unittest.TestCase):
     def test_cli_dry_run_prints_json_plan_for_explicit_artifact(self):
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
-            artifact = write_artifact(Path(tmp), "gfw-fixed-infrastructure.fgb")
+            artifacts = write_vector_bundle(
+                Path(tmp),
+                asset_slug="gfw-fixed-infrastructure",
+                bucket_name="skytruth-shared-datasets-1",
+                asset_root="300-infrastructure-industrial/330-offshore-platforms/gfw-fixed-infrastructure",
+            )
             bucket = FakeBucket("skytruth-shared-datasets-1")
             with (
                 mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)),
@@ -377,9 +481,15 @@ class PublishReleaseTests(unittest.TestCase):
                         "--release-date",
                         "2026-05-01",
                         "--artifact",
-                        f"fgb={artifact}",
-                        "--allow-stale-format",
-                        "pmtiles",
+                        f"fgb={artifacts['fgb']}",
+                        "--artifact",
+                        f"pmtiles={artifacts['pmtiles']}",
+                        "--artifact",
+                        f"metadata={artifacts['metadata']}",
+                        "--artifact",
+                        f"schema={artifacts['schema']}",
+                        "--artifact",
+                        f"manifest={artifacts['manifest']}",
                         "--dry-run",
                     ],
                 )
@@ -387,7 +497,7 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)
         self.assertEqual(payload["asset_slug"], "gfw-fixed-infrastructure")
-        self.assertEqual(payload["stale_formats"], ["pmtiles"])
+        self.assertEqual(payload["stale_formats"], [])
 
     def test_cli_release_index_rebuild_dry_run_reads_remote_runs_and_releases(self):
         runner = CliRunner()

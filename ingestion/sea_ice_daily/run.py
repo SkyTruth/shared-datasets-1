@@ -19,6 +19,7 @@ from typing import Any
 
 from google.cloud import storage
 
+from ingestion.common import feature_metadata
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import (
     STATUS_NOT_READY,
@@ -113,8 +114,13 @@ class DownloadedSource:
 class AssetOutputs:
     fgb: Path
     pmtiles: Path
+    metadata: Path
+    schema: Path
+    manifest: Path
     row_count: int
     sha256: dict[str, str]
+    schema_payload: dict[str, Any]
+    sidecar_records: tuple[dict[str, Any], ...]
 
 
 ASSET = AssetSpec(
@@ -420,6 +426,23 @@ def convert_fgb_to_geojsonseq(fgb: Path, output: Path) -> None:
     )
 
 
+def convert_geojsonseq_to_fgb(geojsonseq: Path, output: Path) -> None:
+    remove_if_exists(output)
+    run_command(
+        [
+            "ogr2ogr",
+            "-f",
+            "FlatGeobuf",
+            "-nln",
+            ASSET.tile_layer,
+            "-nlt",
+            "PROMOTE_TO_MULTI",
+            str(output),
+            str(geojsonseq),
+        ]
+    )
+
+
 def build_pmtiles(geojsonseq: Path, output: Path) -> None:
     remove_if_exists(output)
     mbtiles = output.with_suffix(".mbtiles")
@@ -441,6 +464,8 @@ def build_pmtiles(geojsonseq: Path, output: Path) -> None:
             str(mbtiles),
             "-l",
             ASSET.tile_layer,
+            "--include",
+            feature_metadata.FEATURE_ID_COLUMN,
             "-P",
             *(extra_args or default_args),
             str(geojsonseq),
@@ -518,22 +543,27 @@ def build_outputs(
     raw_gpkg = workdir / "ice-polygons.gpkg"
     filtered_gpkg = workdir / "ice-filtered.gpkg"
     fgb = workdir / f"{ASSET.slug}.fgb"
+    normalized_fgb = workdir / f"{ASSET.slug}.normalized.fgb"
     geojsonseq = workdir / f"{ASSET.slug}.geojsonseq"
+    enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
     pmtiles = workdir / f"{ASSET.slug}.pmtiles"
+    metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
+    schema = workdir / f"{ASSET.slug}.schema.json"
+    manifest = workdir / f"{ASSET.slug}.manifest.json"
 
     build_ice_mask_raster(source_tif, mask_tif)
     polygonize_ice_mask(mask_tif, raw_gpkg)
     filter_ice_polygons(raw_gpkg, filtered_gpkg, source_date)
-    convert_gpkg_to_fgb(filtered_gpkg, fgb)
+    convert_gpkg_to_fgb(filtered_gpkg, normalized_fgb)
     remove_if_exists(mask_tif)
     remove_if_exists(raw_gpkg)
     remove_if_exists(filtered_gpkg)
 
-    actual_rows = feature_count(fgb)
+    actual_rows = feature_count(normalized_fgb)
     if actual_rows <= 0:
         raise RuntimeError(f"{ASSET.slug} output contains no features")
 
-    fields = set(layer_fields(fgb))
+    fields = set(layer_fields(normalized_fgb))
     missing_fields = {"DN", "ice_date"} - fields
     if missing_fields:
         raise RuntimeError(
@@ -541,19 +571,55 @@ def build_outputs(
             + ", ".join(sorted(missing_fields))
         )
 
-    convert_fgb_to_geojsonseq(fgb, geojsonseq)
-    build_pmtiles(geojsonseq, pmtiles)
+    convert_fgb_to_geojsonseq(normalized_fgb, geojsonseq)
+    enriched_features, sidecar_records = feature_metadata.enrich_features_with_generated_ids(
+        feature_metadata.iter_geojsonseq(geojsonseq),
+        asset_slug=ASSET.slug,
+        release=source_date.isoformat(),
+        provenance={"source_date": source_date.isoformat(), "generated_id_strategy": "geometry-digest"},
+    )
+    feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
+    feature_metadata.write_sidecar(sidecar_records, metadata)
+    schema_payload = feature_metadata.schema_from_records(
+        asset_slug=ASSET.slug,
+        release=source_date.isoformat(),
+        records=sidecar_records,
+    )
+    feature_metadata.write_schema(schema_payload, schema)
+    convert_geojsonseq_to_fgb(enriched_geojsonseq, fgb)
+    final_fields = set(layer_fields(fgb))
+    missing_final_fields = {
+        "DN",
+        "ice_date",
+        feature_metadata.FEATURE_ID_COLUMN,
+        feature_metadata.FEATURE_HASH_COLUMN,
+    } - final_fields
+    if missing_final_fields:
+        raise RuntimeError(
+            f"{ASSET.slug} FGB missing required field(s): "
+            + ", ".join(sorted(missing_final_fields))
+        )
+    build_pmtiles(enriched_geojsonseq, pmtiles)
     validate_pmtiles(pmtiles)
+    remove_if_exists(normalized_fgb)
     remove_if_exists(geojsonseq)
+    remove_if_exists(enriched_geojsonseq)
 
     return AssetOutputs(
         fgb=fgb,
         pmtiles=pmtiles,
+        metadata=metadata,
+        schema=schema,
+        manifest=manifest,
         row_count=actual_rows,
         sha256={
             "fgb": sha256_file(fgb),
             "pmtiles": sha256_file(pmtiles),
+            "metadata": sha256_file(metadata),
+            "schema": sha256_file(schema),
         },
+        schema_payload=schema_payload,
+        sidecar_records=tuple(sidecar_records),
     )
 
 
@@ -570,24 +636,17 @@ def publish_outputs(
     if publisher.successful_run_record(asset, run_date):
         LOGGER.info("%s already has a successful run record for %s", asset.slug, run_date)
         release_index_info = publisher.record_existing_successful_release(asset, run_date)
-        latest_metadata = publisher.replace_latest_metadata_from_run_record(
-            asset,
-            run_date,
-            metadata,
-        )
         return add_source_request_warnings(
             {
                 "asset_slug": asset.slug,
                 "run_date": run_date.isoformat(),
                 "status": "skipped",
                 "release_index": release_index_info,
-                "latest_metadata": latest_metadata,
             },
             source_request_warnings,
         )
 
     publisher.assert_no_partial_release(asset, run_date)
-
     release_fgb = publisher.upload_new_object(
         local_path=outputs.fgb,
         object_name=asset.release_object(run_date, ".fgb"),
@@ -596,6 +655,16 @@ def publish_outputs(
     release_pmtiles = publisher.upload_new_object(
         local_path=outputs.pmtiles,
         object_name=asset.release_object(run_date, ".pmtiles"),
+        metadata=metadata,
+    )
+    release_metadata = publisher.upload_new_object(
+        local_path=outputs.metadata,
+        object_name=asset.release_object(run_date, ".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    release_schema = publisher.upload_new_object(
+        local_path=outputs.schema,
+        object_name=asset.release_object(run_date, ".schema.json"),
         metadata=metadata,
     )
     latest_fgb = publisher.replace_latest_object(
@@ -608,6 +677,60 @@ def publish_outputs(
         object_name=asset.latest_object(".pmtiles"),
         metadata=metadata,
     )
+    latest_metadata = publisher.replace_latest_object(
+        local_path=outputs.metadata,
+        object_name=asset.latest_object(".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    latest_schema = publisher.replace_latest_object(
+        local_path=outputs.schema,
+        object_name=asset.latest_object(".schema.json"),
+        metadata=metadata,
+    )
+    manifest_release_object = asset.release_object(run_date, ".manifest.json")
+    manifest_latest_object = asset.latest_object(".manifest.json")
+    feature_metadata.write_manifest(
+        feature_metadata.final_manifest_payload(
+            asset_slug=asset.slug,
+            release=run_date.isoformat(),
+            bucket_name=publisher.bucket.name,
+            asset_root=asset.root,
+            sha256_by_role=outputs.sha256,
+            schema=outputs.schema_payload,
+            source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename}],
+            id_strategy={
+                "strategy": "generated",
+                "preimage": ["geometry_digest"],
+            },
+            feature_count=outputs.row_count,
+            release_blob_info_by_role={
+                "fgb": release_fgb,
+                "pmtiles": release_pmtiles,
+                "metadata": release_metadata,
+                "schema": release_schema,
+            },
+            latest_blob_info_by_role={
+                "fgb": latest_fgb,
+                "pmtiles": latest_pmtiles,
+                "metadata": latest_metadata,
+                "schema": latest_schema,
+            },
+            manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
+            manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+        ),
+        outputs.manifest,
+    )
+    release_manifest = publisher.upload_new_object(
+        local_path=outputs.manifest,
+        object_name=manifest_release_object,
+        metadata=metadata,
+    )
+    latest_manifest = publisher.replace_latest_object(
+        local_path=outputs.manifest,
+        object_name=manifest_latest_object,
+        metadata=metadata,
+    )
+    sha256_values = {**outputs.sha256, "manifest": sha256_file(outputs.manifest)}
 
     record = add_source_request_warnings(
         {
@@ -622,10 +745,10 @@ def publish_outputs(
             "documented_valid_date": source.documented_valid_date.isoformat(),
             "source_version": source.source_filename,
             "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-            "release_paths": [release_fgb, release_pmtiles],
-            "latest_paths": [latest_fgb, latest_pmtiles],
+            "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
+            "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
             "rows": outputs.row_count,
-            "sha256": outputs.sha256,
+            "sha256": sha256_values,
             "notes": (
                 "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
                 "Release date and ice_date use the GeoTIFF filename date by repository "
@@ -716,11 +839,6 @@ def run() -> dict[str, Any]:
             ASSET,
             available_source.filename_date,
         )
-        latest_metadata = publisher.replace_latest_metadata_from_run_record(
-            ASSET,
-            available_source.filename_date,
-            metadata_for_source(asset=ASSET, source=available_source),
-        )
         record = add_source_request_warnings(
             {
                 "asset_slug": ASSET.slug,
@@ -738,8 +856,6 @@ def run() -> dict[str, Any]:
         )
         if successful_release_index:
             record["successful_release_index"] = successful_release_index
-        if latest_metadata:
-            record["latest_metadata"] = latest_metadata
         record["release_index"] = publisher.update_latest_run_index(
             asset=ASSET,
             payload=record,

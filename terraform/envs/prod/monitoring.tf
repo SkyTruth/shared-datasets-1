@@ -16,7 +16,10 @@ locals {
   ])
 
   dataset_write_allowed_principal_filter = join(" AND ", [
-    for email in local.canonical_write_allowed_principal_emails :
+    for email in concat(
+      local.canonical_write_allowed_principal_emails,
+      [module.metadata_index_loader_service_account.email],
+    ) :
     "protoPayload.authenticationInfo.principalEmail!=\"${email}\""
   ])
 
@@ -205,6 +208,64 @@ EOT
   }
 
   depends_on = [
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "metadata_service_error_logs" {
+  project      = var.project_id
+  display_name = "Feature metadata service error logs"
+  combiner     = "OR"
+  enabled      = var.cron_alerts_enabled
+  severity     = "ERROR"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "Metadata service emitted error logs"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="cloud_run_revision"
+resource.labels.project_id="${var.project_id}"
+resource.labels.location="${var.region}"
+resource.labels.service_name="${google_cloud_run_v2_service.metadata_service.name}"
+severity>=ERROR
+EOT
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "Shared datasets metadata service error"
+    content   = <<-EOT
+The feature metadata Cloud Run service emitted error logs.
+
+Check recent service logs:
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="${google_cloud_run_v2_service.metadata_service.name}" AND severity>=ERROR' --project=${var.project_id} --limit=20
+```
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "3600s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "3600s"
+    }
+  }
+
+  user_labels = {
+    component = "feature-metadata"
+    service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_cloud_run_v2_service.metadata_service,
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
   ]

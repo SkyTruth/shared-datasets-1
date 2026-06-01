@@ -40,6 +40,7 @@ RUN_RECORD_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}\.json$")
 RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated", "000-system"}
 ROOT_ALLOWED_DOCS = {"README.md"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
+APPROVED_RELEASE_METADATA_SUFFIXES = (".metadata.ndjson.gz", ".schema.json", ".manifest.json")
 PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
 ALLOW_CANONICAL_MUTATION_ENV = "SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"
@@ -90,6 +91,8 @@ def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool
 def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
     if explicit:
         return explicit
+    if path.name.endswith(".ndjson.gz"):
+        return "application/x-ndjson"
     suffix = path.suffix.lower()
     if suffix in {".tif", ".tiff"}:
         return "image/tiff; application=geotiff; profile=cloud-optimized"
@@ -162,8 +165,13 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
         if rel == ["latest", "manifest.json"]:
             return errors
         if len(rel) != 2:
-            errors.append("latest/ should contain direct files only, except latest/manifest.json for Zarr")
-        ext = Path(rel[-1]).suffix.lower()
+            errors.append(
+                "latest/ should contain direct files only, except latest/manifest.json for Zarr"
+            )
+        filename = rel[-1]
+        if filename.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
+            return errors
+        ext = Path(filename).suffix.lower()
         if ext not in APPROVED_DATA_EXTENSIONS:
             errors.append(f"latest/ file extension {ext or '<none>'} is not approved")
         return errors
@@ -175,9 +183,21 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
             errors.append("releases/ child must be YYYY-MM-DD")
         if any(part.endswith(".zarr") for part in rel):
             return errors
-        ext = Path(rel[-1]).suffix.lower()
+        filename = rel[-1]
+        if filename.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
+            return errors
+        ext = Path(filename).suffix.lower()
         if ext not in APPROVED_DATA_EXTENSIONS:
             errors.append(f"release file extension {ext or '<none>'} is not approved")
+        return errors
+    if rel[0] == "index-loads":
+        if len(rel) != 3:
+            errors.append("index-loads/ records must be under index-loads/YYYY-MM-DD/{load-id}.json")
+            return errors
+        if not DATE_PATTERN.fullmatch(rel[1]):
+            errors.append("index-loads/ child must be YYYY-MM-DD")
+        if Path(rel[2]).suffix.lower() != ".json":
+            errors.append("index-loads/ records must be JSON files")
         return errors
     if rel[0] == "previews":
         ext = Path(rel[-1]).suffix.lower()

@@ -178,6 +178,20 @@ Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
 explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles
 with GDAL and converts them with `pmtiles convert`.
 
+Release feature metadata helpers live in:
+
+```text
+scripts/release_feature_model.py
+scripts/feature_metadata_index.py
+```
+
+Use `release_feature_model.py` from publishing or ingestion code to construct
+stable `feature_id` values, compute separate `feature_hash` values, serialize
+`{asset-slug}.metadata.ndjson.gz`, validate sidecar rows, and build release
+manifests. Use `feature_metadata_index.py --dry-run` to validate a sidecar
+without writing Firestore, and without `--dry-run` only from an approved runtime
+that is meant to refresh the rebuildable serving index.
+
 ## Localized PMTiles sidecars
 
 Localized PMTiles use a same-asset CSV sidecar rather than localized columns in
@@ -304,7 +318,7 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./example-asset.fgb
 ```
 
-For canonical vector/table assets, enforce schema compatibility before publish:
+For canonical vector/table assets, run schema validation before publish:
 
 ```bash
 uv run python scripts/dataset_alerts.py check-schema-compatibility \
@@ -312,9 +326,9 @@ uv run python scripts/dataset_alerts.py check-schema-compatibility \
   --dataset-path ./example-asset.fgb
 ```
 
-Additive fields pass. Removed fields, renamed fields, and type changes fail
-unless a reviewed compatibility waiver is supplied. After a successful
-compatible or waived publish, `check-schema` can still emit structured Cloud
+Schema validation reports added, removed, renamed, reordered, and type-changed
+fields so reviewers can confirm the new release schema is intentional. After a
+successful reviewed publish, `check-schema` can still emit structured Cloud
 Logging warnings and update the snapshot for monitoring.
 
 Production Terraform mutations must land through reviewed PRs and protected
