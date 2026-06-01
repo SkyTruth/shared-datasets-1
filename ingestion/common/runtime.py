@@ -81,6 +81,8 @@ def sha256_file(path: Path) -> str:
 
 
 def content_type_for(path: Path) -> str | None:
+    if path.name.endswith(".ndjson.gz"):
+        return "application/x-ndjson"
     suffix = path.suffix.lower()
     if suffix in {".tif", ".tiff"}:
         return "image/tiff; application=geotiff; profile=cloud-optimized"

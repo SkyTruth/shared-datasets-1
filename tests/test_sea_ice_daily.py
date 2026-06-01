@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import shutil
 import tempfile
@@ -13,6 +14,11 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from ingestion.common.gcs import GcsPublisher
 from ingestion.sea_ice_daily import run as sea_ice
 
+VALID_FGB_SHA = "a" * 64
+VALID_PMTILES_SHA = "b" * 64
+VALID_METADATA_SHA = "c" * 64
+VALID_SCHEMA_SHA = "d" * 64
+
 
 class FakeBlob:
     def __init__(self, name: str, *, exists: bool = False, generation: int = 1) -> None:
@@ -23,6 +29,7 @@ class FakeBlob:
         self.metadata = None
         self.content_type = None
         self.text = ""
+        self.data = b""
         self.uploads = []
 
     def reload(self) -> None:
@@ -39,7 +46,9 @@ class FakeBlob:
         self.generation += 1
         self.content_type = content_type
         self.metadata = self.metadata
-        self.size = Path(filename).stat().st_size
+        self.data = Path(filename).read_bytes()
+        self.text = self.data.decode("utf-8", errors="replace")
+        self.size = len(self.data)
         self.uploads.append(("filename", if_generation_match, content_type))
 
     def upload_from_string(self, data, *, content_type=None, if_generation_match=None):
@@ -48,6 +57,7 @@ class FakeBlob:
         self.generation += 1
         self.content_type = content_type
         self.text = data
+        self.data = data.encode()
         self.size = len(data.encode())
         self.uploads.append(("string", if_generation_match, content_type))
 
@@ -75,6 +85,43 @@ class FakeClient:
 
     def bucket(self, name: str) -> FakeBucket:
         return self._bucket
+
+
+def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ice.AssetOutputs:
+    fgb = tmp_path / "out.fgb"
+    pmtiles = tmp_path / "out.pmtiles"
+    metadata = tmp_path / "out.metadata.ndjson.gz"
+    schema = tmp_path / "out.schema.json"
+    manifest = tmp_path / "out.manifest.json"
+    for path, data in (
+        (fgb, b"fgb"),
+        (pmtiles, b"pmtiles"),
+        (metadata, b"metadata"),
+        (schema, b'{"schema_version":1}\n'),
+    ):
+        path.write_bytes(data)
+    schema_payload = {
+        "schema_version": 1,
+        "asset_slug": sea_ice.ASSET.slug,
+        "release": release,
+        "fields": [{"name": "ice_date", "type": "String", "nullable": False, "projectable": True}],
+    }
+    return sea_ice.AssetOutputs(
+        fgb=fgb,
+        pmtiles=pmtiles,
+        metadata=metadata,
+        schema=schema,
+        manifest=manifest,
+        row_count=2,
+        sha256={
+            "fgb": VALID_FGB_SHA,
+            "pmtiles": VALID_PMTILES_SHA,
+            "metadata": VALID_METADATA_SHA,
+            "schema": VALID_SCHEMA_SHA,
+        },
+        schema_payload=schema_payload,
+        sidecar_records=(),
+    )
 
 
 class SeaIceDailyTests(unittest.TestCase):
@@ -363,19 +410,10 @@ ice_date: String (0.0)
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            fgb = tmp_path / "out.fgb"
-            pmtiles = tmp_path / "out.pmtiles"
-            fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
             record = sea_ice.publish_outputs(
                 publisher=publisher,
                 asset=asset,
-                outputs=sea_ice.AssetOutputs(
-                    fgb=fgb,
-                    pmtiles=pmtiles,
-                    row_count=2,
-                    sha256={"fgb": "fgbhash", "pmtiles": "pmhash"},
-                ),
+                outputs=fake_asset_outputs(tmp_path),
                 source=sea_ice.AvailableSource(
                     filename_date=run_date,
                     source_url="https://example.test/ims.tif.gz",
@@ -393,6 +431,23 @@ ice_date: String (0.0)
         self.assertEqual(latest_fgb.uploads[0][1], 7)
         self.assertEqual(latest_pmtiles.uploads[0][1], 11)
         self.assertEqual(json.loads(run_record.text)["rows"], 2)
+        self.assertEqual(len(json.loads(run_record.text)["release_paths"]), 5)
+        manifest_blob = bucket.blob(asset.release_object(run_date, ".manifest.json"))
+        manifest = json.loads(manifest_blob.text)
+        self.assertEqual(manifest["id_strategy"], {"strategy": "generated", "preimage": ["geometry_digest"]})
+        artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
+        release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
+        latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))
+        for role in ("fgb", "pmtiles", "metadata", "schema"):
+            self.assertEqual(artifacts[role]["path"], release_by_role[role]["path"])
+            self.assertEqual(artifacts[role]["generation"], release_by_role[role]["generation"])
+            self.assertEqual(artifacts[role]["latest_path"], latest_by_role[role]["path"])
+            self.assertEqual(artifacts[role]["latest_generation"], latest_by_role[role]["generation"])
+        self.assertNotIn("generation", artifacts["manifest"])
+        self.assertNotIn("latest_generation", artifacts["manifest"])
+        manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
+        self.assertEqual(record["sha256"]["manifest"], manifest_sha)
+        self.assertEqual(json.loads(run_record.text)["sha256"]["manifest"], manifest_sha)
 
     def test_publish_skips_existing_success_record(self):
         bucket = FakeBucket()
@@ -405,19 +460,10 @@ ice_date: String (0.0)
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            fgb = tmp_path / "out.fgb"
-            pmtiles = tmp_path / "out.pmtiles"
-            fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
             record = sea_ice.publish_outputs(
                 publisher=publisher,
                 asset=asset,
-                outputs=sea_ice.AssetOutputs(
-                    fgb=fgb,
-                    pmtiles=pmtiles,
-                    row_count=2,
-                    sha256={"fgb": "fgbhash", "pmtiles": "pmhash"},
-                ),
+                outputs=fake_asset_outputs(tmp_path),
                 source=sea_ice.AvailableSource(
                     filename_date=run_date,
                     source_url="https://example.test/ims.tif.gz",
@@ -483,6 +529,8 @@ class SeaIceDailyIntegrationTests(unittest.TestCase):
             self.assertGreater(outputs.row_count, 0)
             self.assertTrue(outputs.fgb.exists())
             self.assertTrue(outputs.pmtiles.exists())
+            self.assertTrue(outputs.metadata.exists())
+            self.assertTrue(outputs.schema.exists())
 
 
 if __name__ == "__main__":

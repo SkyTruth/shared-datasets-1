@@ -55,6 +55,10 @@ GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+FEATURE_METADATA_STORAGE = "metadata_sidecar_v1"
+FEATURE_METADATA_INDEX_BACKEND = "firestore"
+FEATURE_METADATA_FEATURE_ID_COLUMN = "feature_id"
+FEATURE_METADATA_FEATURE_HASH_COLUMN = "feature_hash"
 LOCALIZED_NAMES_PROPERTY_TEMPLATE = "name_{locale_code}"
 LOCALIZED_NAMES_LOCALE_CODE_FORMAT = "bcp47_field_safe"
 LOCALIZED_NAME_STORAGE = "localization_csv_v1"
@@ -122,6 +126,7 @@ class CatalogAsset:
     data_profile: dict[str, Any] | None
     search_fields: list[dict[str, Any]]
     localized_names: dict[str, Any] | None
+    feature_metadata: dict[str, Any] | None
     generated_group_id: dict[str, Any] | None
     generated_row_id: dict[str, Any] | None
     source_url: str | None
@@ -520,6 +525,33 @@ def optional_localized_names(metadata: dict[str, Any], *, doc_path: Path) -> dic
         normalized["fallback_locale"] = fallback_locale
     normalized["available_locales"] = [translation["locale_code"] for translation in translations]
     normalized["translations"] = translations
+    return normalized
+
+
+def optional_feature_metadata(metadata: dict[str, Any], *, asset_slug: str, doc_path: Path) -> dict[str, Any] | None:
+    value = metadata.get("feature_metadata")
+    if value in (None, ""):
+        return None
+    if not isinstance(value, dict):
+        raise CatalogSiteError(f"{doc_path}: feature_metadata must be a mapping")
+    expected = {
+        "storage": FEATURE_METADATA_STORAGE,
+        "index_backend": FEATURE_METADATA_INDEX_BACKEND,
+        "feature_id_column": FEATURE_METADATA_FEATURE_ID_COLUMN,
+        "feature_hash_column": FEATURE_METADATA_FEATURE_HASH_COLUMN,
+        "sidecar_file": f"latest/{asset_slug}.metadata.ndjson.gz",
+        "schema_file": f"latest/{asset_slug}.schema.json",
+        "manifest_file": f"latest/{asset_slug}.manifest.json",
+    }
+    normalized: dict[str, Any] = {}
+    for key, expected_value in expected.items():
+        actual = str(value.get(key) or "").strip()
+        if actual != expected_value:
+            raise CatalogSiteError(f"{doc_path}: feature_metadata.{key} must be {expected_value!r}")
+        normalized[key] = actual
+    if value.get("provenance_default") is not True:
+        raise CatalogSiteError(f"{doc_path}: feature_metadata.provenance_default must be true")
+    normalized["provenance_default"] = True
     return normalized
 
 
@@ -1102,6 +1134,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
         localized_names=localized_names,
+        feature_metadata=optional_feature_metadata(doc_metadata, asset_slug=slug, doc_path=doc_path),
         generated_group_id=optional_generated_group_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         generated_row_id=optional_generated_row_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),

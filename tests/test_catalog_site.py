@@ -229,6 +229,7 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["localized_names"]["translations"][1]["field"], "name_es")
         self.assertEqual(asset["localized_names"]["translations"][1]["review_state_field"], "name_es_review_state")
         self.assertEqual(asset["localized_names"]["translations"][1]["review_state"], "machine_translated")
+        self.assertIsNone(asset["feature_metadata"])
         self.assertEqual(asset["generated_group_id"]["column"], "shared_datasets_group_id")
         self.assertEqual(asset["generated_group_id"]["algorithm"], "shared-datasets-group-id:v1")
         self.assertEqual(asset["generated_group_id"]["grouping_fields"], ["source_name"])
@@ -237,6 +238,37 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertEqual(asset["citation"], "Example citation")
         self.assertIn("Reusable example boundary dataset", asset["description"])
+
+    def test_feature_metadata_frontmatter_is_emitted(self):
+        feature_doc = DOC.replace(
+            "generated_group_id:\n",
+            "feature_metadata:\n"
+            "  storage: metadata_sidecar_v1\n"
+            "  index_backend: firestore\n"
+            "  feature_id_column: feature_id\n"
+            "  feature_hash_column: feature_hash\n"
+            "  sidecar_file: latest/example-asset.metadata.ndjson.gz\n"
+            "  schema_file: latest/example-asset.schema.json\n"
+            "  manifest_file: latest/example-asset.manifest.json\n"
+            "  provenance_default: true\n"
+            "generated_group_id:\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+            (docs_dir / "example-asset.md").write_text(feature_doc)
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+            )
+
+        feature_metadata = payload["assets"][0]["feature_metadata"]
+        self.assertEqual(feature_metadata["storage"], "metadata_sidecar_v1")
+        self.assertEqual(feature_metadata["index_backend"], "firestore")
+        self.assertEqual(feature_metadata["sidecar_file"], "latest/example-asset.metadata.ndjson.gz")
 
     def test_build_catalog_payload_keeps_public_and_private_assets_visible(self):
         with tempfile.TemporaryDirectory() as tmp:

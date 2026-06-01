@@ -46,6 +46,15 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique among non-empty values; 25 null/empty
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
+  schema_file: latest/eamlis-abandoned-mine-land-inventory.schema.json
+  manifest_file: latest/eamlis-abandoned-mine-land-inventory.manifest.json
+  provenance_default: true
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
@@ -55,6 +64,18 @@ files:
   format: pmtiles
   role: companion
   purpose: Web map tiles generated from the same point features
+- path: latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/eamlis-abandoned-mine-land-inventory.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/eamlis-abandoned-mine-land-inventory.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 - path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb
   role: release
@@ -108,6 +129,9 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 |---|---|---|---|
 | `latest/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `canonical` | Canonical WGS84 point dataset |
 | `latest/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point features |
+| `latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/eamlis-abandoned-mine-land-inventory.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/eamlis-abandoned-mine-land-inventory.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `release` | Dated canonical releases |
 | `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `release` | Dated map-tile releases |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Scheduled ingestion run records |

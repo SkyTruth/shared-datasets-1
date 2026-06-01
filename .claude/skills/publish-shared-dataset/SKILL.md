@@ -155,6 +155,14 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   catalog inspector. Do not use Tippecanoe `--exclude-all`; the repo vector
   helper rejects it, and manual multi-layer builds must verify decoded feature
   properties before publication.
+- Release-oriented vector assets use a strict artifact set: canonical FGB with
+  `feature_id` and
+  `feature_hash`, PMTiles projected to geometry plus `feature_id`, a canonical
+  `{asset-slug}.metadata.ndjson.gz` sidecar, `{asset-slug}.schema.json`, and
+  `{asset-slug}.manifest.json`. Use `scripts/release_feature_model.py` helpers
+  for IDs, hashes, sidecar serialization, validation, and manifest creation.
+  Use `--pmtiles-feature-id-property feature_id` with `scripts/vector_asset.py`
+  to build lightweight metadata-lookup tiles.
 - Shared vector PMTiles display artifacts should use `scripts/vector_asset.py
   build` auto maxzoom. The helper generates the FGB, profiles it, then chooses
   maxzoom from source scale/resolution hints and measured geometry detail. It
@@ -681,7 +689,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./example-asset.fgb
 ```
 
-For canonical vector/table assets, enforce schema compatibility before publish:
+For canonical vector/table assets, run schema validation before publish:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py check-schema-compatibility \
@@ -689,9 +697,9 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/dataset_alerts.py check-schema-comp
   --dataset-path ./example-asset.fgb
 ```
 
-Additive fields pass. Removed fields, renamed fields, and type changes fail
-unless a reviewed compatibility waiver is supplied. After a successful
-compatible or waived publish, `check-schema` remains available for diagnostic
+Schema validation reports added, removed, renamed, reordered, and type-changed
+fields so reviewers can confirm the new release schema is intentional. After a
+successful reviewed publish, `check-schema` remains available for diagnostic
 warnings and schema snapshot updates.
 
 Alert once per meaningful release. If a Slack upload alert already went out for

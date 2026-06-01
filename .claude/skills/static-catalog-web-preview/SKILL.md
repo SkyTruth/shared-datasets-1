@@ -93,9 +93,11 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
      those defaults for point assets unless the human explicitly accepts sparse
      low-zoom display tiles.
    - PMTiles display artifacts must preserve at least one useful feature
-     property for the catalog inspector. Do not use Tippecanoe `--exclude-all`;
-     `scripts/vector_asset.py` rejects it, and manual multi-layer Tippecanoe
-     builds must use the same standard.
+     property for the catalog inspector. For release-oriented metadata lookup
+     assets, that property is the stable `feature_id`; full attributes are
+     served from the metadata sidecar/API. Do not use Tippecanoe
+     `--exclude-all`; `scripts/vector_asset.py` rejects it, and manual
+     multi-layer Tippecanoe builds must use the same standard.
    - For dense point layers, confirm the effective command includes the
      retention flags:
 

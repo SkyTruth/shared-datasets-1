@@ -24,6 +24,7 @@ from typing import Any
 
 from google.cloud import storage
 
+from ingestion.common import feature_metadata
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import (
     STATUS_NOT_READY,
@@ -102,8 +103,13 @@ class SourceLayer:
 class AssetOutputs:
     fgb: Path
     pmtiles: Path
+    metadata: Path
+    schema: Path
+    manifest: Path
     row_count: int
     sha256: dict[str, str]
+    schema_payload: dict[str, Any]
+    sidecar_records: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True)
@@ -581,6 +587,23 @@ def convert_gpkg_to_fgb(gpkg: Path, asset: AssetSpec, output: Path) -> None:
     )
 
 
+def convert_geojsonseq_to_fgb(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
+    remove_if_exists(output)
+    run_command(
+        [
+            "ogr2ogr",
+            "-f",
+            "FlatGeobuf",
+            str(output),
+            str(geojsonseq),
+            "-nln",
+            asset.tile_layer,
+            "-nlt",
+            "GEOMETRY",
+        ]
+    )
+
+
 def convert_gpkg_to_geojsonseq(gpkg: Path, asset: AssetSpec, output: Path) -> None:
     remove_if_exists(output)
     run_command(
@@ -617,6 +640,8 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
             str(mbtiles),
             "-l",
             asset.tile_layer,
+            "--include",
+            feature_metadata.FEATURE_ID_COLUMN,
             "-P",
             *(extra_args or default_args),
             str(geojsonseq),
@@ -657,6 +682,7 @@ def build_asset_outputs(
     asset: AssetSpec,
     where: str,
     workdir: Path,
+    run_date: dt.date,
     cleanup_after_gpkg: tuple[Path, ...] = (),
 ) -> AssetOutputs:
     expected_rows = expected_feature_count(source, source_layers, where)
@@ -666,7 +692,11 @@ def build_asset_outputs(
     gpkg = workdir / f"{asset.slug}.gpkg"
     fgb = workdir / f"{asset.slug}.fgb"
     geojsonseq = workdir / f"{asset.slug}.geojsonseq"
+    enriched_geojsonseq = workdir / f"{asset.slug}.metadata.geojsonseq"
     pmtiles = workdir / f"{asset.slug}.pmtiles"
+    metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
+    schema = workdir / f"{asset.slug}.schema.json"
+    manifest = workdir / f"{asset.slug}.manifest.json"
 
     build_filtered_gpkg(
         source=source,
@@ -680,10 +710,26 @@ def build_asset_outputs(
         remove_if_exists(path)
 
     convert_gpkg_to_geojsonseq(gpkg, asset, geojsonseq)
-    build_pmtiles(geojsonseq, asset, pmtiles)
+    enriched_features, sidecar_records = feature_metadata.enrich_features_with_provider_ids(
+        feature_metadata.iter_geojsonseq(geojsonseq),
+        asset_slug=asset.slug,
+        release=run_date.isoformat(),
+        id_field="SITE_PID",
+        provenance={"source": source, "where": where},
+    )
+    feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
+    feature_metadata.write_sidecar(sidecar_records, metadata)
+    schema_payload = feature_metadata.schema_from_records(
+        asset_slug=asset.slug,
+        release=run_date.isoformat(),
+        records=sidecar_records,
+    )
+    feature_metadata.write_schema(schema_payload, schema)
+    build_pmtiles(enriched_geojsonseq, asset, pmtiles)
     remove_if_exists(geojsonseq)
 
-    convert_gpkg_to_fgb(gpkg, asset, fgb)
+    convert_geojsonseq_to_fgb(enriched_geojsonseq, asset, fgb)
+    remove_if_exists(enriched_geojsonseq)
 
     actual_rows = feature_count(str(fgb))
     if actual_rows != expected_rows:
@@ -691,19 +737,32 @@ def build_asset_outputs(
             f"{asset.slug} row count mismatch: expected {expected_rows}, got {actual_rows}"
         )
     output_fields = layer_fields(fgb)
-    if output_fields != source_fields:
-        raise RuntimeError(f"{asset.slug} FGB schema does not match source schema")
+    output_field_names = {field.name for field in output_fields}
+    required_field_names = {field.name for field in source_fields} | {
+        feature_metadata.FEATURE_ID_COLUMN,
+        feature_metadata.FEATURE_HASH_COLUMN,
+    }
+    if not required_field_names.issubset(output_field_names):
+        missing = sorted(required_field_names - output_field_names)
+        raise RuntimeError(f"{asset.slug} FGB schema is missing required fields: {', '.join(missing)}")
     validate_pmtiles(pmtiles)
     remove_if_exists(gpkg)
 
     return AssetOutputs(
         fgb=fgb,
         pmtiles=pmtiles,
+        metadata=metadata,
+        schema=schema,
+        manifest=manifest,
         row_count=actual_rows,
         sha256={
             "fgb": sha256_file(fgb),
             "pmtiles": sha256_file(pmtiles),
+            "metadata": sha256_file(metadata),
+            "schema": sha256_file(schema),
         },
+        schema_payload=schema_payload,
+        sidecar_records=tuple(sidecar_records),
     )
 
 
@@ -728,15 +787,9 @@ def publish_asset(
             "asset_slug": asset.slug,
             "status": "skipped",
             "release_index": publisher.record_existing_successful_release(asset, run_date),
-            "latest_metadata": publisher.replace_latest_metadata_from_run_record(
-                asset,
-                run_date,
-                metadata,
-            ),
         }
 
     publisher.assert_no_partial_release(asset, run_date)
-
     release_fgb = publisher.upload_new_object(
         local_path=outputs.fgb,
         object_name=asset.release_object(run_date, ".fgb"),
@@ -745,6 +798,16 @@ def publish_asset(
     release_pmtiles = publisher.upload_new_object(
         local_path=outputs.pmtiles,
         object_name=asset.release_object(run_date, ".pmtiles"),
+        metadata=metadata,
+    )
+    release_metadata = publisher.upload_new_object(
+        local_path=outputs.metadata,
+        object_name=asset.release_object(run_date, ".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    release_schema = publisher.upload_new_object(
+        local_path=outputs.schema,
+        object_name=asset.release_object(run_date, ".schema.json"),
         metadata=metadata,
     )
     latest_fgb = publisher.replace_latest_object(
@@ -757,6 +820,57 @@ def publish_asset(
         object_name=asset.latest_object(".pmtiles"),
         metadata=metadata,
     )
+    latest_metadata = publisher.replace_latest_object(
+        local_path=outputs.metadata,
+        object_name=asset.latest_object(".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    latest_schema = publisher.replace_latest_object(
+        local_path=outputs.schema,
+        object_name=asset.latest_object(".schema.json"),
+        metadata=metadata,
+    )
+    manifest_release_object = asset.release_object(run_date, ".manifest.json")
+    manifest_latest_object = asset.latest_object(".manifest.json")
+    feature_metadata.write_manifest(
+        feature_metadata.final_manifest_payload(
+            asset_slug=asset.slug,
+            release=run_date.isoformat(),
+            bucket_name=publisher.bucket.name,
+            asset_root=asset.root,
+            sha256_by_role=outputs.sha256,
+            schema=outputs.schema_payload,
+            source_inputs=[{"uri": source_url}],
+            id_strategy={"strategy": "provider", "field": "SITE_PID"},
+            feature_count=outputs.row_count,
+            release_blob_info_by_role={
+                "fgb": release_fgb,
+                "pmtiles": release_pmtiles,
+                "metadata": release_metadata,
+                "schema": release_schema,
+            },
+            latest_blob_info_by_role={
+                "fgb": latest_fgb,
+                "pmtiles": latest_pmtiles,
+                "metadata": latest_metadata,
+                "schema": latest_schema,
+            },
+            manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
+            manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+        ),
+        outputs.manifest,
+    )
+    release_manifest = publisher.upload_new_object(
+        local_path=outputs.manifest,
+        object_name=manifest_release_object,
+        metadata=metadata,
+    )
+    latest_manifest = publisher.replace_latest_object(
+        local_path=outputs.manifest,
+        object_name=manifest_latest_object,
+        metadata=metadata,
+    )
+    sha256_values = {**outputs.sha256, "manifest": sha256_file(outputs.manifest)}
 
     record = {
         "record_version": RUN_RECORD_VERSION,
@@ -766,10 +880,10 @@ def publish_asset(
         "source": source_url,
         "source_version": source_version,
         "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-        "release_paths": [release_fgb, release_pmtiles],
-        "latest_paths": [latest_fgb, latest_pmtiles],
+        "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
+        "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
         "rows": outputs.row_count,
-        "sha256": outputs.sha256,
+        "sha256": sha256_values,
         "field_count": len(source_fields),
         "notes": "Generated by simplified monthly WDPA job; fields preserved from source.",
     }
@@ -831,15 +945,6 @@ def run() -> list[dict[str, Any]]:
                 asset,
                 run_date,
             )
-            latest_metadata = publisher.replace_latest_metadata_from_run_record(
-                asset,
-                run_date,
-                metadata_for_asset(
-                    asset=asset,
-                    run_date=run_date,
-                    source_version=source_version,
-                ),
-            )
             record = {
                 "asset_slug": asset.slug,
                 "run_date": attempt_date.isoformat(),
@@ -851,8 +956,6 @@ def run() -> list[dict[str, Any]]:
             }
             if successful_release_index:
                 record["successful_release_index"] = successful_release_index
-            if latest_metadata:
-                record["latest_metadata"] = latest_metadata
             record["release_index"] = publisher.update_latest_run_index(
                 asset=asset,
                 payload=record,
@@ -907,17 +1010,6 @@ def run() -> list[dict[str, Any]]:
                 )
                 if release_index_info:
                     record["release_index"] = release_index_info
-                latest_metadata = publisher.replace_latest_metadata_from_run_record(
-                    asset,
-                    run_date,
-                    metadata_for_asset(
-                        asset=asset,
-                        run_date=run_date,
-                        source_version=source_version,
-                    ),
-                )
-                if latest_metadata:
-                    record["latest_metadata"] = latest_metadata
                 records.append(record)
                 continue
             where = sampled_where_clause(asset_where_clause(asset, split_field), sample_spec)
@@ -928,6 +1020,7 @@ def run() -> list[dict[str, Any]]:
                 asset=asset,
                 where=where,
                 workdir=workdir,
+                run_date=run_date,
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
@@ -945,6 +1038,9 @@ def run() -> list[dict[str, Any]]:
             )
             remove_if_exists(outputs.fgb)
             remove_if_exists(outputs.pmtiles)
+            remove_if_exists(outputs.metadata)
+            remove_if_exists(outputs.schema)
+            remove_if_exists(outputs.manifest)
         return records
 
 

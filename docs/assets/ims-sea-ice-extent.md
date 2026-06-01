@@ -28,6 +28,15 @@ data_profile:
   field_count: 2
   identity_candidates: []
   notes: No unique ID candidate; DN/ice_date are class/time attributes
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/ims-sea-ice-extent.metadata.ndjson.gz
+  schema_file: latest/ims-sea-ice-extent.schema.json
+  manifest_file: latest/ims-sea-ice-extent.manifest.json
+  provenance_default: true
 source_resolution_meters: 4000
 files:
 - path: latest/ims-sea-ice-extent.fgb
@@ -38,6 +47,18 @@ files:
   format: pmtiles
   role: companion
   purpose: Web map tiles generated from the same vector output
+- path: latest/ims-sea-ice-extent.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/ims-sea-ice-extent.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/ims-sea-ice-extent.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 - path: releases/YYYY-MM-DD/ims-sea-ice-extent.fgb
   format: fgb
   role: release
@@ -89,6 +110,9 @@ record preserves that documented valid date.
 |---|---|---|---|
 | `latest/ims-sea-ice-extent.fgb` | `fgb` | `canonical` | Canonical vectorized class-3 extent |
 | `latest/ims-sea-ice-extent.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same vector output |
+| `latest/ims-sea-ice-extent.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/ims-sea-ice-extent.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/ims-sea-ice-extent.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/ims-sea-ice-extent.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/ims-sea-ice-extent.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Daily run record |

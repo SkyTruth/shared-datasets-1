@@ -288,6 +288,60 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(commands[0].kind, "pipeline")
         self.assertNotIn("-sql", commands[0].source)
 
+    def test_pmtiles_feature_id_property_projects_tiles_to_feature_id_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                work_dir=Path(tmp) / "work",
+                pmtiles_feature_id_property=vector_asset.FEATURE_ID_COLUMN,
+            )
+            profile = pmtiles_zoom.FgbProfile(
+                path=plan.fgb_path,
+                feature_count=1,
+                geometry_types=("Point",),
+                bounds=(-76.5, 38.9, -76.5, 38.9),
+                point_feature_count=1,
+                sampled_feature_count=1,
+                sampled_segment_count=0,
+                segment_length_m_p25=None,
+                segment_length_m_p50=None,
+                feature_min_dimension_m_p10=None,
+                feature_min_dimension_m_p25=None,
+                envelope_like=False,
+                property_keys=("feature_id", "name", "source_id"),
+            )
+
+        commands = vector_asset.pmtiles_commands(plan, 12, profile=profile)
+
+        self.assertIn(vector_asset.FEATURE_ID_COLUMN, plan.required_properties)
+        self.assertIn(vector_asset.FEATURE_HASH_COLUMN, plan.required_properties)
+        self.assertEqual(
+            plan.required_fgb_properties,
+            (vector_asset.FEATURE_ID_COLUMN, vector_asset.FEATURE_HASH_COLUMN),
+        )
+        self.assertEqual(plan.required_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN,))
+        self.assertEqual(plan.exact_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN,))
+        self.assertEqual(plan.pmtiles_feature_id_property, vector_asset.FEATURE_ID_COLUMN)
+        self.assertEqual(commands[0].kind, "pipeline")
+        sql = commands[0].source[commands[0].source.index("-sql") + 1]
+        self.assertEqual(sql, 'SELECT "feature_id" FROM "example_asset"')
+
+    def test_pmtiles_feature_id_property_must_use_standard_feature_id_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "must be feature_id"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path(tmp) / "work",
+                    pmtiles_feature_id_property="source_id",
+                )
+
     def test_low_maxzoom_requires_documented_exception(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -576,6 +630,83 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertTrue(result.valid)
         self.assertEqual(result.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
+
+    def test_metadata_mode_validation_requires_fgb_hash_and_pmtiles_feature_id_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fgb = Path(tmp) / "example.fgb"
+            pmtiles = Path(tmp) / "example.pmtiles"
+            fgb.write_bytes(b"fgb")
+            pmtiles.write_bytes(b"pmtiles")
+
+            def which(name):
+                if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
+                    return f"/usr/bin/{name}"
+                return None
+
+            def run(command, **kwargs):
+                if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "layers": [
+                                    {
+                                        "name": "example",
+                                        "featureCount": 1,
+                                        "fields": [{"name": vector_asset.FEATURE_ID_COLUMN}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                if command[:4] == ["ogrinfo", "-ro", "-q", "-dialect"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="invalid_geometry_count (Integer) = 0\n",
+                        stderr="",
+                    )
+                if command[0] == "pmtiles":
+                    return SimpleNamespace(returncode=0, stdout="", stderr="")
+                if command[0] == "tippecanoe-decode":
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "features": [
+                                    {
+                                        "features": [
+                                            {
+                                                "properties": {
+                                                    vector_asset.FEATURE_ID_COLUMN: "src:id:1",
+                                                    "name": "extra",
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            with mock.patch.object(vector_asset.shutil, "which", side_effect=which), mock.patch.object(
+                vector_asset.subprocess,
+                "run",
+                side_effect=run,
+            ):
+                result = vector_asset.validate_outputs(
+                    fgb,
+                    pmtiles,
+                    required_fgb_properties=(vector_asset.FEATURE_ID_COLUMN, vector_asset.FEATURE_HASH_COLUMN),
+                    required_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN,),
+                    exact_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN,),
+                )
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any("FGB is missing" in error and "feature_hash" in error for error in result.errors))
+        self.assertTrue(any("must be exactly" in error for error in result.errors))
 
     def test_validation_treats_empty_sampled_tile_as_pmtiles_property_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:

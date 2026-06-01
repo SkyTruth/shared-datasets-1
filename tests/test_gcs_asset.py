@@ -23,6 +23,7 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         expected = {
             "catalog.json": "application/json",
             "shared-datasets-catalog.csv": "text/csv",
+            "example.metadata.ndjson.gz": "application/x-ndjson",
             "index.html": "text/html",
             "styles.css": "text/css",
             "app.js": "application/javascript",
@@ -37,9 +38,16 @@ class GcsAssetPathValidationTests(unittest.TestCase):
         paths = [
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/README.md",
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.fgb",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.ndjson.gz",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.schema.json",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-04-29/wdpa-terrestrial.pmtiles",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-04-29/wdpa-terrestrial.metadata.ndjson.gz",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-04-29/wdpa-terrestrial.schema.json",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-04-29/wdpa-terrestrial.manifest.json",
             "200-imagery-derived/250-weather-climate/example/previews/example-preview.png",
             "200-imagery-derived/250-weather-climate/example/runs/2026-04-29.json",
+            "100-geographic-reference/130-protected-areas/wdpa-terrestrial/index-loads/2026-04-29/load-1.json",
         ]
 
         for path in paths:

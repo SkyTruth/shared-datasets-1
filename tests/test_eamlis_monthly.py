@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -16,6 +17,11 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.eamlis_monthly import run as eamlis
 from ingestion.common.gcs import GcsPublisher
+
+VALID_FGB_SHA = "a" * 64
+VALID_PMTILES_SHA = "b" * 64
+VALID_METADATA_SHA = "c" * 64
+VALID_SCHEMA_SHA = "d" * 64
 
 
 def gdal_binaries_work() -> bool:
@@ -46,6 +52,7 @@ class FakeBlob:
         self.metadata = None
         self.content_type = None
         self.text = ""
+        self.data = b""
         self.uploads = []
 
     def reload(self) -> None:
@@ -61,7 +68,9 @@ class FakeBlob:
         self.exists = True
         self.generation += 1
         self.content_type = content_type
-        self.size = Path(filename).stat().st_size
+        self.data = Path(filename).read_bytes()
+        self.text = self.data.decode("utf-8", errors="replace")
+        self.size = len(self.data)
         self.uploads.append(("filename", if_generation_match, content_type))
 
     def upload_from_string(self, data, *, content_type=None, if_generation_match=None):
@@ -70,6 +79,7 @@ class FakeBlob:
         self.generation += 1
         self.content_type = content_type
         self.text = data
+        self.data = data.encode()
         self.size = len(data.encode())
         self.uploads.append(("string", if_generation_match, content_type))
 
@@ -164,6 +174,48 @@ def sample_source_state(*, fingerprint_hash: str = "abc123", feature_count: int 
         stats=sample_stats(feature_count),
         fingerprint_hash=fingerprint_hash,
         fingerprint=fingerprint,
+    )
+
+
+def fake_asset_output(
+    tmp_path: Path,
+    *,
+    fgb_sha: str = VALID_FGB_SHA,
+    pmtiles_sha: str = VALID_PMTILES_SHA,
+) -> eamlis.AssetOutput:
+    fgb = tmp_path / "asset.fgb"
+    pmtiles = tmp_path / "asset.pmtiles"
+    metadata = tmp_path / "asset.metadata.ndjson.gz"
+    schema = tmp_path / "asset.schema.json"
+    manifest = tmp_path / "asset.manifest.json"
+    for path, data in (
+        (fgb, b"fgb"),
+        (pmtiles, b"pmtiles"),
+        (metadata, b"metadata"),
+        (schema, b'{"schema_version":1}\n'),
+    ):
+        path.write_bytes(data)
+    schema_payload = {
+        "schema_version": 1,
+        "asset_slug": eamlis.ASSET.slug,
+        "release": "2026-05-02",
+        "fields": [{"name": "OBJECTID", "type": "Integer", "nullable": False, "projectable": True}],
+    }
+    return eamlis.AssetOutput(
+        fgb=fgb,
+        pmtiles=pmtiles,
+        metadata=metadata,
+        schema=schema,
+        manifest=manifest,
+        row_count=2,
+        sha256={
+            "fgb": fgb_sha,
+            "pmtiles": pmtiles_sha,
+            "metadata": VALID_METADATA_SHA,
+            "schema": VALID_SCHEMA_SHA,
+        },
+        schema_payload=schema_payload,
+        sidecar_records=(),
     )
 
 
@@ -315,16 +367,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            fgb = tmp_path / "asset.fgb"
-            pmtiles = tmp_path / "asset.pmtiles"
-            fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
-            output = eamlis.AssetOutput(
-                fgb=fgb,
-                pmtiles=pmtiles,
-                row_count=2,
-                sha256={"fgb": "new-sha", "pmtiles": "pmtiles-sha"},
-            )
+            output = fake_asset_output(tmp_path)
             record = eamlis.publish_changed_asset(
                 publisher=publisher,
                 run_date=dt.date(2026, 5, 2),
@@ -341,10 +384,25 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(latest_pmtiles.uploads[0][1], 0)
         self.assertEqual(run_blob.uploads[0][1], 0)
         self.assertEqual(record["status"], "success")
-        self.assertEqual(record["sha256"]["fgb"], "new-sha")
-        self.assertEqual(record["sha256"]["pmtiles"], "pmtiles-sha")
-        self.assertEqual(len(record["release_paths"]), 2)
-        self.assertEqual(len(record["latest_paths"]), 2)
+        self.assertEqual(record["sha256"]["fgb"], VALID_FGB_SHA)
+        self.assertEqual(record["sha256"]["pmtiles"], VALID_PMTILES_SHA)
+        self.assertEqual(len(record["release_paths"]), 5)
+        self.assertEqual(len(record["latest_paths"]), 5)
+        manifest_blob = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".manifest.json"))
+        manifest = json.loads(manifest_blob.text)
+        artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
+        release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
+        latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))
+        for role in ("fgb", "pmtiles", "metadata", "schema"):
+            self.assertEqual(artifacts[role]["path"], release_by_role[role]["path"])
+            self.assertEqual(artifacts[role]["generation"], release_by_role[role]["generation"])
+            self.assertEqual(artifacts[role]["latest_path"], latest_by_role[role]["path"])
+            self.assertEqual(artifacts[role]["latest_generation"], latest_by_role[role]["generation"])
+        self.assertNotIn("generation", artifacts["manifest"])
+        self.assertNotIn("latest_generation", artifacts["manifest"])
+        manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
+        self.assertEqual(record["sha256"]["manifest"], manifest_sha)
+        self.assertEqual(json.loads(run_blob.text)["sha256"]["manifest"], manifest_sha)
 
     def test_output_hash_unchanged_writes_skipped_record_without_publish(self):
         bucket = FakeBucket()
@@ -372,21 +430,17 @@ class EamlisMonthlyTests(unittest.TestCase):
             }
         )
         source = sample_source_state(fingerprint_hash="new")
-        output = eamlis.AssetOutput(
-            fgb=Path("/tmp/nonexistent.fgb"),
-            pmtiles=Path("/tmp/nonexistent.pmtiles"),
-            row_count=2,
-            sha256={"fgb": "same-sha"},
-        )
-        with (
-            mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-            mock.patch.object(eamlis, "require_binary", lambda _binary: None),
-            mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
-            mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-            mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
-            mock.patch.object(eamlis, "build_asset_output", return_value=output),
-        ):
-            records = eamlis.run()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = fake_asset_output(Path(tmp), fgb_sha="same-sha")
+            with (
+                mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
+                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
+                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
+                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
+                mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
+                mock.patch.object(eamlis, "build_asset_output", return_value=output),
+            ):
+                records = eamlis.run()
 
         self.assertEqual(records[0]["status"], "skipped")
         self.assertEqual(records[0]["reason"], "generated FGB hash unchanged")
@@ -464,6 +518,7 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
                 source=source,
                 extract=extract,
                 workdir=tmp_path,
+                release_date=dt.date(2026, 5, 2),
             )
             first_hash = output_one.sha256["fgb"]
             output_one.fgb.unlink()
@@ -471,6 +526,7 @@ class EamlisMonthlyIntegrationTests(unittest.TestCase):
                 source=source,
                 extract=extract,
                 workdir=tmp_path,
+                release_date=dt.date(2026, 5, 2),
             )
 
         self.assertEqual(output_two.row_count, 2)

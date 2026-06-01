@@ -34,6 +34,7 @@ Maintainer-only publishing and infrastructure procedures live in
 | Browser may display private PMTiles | TypeScript SDK plus app-owned backend session route | Private PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
 | Backend route issues private PMTiles cookies | TypeScript server entrypoint | Cookie signing uses Node crypto and should stay behind the app backend. |
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
+| App has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is served by asset/release/ID lookup. |
 
 Do not build browser integrations on anonymous
 `https://storage.googleapis.com/skytruth-shared-datasets-1/...` reads. Direct
@@ -71,11 +72,16 @@ where relevant:
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
 | `localized_names`, `localized_name_locales`, and `localized_name_review_states` | Localization sidecar metadata, declared PMTiles `name_${locale_code}` fields, available locale codes, and aggregate review confidence when an asset publishes localized display names. |
+| `feature_metadata` | Metadata sidecar, schema, manifest, and Firestore-backed lookup support for assets that publish feature-level metadata. |
 
 Localized PMTiles consumers still read `name` and declared `name_${locale_code}`
 feature properties from PMTiles. Canonical FGB consumers should rely on
 `ext_id` for joins and should not expect localized name columns in the FGB; the
 localization source is the same-asset `{asset-slug}-localizations.csv` sidecar.
+
+Release-oriented vector PMTiles carry geometry plus `feature_id` only. Use the
+metadata API for full attributes and provenance instead of expecting source
+columns in PMTiles.
 
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display
@@ -184,6 +190,47 @@ Minimum private PMTiles flow:
 Exact CORS origins and signer IAM grants are infrastructure concerns. Request a
 shared-datasets infrastructure PR before relying on private PMTiles from a new
 deployed frontend origin.
+
+## Feature Metadata API
+
+The metadata API is an IAP-protected Cloud Run service. Initial access is
+SkyTruth-only for all assets, even when the underlying catalog asset is public.
+
+Lookup endpoint:
+
+```http
+POST /v1/assets/{asset_slug}/releases/{release}:lookup
+```
+
+Use `release=latest` for convenience; every response includes the concrete
+`resolved_release`. Persist that resolved release in downstream lineage when a
+result must be reproducible.
+
+Request:
+
+```json
+{
+  "ids": ["src:id:1", "src:id:2"],
+  "fields": ["name", "source_id"]
+}
+```
+
+`fields` omitted or `null` returns all properties. `fields: []` returns only
+identifiers, hashes, and provenance. Provenance is included by default; pass
+`"include_provenance": false` only when a caller explicitly wants a smaller
+response.
+
+Limits:
+
+- 500 feature IDs per request.
+- 500 projected fields per request.
+- 10 MiB maximum JSON response.
+
+If a response would exceed the size limit, the service returns
+`413 response_too_large`; request fewer IDs or explicit fields. Missing feature
+IDs are item-level `status: "missing"` in a `200` response. Unknown assets or
+releases return `404`; unloaded indexes return `409 index_not_ready`; invalid
+fields return `400`.
 
 ## Migration Checklist
 

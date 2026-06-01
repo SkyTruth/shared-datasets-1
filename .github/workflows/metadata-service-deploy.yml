@@ -1,0 +1,185 @@
+name: Feature metadata service deploy
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/metadata-service-deploy.yml"
+      - "services/metadata_service/**"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/metadata_service.tf"
+      - "terraform/envs/prod/monitoring.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/metadata-service-deploy.yml"
+      - "services/metadata_service/**"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/metadata_service.tf"
+      - "terraform/envs/prod/monitoring.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  IMAGE_NAME: metadata-service
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  readiness:
+    name: Check metadata-service deploy readiness
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER or GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+  deploy:
+    name: Build image and apply metadata-service Terraform
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: metadata-service-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER or GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build metadata-service image
+        run: |
+          set -euo pipefail
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build \
+            --platform linux/amd64 \
+            -f services/metadata_service/Dockerfile \
+            -t "${image_tag}" \
+            .
+          docker push "${image_tag}"
+          image_digest="$(gcloud artifacts docker images describe "${image_tag}" --format='value(image_summary.fully_qualified_digest)')"
+          if [[ -z "${image_digest}" || "${image_digest}" != *@sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${image_tag}" >&2
+            exit 1
+          fi
+          echo "METADATA_SERVICE_IMAGE=${image_digest}" >> "${GITHUB_ENV}"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/prod init -input=false
+
+      - name: Terraform plan
+        run: |
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -out="${RUNNER_TEMP}/metadata-service.tfplan" \
+            -var="metadata_service_image=${METADATA_SERVICE_IMAGE}" \
+            -var="wdpa_monthly_image=unused-by-metadata-service-deploy" \
+            -var="sea_ice_daily_image=unused-by-metadata-service-deploy" \
+            -var="eamlis_monthly_image=unused-by-metadata-service-deploy"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/metadata-service.tfplan" > "${RUNNER_TEMP}/metadata-service.tfplan.json"
+
+      - name: Enforce metadata-service resource-change allowlist
+        run: |
+          python - "${RUNNER_TEMP}/metadata-service.tfplan.json" <<'PY'
+          import json
+          import re
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_firestore_database.feature_metadata",
+              "google_cloud_run_v2_service.metadata_service",
+              "google_cloud_run_v2_service_iam_member.metadata_service_iap_invoker",
+              "google_monitoring_alert_policy.metadata_service_error_logs",
+              "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",
+              'google_project_service.required["firestore.googleapis.com"]',
+              'google_project_service.required["iap.googleapis.com"]',
+              'google_storage_bucket_iam_member.metadata_service_object_viewer',
+              'google_storage_bucket_iam_member.metadata_index_loader_object_viewer',
+              'google_storage_bucket_iam_member.metadata_index_loader_index_load_creator',
+              'google_project_iam_member.metadata_service_firestore_viewer',
+              'google_project_iam_member.metadata_index_loader_firestore_user',
+              'google_service_account_iam_member.metadata_index_loader_github_wif',
+          }
+          allowed_patterns = [
+              re.compile(r"^module\.metadata_service_account\."),
+              re.compile(r"^module\.metadata_index_loader_service_account\."),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_accessors\["),
+          ]
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing metadata-service deploy because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/metadata-service.tfplan"

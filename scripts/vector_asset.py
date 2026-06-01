@@ -43,6 +43,8 @@ DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
+FEATURE_ID_COLUMN = "feature_id"
+FEATURE_HASH_COLUMN = "feature_hash"
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GROUP_ID_VRT_SOURCE_LAYER = "source"
@@ -114,6 +116,9 @@ class VectorBuildPlan:
     tile_simplify: float | None
     tippecanoe_extra_args: tuple[str, ...]
     required_properties: tuple[str, ...]
+    required_fgb_properties: tuple[str, ...]
+    required_pmtiles_properties: tuple[str, ...]
+    exact_pmtiles_properties: tuple[str, ...]
     group_id_fields: tuple[str, ...]
     group_id_token_length: int | None
     group_id_fail_on_ambiguous_geometry: bool
@@ -121,6 +126,7 @@ class VectorBuildPlan:
     row_id_token_length: int | None
     generated_id_column: str | None
     generated_id_algorithm: str | None
+    pmtiles_feature_id_property: str | None
     title: str
     description: str
     commands: list[BuildCommand]
@@ -143,6 +149,9 @@ class VectorValidationResult:
     profile: dict[str, Any] | None = None
     recommendation: dict[str, Any] | None = None
     required_properties: tuple[str, ...] = ()
+    required_fgb_properties: tuple[str, ...] = ()
+    required_pmtiles_properties: tuple[str, ...] = ()
+    exact_pmtiles_properties: tuple[str, ...] = ()
 
 
 def default_work_dir(asset_slug: str, *, root: Path | None = None) -> Path:
@@ -364,6 +373,7 @@ def build_plan(
     group_id_fail_on_ambiguous_geometry: bool = False,
     generate_row_id: bool = False,
     row_id_token_length: int | None = None,
+    pmtiles_feature_id_property: str | None = None,
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
@@ -407,18 +417,36 @@ def build_plan(
         raise ValueError("row ID token length must be at least 8")
     generated_id_column = GENERATED_GROUP_ID_COLUMN if group_id_field_tuple else GENERATED_ROW_ID_COLUMN if generate_row_id else None
     generated_id_algorithm = GENERATED_GROUP_ID_ALGORITHM if group_id_field_tuple else GENERATED_ROW_ID_ALGORITHM if generate_row_id else None
-    required_property_tuple = tuple(
+    pmtiles_feature_id_property = (pmtiles_feature_id_property or "").strip() or None
+    if pmtiles_feature_id_property and pmtiles_feature_id_property != FEATURE_ID_COLUMN:
+        raise ValueError("--pmtiles-feature-id-property must be feature_id for release metadata PMTiles")
+    base_required_property_tuple = tuple(
         dict.fromkeys(
             [
                 *(property_name.strip() for property_name in required_properties if property_name.strip()),
                 *([generated_id_column] if generated_id_column else []),
+                *([pmtiles_feature_id_property] if pmtiles_feature_id_property else []),
             ]
         )
     )
+    if pmtiles_feature_id_property:
+        required_fgb_property_tuple = tuple(
+            dict.fromkeys((*base_required_property_tuple, FEATURE_ID_COLUMN, FEATURE_HASH_COLUMN))
+        )
+        required_pmtiles_property_tuple = (FEATURE_ID_COLUMN,)
+        exact_pmtiles_property_tuple = (FEATURE_ID_COLUMN,)
+        required_property_tuple = tuple(
+            dict.fromkeys((*required_fgb_property_tuple, *required_pmtiles_property_tuple))
+        )
+    else:
+        required_fgb_property_tuple = base_required_property_tuple
+        required_pmtiles_property_tuple = base_required_property_tuple
+        exact_pmtiles_property_tuple = ()
+        required_property_tuple = base_required_property_tuple
     validate_tippecanoe_args(
         tippecanoe_extra_args,
         allow_point_dropping=allow_point_dropping,
-        required_properties=required_property_tuple,
+        required_properties=required_pmtiles_property_tuple,
     )
 
     layer = layer_name or slug_to_layer_name(asset_slug)
@@ -545,6 +573,9 @@ def build_plan(
         tile_simplify=tile_simplify,
         tippecanoe_extra_args=effective_tippecanoe_args,
         required_properties=required_property_tuple,
+        required_fgb_properties=required_fgb_property_tuple,
+        required_pmtiles_properties=required_pmtiles_property_tuple,
+        exact_pmtiles_properties=exact_pmtiles_property_tuple,
         group_id_fields=group_id_field_tuple,
         group_id_token_length=group_id_token_length,
         group_id_fail_on_ambiguous_geometry=group_id_fail_on_ambiguous_geometry,
@@ -552,6 +583,7 @@ def build_plan(
         row_id_token_length=row_id_token_length,
         generated_id_column=generated_id_column,
         generated_id_algorithm=generated_id_algorithm,
+        pmtiles_feature_id_property=pmtiles_feature_id_property,
         title=dataset_title,
         description=dataset_description,
         commands=commands,
@@ -562,7 +594,7 @@ def build_plan(
 
 
 def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbProfile | None = None) -> list[BuildCommand]:
-    synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
+    synthetic_sql = pmtiles_sql(plan, profile)
     tile_source_command = [
         plan.ogr2ogr_bin,
         "-f",
@@ -665,6 +697,19 @@ def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | 
         f"SELECT *, {sql_string(plan.layer_name)} AS {sql_identifier(SYNTHETIC_PMTILES_PROPERTY)} "
         f"FROM {sql_identifier(plan.layer_name)}"
     )
+
+
+def pmtiles_feature_id_sql(plan: VectorBuildPlan) -> str | None:
+    if not plan.pmtiles_feature_id_property:
+        return None
+    return (
+        f"SELECT {sql_identifier(plan.pmtiles_feature_id_property)} "
+        f"FROM {sql_identifier(plan.layer_name)}"
+    )
+
+
+def pmtiles_sql(plan: VectorBuildPlan, profile: FgbProfile | None = None) -> str | None:
+    return pmtiles_feature_id_sql(plan) or pmtiles_synthetic_property_sql(plan, profile)
 
 
 def dry_run_payload(plan: VectorBuildPlan) -> dict[str, Any]:
@@ -801,6 +846,9 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
         recommendation=recommendation,
         pmtiles_profile_path=Path(plan.pmtiles_profile_path),
         required_properties=plan.required_properties,
+        required_fgb_properties=plan.required_fgb_properties,
+        required_pmtiles_properties=plan.required_pmtiles_properties,
+        exact_pmtiles_properties=plan.exact_pmtiles_properties,
         decode_zoom=plan.minzoom,
     )
     write_pmtiles_profile(plan, profile, recommendation, validation=validation)
@@ -854,7 +902,19 @@ def write_pmtiles_profile(
         }
     if plan.required_properties:
         payload["required_properties"] = list(plan.required_properties)
+    if plan.required_fgb_properties:
+        payload["required_fgb_properties"] = list(plan.required_fgb_properties)
+    if plan.required_pmtiles_properties:
+        payload["required_pmtiles_properties"] = list(plan.required_pmtiles_properties)
+    if plan.exact_pmtiles_properties:
+        payload["exact_pmtiles_properties"] = list(plan.exact_pmtiles_properties)
     synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
+    feature_id_sql = pmtiles_feature_id_sql(plan)
+    if feature_id_sql is not None:
+        payload["pmtiles_property_projection"] = {
+            "mode": "feature_id_only",
+            "property": plan.pmtiles_feature_id_property,
+        }
     if synthetic_sql is not None:
         payload["pmtiles_synthetic_properties"] = {SYNTHETIC_PMTILES_PROPERTY: plan.layer_name}
     if validation is not None:
@@ -881,10 +941,30 @@ def validate_outputs(
     recommendation: ZoomRecommendation | None = None,
     pmtiles_profile_path: Path | None = None,
     required_properties: Sequence[str] = (),
+    required_fgb_properties: Sequence[str] | None = None,
+    required_pmtiles_properties: Sequence[str] | None = None,
+    exact_pmtiles_properties: Sequence[str] = (),
     decode_zoom: int = 0,
 ) -> VectorValidationResult:
     errors: list[str] = []
     required_property_tuple = tuple(dict.fromkeys(property_name for property_name in required_properties if property_name))
+    required_fgb_property_tuple = tuple(
+        dict.fromkeys(
+            property_name
+            for property_name in (required_fgb_properties if required_fgb_properties is not None else required_property_tuple)
+            if property_name
+        )
+    )
+    required_pmtiles_property_tuple = tuple(
+        dict.fromkeys(
+            property_name
+            for property_name in (
+                required_pmtiles_properties if required_pmtiles_properties is not None else required_property_tuple
+            )
+            if property_name
+        )
+    )
+    exact_pmtiles_property_tuple = tuple(dict.fromkeys(property_name for property_name in exact_pmtiles_properties if property_name))
     pmtiles_verify: str | None = None
     decoded_feature_count: int | None = None
     decoded_property_keys: tuple[str, ...] = ()
@@ -958,11 +1038,11 @@ def validate_outputs(
                         "Repair source geometries with GDAL -makevalid before publishing."
                     )
 
-    if required_property_tuple:
+    if required_fgb_property_tuple:
         if fgb_property_keys is None:
             errors.append("Could not verify required FGB properties with ogrinfo.")
         else:
-            missing_fgb = sorted(set(required_property_tuple) - set(fgb_property_keys))
+            missing_fgb = sorted(set(required_fgb_property_tuple) - set(fgb_property_keys))
             if missing_fgb:
                 errors.append(f"FGB is missing required propert{'y' if len(missing_fgb) == 1 else 'ies'}: {', '.join(missing_fgb)}")
 
@@ -996,11 +1076,16 @@ def validate_outputs(
             decoded_z0_feature_count = decoded_feature_count
             decoded_z0_property_keys = decoded_property_keys
         if decoded_feature_count > 0:
-            missing_pmtiles = sorted(set(required_property_tuple) - set(decoded_property_keys))
+            missing_pmtiles = sorted(set(required_pmtiles_property_tuple) - set(decoded_property_keys))
             if missing_pmtiles:
                 errors.append(
                     f"PMTiles decoded features are missing required propert{'y' if len(missing_pmtiles) == 1 else 'ies'}: "
                     f"{', '.join(missing_pmtiles)}"
+                )
+            if exact_pmtiles_property_tuple and decoded_property_keys != exact_pmtiles_property_tuple:
+                errors.append(
+                    "PMTiles decoded feature properties must be exactly: "
+                    + ", ".join(exact_pmtiles_property_tuple)
                 )
             if not decoded_property_keys:
                 errors.append(
@@ -1008,6 +1093,8 @@ def validate_outputs(
                     "Do not publish geometry-only display tiles; preserve compact source properties "
                     "or add a synthetic property such as source_layer for the catalog inspector."
                 )
+        elif exact_pmtiles_property_tuple:
+            errors.append("Could not verify exact PMTiles properties because the sampled tile contains no features.")
         if (
             profile is not None
             and profile.feature_count > 0
@@ -1020,7 +1107,7 @@ def validate_outputs(
                     "Decoded PMTiles z0 feature count does not match point profile count: "
                     f"{decoded_feature_count} != {profile.point_feature_count}"
                 )
-    elif required_property_tuple:
+    elif required_pmtiles_property_tuple or exact_pmtiles_property_tuple:
         errors.append("Could not verify required PMTiles properties with tippecanoe-decode.")
 
     return VectorValidationResult(
@@ -1039,6 +1126,9 @@ def validate_outputs(
         profile=asdict(profile) if profile else None,
         recommendation=asdict(recommendation) if recommendation else None,
         required_properties=required_property_tuple,
+        required_fgb_properties=required_fgb_property_tuple,
+        required_pmtiles_properties=required_pmtiles_property_tuple,
+        exact_pmtiles_properties=exact_pmtiles_property_tuple,
     )
 
 
@@ -1193,6 +1283,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         group_id_fail_on_ambiguous_geometry=args.group_id_fail_on_ambiguous_geometry,
         generate_row_id=args.generate_row_id,
         row_id_token_length=args.row_id_token_length,
+        pmtiles_feature_id_property=args.pmtiles_feature_id_property,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
@@ -1332,6 +1423,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--row-id-token-length",
         type=int,
         help="Optional base62 token length for generated shared_datasets_row_id values; defaults to policy calculation.",
+    )
+    build_parser.add_argument(
+        "--pmtiles-feature-id-property",
+        default=None,
+        help=(
+            "Project PMTiles feature properties down to this stable feature ID column. "
+            f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
+        ),
     )
     build_parser.add_argument(
         "--pmtiles-engine",
