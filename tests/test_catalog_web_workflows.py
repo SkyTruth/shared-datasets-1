@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
+SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 
 
 class CatalogWebWorkflowTests(unittest.TestCase):
@@ -76,6 +77,39 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("Read current ingestion images", workflow)
         self.assertNotIn("gcloud run jobs describe", workflow)
         self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_TERRAFORM_SERVICE_ACCOUNT != ''", workflow)
+
+    def test_scratch_cleanup_iam_sync_has_explicit_resource_change_allowlist(self):
+        workflow = SCRATCH_CLEANUP_IAM_SYNC.read_text()
+
+        self.assertIn("Scratch cleanup IAM sync", workflow)
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("Check scratch cleanup IAM sync readiness", workflow)
+        self.assertIn("github.event_name != 'pull_request'", workflow)
+        self.assertIn("shared-datasets-production", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
+        self.assertIn("-refresh=false", workflow)
+        self.assertIn("-target=google_project_iam_custom_role.shared_datasets_publisher_object_lister", workflow)
+        self.assertIn("-target=google_storage_bucket_iam_member.shared_datasets_publisher_object_lister", workflow)
+        self.assertIn(
+            "-target=google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
+            workflow,
+        )
+        self.assertIn("unused-by-scratch-cleanup-iam-sync", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/prod apply", workflow)
+        self.assertIn("allowed_exact", workflow)
+        self.assertIn("google_project_iam_custom_role.shared_datasets_publisher_object_lister", workflow)
+        self.assertIn("google_storage_bucket_iam_member.shared_datasets_publisher_object_lister", workflow)
+        self.assertIn(
+            "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
+            workflow,
+        )
+        self.assertNotIn("-target=google_storage_bucket.shared_bucket", workflow)
+        self.assertNotIn("google_compute_url_map.pmtiles_cdn", workflow)
+        self.assertNotIn("google_storage_managed_folder.shared_bucket_public_prefixes", workflow)
+        self.assertIn("Refusing automatic scratch cleanup IAM sync", workflow)
+        self.assertIn("Validate Terraform auth configuration", workflow)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
+        self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
 
 
 if __name__ == "__main__":

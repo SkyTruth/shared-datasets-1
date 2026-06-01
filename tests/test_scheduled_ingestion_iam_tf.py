@@ -170,6 +170,31 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertIn("_scratch/cleanup-audit/", iam_tf)
         self.assertNotIn("_scratch/*", block)
 
+    def test_publisher_has_bucket_level_list_only_role_for_scratch_cleanup(self):
+        iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
+        role_block = terraform_resource_block(
+            iam_tf,
+            "google_project_iam_custom_role",
+            "shared_datasets_publisher_object_lister",
+        )
+        binding_block = terraform_resource_block(
+            iam_tf,
+            "google_storage_bucket_iam_member",
+            "shared_datasets_publisher_object_lister",
+        )
+
+        self.assertIn('role_id     = "sharedDatasetsPublisherObjectLister"', role_block)
+        self.assertIn('permissions = ["storage.objects.list"]', role_block)
+        self.assertNotIn("storage.objects.get", role_block)
+        self.assertNotIn("storage.objects.create", role_block)
+        self.assertNotIn("storage.objects.delete", role_block)
+        self.assertIn(
+            "role   = google_project_iam_custom_role.shared_datasets_publisher_object_lister.name",
+            binding_block,
+        )
+        self.assertIn("member = module.shared_datasets_publisher_service_account.member", binding_block)
+        self.assertNotIn("condition {", binding_block)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -124,6 +124,24 @@ resource "google_service_account_iam_member" "shared_datasets_publisher_github_w
   member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
 }
 
+resource "google_project_iam_custom_role" "shared_datasets_publisher_object_lister" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsPublisherObjectLister"
+  title       = "Shared Datasets Publisher Object Lister"
+  description = "Allows the approved publisher to list bucket object names for scratch cleanup audits."
+  permissions = ["storage.objects.list"]
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_storage_bucket_iam_member" "shared_datasets_publisher_object_lister" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.shared_datasets_publisher_object_lister.name
+  member = module.shared_datasets_publisher_service_account.member
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
 resource "google_storage_bucket_iam_member" "shared_datasets_publisher_object_user" {
   bucket = var.bucket_name
   role   = "roles/storage.objectUser"
