@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
+from ingestion.common import feature_metadata
 from ingestion.common import release_index
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
@@ -47,7 +48,7 @@ ASSET_PARENT = "300-infrastructure-industrial/320-mining"
 ASSET_SLUG = "eamlis-abandoned-mine-land-inventory"
 LAYER_NAME = "eamlis_abandoned_mine_land_inventory"
 RUN_RECORD_VERSION = 1
-RELEASE_SUFFIXES = (".fgb", ".pmtiles")
+RELEASE_SUFFIXES = feature_metadata.VECTOR_BUNDLE_SUFFIXES
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
 PMTILES_RETENTION_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
@@ -111,8 +112,13 @@ class SourceExtract:
 class AssetOutput:
     fgb: Path
     pmtiles: Path
+    metadata: Path
+    schema: Path
+    manifest: Path
     row_count: int
     sha256: dict[str, str]
+    schema_payload: dict[str, Any]
+    sidecar_records: tuple[dict[str, Any], ...]
 
 
 ASSET = AssetSpec()
@@ -423,6 +429,8 @@ def convert_geojson_to_pmtiles(source: Path, output: Path) -> None:
             "OSMRE e-AMLIS Abandoned Mine Land Inventory",
             "-N",
             "OSMRE e-AMLIS abandoned mine land inventory point tiles",
+            "--include",
+            feature_metadata.FEATURE_ID_COLUMN,
             *PMTILES_RETENTION_ARGS,
             str(source),
         ]
@@ -472,10 +480,30 @@ def output_layer_summary(path: Path) -> dict[str, Any]:
     return parse_ogrinfo_summary(text)
 
 
-def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: Path) -> AssetOutput:
+def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: Path, release_date: dt.date) -> AssetOutput:
     fgb = workdir / f"{ASSET.slug}.fgb"
     pmtiles = workdir / f"{ASSET.slug}.pmtiles"
-    convert_geojson_to_fgb(extract.geojson, fgb)
+    metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
+    schema = workdir / f"{ASSET.slug}.schema.json"
+    manifest = workdir / f"{ASSET.slug}.manifest.json"
+    enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
+    enriched_features, sidecar_records = feature_metadata.enrich_features_with_provider_ids(
+        feature_metadata.iter_geojson_features(extract.geojson),
+        asset_slug=ASSET.slug,
+        release=release_date.isoformat(),
+        id_field="OBJECTID",
+        provenance={"source": source.layer_url, "where": source.where},
+    )
+    feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
+    feature_metadata.write_sidecar(sidecar_records, metadata)
+    schema_payload = feature_metadata.schema_from_records(
+        asset_slug=ASSET.slug,
+        release=release_date.isoformat(),
+        records=sidecar_records,
+    )
+    feature_metadata.write_schema(schema_payload, schema)
+
+    convert_geojson_to_fgb(enriched_geojsonseq, fgb)
     summary = output_layer_summary(fgb)
     if summary["feature_count"] != source.stats.feature_count:
         raise RuntimeError(
@@ -485,17 +513,31 @@ def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: 
     if "Point" not in summary["geometry_type"]:
         raise RuntimeError(f"Expected point FGB geometry, got {summary['geometry_type']}")
 
-    missing_fields = sorted(set(field_names(source.fields)) - set(summary["fields"]))
+    missing_fields = sorted(
+        (set(field_names(source.fields)) | {feature_metadata.FEATURE_ID_COLUMN, feature_metadata.FEATURE_HASH_COLUMN})
+        - set(summary["fields"])
+    )
     if missing_fields:
         raise RuntimeError("FGB output is missing source fields: " + ", ".join(missing_fields))
 
-    convert_geojson_to_pmtiles(extract.geojson, pmtiles)
+    convert_geojson_to_pmtiles(enriched_geojsonseq, pmtiles)
+    remove_if_exists(enriched_geojsonseq)
 
     return AssetOutput(
         fgb=fgb,
         pmtiles=pmtiles,
+        metadata=metadata,
+        schema=schema,
+        manifest=manifest,
         row_count=summary["feature_count"],
-        sha256={"fgb": sha256_file(fgb), "pmtiles": sha256_file(pmtiles)},
+        sha256={
+            "fgb": sha256_file(fgb),
+            "pmtiles": sha256_file(pmtiles),
+            "metadata": sha256_file(metadata),
+            "schema": sha256_file(schema),
+        },
+        schema_payload=schema_payload,
+        sidecar_records=tuple(sidecar_records),
     )
 
 
@@ -640,6 +682,16 @@ def publish_changed_asset(
         object_name=ASSET.release_object(run_date, ".pmtiles"),
         metadata=metadata,
     )
+    release_metadata = publisher.upload_new_object(
+        local_path=output.metadata,
+        object_name=ASSET.release_object(run_date, ".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    release_schema = publisher.upload_new_object(
+        local_path=output.schema,
+        object_name=ASSET.release_object(run_date, ".schema.json"),
+        metadata=metadata,
+    )
     latest_fgb = publisher.replace_latest_object(
         local_path=output.fgb,
         object_name=ASSET.latest_object(".fgb"),
@@ -650,6 +702,57 @@ def publish_changed_asset(
         object_name=ASSET.latest_object(".pmtiles"),
         metadata=metadata,
     )
+    latest_metadata = publisher.replace_latest_object(
+        local_path=output.metadata,
+        object_name=ASSET.latest_object(".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    latest_schema = publisher.replace_latest_object(
+        local_path=output.schema,
+        object_name=ASSET.latest_object(".schema.json"),
+        metadata=metadata,
+    )
+    manifest_release_object = ASSET.release_object(run_date, ".manifest.json")
+    manifest_latest_object = ASSET.latest_object(".manifest.json")
+    feature_metadata.write_manifest(
+        feature_metadata.final_manifest_payload(
+            asset_slug=ASSET.slug,
+            release=run_date.isoformat(),
+            bucket_name=publisher.bucket.name,
+            asset_root=ASSET.root,
+            sha256_by_role=output.sha256,
+            schema=output.schema_payload,
+            source_inputs=[{"uri": source.layer_url, "where": source.where}],
+            id_strategy={"strategy": "provider", "field": "OBJECTID"},
+            feature_count=output.row_count,
+            release_blob_info_by_role={
+                "fgb": release_fgb,
+                "pmtiles": release_pmtiles,
+                "metadata": release_metadata,
+                "schema": release_schema,
+            },
+            latest_blob_info_by_role={
+                "fgb": latest_fgb,
+                "pmtiles": latest_pmtiles,
+                "metadata": latest_metadata,
+                "schema": latest_schema,
+            },
+            manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
+            manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+        ),
+        output.manifest,
+    )
+    release_manifest = publisher.upload_new_object(
+        local_path=output.manifest,
+        object_name=manifest_release_object,
+        metadata=metadata,
+    )
+    latest_manifest = publisher.replace_latest_object(
+        local_path=output.manifest,
+        object_name=manifest_latest_object,
+        metadata=metadata,
+    )
+    sha256_values = {**output.sha256, "manifest": sha256_file(output.manifest)}
 
     record = {
         "record_version": RUN_RECORD_VERSION,
@@ -666,10 +769,10 @@ def publish_changed_asset(
             "max_objectid": source.stats.max_objectid,
         },
         "release_path": f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
-        "release_paths": [release_fgb, release_pmtiles],
-        "latest_paths": [latest_fgb, latest_pmtiles],
+        "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
+        "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
         "rows": output.row_count,
-        "sha256": output.sha256,
+        "sha256": sha256_values,
         "field_count": len(source.fields),
         "notes": "Generated by monthly e-AMLIS job from the public ArcGIS hosted feature layer.",
     }
@@ -746,13 +849,6 @@ def run() -> list[dict[str, Any]]:
             )
             if release_index_info:
                 existing_record["release_index"] = release_index_info
-            latest_metadata = publisher.replace_latest_metadata_from_run_record(
-                ASSET,
-                run_date,
-                metadata_for_source(run_date=run_date, source=source),
-            )
-            if latest_metadata:
-                existing_record["latest_metadata"] = latest_metadata
         return [existing_record]
 
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
@@ -777,7 +873,7 @@ def run() -> list[dict[str, Any]]:
             dest=workdir / f"{ASSET.slug}.geojson",
             page_size=page_size,
         )
-        output = build_asset_output(source=source, extract=extract, workdir=workdir)
+        output = build_asset_output(source=source, extract=extract, workdir=workdir, release_date=run_date)
         previous_sha = ((previous_record or {}).get("sha256") or {}).get("fgb")
         if previous_sha and previous_sha == output.sha256["fgb"]:
             LOGGER.info("%s output hash unchanged; skipping", ASSET.slug)

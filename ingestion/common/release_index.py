@@ -17,6 +17,9 @@ RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_CONTENT_TYPE = "application/json"
 
 FORMAT_EXTENSIONS = {
+    ".metadata.ndjson.gz": "metadata",
+    ".schema.json": "schema",
+    ".manifest.json": "manifest",
     ".fgb": "fgb",
     ".pmtiles": "pmtiles",
     ".geojson": "geojson",

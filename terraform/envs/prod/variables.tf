@@ -91,6 +91,48 @@ variable "catalog_viewer_catalog_ttl_seconds" {
   default     = 60
 }
 
+variable "feature_metadata_firestore_location_id" {
+  description = "Location for the Firestore Native database used as a rebuildable feature metadata serving index. This is immutable after creation."
+  type        = string
+  default     = "nam5"
+}
+
+variable "metadata_service_image" {
+  description = "Container image URI for the IAP-protected feature metadata Cloud Run service. Override with an immutable tag for production deploys."
+  type        = string
+  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/metadata-service:bootstrap-required"
+}
+
+variable "metadata_service_iap_accessor_members" {
+  description = "IAM members allowed through direct Cloud Run IAP to the feature metadata service run.app URL."
+  type        = set(string)
+  default     = ["domain:skytruth.org"]
+}
+
+variable "metadata_service_allowed_email_domains" {
+  description = "Email domains accepted by the metadata service after IAP authentication."
+  type        = list(string)
+  default     = ["skytruth.org"]
+}
+
+variable "feature_metadata_max_ids" {
+  description = "Maximum feature IDs accepted by one metadata lookup request."
+  type        = number
+  default     = 500
+}
+
+variable "feature_metadata_max_fields" {
+  description = "Maximum projected fields accepted by one metadata lookup request."
+  type        = number
+  default     = 500
+}
+
+variable "feature_metadata_max_response_bytes" {
+  description = "Maximum JSON response size for one metadata lookup request."
+  type        = number
+  default     = 10485760
+}
+
 variable "pmtiles_cdn_host" {
   description = "Public hostname for CDN-mediated PMTiles browser access."
   type        = string

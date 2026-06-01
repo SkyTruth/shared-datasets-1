@@ -37,6 +37,7 @@ from scripts.raster_asset import (
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
+APPROVED_RELEASE_METADATA_SUFFIXES = (".metadata.ndjson.gz", ".schema.json", ".manifest.json")
 CATALOG_REQUIRED_COLUMNS = (
     "asset_slug",
     "title",
@@ -335,6 +336,9 @@ def validate_data_extension(
                 "Publish a self-contained COG or documented Zarr release instead of sidecar-dependent raster files.",
             )
         )
+        return findings
+
+    if blob.name.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
         return findings
 
     if ext in PREVIEW_EXTENSIONS:

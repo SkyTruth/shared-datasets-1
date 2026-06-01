@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PORT=8080
+
+WORKDIR /app
+
+RUN python -m pip install --no-cache-dir \
+    "google-cloud-firestore>=2.21.0" \
+    "google-cloud-storage>=2.19.0"
+
+COPY services ./services
+
+CMD ["python", "-m", "services.metadata_service.run"]

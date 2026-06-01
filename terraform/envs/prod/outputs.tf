@@ -42,6 +42,22 @@ output "catalog_viewer_service_account" {
   value = module.catalog_viewer_service_account.email
 }
 
+output "metadata_service_name" {
+  value = google_cloud_run_v2_service.metadata_service.name
+}
+
+output "metadata_service_uri" {
+  value = google_cloud_run_v2_service.metadata_service.uri
+}
+
+output "metadata_service_account" {
+  value = module.metadata_service_account.email
+}
+
+output "metadata_index_loader_service_account" {
+  value = module.metadata_index_loader_service_account.email
+}
+
 output "shared_bucket_public_managed_folders" {
   value = sort(tolist(local.shared_bucket_public_managed_folder_names))
 }

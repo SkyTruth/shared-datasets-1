@@ -82,6 +82,7 @@ FRONTMATTER_KEYS = [
     "data_profile",
     "search_fields",
     "localized_names",
+    "feature_metadata",
     "generated_group_id",
     "generated_row_id",
     "source_resolution_meters",
@@ -101,6 +102,7 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "data_profile",
     "search_fields",
     "localized_names",
+    "feature_metadata",
     "generated_group_id",
     "generated_row_id",
     "source_resolution_meters",
@@ -131,6 +133,10 @@ LOCALIZED_NAMES_JOIN_KEY = "ext_id"
 LOCALIZED_NAMES_FALLBACK_FIELD = "name"
 LOCALIZED_NAMES_LOCALIZATION_SUFFIX = "-localizations.csv"
 LOCALIZED_NAME_REVIEW_STATES = {"source_provided", "machine_translated", "human_reviewed", "mixed"}
+FEATURE_METADATA_STORAGE = "metadata_sidecar_v1"
+FEATURE_METADATA_INDEX_BACKEND = "firestore"
+FEATURE_METADATA_FEATURE_ID_COLUMN = "feature_id"
+FEATURE_METADATA_FEATURE_HASH_COLUMN = "feature_hash"
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 BODY_LOCALIZED_NAME_FIELD_RE = re.compile(r"`name_[a-z]{2,3}(?:_[a-z0-9]{2,8})*`")
 
@@ -238,6 +244,10 @@ def infer_format(path: str, canonical_format: str | None = None) -> str:
     lowered = path.lower()
     if lowered == "latest/manifest.json" and canonical_format == "zarr":
         return "zarr"
+    if lowered.endswith(".metadata.ndjson.gz"):
+        return "ndjson_gzip"
+    if lowered.endswith(".schema.json") or lowered.endswith(".manifest.json"):
+        return "json"
     for suffix, format_name in (
         (".ndgeojson", "ndgeojson"),
         (".geojson", "geojson"),
@@ -260,6 +270,8 @@ def infer_format(path: str, canonical_format: str | None = None) -> str:
 def infer_role(path: str, canonical_file: str) -> str:
     if path == canonical_file:
         return "canonical"
+    if path.endswith((".metadata.ndjson.gz", ".schema.json", ".manifest.json")):
+        return "metadata"
     if path.startswith("latest/"):
         return "companion"
     if path.startswith("releases/"):
@@ -471,6 +483,15 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
             raise CatalogDocsError(f"{path}: localization file entry must use role 'localization'")
         if localization_entries[0]["format"] != "csv":
             raise CatalogDocsError(f"{path}: localization file entry must use format 'csv'")
+    feature_metadata = metadata.get("feature_metadata")
+    if isinstance(feature_metadata, dict):
+        for key in ("sidecar_file", "schema_file", "manifest_file"):
+            file_path = feature_metadata.get(key)
+            entries = [entry for entry in metadata["files"] if entry["path"] == file_path]
+            if len(entries) != 1:
+                raise CatalogDocsError(f"{path}: files must contain exactly one entry for feature_metadata.{key}")
+            if entries[0]["role"] != "metadata":
+                raise CatalogDocsError(f"{path}: feature metadata file entry must use role 'metadata'")
     validate_optional_discovery_metadata(path, metadata)
 
 
@@ -733,6 +754,31 @@ def validate_localized_names(value: Any, *, path: Path) -> None:
     normalize_localized_names(value, path=path)
 
 
+def validate_feature_metadata(value: Any, *, path: Path, asset_slug: str) -> None:
+    if value in (None, ""):
+        return
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: feature_metadata must be a mapping")
+    if as_text(value.get("storage")).strip() != FEATURE_METADATA_STORAGE:
+        raise CatalogDocsError(f"{path}: feature_metadata.storage must be {FEATURE_METADATA_STORAGE!r}")
+    if as_text(value.get("index_backend")).strip() != FEATURE_METADATA_INDEX_BACKEND:
+        raise CatalogDocsError(f"{path}: feature_metadata.index_backend must be {FEATURE_METADATA_INDEX_BACKEND!r}")
+    if as_text(value.get("feature_id_column")).strip() != FEATURE_METADATA_FEATURE_ID_COLUMN:
+        raise CatalogDocsError(f"{path}: feature_metadata.feature_id_column must be {FEATURE_METADATA_FEATURE_ID_COLUMN!r}")
+    if as_text(value.get("feature_hash_column")).strip() != FEATURE_METADATA_FEATURE_HASH_COLUMN:
+        raise CatalogDocsError(f"{path}: feature_metadata.feature_hash_column must be {FEATURE_METADATA_FEATURE_HASH_COLUMN!r}")
+    expected_files = {
+        "sidecar_file": f"latest/{asset_slug}.metadata.ndjson.gz",
+        "schema_file": f"latest/{asset_slug}.schema.json",
+        "manifest_file": f"latest/{asset_slug}.manifest.json",
+    }
+    for key, expected in expected_files.items():
+        if as_text(value.get(key)).strip() != expected:
+            raise CatalogDocsError(f"{path}: feature_metadata.{key} must be {expected!r}")
+    if value.get("provenance_default") is not True:
+        raise CatalogDocsError(f"{path}: feature_metadata.provenance_default must be true")
+
+
 def validate_generated_group_id(value: Any, *, path: Path, row_count: int | None) -> None:
     if value in (None, ""):
         return
@@ -859,6 +905,7 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
     validate_data_profile(path, metadata, row_count=row_count)
     validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
     validate_localized_names(metadata.get("localized_names"), path=path)
+    validate_feature_metadata(metadata.get("feature_metadata"), path=path, asset_slug=metadata["asset_slug"])
     localized_names = metadata.get("localized_names")
     if isinstance(localized_names, dict):
         expected_localization_file = f"latest/{metadata['asset_slug']}{LOCALIZED_NAMES_LOCALIZATION_SUFFIX}"

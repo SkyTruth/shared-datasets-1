@@ -40,6 +40,15 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/wdpa-terrestrial.metadata.ndjson.gz
+  schema_file: latest/wdpa-terrestrial.schema.json
+  manifest_file: latest/wdpa-terrestrial.manifest.json
+  provenance_default: true
 files:
 - path: latest/wdpa-terrestrial.fgb
   format: fgb
@@ -49,6 +58,18 @@ files:
   format: pmtiles
   role: companion
   purpose: Web map tiles generated from the same monthly extract
+- path: latest/wdpa-terrestrial.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/wdpa-terrestrial.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/wdpa-terrestrial.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 - path: releases/YYYY-MM-DD/wdpa-terrestrial.fgb
   format: fgb
   role: release
@@ -95,6 +116,9 @@ source. Fields are preserved from the source dataset.
 |---|---|---|---|
 | `latest/wdpa-terrestrial.fgb` | `fgb` | `canonical` | Canonical mixed-geometry vector dataset |
 | `latest/wdpa-terrestrial.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same monthly extract |
+| `latest/wdpa-terrestrial.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/wdpa-terrestrial.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/wdpa-terrestrial.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Monthly run record |

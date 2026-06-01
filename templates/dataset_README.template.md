@@ -65,6 +65,15 @@ localized_names:
       review_state_field: "name_{locale_code}_review_state"
       label: "{optional human-readable language label}"
       review_state: "{source_provided | machine_translated | human_reviewed | mixed}"
+feature_metadata:
+  storage: "metadata_sidecar_v1"
+  index_backend: "firestore"
+  feature_id_column: "feature_id"
+  feature_hash_column: "feature_hash"
+  sidecar_file: "latest/{asset-slug}.metadata.ndjson.gz"
+  schema_file: "latest/{asset-slug}.schema.json"
+  manifest_file: "latest/{asset-slug}.manifest.json"
+  provenance_default: true
 generated_group_id:
   column: "shared_datasets_group_id"
   algorithm: "shared-datasets-group-id:v1"
@@ -97,6 +106,18 @@ files:
     format: "csv"
     role: "localization"
     purpose: "Feature display-name localizations joined into PMTiles"
+  - path: "latest/{asset-slug}.metadata.ndjson.gz"
+    format: "ndjson_gzip"
+    role: "metadata"
+    purpose: "Canonical feature metadata sidecar keyed by feature_id"
+  - path: "latest/{asset-slug}.schema.json"
+    format: "json"
+    role: "metadata"
+    purpose: "Release feature schema"
+  - path: "latest/{asset-slug}.manifest.json"
+    format: "json"
+    role: "metadata"
+    purpose: "Release manifest"
 ---
 
 # {Dataset title}
@@ -138,6 +159,9 @@ localization source in `latest/{asset-slug}-localizations.csv`, keyed by
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
 must keep unique nonblank `ext_id` values but does not need native localized
 name columns.
+For vector assets, keep `feature_id` and `feature_hash` in the canonical FGB,
+keep only `feature_id` in PMTiles, publish the metadata
+sidecar/schema/manifest files, and declare them in `feature_metadata`.
 
 ## Raster metadata
 

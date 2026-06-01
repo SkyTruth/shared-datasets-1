@@ -12,11 +12,12 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
 from ingestion.common import release_index
+from ingestion.common.feature_metadata import VECTOR_BUNDLE_SUFFIXES
 from ingestion.common.runtime import content_type_for
 
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_RELEASE_SUFFIXES = (".fgb", ".pmtiles")
+DEFAULT_RELEASE_SUFFIXES = VECTOR_BUNDLE_SUFFIXES
 
 
 class ReleaseAsset(Protocol):

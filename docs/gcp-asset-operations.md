@@ -115,6 +115,43 @@ The standard vector build is:
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
 
+Release-oriented vector assets add a feature metadata layer before publication.
+Normalize the source into a release feature model with `feature_id`,
+`feature_hash`, full properties, provenance, and validation. From that model,
+publish the FGB, PMTiles, metadata sidecar, schema, and manifest together:
+
+```text
+latest/{asset-slug}.fgb
+latest/{asset-slug}.pmtiles
+latest/{asset-slug}.metadata.ndjson.gz
+latest/{asset-slug}.schema.json
+latest/{asset-slug}.manifest.json
+releases/YYYY-MM-DD/{asset-slug}.fgb
+releases/YYYY-MM-DD/{asset-slug}.pmtiles
+releases/YYYY-MM-DD/{asset-slug}.metadata.ndjson.gz
+releases/YYYY-MM-DD/{asset-slug}.schema.json
+releases/YYYY-MM-DD/{asset-slug}.manifest.json
+index-loads/YYYY-MM-DD/{load-id}.json
+```
+
+Use `scripts/release_feature_model.py` helpers for stable JSON hashing,
+provider/composite/generated `feature_id` construction, `feature_hash`
+calculation, sidecar serialization, sidecar validation, manifest creation, and
+index-load record naming. Sidecars and manifests are canonical GCS artifacts;
+the Firestore index is a rebuildable serving copy loaded from the sidecar.
+
+To build PMTiles for metadata lookup, project tile properties down to only the
+stable feature ID:
+
+```bash
+uv run python scripts/vector_asset.py build ./source.fgb \
+  --asset-slug example-asset \
+  --pmtiles-feature-id-property feature_id
+```
+
+This keeps PMTiles lightweight while preserving click-to-metadata joins through
+the Cloud Run metadata service.
+
 Generated group IDs are opt-in. Present provider ID candidates and
 grouping/search field candidates before adding `--group-id-field`. Use the
 standard concierge decision table: row/column counts plus likely provider

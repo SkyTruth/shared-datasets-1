@@ -37,6 +37,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
+| Feature metadata lookup API | `docs/feature-metadata-api.md`, `services/metadata_service/` |
 | Feature branch preview | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md`, `terraform/envs/preview/`, `Deploy Feature Branch to Preview`, `Destroy Preview Environment`, `Preview Terraform IAM sync` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
@@ -59,7 +60,7 @@ When instructions conflict, follow this order:
 1. **The bucket is a product.** Treat every shared dataset as something another SkyTruth project may depend on.
 2. **Low overhead wins.** Prefer predictable paths, simple READMEs, and generated catalogs over heavy metadata processes.
 3. **Stable paths beat clever names.** Someone should be able to guess where a dataset belongs before searching.
-4. **Canonical data is boring.** Approved formats are `.fgb`, COG `.tif`, `.zarr/`, `.pmtiles`, `.geojson`, `.ndgeojson`, and geometry-free `.csv`.
+4. **Canonical data is boring.** Approved data formats are `.fgb`, COG `.tif`, `.zarr/`, `.pmtiles`, `.geojson`, `.ndgeojson`, and geometry-free `.csv`; release vector metadata sidecars use `.metadata.ndjson.gz`, `.schema.json`, and `.manifest.json`.
 5. **Cron jobs must be safe to retry.** Scheduled jobs should be idempotent, skip unchanged assets without writing new dataset artifacts, and never destroy previous releases.
 6. **Infrastructure and data are managed differently.** Terraform manages cloud resources. The Python GCS asset tooling manages data objects.
 7. **Agents must leave things clearer than they found them.** Any remote asset change should update the relevant README/catalog when appropriate.
@@ -168,10 +169,19 @@ in `docs/standards/dataset-taxonomy.md`.
 | `.geojson` | Small previews, interchange, debugging |
 | `.ndgeojson` | Newline-delimited GeoJSON features for streamable vector interchange/debugging |
 | `.csv` | Non-geometry tables only |
+| `.metadata.ndjson.gz` | Canonical feature metadata sidecar for release-oriented vector assets |
+| `.schema.json` | Release feature schema |
+| `.manifest.json` | Release manifest with source, artifact, checksum, identity, validation, and index-load policy metadata |
 
 COGs must be internally tiled, internally overviewed, georeferenced, and self-contained. Zarr assets publish immutable release prefixes and expose `latest/manifest.json`; do not mirror chunk objects directly under `latest/`. PNG/JPEG/WebP files are previews only, and raw source rasters such as NetCDF, GRIB, HDF, or non-COG GeoTIFF require a documented source/archive exception.
 
 See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README, COG, and Zarr rules. Do not add new canonical file formats without updating that standards doc, the templates, the catalog schema/validation, and the review checklist.
+
+Release-oriented vector assets use a normalized release feature model as the
+source of truth. FGB remains the canonical vector artifact for consumers,
+PMTiles are intentionally lightweight geometry-plus-`feature_id` tiles, and the
+full feature metadata lives in a durable GCS sidecar loaded into a rebuildable
+Firestore serving index.
 
 ## Quick start for contributors
 
@@ -435,11 +445,12 @@ ingestion failures. The alerts cover two cases:
 
 Manual canary failures are not matched by the Cloud Run alert because the log
 filter requires the execution creator to be the job's Cloud Scheduler service
-account. Configure Slack delivery by passing an existing Cloud Monitoring Slack
-notification channel:
+account. Configure Slack delivery by changing Terraform in a reviewed PR and
+letting the protected production workflow apply it after merge. A local review
+plan can pass the existing Cloud Monitoring Slack notification channel:
 
 ```bash
-terraform -chdir=terraform/envs/prod apply \
+terraform -chdir=terraform/envs/prod plan \
   -var='cron_alert_notification_channels=["projects/shared-datasets-1/notificationChannels/CHANNEL_ID"]'
 ```
 
@@ -495,10 +506,9 @@ same-release cache refreshes, README wording fixes, PMTiles repairs, or other
 corrective follow-ups unless explicitly requested.
 
 For canonical vector/table assets, `publish-release` and the approved GitHub
-promotion workflow enforce schema compatibility before canonical objects are
-written. Added fields are allowed. Removed fields, renamed fields, and type
-changes fail unless the reviewed publish includes an explicit compatibility
-waiver. Reordered fields are reported as warnings.
+promotion workflow run schema validation before canonical objects are written.
+The validation reports added, removed, renamed, reordered, and type-changed
+fields so reviewers can confirm the new release schema is intentional.
 
 ```bash
 uv run python scripts/dataset_alerts.py check-schema-compatibility \
@@ -770,10 +780,9 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
 - Staged `_scratch/pending-publishes/` source URIs and source generations.
 - Intended canonical destination URIs and destination-generation expectations.
 - A fenced `shared-datasets-publish-plan` JSON block if approval should trigger
-  automatic promotion. For blocked schema compatibility changes, include
-  `compatibility_waiver` on the affected promotion with `asset_slug`,
-  `blocked_changes`, `rationale`, `consumer_impact`, `reviewer`, `pr_reference`,
-  and `migration_path`.
+  automatic promotion. For intentional release-schema changes, describe the
+  schema change, rationale, reviewer, PR reference, and consumer impact in the
+  publish plan.
 - A fenced `shared-datasets-delete-plan` JSON block if approval should trigger
   reviewed deletion; every deletion must include exact URI, generation, and
   reason.
