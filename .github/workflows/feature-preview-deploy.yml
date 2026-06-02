@@ -27,6 +27,7 @@ env:
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
+  PREVIEW_TERRAFORM_DIR: preview-source/terraform/envs/preview
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
@@ -281,7 +282,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
-        run: terraform -chdir=terraform/envs/preview init -input=false
+        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init -input=false
 
       - name: Release stable preview bootstrap state
         run: |
@@ -294,8 +295,8 @@ jobs:
           )
 
           for address in "${bootstrap_addresses[@]}"; do
-            if terraform -chdir=terraform/envs/preview state list | grep -qx "${address}"; then
-              terraform -chdir=terraform/envs/preview state rm "${address}"
+            if terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state list | grep -qx "${address}"; then
+              terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state rm "${address}"
             fi
           done
 
@@ -304,18 +305,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir=terraform/envs/preview plan \
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" plan \
             -destroy \
             -input=false \
             -out="${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
 
       - name: Export Terraform reset plan JSON
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
+        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
 
       - name: Terraform apply reset plan
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
+        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
 
       - name: Wait for preview database ID reuse
         if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
@@ -350,7 +351,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir=terraform/envs/preview plan \
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" plan \
             -input=false \
             -out="${RUNNER_TEMP}/feature-branch-preview.tfplan" \
             -var="preview_service_image=${PREVIEW_SERVICE_IMAGE}" \
@@ -359,7 +360,7 @@ jobs:
             -var="preview_deploy_sha=${PREVIEW_DEPLOY_SHA}"
 
       - name: Export Terraform plan JSON
-        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/feature-branch-preview.tfplan" > "${RUNNER_TEMP}/feature-branch-preview.tfplan.json"
+        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/feature-branch-preview.tfplan" > "${RUNNER_TEMP}/feature-branch-preview.tfplan.json"
 
       - name: Enforce preview resource-change allowlist
         run: |
@@ -515,14 +516,14 @@ jobs:
           PY
 
       - name: Terraform apply preview plan
-        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview.tfplan"
+        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview.tfplan"
 
       - name: Report preview outputs
         run: |
-          terraform -chdir=terraform/envs/preview output preview_service_uri
-          terraform -chdir=terraform/envs/preview output preview_catalog_viewer_uri
-          terraform -chdir=terraform/envs/preview output preview_bucket
-          terraform -chdir=terraform/envs/preview output preview_firestore_database
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_service_uri
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_catalog_viewer_uri
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_bucket
+          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" output preview_firestore_database
 
       - name: Collect preview release indexes
         run: |
