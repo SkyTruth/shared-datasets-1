@@ -148,8 +148,8 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
      workflow as the PR-backed promotion path and do not also include
      `_catalog/web/catalog.json` in a `shared-datasets-publish-plan`; the
      duplicate promotion can race the automatic deploy.
-   - Stat existing objects before replacement and use the returned generation as the workflow destination precondition.
-   - Pass the workflow `cache_control` input for `catalog.json`, PMTiles, and other cache-sensitive replacements when no-cache metadata is required.
+   - Stat existing objects before replacement and use the returned generation as the publish-plan destination precondition.
+   - Pass the publish-plan `cache_control` field for `catalog.json`, PMTiles, and other cache-sensitive replacements when no-cache metadata is required.
    - Use no-clobber promotion for new objects.
    - Do not use unsafe overwrites.
 
@@ -158,8 +158,8 @@ python3 -m http.server 4173 --bind 127.0.0.1 \
    the Terraform path locally.
 
 7. Cache control and live-site freshness:
-   - When promoting web shell/runtime objects, pass the workflow
-     `cache_control` input with `no-cache, max-age=0, must-revalidate`.
+   - When promoting web shell/runtime objects, pass the publish-plan
+     `cache_control` field with `no-cache, max-age=0, must-revalidate`.
    - After same-path PMTiles replacement, make sure the approved workflow
      promotion also sets no-cache metadata on the replaced PMTiles objects.
    - Corrective PMTiles-only rebuilds should replace the PMTiles object under the matching canonical release date, not create a new PMTiles-only dated release directory unless PMTiles is the canonical format.

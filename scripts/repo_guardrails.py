@@ -102,6 +102,24 @@ TERRAFORM_APPLY_ALLOWED_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+WORKFLOW_GCP_AUTH_MARKERS = (
+    "google-github-actions/auth",
+    "service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}",
+    "service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}",
+    "service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}",
+    "service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}",
+)
+WORKFLOW_MAIN_REF_GUARD = 'GITHUB_REF}" != "refs/heads/main"'
+WORKFLOW_TRUSTED_CHECKOUT_MARKERS = (
+    "ref: main",
+    "ref: ${{ github.event.repository.default_branch }}",
+)
+WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS = (
+    "Single-object fallback",
+    "Promote staged object manually",
+    "github.event.inputs.pr_number == ''",
+)
+
 
 @dataclass(frozen=True)
 class ChangedFile:
@@ -401,6 +419,46 @@ def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
     return errors
 
 
+def check_workflow_boundaries(repo_root: Path) -> list[str]:
+    workflows_dir = repo_root / ".github" / "workflows"
+    if not workflows_dir.exists():
+        return []
+
+    errors: list[str] = []
+    for path in sorted(workflows_dir.glob("*.yml")):
+        text = file_text(path)
+        rel = path.relative_to(repo_root)
+
+        if any(marker in text for marker in WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS):
+            errors.append(f"{rel}: single-object dataset publish fallback is not allowed; use reviewed PR plans")
+
+        uses_gcp_auth = any(marker in text for marker in WORKFLOW_GCP_AUTH_MARKERS)
+        if uses_gcp_auth and "workflow_dispatch:" in text:
+            if WORKFLOW_MAIN_REF_GUARD not in text:
+                errors.append(f"{rel}: GCP-auth workflow_dispatch paths must validate refs/heads/main")
+            if not any(marker in text for marker in WORKFLOW_TRUSTED_CHECKOUT_MARKERS):
+                errors.append(f"{rel}: GCP-auth workflow_dispatch paths must check out trusted main code")
+
+        is_preview_workflow = "skytruth-shared-datasets-1-preview" in text or "feature branch preview" in text.lower()
+        if is_preview_workflow and "gs://skytruth-shared-datasets-1/" in text:
+            errors.append(f"{rel}: preview workflows must not accept production bucket URIs")
+
+        if "terraform -chdir=terraform/envs/preview apply" in text and "terraform -chdir=terraform/envs/prod" in text:
+            errors.append(f"{rel}: preview Terraform apply workflows must stay under terraform/envs/preview")
+
+        if "terraform -chdir=terraform/envs/prod apply" in text:
+            required = {
+                "main ref validation": WORKFLOW_MAIN_REF_GUARD,
+                "prod Terraform state concurrency": "group: prod-terraform-state",
+                "resource-change allowlist": "allowed_exact",
+            }
+            for label, marker in required.items():
+                if marker not in text:
+                    errors.append(f"{rel}: prod Terraform apply workflow is missing {label}")
+
+    return errors
+
+
 def check_diff(args: argparse.Namespace) -> list[str]:
     repo_root = args.repo_root.resolve()
     changes = git_changed_files(args.base, args.head, repo_root=repo_root)
@@ -421,6 +479,7 @@ def check_static(args: argparse.Namespace) -> list[str]:
     errors.extend(check_secrets(repo_root))
     errors.extend(check_terraform_static(repo_root))
     errors.extend(check_no_local_terraform_apply_guidance(repo_root))
+    errors.extend(check_workflow_boundaries(repo_root))
     return errors
 
 

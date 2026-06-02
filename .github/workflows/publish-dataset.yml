@@ -11,43 +11,6 @@ on:
         description: "Same-repo PR number containing a publish/delete plan. Restricted to jonaraphael."
         required: false
         type: string
-      asset_slug:
-        description: "Single-object fallback: asset slug associated with the staged publish."
-        required: false
-        type: string
-      proposal_id:
-        description: "Single-object fallback: PR number, issue number, branch slug, or other reviewed proposal ID."
-        required: false
-        type: string
-      source_uri:
-        description: "Single-object fallback: staged object URI under _scratch/pending-publishes/{asset_slug}/{proposal_id}/."
-        required: false
-        type: string
-      destination_uri:
-        description: "Single-object fallback: approved canonical destination object URI."
-        required: false
-        type: string
-      source_generation:
-        description: "Single-object fallback: required source generation precondition for the approved staged object."
-        required: false
-        type: string
-      destination_generation:
-        description: "Optional destination generation precondition; empty means no-clobber."
-        required: false
-        type: string
-      content_type:
-        description: "Optional destination content type override."
-        required: false
-        type: string
-      cache_control:
-        description: "Optional destination Cache-Control metadata override."
-        required: false
-        type: string
-      dry_run:
-        description: "Validate and print the copy command without writing."
-        required: true
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -64,315 +27,6 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  promote:
-    name: Promote staged object manually
-    runs-on: ubuntu-latest
-    environment: shared-datasets-production
-    if: >-
-      ${{
-        github.event_name == 'workflow_dispatch' &&
-        github.actor == 'jonaraphael' &&
-        github.event.inputs.pr_number == ''
-      }}
-
-    env:
-      ASSET_SLUG: ${{ inputs.asset_slug }}
-      PROPOSAL_ID: ${{ inputs.proposal_id }}
-      SOURCE_URI: ${{ inputs.source_uri }}
-      DESTINATION_URI: ${{ inputs.destination_uri }}
-      SOURCE_GENERATION: ${{ inputs.source_generation }}
-      DESTINATION_GENERATION: ${{ inputs.destination_generation }}
-      CONTENT_TYPE: ${{ inputs.content_type }}
-      CACHE_CONTROL: ${{ inputs.cache_control }}
-      DRY_RUN: ${{ inputs.dry_run }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Validate publisher auth configuration
-        env:
-          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-
-      - name: Validate publish request
-        run: |
-          set -euo pipefail
-
-          if [[ ! "${ASSET_SLUG}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
-            echo "asset_slug must be lowercase kebab-case" >&2
-            exit 1
-          fi
-
-          if [[ ! "${PROPOSAL_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "proposal_id may contain only letters, digits, dots, underscores, and hyphens" >&2
-            exit 1
-          fi
-
-          if [[ ! "${SOURCE_GENERATION}" =~ ^[0-9]+$ ]]; then
-            echo "source_generation must be a numeric object generation" >&2
-            exit 1
-          fi
-
-          if [[ -n "${DESTINATION_GENERATION}" && ! "${DESTINATION_GENERATION}" =~ ^[0-9]+$ ]]; then
-            echo "destination_generation must be empty or a numeric object generation" >&2
-            exit 1
-          fi
-
-          expected_source_prefix="gs://${SHARED_DATASETS_BUCKET}/_scratch/pending-publishes/${ASSET_SLUG}/${PROPOSAL_ID}/"
-          if [[ "${SOURCE_URI}" != "${expected_source_prefix}"* ]]; then
-            echo "source_uri must start with ${expected_source_prefix}" >&2
-            exit 1
-          fi
-
-          expected_destination_prefix="gs://${SHARED_DATASETS_BUCKET}/"
-          if [[ "${DESTINATION_URI}" != "${expected_destination_prefix}"* ]]; then
-            echo "destination_uri must be inside gs://${SHARED_DATASETS_BUCKET}/" >&2
-            exit 1
-          fi
-
-          destination_object="${DESTINATION_URI#${expected_destination_prefix}}"
-          case "${destination_object}" in
-            _scratch/*|_deprecated/*|000-system/*)
-              echo "destination_uri cannot target _scratch/, _deprecated/, or 000-system/" >&2
-              exit 1
-              ;;
-            README.md|_catalog/*|[0-9][0-9][0-9]-*)
-              ;;
-            *)
-              echo "destination_uri is outside approved canonical publish prefixes" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --frozen
-
-      - name: Install schema inspection tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gdal-bin
-
-      - name: Validate destination layout
-        run: uv run python scripts/gcs_asset.py validate-path "${DESTINATION_URI}"
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
-
-      - name: Check manual schema compatibility
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import csv
-          import os
-          import pathlib
-          import subprocess
-          import tempfile
-
-          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
-          bucket = os.environ["SHARED_DATASETS_BUCKET"]
-          asset_slug = os.environ["ASSET_SLUG"]
-          source_uri = os.environ["SOURCE_URI"]
-          destination_uri = os.environ["DESTINATION_URI"]
-          source_generation = os.environ["SOURCE_GENERATION"]
-
-          def catalog_row(slug):
-              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
-                  for row in csv.DictReader(file_obj):
-                      if row.get("asset_slug") == slug:
-                          return row
-              return None
-
-          def is_schema_target(slug, uri):
-              prefix = f"gs://{bucket}/"
-              if not uri.startswith(prefix):
-                  return False
-              destination_name = uri.removeprefix(prefix)
-              filename = destination_name.rsplit("/", 1)[-1]
-              suffix = pathlib.Path(filename).suffix.lower()
-              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
-                  return False
-              row = catalog_row(slug)
-              if row:
-                  canonical_path = row.get("canonical_path", "")
-                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
-                  if uri == canonical_path:
-                      return True
-                  if "/latest/" in canonical_path:
-                      asset_root = canonical_path.split("/latest/", 1)[0]
-                      if uri.startswith(f"{asset_root}/releases/") and filename == canonical_filename:
-                          return True
-                  return False
-              return pathlib.Path(filename).stem == slug
-
-          prefix = f"gs://{bucket}/"
-          filename = destination_uri.removeprefix(prefix).rsplit("/", 1)[-1]
-          if not is_schema_target(asset_slug, destination_uri):
-              print(f"Skipping schema compatibility check for noncanonical schema target: {destination_uri}")
-              raise SystemExit(0)
-
-          with tempfile.TemporaryDirectory() as tmp:
-              dataset_path = pathlib.Path(tmp) / filename
-              subprocess.run(
-                  [
-                      "uv",
-                      "run",
-                      "python",
-                      "scripts/gcs_asset.py",
-                      "download",
-                      source_uri,
-                      str(dataset_path),
-                      "--generation",
-                      source_generation,
-                  ],
-                  check=True,
-              )
-              subprocess.run(
-                  [
-                      "uv",
-                      "run",
-                      "python",
-                      "scripts/dataset_alerts.py",
-                      "check-schema-compatibility",
-                      "--asset-slug",
-                      asset_slug,
-                      "--dataset-path",
-                      str(dataset_path),
-                  ],
-                  check=True,
-              )
-          PY
-
-      - name: Promote staged object
-        run: |
-          set -euo pipefail
-
-          copy_args=(copy "${SOURCE_URI}" "${DESTINATION_URI}")
-          if [[ -n "${SOURCE_GENERATION}" ]]; then
-            copy_args+=(--source-generation "${SOURCE_GENERATION}")
-          fi
-          if [[ -n "${DESTINATION_GENERATION}" ]]; then
-            copy_args+=(--replace-generation "${DESTINATION_GENERATION}")
-          fi
-          if [[ -n "${CONTENT_TYPE}" ]]; then
-            copy_args+=(--content-type "${CONTENT_TYPE}")
-          fi
-          if [[ -n "${CACHE_CONTROL}" ]]; then
-            copy_args+=(--cache-control "${CACHE_CONTROL}")
-          fi
-
-          uv run python scripts/gcs_asset.py stat "${SOURCE_URI}"
-          if [[ "${DRY_RUN}" == "true" ]]; then
-            printf 'dry run: uv run python scripts/gcs_asset.py'
-            printf ' %q' "${copy_args[@]}"
-            printf '\n'
-          else
-            uv run python scripts/gcs_asset.py "${copy_args[@]}"
-            uv run python scripts/gcs_asset.py stat "${DESTINATION_URI}"
-          python - <<'PY'
-          import csv
-          import os
-          import pathlib
-          import subprocess
-          import tempfile
-
-          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
-          bucket = os.environ["SHARED_DATASETS_BUCKET"]
-          asset_slug = os.environ["ASSET_SLUG"]
-          source_uri = os.environ["SOURCE_URI"]
-          destination_uri = os.environ["DESTINATION_URI"]
-          source_generation = os.environ["SOURCE_GENERATION"]
-
-          def catalog_row(slug):
-              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
-                  for row in csv.DictReader(file_obj):
-                      if row.get("asset_slug") == slug:
-                          return row
-              return None
-
-          def is_schema_target(slug, uri):
-              prefix = f"gs://{bucket}/"
-              if not uri.startswith(prefix):
-                  return False
-              destination_name = uri.removeprefix(prefix)
-              filename = destination_name.rsplit("/", 1)[-1]
-              suffix = pathlib.Path(filename).suffix.lower()
-              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
-                  return False
-              row = catalog_row(slug)
-              if row:
-                  canonical_path = row.get("canonical_path", "")
-                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
-                  if uri == canonical_path:
-                      return True
-                  if "/latest/" in canonical_path:
-                      asset_root = canonical_path.split("/latest/", 1)[0]
-                      if uri.startswith(f"{asset_root}/releases/") and filename == canonical_filename:
-                          return True
-                  return False
-              return pathlib.Path(filename).stem == slug
-
-          if not is_schema_target(asset_slug, destination_uri):
-              print(f"Skipping schema snapshot update for noncanonical schema target: {destination_uri}")
-              raise SystemExit(0)
-
-          filename = destination_uri.rsplit("/", 1)[-1]
-          with tempfile.TemporaryDirectory() as tmp:
-              dataset_path = pathlib.Path(tmp) / filename
-              subprocess.run(
-                  [
-                      "uv",
-                      "run",
-                      "python",
-                      "scripts/gcs_asset.py",
-                      "download",
-                      source_uri,
-                      str(dataset_path),
-                      "--generation",
-                      source_generation,
-                  ],
-                  check=True,
-              )
-              subprocess.run(
-                  [
-                      "uv",
-                      "run",
-                      "python",
-                      "scripts/dataset_alerts.py",
-                      "check-schema",
-                      "--asset-slug",
-                      asset_slug,
-                      "--dataset-path",
-                      str(dataset_path),
-                  ],
-                  check=True,
-              )
-          PY
-            uv run python scripts/gcs_asset.py delete "${SOURCE_URI}" \
-              --generation "${SOURCE_GENERATION}" \
-              --confirm DELETE
-          fi
-
   reviewed_pr_plans:
     name: Detect reviewed PR mutation plans
     runs-on: ubuntu-latest
@@ -399,6 +53,16 @@ jobs:
       has_delete_plan: ${{ steps.detect.outputs.has_delete_plan }}
 
     steps:
+      - name: Validate main ref
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Approved dataset mutation dispatch must run from main; pass the reviewed PR number as input." >&2
+            exit 1
+          fi
+
       - name: Check out trusted repository code
         uses: actions/checkout@v4
         with:
@@ -491,6 +155,16 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Validate main ref
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Approved dataset mutation dispatch must run from main; pass the reviewed PR number as input." >&2
+            exit 1
+          fi
+
       - name: Check out trusted repository code
         uses: actions/checkout@v4
         with:

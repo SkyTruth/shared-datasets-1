@@ -40,8 +40,25 @@ jobs:
       }}
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Validate trusted live-drift ref
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Live catalog drift checks may only use production read-only auth from main." >&2
+            exit 1
+          fi
+
+      - name: Check out pull request repository
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/checkout@v4
+
+      - name: Check out trusted repository
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5

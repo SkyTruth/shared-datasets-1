@@ -18,8 +18,8 @@ Use the GitHub Actions workflow named `Deploy Feature Branch to Preview`.
 
 Selection:
 
-- In the GitHub **Run workflow** branch dropdown, select the feature branch to
-  deploy.
+- In the GitHub **Run workflow** branch dropdown, select `main`.
+- In the `ref` input, enter the feature branch, tag, or SHA to deploy.
 
 The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
@@ -30,8 +30,8 @@ control-plane checkout, then plans and applies the new preview stack for the
 selected branch and prints the preview Cloud Run URL.
 
 This split is intentional. `main` provides the reviewed workflow and Terraform
-control plane, while the branch selected in the GitHub workflow dropdown
-provides the source that is deployed into the preview slot.
+control plane, while the `ref` input provides the source that is deployed into
+the preview slot.
 
 The selected feature branch must include the baseline preview service source and
 support the preview Firestore database override. `main` carries those mechanics;
@@ -39,11 +39,11 @@ feature branches should rebase or merge from `main` before using the preview
 workflow.
 
 To replace the preview with a different feature branch, run the same workflow
-again from that branch in the GitHub dropdown. There is only one active preview
-slot; each deploy first tears down the previous preview bucket, Firestore
-database, Cloud Run service, and preview bucket/IAP IAM bindings before creating
-the new preview deployment. This clears previous preview data that is no longer
-present in the selected branch.
+again from `main` with the new branch, tag, or SHA in the `ref` input. There is
+only one active preview slot; each deploy first tears down the previous preview
+bucket, Firestore database, Cloud Run service, and preview bucket/IAP IAM
+bindings before creating the new preview deployment. This clears previous
+preview data that is no longer present in the selected ref.
 
 The deploy workflow does not own the stable conditioned project IAM grants that
 let the preview service and preview loader use the preview Firestore database,
@@ -96,6 +96,10 @@ gs://skytruth-shared-datasets-1-preview/_catalog/releases/{asset-slug}.json
 All schema, manifest, and related artifact paths inside those JSON files must
 point to `gs://skytruth-shared-datasets-1-preview/...`, not to the production
 bucket.
+
+Preview data loading is explicit and does not use the production
+`_scratch/pending-publishes/` promotion path. The preview load workflow requires
+preview-bucket artifact URIs and exact generations.
 
 After the preview release bundle is in place, use the relevant preview load
 workflow for the feature under test.

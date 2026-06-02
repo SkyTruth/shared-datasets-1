@@ -244,8 +244,8 @@ objects only through an explicit PR with a fenced publish plan. After that PR
 merges, the `Approved dataset mutation` GitHub workflow applies the plan. Do not
 use standalone workflow dispatch or single-object fallback inputs for catalog
 refreshes. New files should use no-clobber promotion. Existing files should be
-replaced only after reading the current generation. Pass the workflow
-`cache_control` input for `catalog.json` and any other cache-sensitive
+replaced only after reading the current generation. Set the publish-plan
+`cache_control` field for `catalog.json` and any other cache-sensitive
 replacement that needs no-cache metadata.
 
 Publisher-identity CLI reference only:
@@ -278,7 +278,7 @@ Keep the live web shell and runtime contract revalidating on every request. The
 catalog app also appends cache-busting query strings to `catalog.json`, docs
 Markdown, and PMTiles URLs, but the object metadata should not invite a browser
 or CDN to hold stale catalog or tile bytes after a same-path replacement. Pass
-the workflow `cache_control` input with
+the publish-plan `cache_control` field with
 `no-cache, max-age=0, must-revalidate` for `catalog.json`, web shell/runtime
 objects, and same-path PMTiles replacements that need no-cache metadata.
 

@@ -257,14 +257,13 @@ breaking existing paths.
    also the PR author and GitHub blocks the reviewer request. Include staged
    source URIs/generations, intended canonical destination URIs,
    destination-generation expectations, validation commands, and any needed
-   `content_type` or `cache_control` workflow inputs. Include a fenced
-   `shared-datasets-publish-plan` JSON block so approval or the restricted
-   self-approval dispatch can trigger promotion.
+   `content_type` or `cache_control` publish-plan fields. Include a fenced
+   `shared-datasets-publish-plan` JSON block so merge or restricted PR-number
+   dispatch can trigger promotion.
 12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
-    dispatch by PR number is restricted to `jonaraphael` for self-authored PRs
-    and fallback operations.
+    dispatch by PR number is restricted to `jonaraphael`.
 
 ### Upload a new version of an existing dataset
 
@@ -346,8 +345,8 @@ repository and environment. PR approval by `jonaraphael` is the normal human
 approval gate for automatic promotion. When GitHub blocks self-review because
 `jonaraphael` authored the PR, the `Approved dataset mutation` workflow can be
 dispatched with the PR number by `jonaraphael` only; it applies the same fenced
-plan validation before promotion or deletion. Manual workflow dispatch remains
-restricted to `jonaraphael` for fallback operations. If the GitHub environment is
+plan validation before promotion or deletion. Manual workflow dispatch by PR
+number remains restricted to `jonaraphael`. If the GitHub environment is
 also configured with required deployment reviewers, GitHub will pause the publish
 job for that separate environment approval instead of completing from PR approval
 alone. The workflow must use source and destination generation preconditions.
@@ -543,7 +542,9 @@ The feature branch preview is a single replaceable test slot in
 `shared-datasets-1` for deploying and testing selected feature branches before
 merge. It uses preview-named GCP resources and a separate Terraform state
 prefix under `terraform/envs/preview/`; see
-`docs/feature-metadata-preview.md` for the GitHub Actions workflow steps.
+`docs/feature-metadata-preview.md` for the GitHub Actions workflow steps. Run
+the preview deploy workflow from `main` and pass the feature branch, tag, or SHA
+in the `ref` input.
 Stable preview IAM bootstrap is managed by the protected
 `Preview Terraform IAM sync` workflow.
 

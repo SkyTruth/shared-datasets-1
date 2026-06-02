@@ -18,8 +18,19 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Bucket hygiene audit may only use production read-only auth from main." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Validate read-only GCP auth configuration
         env:
