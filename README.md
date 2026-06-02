@@ -547,8 +547,8 @@ merge. It uses preview-named GCP resources and a separate Terraform state
 prefix under `terraform/envs/preview/`; see
 `.claude/skills/feature-preview/SKILL.md` and
 `docs/feature-preview.md` for the GitHub Actions workflow steps. Run
-the preview deploy workflow from `main` and pass the feature branch, tag, or
-SHA in the `ref` input.
+the preview deploy workflow by selecting the feature branch or tag in the
+GitHub **Run workflow** branch dropdown.
 Stable preview IAM bootstrap is managed by the protected
 `Preview Terraform IAM sync` workflow.
 Preview test data is not production publishing: upload disposable release

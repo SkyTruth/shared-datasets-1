@@ -18,8 +18,8 @@ Use the GitHub Actions workflow named `Deploy Feature Branch to Preview`.
 
 Selection:
 
-- In the GitHub **Run workflow** branch dropdown, select `main`.
-- In the `ref` input, enter the feature branch, tag, or SHA to deploy.
+- In the GitHub **Run workflow** branch dropdown, select the branch or tag to
+  deploy into the preview slot.
 
 The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
@@ -29,9 +29,9 @@ an allowlisted `terraform/envs/preview` destroy reset from the `main`
 control-plane checkout, then plans and applies the new preview stack for the
 selected branch and prints the preview Cloud Run URL.
 
-This split is intentional. `main` provides the reviewed workflow and Terraform
-control plane, while the `ref` input provides the source that is deployed into
-the preview slot.
+This split is intentional. The workflow branch dropdown provides the source that
+is deployed into the preview slot, while the workflow checks out `main` for the
+reviewed Terraform control plane.
 
 The selected feature branch must include the baseline preview service source and
 support the preview Firestore database override. `main` carries those mechanics;
@@ -39,7 +39,7 @@ feature branches should rebase or merge from `main` before using the preview
 workflow.
 
 To replace the preview with a different feature branch, run the same workflow
-again from `main` with the new branch, tag, or SHA in the `ref` input. There is
+again and select the new branch or tag in the workflow branch dropdown. There is
 only one active preview slot; each deploy first tears down the previous preview
 bucket, Firestore database, Cloud Run service, and preview bucket/IAP IAM
 bindings before creating the new preview deployment. This clears previous

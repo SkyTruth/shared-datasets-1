@@ -2,12 +2,6 @@ name: Deploy Feature Branch to Preview
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Branch, tag, or SHA to deploy into the preview slot."
-        required: true
-        default: "main"
-        type: string
 permissions:
   contents: read
   id-token: write
@@ -33,24 +27,20 @@ jobs:
       cancel-in-progress: false
 
     env:
-      PREVIEW_REF: ${{ inputs.ref }}
+      PREVIEW_REF: ${{ github.ref_name }}
+      PREVIEW_SOURCE_REF: ${{ github.ref }}
 
     steps:
-      - name: Validate main ref
+      - name: Validate selected ref
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Deploy Feature Branch to Preview must be run from main; pass the feature branch, tag, or SHA in the ref input." >&2
+          if [[ -z "${PREVIEW_SOURCE_REF}" || -z "${PREVIEW_REF}" ]]; then
+            echo "Select the branch or tag to deploy from the workflow branch dropdown." >&2
             exit 1
           fi
-
-      - name: Validate selected branch
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${PREVIEW_REF}" ]]; then
-            echo "selected workflow ref is required for deploy" >&2
+          if [[ "${PREVIEW_SOURCE_REF}" == refs/pull/* ]]; then
+            echo "Pull request refs are not valid preview deploy sources; select a branch or tag." >&2
             exit 1
           fi
 
@@ -62,7 +52,7 @@ jobs:
       - name: Check out selected feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.ref }}
           path: preview-source
 
       - name: Record checked-out SHA
