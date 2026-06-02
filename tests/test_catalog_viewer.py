@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import unittest
 
+from services.feature_preview_service import run as feature_preview_run
 from services.catalog_viewer.run import CatalogJsonCache, StaticObject, StaticObjectNotFound, handle_request
 
 
@@ -75,6 +76,40 @@ class FakeSigner:
         return "https://storage.googleapis.com/signed-private.pmtiles?X-Goog-" + "Signature=abc"
 
 
+class FakeFeatureReleaseResolver:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def resolve(self, asset_slug: str, release: str) -> feature_preview_run.ResolvedRelease:
+        self.calls.append((asset_slug, release))
+        return feature_preview_run.ResolvedRelease(
+            requested_release=release,
+            resolved_release="2026-05-01" if release == "latest" else release,
+            release_index_generation=12345,
+        )
+
+
+class FakeFeatureIndex:
+    def __init__(self) -> None:
+        self.calls = []
+        self.documents = {
+            "src:MRGID:48943": {
+                "feature_id": "src:MRGID:48943",
+                "feature_hash": "hash-48943",
+                "properties": {
+                    "GEONAME": "Overlapping claim: Canada / United States",
+                    "MRGID": 48943,
+                    "SOVEREIGN1": "Canada",
+                },
+                "provenance": {"source": "preview sidecar"},
+            }
+        }
+
+    def lookup(self, asset_slug: str, release: str, feature_ids: list[str]) -> dict[str, dict]:
+        self.calls.append((asset_slug, release, list(feature_ids)))
+        return {feature_id: self.documents[feature_id] for feature_id in feature_ids if feature_id in self.documents}
+
+
 def catalog_payload():
     return {
         "assets": [
@@ -143,6 +178,28 @@ def download_url_request(slug: str, *, version: str = "latest", fmt: str = "fgb"
         signer=signer,
         now=lambda: dt.datetime(2026, 5, 9, 12, 0, tzinfo=dt.UTC),
     ), signer
+
+
+def feature_lookup_request(body, headers=None, resolver=None, index=None):
+    store = FakeStore(catalog_payload())
+    resolver = resolver or FakeFeatureReleaseResolver()
+    index = index or FakeFeatureIndex()
+    response = handle_request(
+        "POST",
+        "/v1/assets/marine-regions-eez/releases/latest:lookup",
+        headers or {},
+        json.dumps(body).encode("utf-8"),
+        catalog_cache=CatalogJsonCache(loader=store.read_catalog_json),
+        object_store=store,
+        signer=FakeSigner(),
+        bucket_name="skytruth-shared-datasets-1-preview",
+        feature_release_resolver=resolver,
+        feature_index=index,
+        feature_max_ids=10,
+        feature_max_fields=10,
+        feature_max_response_bytes=100_000,
+    )
+    return response, resolver, index
 
 
 class CatalogViewerTests(unittest.TestCase):
@@ -306,6 +363,34 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(table_response.status, 400)
         self.assertEqual(outside_response.status, 502)
+
+    def test_feature_metadata_lookup_requires_authenticated_iap_identity(self):
+        response, resolver, index = feature_lookup_request({"ids": ["src:MRGID:48943"]})
+
+        self.assertEqual(response.status, 401)
+        self.assertEqual(resolver.calls, [])
+        self.assertEqual(index.calls, [])
+
+    def test_feature_metadata_lookup_delegates_to_preview_sidecar_index(self):
+        response, resolver, index = feature_lookup_request(
+            {"ids": ["src:MRGID:48943"], "include_provenance": True},
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["asset_slug"], "marine-regions-eez")
+        self.assertEqual(payload["requested_release"], "latest")
+        self.assertEqual(payload["resolved_release"], "2026-05-01")
+        self.assertEqual(payload["release_index_generation"], 12345)
+        self.assertEqual(resolver.calls, [("marine-regions-eez", "latest")])
+        self.assertEqual(index.calls, [("marine-regions-eez", "2026-05-01", ["src:MRGID:48943"])])
+        self.assertEqual(payload["items"][0]["id"], "src:MRGID:48943")
+        self.assertTrue(payload["items"][0]["found"])
+        self.assertEqual(payload["items"][0]["feature_hash"], "hash-48943")
+        self.assertEqual(payload["items"][0]["properties"]["GEONAME"], "Overlapping claim: Canada / United States")
+        self.assertEqual(payload["items"][0]["properties"]["MRGID"], 48943)
+        self.assertEqual(payload["items"][0]["provenance"]["source"], "preview sidecar")
 
 
 if __name__ == "__main__":

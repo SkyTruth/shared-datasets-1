@@ -42,6 +42,11 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn('resource "google_cloud_run_v2_service" "feature_preview_service"', main_tf)
         self.assertIn('resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer"', catalog_viewer_tf)
         self.assertIn('"SHARED_DATASETS_SITE_PREFIX"', catalog_viewer_tf)
+        self.assertIn('"FEATURE_PREVIEW_FIRESTORE_DATABASE"', catalog_viewer_tf)
+        self.assertIn('"FEATURE_PREVIEW_COLLECTION_ROOT"', catalog_viewer_tf)
+        self.assertIn('"FEATURE_PREVIEW_MAX_IDS"', catalog_viewer_tf)
+        self.assertIn('"FEATURE_PREVIEW_MAX_FIELDS"', catalog_viewer_tf)
+        self.assertIn('"FEATURE_PREVIEW_MAX_RESPONSE_BYTES"', catalog_viewer_tf)
         self.assertIn('"CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT"', catalog_viewer_tf)
         self.assertIn("local.preview_service_account_email", catalog_viewer_tf)
         self.assertIn('resource "google_cloud_run_v2_service_iam_member" "feature_preview_catalog_viewer_iap_invoker"', catalog_viewer_tf)
@@ -121,6 +126,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("SHARED_DATASETS_BUCKET must be", workflow)
         self.assertIn("SHARED_DATASETS_SITE_PREFIX must be", workflow)
         self.assertIn("preview Firestore database must be", workflow)
+        self.assertIn("preview collection root must be", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_service_uri", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_catalog_viewer_uri", workflow)
         self.assertIn("Build initial preview catalog web bundle", workflow)
@@ -262,13 +268,21 @@ class FeaturePreviewTests(unittest.TestCase):
     def test_main_contains_preview_source_mechanics(self):
         service_run = REPO_ROOT / "services/feature_preview_service/run.py"
         service_dockerfile = REPO_ROOT / "services/feature_preview_service/Dockerfile"
+        catalog_viewer_run = REPO_ROOT / "services/catalog_viewer/run.py"
+        catalog_viewer_dockerfile = REPO_ROOT / "services/catalog_viewer/Dockerfile"
         index_loader = REPO_ROOT / "scripts/feature_preview_index.py"
 
         self.assertTrue(service_run.exists())
         self.assertTrue(service_dockerfile.exists())
+        self.assertTrue(catalog_viewer_run.exists())
+        self.assertTrue(catalog_viewer_dockerfile.exists())
         self.assertTrue(index_loader.exists())
         self.assertIn("FEATURE_PREVIEW_FIRESTORE_DATABASE", service_run.read_text())
+        self.assertIn("feature_preview_run.FirestoreFeatureIndex", catalog_viewer_run.read_text())
+        self.assertIn("FEATURE_PREVIEW_COLLECTION_ROOT", catalog_viewer_run.read_text())
         self.assertIn("FEATURE_PREVIEW_FIRESTORE_DATABASE", index_loader.read_text())
+        self.assertIn("google-cloud-firestore", service_dockerfile.read_text())
+        self.assertIn("google-cloud-firestore", catalog_viewer_dockerfile.read_text())
 
     def test_prod_terraform_sync_workflows_share_state_concurrency(self):
         for workflow_path in (
