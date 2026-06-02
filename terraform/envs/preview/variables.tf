@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "GCP project ID that owns the replaceable metadata preview slot."
+  description = "GCP project ID that owns the replaceable feature branch preview slot."
   type        = string
   default     = "shared-datasets-1"
 }
@@ -11,49 +11,49 @@ variable "region" {
 }
 
 variable "preview_bucket_name" {
-  description = "Disposable preview bucket used by the metadata preview service."
+  description = "Disposable bucket used by the preview service."
   type        = string
   default     = "skytruth-shared-datasets-1-preview"
 }
 
-variable "metadata_service_image" {
-  description = "Container image URI for the preview feature metadata Cloud Run service."
+variable "preview_service_image" {
+  description = "Container image URI for the preview Cloud Run service."
   type        = string
   default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/metadata-service:bootstrap-required"
 }
 
 variable "metadata_service_name" {
-  description = "Cloud Run service name for the replaceable metadata preview slot."
+  description = "Cloud Run service name for the replaceable preview slot."
   type        = string
   default     = "metadata-service-preview"
 }
 
 variable "metadata_service_account_id" {
-  description = "Service account ID for the preview metadata service."
+  description = "Service account ID for the preview service."
   type        = string
   default     = "metadata-service-preview"
 }
 
 variable "metadata_index_loader_service_account_id" {
-  description = "Service account ID for preview metadata index loads."
+  description = "Service account ID for preview load workflows."
   type        = string
   default     = "metadata-index-loader-preview"
 }
 
 variable "feature_metadata_firestore_database_id" {
-  description = "Named Firestore Native database used only by the metadata preview slot."
+  description = "Named Firestore Native database used only by the preview slot."
   type        = string
   default     = "feature-metadata-preview"
 }
 
 variable "feature_metadata_collection_root" {
-  description = "Root Firestore collection for feature metadata documents inside the preview database."
+  description = "Root Firestore collection for preview documents."
   type        = string
   default     = "feature_metadata"
 }
 
 variable "metadata_service_iap_accessor_members" {
-  description = "IAM members allowed through direct Cloud Run IAP to the preview metadata service run.app URL."
+  description = "IAM members allowed through direct Cloud Run IAP to the preview service run.app URL."
   type        = set(string)
   default     = ["domain:skytruth.org"]
 }
@@ -80,24 +80,6 @@ variable "feature_metadata_max_response_bytes" {
   description = "Maximum JSON response size for one metadata lookup request."
   type        = number
   default     = 10485760
-}
-
-variable "github_repository" {
-  description = "GitHub repository allowed to run preview metadata index loads."
-  type        = string
-  default     = "SkyTruth/shared-datasets-1"
-}
-
-variable "github_environment" {
-  description = "GitHub environment whose approved workflow runs can impersonate the preview index-loader service account. The default reuses the existing production WIF provider."
-  type        = string
-  default     = "shared-datasets-production"
-}
-
-variable "github_workload_identity_pool_id" {
-  description = "Existing Workload Identity Pool ID used by GitHub Actions for this repository."
-  type        = string
-  default     = "github"
 }
 
 variable "preview_ref" {

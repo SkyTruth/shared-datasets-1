@@ -10,7 +10,7 @@ env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
   ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
-  IMAGE_NAME: metadata-service
+  IMAGE_NAME: preview-service
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
@@ -19,11 +19,11 @@ env:
 
 jobs:
   preview:
-    name: Deploy selected branch to feature metadata preview
+    name: Deploy selected branch to preview
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: metadata-service-preview
+      group: feature-branch-preview
       cancel-in-progress: false
 
     env:
@@ -76,20 +76,101 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Validate preview IAM bootstrap
+        run: |
+          set -euo pipefail
+
+          preview_service_account="metadata-service-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
+          preview_loader_service_account="metadata-index-loader-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
+          preview_database="projects/${GOOGLE_CLOUD_PROJECT}/databases/feature-metadata-preview"
+          project_number="$(gcloud projects describe "${GOOGLE_CLOUD_PROJECT}" --format='value(projectNumber)')"
+          preview_loader_wif_member="principal://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/subject/repo:SkyTruth/shared-datasets-1:environment:shared-datasets-production"
+
+          missing_bootstrap=0
+          if ! gcloud iam service-accounts describe "${preview_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
+            echo "Missing preview service account: ${preview_service_account}" >&2
+            missing_bootstrap=1
+          fi
+          if ! gcloud iam service-accounts describe "${preview_loader_service_account}" --project="${GOOGLE_CLOUD_PROJECT}" >/dev/null; then
+            echo "Missing preview loader service account: ${preview_loader_service_account}" >&2
+            missing_bootstrap=1
+          fi
+          if [[ "${missing_bootstrap}" == "1" ]]; then
+            echo "Preview IAM bootstrap is incomplete. Run the protected 'Preview Terraform IAM sync' workflow first." >&2
+            exit 1
+          fi
+
+          gcloud projects get-iam-policy "${GOOGLE_CLOUD_PROJECT}" --format=json > "${RUNNER_TEMP}/preview-project-iam.json"
+          gcloud iam service-accounts get-iam-policy "${preview_loader_service_account}" \
+            --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format=json > "${RUNNER_TEMP}/preview-loader-iam.json"
+          export PREVIEW_LOADER_WIF_MEMBER="${preview_loader_wif_member}"
+
+          python - "${RUNNER_TEMP}/preview-project-iam.json" "${RUNNER_TEMP}/preview-loader-iam.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          project_policy = json.load(open(sys.argv[1]))
+          loader_policy = json.load(open(sys.argv[2]))
+          project = os.environ["GOOGLE_CLOUD_PROJECT"]
+          terraform_service_account = os.environ["TERRAFORM_SERVICE_ACCOUNT"]
+          preview_database = f"projects/{project}/databases/feature-metadata-preview"
+          preview_service_member = f"serviceAccount:metadata-service-preview@{project}.iam.gserviceaccount.com"
+          preview_loader_member = f"serviceAccount:metadata-index-loader-preview@{project}.iam.gserviceaccount.com"
+          preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
+          loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
+
+          def project_binding_exists(role, member, condition_title=None):
+              for binding in project_policy.get("bindings", []):
+                  if binding.get("role") != role or member not in binding.get("members", []):
+                      continue
+                  if condition_title is None:
+                      return True
+                  condition = binding.get("condition") or {}
+                  if condition.get("title") != condition_title:
+                      continue
+                  if preview_database in condition.get("expression", ""):
+                      return True
+              return False
+
+          def service_account_binding_exists(role, member):
+              return any(
+                  binding.get("role") == role and member in binding.get("members", [])
+                  for binding in loader_policy.get("bindings", [])
+              )
+
+          missing = []
+          if not project_binding_exists(preview_terraform_role, f"serviceAccount:{terraform_service_account}"):
+              missing.append("preview Terraform custom role binding")
+          if not project_binding_exists("roles/datastore.viewer", preview_service_member, "preview_firestore_read"):
+              missing.append("preview service Firestore read binding")
+          if not project_binding_exists("roles/datastore.user", preview_loader_member, "preview_firestore_write"):
+              missing.append("preview loader Firestore write binding")
+          if not service_account_binding_exists("roles/iam.workloadIdentityUser", loader_wif_member):
+              missing.append("preview loader Workload Identity binding")
+
+          if missing:
+              print("Preview IAM bootstrap is incomplete. Run the protected 'Preview Terraform IAM sync' workflow first.")
+              for item in missing:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-      - name: Verify selected feature branch contains metadata service
+      - name: Verify selected feature branch contains preview service
         run: |
           set -euo pipefail
 
           test -f preview-source/services/metadata_service/Dockerfile
           if ! grep -q "FEATURE_METADATA_FIRESTORE_DATABASE" preview-source/services/metadata_service/run.py; then
-            echo "The selected feature branch must support FEATURE_METADATA_FIRESTORE_DATABASE before it can run in preview." >&2
+            echo "The selected feature branch must support the preview Firestore database override before it can run in preview." >&2
             exit 1
           fi
 
-      - name: Build preview metadata-service image
+      - name: Build preview service image
         run: |
           set -euo pipefail
 
@@ -112,7 +193,7 @@ jobs:
             echo "Could not resolve immutable image digest for ${image_tag}" >&2
             exit 1
           fi
-          echo "METADATA_SERVICE_IMAGE=${image_digest}" >> "${GITHUB_ENV}"
+          echo "PREVIEW_SERVICE_IMAGE=${image_digest}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -122,6 +203,22 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=terraform/envs/preview init -input=false
 
+      - name: Release stable preview bootstrap state
+        run: |
+          set -euo pipefail
+
+          bootstrap_addresses=(
+            "module.metadata_service_account.google_service_account.this"
+            "module.metadata_index_loader_service_account.google_service_account.this"
+            "google_service_account_iam_member.metadata_index_loader_github_wif"
+          )
+
+          for address in "${bootstrap_addresses[@]}"; do
+            if terraform -chdir=terraform/envs/preview state list | grep -qx "${address}"; then
+              terraform -chdir=terraform/envs/preview state rm "${address}"
+            fi
+          done
+
       - name: Terraform reset plan
         run: |
           set -euo pipefail
@@ -129,38 +226,74 @@ jobs:
           terraform -chdir=terraform/envs/preview plan \
             -destroy \
             -input=false \
-            -out="${RUNNER_TEMP}/metadata-preview-reset.tfplan"
+            -out="${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
 
       - name: Export Terraform reset plan JSON
-        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/metadata-preview-reset.tfplan" > "${RUNNER_TEMP}/metadata-preview-reset.tfplan.json"
+        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
 
       - name: Enforce preview reset resource-change allowlist
         run: |
-          python - "${RUNNER_TEMP}/metadata-preview-reset.tfplan.json" <<'PY'
+          python - "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json" <<'PY'
           import json
           import re
           import sys
 
           plan = json.load(open(sys.argv[1]))
+          legacy_preview_project_iam_exact = {
+              "google_project_iam_member.metadata_service_firestore_viewer": {
+                  "role": "roles/datastore.viewer",
+                  "member": "serviceAccount:metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com",
+              },
+              "google_project_iam_member.metadata_index_loader_firestore_user": {
+                  "role": "roles/datastore.user",
+                  "member": "serviceAccount:metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com",
+              },
+          }
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
               "google_firestore_database.feature_metadata_preview",
-              "google_project_iam_member.metadata_service_firestore_viewer",
-              "google_project_iam_member.metadata_index_loader_firestore_user",
               "google_storage_bucket_iam_member.metadata_service_preview_object_viewer",
               "google_storage_bucket_iam_member.metadata_index_loader_preview_object_viewer",
               "google_storage_bucket_iam_member.metadata_index_loader_preview_index_load_creator",
-              "google_service_account_iam_member.metadata_index_loader_github_wif",
               "google_cloud_run_v2_service.metadata_service_preview",
               "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker",
-          }
+          } | set(legacy_preview_project_iam_exact)
           allowed_patterns = [
-              re.compile(r"^module\.metadata_service_account\."),
-              re.compile(r"^module\.metadata_index_loader_service_account\."),
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_preview_accessors\["),
           ]
+          expected_database = "projects/shared-datasets-1/databases/feature-metadata-preview"
+
+          def planned_values(resource):
+              change = resource.get("change", {})
+              for key in ("after", "before"):
+                  value = change.get(key)
+                  if isinstance(value, dict):
+                      return value
+              return {}
+
+          def validate_legacy_project_iam(address, values):
+              expected = legacy_preview_project_iam_exact[address]
+              violations = []
+              for key, expected_value in {
+                  "project": "shared-datasets-1",
+                  "role": expected["role"],
+                  "member": expected["member"],
+              }.items():
+                  actual = values.get(key)
+                  if actual != expected_value:
+                      violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
+
+              condition = values.get("condition") or []
+              if not condition or not isinstance(condition, list):
+                  violations.append(f"{address} must have a preview Firestore IAM condition")
+              else:
+                  expression = condition[0].get("expression", "")
+                  if expected_database not in expression:
+                      violations.append(f"{address} condition must be scoped to {expected_database!r}")
+              return violations
 
           blocked = []
+          value_violations = []
           for resource in plan.get("resource_changes", []):
               actions = resource.get("change", {}).get("actions", [])
               if actions in ([], ["no-op"], ["read"]):
@@ -170,16 +303,51 @@ jobs:
                   blocked.append(f"{'/'.join(actions)} {address}")
               elif address not in allowed_exact and not any(pattern.match(address) for pattern in allowed_patterns):
                   blocked.append(f"{'/'.join(actions)} {address}")
+              elif address in legacy_preview_project_iam_exact:
+                  value_violations.extend(validate_legacy_project_iam(address, planned_values(resource)))
 
           if blocked:
-              print("Refusing metadata preview reset because the Terraform plan changes non-allowlisted resources:")
+              print("Refusing preview reset because the Terraform plan changes non-allowlisted resources:")
               for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          if value_violations:
+              print("Refusing preview reset because a legacy project IAM delete is not scoped to preview:")
+              for item in value_violations:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
 
       - name: Terraform apply reset plan
-        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/metadata-preview-reset.tfplan"
+        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
+
+      - name: Wait for preview database ID reuse
+        run: |
+          set -euo pipefail
+
+          wait_required="$(
+            python - "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          for resource in plan.get("resource_changes", []):
+              if resource.get("address") != "google_firestore_database.feature_metadata_preview":
+                  continue
+              if resource.get("change", {}).get("actions", []) == ["delete"]:
+                  print("1")
+                  break
+          else:
+              print("0")
+          PY
+          )"
+
+          if [[ "${wait_required}" == "1" ]]; then
+            echo "The preview database was deleted during reset; waiting for database ID reuse."
+            sleep 330
+          else
+            echo "The preview database was not deleted during reset; continuing without a reuse wait."
+          fi
 
       - name: Terraform plan
         run: |
@@ -187,17 +355,17 @@ jobs:
 
           terraform -chdir=terraform/envs/preview plan \
             -input=false \
-            -out="${RUNNER_TEMP}/metadata-preview.tfplan" \
-            -var="metadata_service_image=${METADATA_SERVICE_IMAGE}" \
+            -out="${RUNNER_TEMP}/feature-branch-preview.tfplan" \
+            -var="preview_service_image=${PREVIEW_SERVICE_IMAGE}" \
             -var="preview_ref=${PREVIEW_REF}" \
             -var="preview_deploy_sha=${PREVIEW_DEPLOY_SHA}"
 
       - name: Export Terraform plan JSON
-        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/metadata-preview.tfplan" > "${RUNNER_TEMP}/metadata-preview.tfplan.json"
+        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/feature-branch-preview.tfplan" > "${RUNNER_TEMP}/feature-branch-preview.tfplan.json"
 
       - name: Enforce preview resource-change allowlist
         run: |
-          python - "${RUNNER_TEMP}/metadata-preview.tfplan.json" <<'PY'
+          python - "${RUNNER_TEMP}/feature-branch-preview.tfplan.json" <<'PY'
           import json
           import re
           import sys
@@ -206,18 +374,13 @@ jobs:
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
               "google_firestore_database.feature_metadata_preview",
-              "google_project_iam_member.metadata_service_firestore_viewer",
-              "google_project_iam_member.metadata_index_loader_firestore_user",
               "google_storage_bucket_iam_member.metadata_service_preview_object_viewer",
               "google_storage_bucket_iam_member.metadata_index_loader_preview_object_viewer",
               "google_storage_bucket_iam_member.metadata_index_loader_preview_index_load_creator",
-              "google_service_account_iam_member.metadata_index_loader_github_wif",
               "google_cloud_run_v2_service.metadata_service_preview",
               "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker",
           }
           allowed_patterns = [
-              re.compile(r"^module\.metadata_service_account\."),
-              re.compile(r"^module\.metadata_index_loader_service_account\."),
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_preview_accessors\["),
           ]
           expected = {
@@ -240,11 +403,6 @@ jobs:
               actual = values.get(key)
               if actual is not None and actual != expected_value:
                   violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
-
-          def require_contains(violations, address, values, key, expected_value):
-              actual = values.get(key)
-              if actual is not None and expected_value not in str(actual):
-                  violations.append(f"{address} {key} must contain {expected_value!r}")
 
           def cloud_run_env(values):
               template = values.get("template") or []
@@ -277,48 +435,34 @@ jobs:
                               value_violations.append(f"{address} SHARED_DATASETS_BUCKET must be {expected['bucket']!r}")
                           if env.get("FEATURE_METADATA_FIRESTORE_DATABASE") != expected["database"]:
                               value_violations.append(
-                                  f"{address} FEATURE_METADATA_FIRESTORE_DATABASE must be {expected['database']!r}"
+                                  f"{address} preview Firestore database must be {expected['database']!r}"
                               )
                   elif address == "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker":
                       require_value(value_violations, address, values, "name", expected["service"])
                   elif address.startswith("google_iap_web_cloud_run_service_iam_member.metadata_service_preview_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
-                  elif address.startswith("module.metadata_service_account."):
-                      require_value(value_violations, address, values, "account_id", expected["service_account"])
-                  elif address.startswith("module.metadata_index_loader_service_account."):
-                      require_value(value_violations, address, values, "account_id", expected["index_loader_service_account"])
                   elif address.startswith("google_storage_bucket_iam_member."):
                       require_value(value_violations, address, values, "bucket", expected["bucket"])
-                  elif address.startswith("google_project_iam_member."):
-                      condition = values.get("condition") or []
-                      if condition and isinstance(condition, list):
-                          require_contains(
-                              value_violations,
-                              address,
-                              condition[0],
-                              "expression",
-                              f"databases/{expected['database']}",
-                          )
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 
           if blocked:
-              print("Refusing metadata preview because the Terraform plan changes non-allowlisted resources:")
+              print("Refusing preview deploy because the Terraform plan changes non-allowlisted resources:")
               for item in blocked:
                   print(f"- {item}")
               raise SystemExit(1)
           if value_violations:
-              print("Refusing metadata preview because an allowlisted resource is not constrained to preview names:")
+              print("Refusing preview deploy because an allowlisted resource is not constrained to preview names:")
               for item in value_violations:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
 
       - name: Terraform apply preview plan
-        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/metadata-preview.tfplan"
+        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview.tfplan"
 
       - name: Report preview outputs
         run: |
-          terraform -chdir=terraform/envs/preview output metadata_preview_service_uri
-          terraform -chdir=terraform/envs/preview output metadata_preview_bucket
-          terraform -chdir=terraform/envs/preview output metadata_preview_firestore_database
+          terraform -chdir=terraform/envs/preview output preview_service_uri
+          terraform -chdir=terraform/envs/preview output preview_bucket
+          terraform -chdir=terraform/envs/preview output preview_firestore_database

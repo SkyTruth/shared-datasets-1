@@ -55,6 +55,12 @@ variable "artifact_registry_repository" {
   default     = "shared-datasets-jobs"
 }
 
+variable "github_actions_terraform_service_account_email" {
+  description = "Service account used by approved GitHub Actions Terraform workflows that also push deploy images."
+  type        = string
+  default     = "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com"
+}
+
 variable "catalog_viewer_image" {
   description = "Container image URI for the authenticated catalog viewer Cloud Run service. Override with an immutable tag for production deploys."
   type        = string

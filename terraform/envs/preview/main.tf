@@ -3,9 +3,11 @@ data "google_project" "current" {
 }
 
 locals {
-  github_workload_identity_pool_name       = "projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/${var.github_workload_identity_pool_id}"
-  iap_service_agent                        = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
-  preview_firestore_database_resource_name = "projects/${var.project_id}/databases/${var.feature_metadata_firestore_database_id}"
+  iap_service_agent              = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  preview_service_account_email  = "${var.metadata_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  preview_service_account_member = "serviceAccount:${local.preview_service_account_email}"
+  preview_loader_service_account = "${var.metadata_index_loader_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  preview_loader_member          = "serviceAccount:${local.preview_loader_service_account}"
 }
 
 resource "google_storage_bucket" "preview_bucket" {
@@ -37,72 +39,46 @@ resource "google_firestore_database" "feature_metadata_preview" {
   app_engine_integration_mode = "DISABLED"
 }
 
-module "metadata_service_account" {
-  source = "../../modules/service_account"
+removed {
+  from = module.metadata_service_account.google_service_account.this
 
-  project_id   = var.project_id
-  account_id   = var.metadata_service_account_id
-  display_name = "Shared datasets feature metadata preview service"
-}
-
-module "metadata_index_loader_service_account" {
-  source = "../../modules/service_account"
-
-  project_id   = var.project_id
-  account_id   = var.metadata_index_loader_service_account_id
-  display_name = "Shared datasets feature metadata preview index loader"
-}
-
-resource "google_project_iam_member" "metadata_service_firestore_viewer" {
-  project = var.project_id
-  role    = "roles/datastore.viewer"
-  member  = module.metadata_service_account.member
-
-  condition {
-    title       = "metadata_preview_firestore_read"
-    description = "Limit preview metadata service reads to the preview Firestore database."
-    expression  = "resource.name == '${local.preview_firestore_database_resource_name}' || resource.name.startsWith('${local.preview_firestore_database_resource_name}/')"
+  lifecycle {
+    destroy = false
   }
-
-  depends_on = [google_firestore_database.feature_metadata_preview]
 }
 
-resource "google_project_iam_member" "metadata_index_loader_firestore_user" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = module.metadata_index_loader_service_account.member
+removed {
+  from = module.metadata_index_loader_service_account.google_service_account.this
 
-  condition {
-    title       = "metadata_preview_firestore_write"
-    description = "Limit preview metadata index writes to the preview Firestore database."
-    expression  = "resource.name == '${local.preview_firestore_database_resource_name}' || resource.name.startsWith('${local.preview_firestore_database_resource_name}/')"
+  lifecycle {
+    destroy = false
   }
+}
 
-  depends_on = [google_firestore_database.feature_metadata_preview]
+removed {
+  from = google_service_account_iam_member.metadata_index_loader_github_wif
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "google_storage_bucket_iam_member" "metadata_service_preview_object_viewer" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectViewer"
-  member = module.metadata_service_account.member
+  member = local.preview_service_account_member
 }
 
 resource "google_storage_bucket_iam_member" "metadata_index_loader_preview_object_viewer" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectViewer"
-  member = module.metadata_index_loader_service_account.member
+  member = local.preview_loader_member
 }
 
 resource "google_storage_bucket_iam_member" "metadata_index_loader_preview_index_load_creator" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectCreator"
-  member = module.metadata_index_loader_service_account.member
-}
-
-resource "google_service_account_iam_member" "metadata_index_loader_github_wif" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.metadata_index_loader_service_account.email}"
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principal://iam.googleapis.com/${local.github_workload_identity_pool_name}/subject/repo:${var.github_repository}:environment:${var.github_environment}"
+  member = local.preview_loader_member
 }
 
 resource "google_cloud_run_v2_service" "metadata_service_preview" {
@@ -115,7 +91,7 @@ resource "google_cloud_run_v2_service" "metadata_service_preview" {
   iap_enabled         = true
 
   template {
-    service_account = module.metadata_service_account.email
+    service_account = local.preview_service_account_email
 
     scaling {
       min_instance_count = 0
@@ -123,7 +99,7 @@ resource "google_cloud_run_v2_service" "metadata_service_preview" {
     }
 
     containers {
-      image = var.metadata_service_image
+      image = var.preview_service_image
 
       ports {
         container_port = 8080
@@ -165,12 +141,12 @@ resource "google_cloud_run_v2_service" "metadata_service_preview" {
       }
 
       env {
-        name  = "METADATA_PREVIEW_REF"
+        name  = "PREVIEW_REF"
         value = var.preview_ref
       }
 
       env {
-        name  = "METADATA_PREVIEW_DEPLOY_SHA"
+        name  = "PREVIEW_DEPLOY_SHA"
         value = var.preview_deploy_sha
       }
 

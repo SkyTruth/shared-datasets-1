@@ -36,7 +36,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
-| Feature metadata preview | `docs/feature-metadata-preview.md`, `terraform/envs/preview/`, `.github/workflows/metadata-service-preview.yml`, `.github/workflows/metadata-service-preview-destroy.yml` |
+| Feature branch preview | `docs/feature-metadata-preview.md`, `terraform/envs/preview/`, `Deploy Feature Branch to Preview`, `Destroy Preview Environment`, `Preview Terraform IAM sync` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
 | TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
@@ -519,25 +519,23 @@ gcloud secrets versions add shared-datasets-slack-webhook-url \
   --data-file=/path/to/webhook-url.txt
 ```
 
-### Apply production Terraform
+### Production Terraform
 
-Prefer the wrapper so successful and failed local applies send Slack summaries:
+Production Terraform mutations must land through reviewed PRs and protected
+GitHub Actions workflows in the `shared-datasets-production` environment. Local
+`terraform plan`, `terraform validate`, and saved-plan review commands are OK;
+local `terraform apply` and `scripts/terraform_prod_apply.py` are reserved for
+explicitly approved break-glass emergencies.
 
-```bash
-uv run python scripts/terraform_prod_apply.py
-```
+### Feature Branch Preview
 
-The wrapper reads the current Cloud Run job images when image variables are not
-provided, creates a saved plan, applies that plan, and reports the result to
-Slack. Direct Terraform still works but will not send deployment summaries.
-
-### Feature Metadata Preview
-
-The feature metadata preview is a single replaceable test slot in
-`shared-datasets-1` for deploying metadata-service changes from a feature
-branch before merge. It uses preview-named GCP resources and a separate
-Terraform state prefix under `terraform/envs/preview/`; see
+The feature branch preview is a single replaceable test slot in
+`shared-datasets-1` for deploying and testing selected feature branches before
+merge. It uses preview-named GCP resources and a separate Terraform state
+prefix under `terraform/envs/preview/`; see
 `docs/feature-metadata-preview.md` for the GitHub Actions workflow steps.
+Stable preview IAM bootstrap is managed by the protected
+`Preview Terraform IAM sync` workflow.
 
 ## Standard local setup
 
