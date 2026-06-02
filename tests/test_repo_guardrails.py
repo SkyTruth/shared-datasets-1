@@ -200,6 +200,92 @@ class RepoGuardrailsTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_workflow_boundaries_require_main_for_gcp_auth_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "unsafe.yml").write_text(
+                "name: Unsafe\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  unsafe:\n"
+                "    steps:\n"
+                "      - uses: actions/checkout@v4\n"
+                "      - uses: google-github-actions/auth@v2\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("must validate refs/heads/main" in error for error in errors))
+        self.assertTrue(any("must check out trusted main code" in error for error in errors))
+
+    def test_workflow_boundaries_accept_main_guarded_gcp_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "safe.yml").write_text(
+                "name: Safe\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  safe:\n"
+                "    steps:\n"
+                "      - name: Validate main ref\n"
+                "        run: |\n"
+                "          if [[ \"${GITHUB_REF}\" != \"refs/heads/main\" ]]; then exit 1; fi\n"
+                "      - uses: actions/checkout@v4\n"
+                "        with:\n"
+                "          ref: main\n"
+                "      - uses: google-github-actions/auth@v2\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertEqual(errors, [])
+
+    def test_workflow_boundaries_reject_production_uri_in_preview_workflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "preview.yml").write_text(
+                "name: Preview\n"
+                "env:\n"
+                "  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview\n"
+                "jobs:\n"
+                "  preview:\n"
+                "    steps:\n"
+                "      - run: echo gs://skytruth-shared-datasets-1/path/to/object\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("preview workflows must not accept production bucket URIs" in error for error in errors))
+
+    def test_workflow_boundaries_reject_single_object_publish_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "publish.yml").write_text(
+                "name: Publish\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "    inputs:\n"
+                "      source_uri:\n"
+                "        description: Single-object fallback source\n"
+                "jobs:\n"
+                "  promote:\n"
+                "    name: Promote staged object manually\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("single-object dataset publish fallback is not allowed" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,8 +38,19 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Catalog web deploy may only publish from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5

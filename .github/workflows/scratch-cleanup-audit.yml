@@ -32,8 +32,19 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Scratch cleanup audit may only run with publisher identity from main." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Validate publisher auth configuration
         env:

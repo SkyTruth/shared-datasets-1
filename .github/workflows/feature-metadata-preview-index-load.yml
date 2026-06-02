@@ -81,8 +81,19 @@ jobs:
       REQUESTED_LOAD_ID: ${{ inputs.load_id }}
 
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Feature metadata preview index load must be run from main; pass loader code in the ref input." >&2
+            exit 1
+          fi
+
       - name: Check out preview control plane
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Check out requested source ref
         uses: actions/checkout@v4

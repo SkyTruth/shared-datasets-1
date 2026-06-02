@@ -306,7 +306,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat "$DEST/catalog.js
 ```
 
 Local agents should stage the file under `_scratch/pending-publishes/` and
-record it in the PR publish plan, passing the workflow `cache_control` input
+record it in the PR publish plan, passing the publish-plan `cache_control` field
 with `no-cache, max-age=0, must-revalidate`. Do not use standalone workflow
 dispatch or single-object fallback inputs to bypass a PR.
 
@@ -389,7 +389,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     the PR author and GitHub blocks the reviewer request. The PR body must
     include the asset slug, changed repo files, staged source URIs and
     generations, intended canonical destination URIs, destination-generation
-    expectations, needed `content_type` or `cache_control` workflow inputs,
+    expectations, needed `content_type` or `cache_control` publish-plan fields,
     validation commands, and any unresolved assumptions. If using the GitHub CLI,
     pass `--reviewer jonaraphael` to `gh pr create` when `jonaraphael` is not the
     PR author; if using a GitHub connector, set `jonaraphael` as requested
