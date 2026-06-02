@@ -26,27 +26,30 @@ Selection:
   and are prepared to reload preview data.
 
 The selected branch or tag is both the workflow ref and the preview source ref.
-The protected workflow keeps the preview control plane checked out from `main`
-at the workspace root and checks out the selected workflow branch separately
-under `preview-source/`. It builds the preview service and preview catalog
-viewer images from the selected branch after verifying the protected preview
-IAM bootstrap. In `preserve` mode, it plans and applies the updated preview
-stack without first destroying the preview bucket or Firestore database, then
-rebuilds the catalog web bundle from existing preview release indexes. In
-`reset` mode, it first plans and applies a saved `terraform/envs/preview`
-destroy reset from the `main` control-plane checkout, waits if the preview
-Firestore database ID needs reuse time, then creates the new preview stack and
-publishes a catalog shell. In both modes, it prints the preview service and
-catalog viewer Cloud Run URLs.
+The protected workflow checks out `main` at the workspace root and checks out
+the selected workflow branch separately under `preview-source/`. It builds the
+preview service and preview catalog viewer images from the selected branch
+after verifying the protected preview IAM bootstrap, then plans and applies
+`preview-source/terraform/envs/preview` through the preview resource-change
+allowlist. This lets feature branches exercise preview-only Terraform changes
+before merge while still refusing non-preview resources. In `preserve` mode, it
+plans and applies the updated preview stack without first destroying the preview
+bucket or Firestore database, then rebuilds the catalog web bundle from
+existing preview release indexes. In `reset` mode, it first plans and applies a
+saved destroy reset from the selected branch preview Terraform, waits if the
+preview Firestore database ID needs reuse time, then creates the new preview
+stack and publishes a catalog shell. In both modes, it prints the preview
+service and catalog viewer Cloud Run URLs.
 
-This split is intentional. The workflow branch dropdown provides the source that
-is deployed into the preview slot, while the workflow checks out `main` for the
-reviewed Terraform control plane.
+This split is intentional. The workflow branch dropdown provides the source and
+preview Terraform that are deployed into the preview slot, while stable
+production-scoped IAM bootstrap remains on `main` through the separate sync
+workflow.
 
 The selected feature branch must include the baseline preview service source,
-catalog viewer source, catalog site generator, and preview Firestore database
-override. `main` carries those mechanics; feature branches should rebase or
-merge from `main` before using the preview workflow.
+catalog viewer source, catalog site generator, preview Terraform, and preview
+Firestore database override. Feature branches should rebase or merge from
+`main` before using the preview workflow.
 
 To replace the preview with a different feature branch, run the same workflow
 again and select the new branch or tag in the workflow branch dropdown. There is
