@@ -103,8 +103,8 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_service_uri", workflow)
         self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
-        self.assertIn("legacy_preview_project_iam_exact", workflow)
-        self.assertIn("Refusing preview reset because a legacy project IAM delete is not scoped to preview", workflow)
+        self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
+        self.assertNotIn("Refusing preview reset", workflow)
         deploy_create_section = workflow.split("      - name: Terraform plan", 1)[1]
         self.assertNotIn("google_project_iam_member.feature_preview_service_firestore_viewer", deploy_create_section)
         self.assertNotIn("google_project_iam_member.feature_preview_loader_firestore_user", deploy_create_section)

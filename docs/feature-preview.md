@@ -26,9 +26,9 @@ The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
 under `preview-source/`. It builds the preview service image from the selected
 branch after verifying the protected preview IAM bootstrap, plans and applies
-an allowlisted `terraform/envs/preview` destroy reset from the `main`
-control-plane checkout, then plans and applies the new preview stack for the
-selected branch and prints the preview Cloud Run URL.
+a saved `terraform/envs/preview` destroy reset from the `main` control-plane
+checkout, then plans and applies the new preview stack for the selected branch
+and prints the preview Cloud Run URL.
 
 This split is intentional. The workflow branch dropdown provides the source that
 is deployed into the preview slot, while the workflow checks out `main` for the
@@ -62,11 +62,9 @@ sync has not run.
 
 During the migration from the earlier preview root, deploy reset first removes
 the stable preview service accounts and loader Workload Identity binding from
-preview Terraform state without deleting the live resources. It may also delete
-the two legacy preview-scoped Firestore project IAM bindings that remain in old
-preview Terraform state. The verifier only permits those deletes when the
-member, role, and condition are scoped to the preview service accounts and
-`projects/shared-datasets-1/databases/feature-preview`.
+preview Terraform state without deleting the live resources. The saved preview
+reset plan may also delete old preview-stack resources that remain in
+`terraform/envs/preview` state from earlier naming.
 
 ## Destroy The Preview
 
