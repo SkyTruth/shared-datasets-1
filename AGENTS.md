@@ -77,6 +77,9 @@ High-priority triggers:
   replacing, publishing, or validating shared GCS objects.
 - Use `publish-shared-dataset` before manually adding, updating, publishing, or
   documenting a shared dataset asset.
+  Plain-language requests such as "add this" or "upload this file" count as
+  manual dataset intake unless the human explicitly limits the request to
+  scratch-only or diagnostic staging.
 - Use `deploy-scheduled-ingestion` before deploying or updating Cloud Run and
   Cloud Scheduler ingestion jobs.
 - Use `feature-preview` before deploying, destroying, uploading test
@@ -271,6 +274,12 @@ Dataset metadata and local files:
 - For publishable bytes that depend on native geospatial CLIs such as GDAL,
   Tippecanoe, or PMTiles, record resolved tool paths and versions. Use a pinned
   repo-owned toolchain when reproducibility matters.
+- For any generated PMTiles artifact, validate the archive format and contents
+  before upload or success reporting. A `.pmtiles` filename is not sufficient:
+  confirm PMTiles magic bytes, run `pmtiles verify`, inspect `pmtiles show`
+  metadata, and decode at least one representative tile to verify expected
+  layers and compact feature properties. If Tippecanoe writes MBTiles/SQLite,
+  convert it with the PMTiles CLI before treating it as PMTiles.
 
 Infrastructure and security:
 
