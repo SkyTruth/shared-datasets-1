@@ -80,6 +80,21 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn(".filter((file) => releaseFilePath(file))", app)
         self.assertIn(".map((file) => ({ ...file, path: releaseFilePath(file) }))", app)
 
+    def test_catalog_viewer_populates_clicked_features_from_metadata_sidecar_lookup(self):
+        app = (REPO_ROOT / "web/catalog/app.js").read_text()
+        map_preview = (REPO_ROOT / "web/catalog/map-preview.js").read_text()
+
+        self.assertIn("featureLookupSerial", app)
+        self.assertIn("onFeatureSelect: handleFeatureSelect", app)
+        self.assertIn("function featureMetadataLookupUrl", app)
+        self.assertIn("/v1/assets/${encodeURIComponent(assetSlug)}/releases/${encodeURIComponent(release)}:lookup", app)
+        self.assertIn('method: "POST"', app)
+        self.assertIn('credentials: "include"', app)
+        self.assertIn("include_provenance: true", app)
+        self.assertIn("item.properties", app)
+        self.assertIn("feature_id: featureId", app)
+        self.assertIn("source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || \"latest\"", map_preview)
+
 
 if __name__ == "__main__":
     unittest.main()

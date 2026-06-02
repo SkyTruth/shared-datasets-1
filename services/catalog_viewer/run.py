@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from services.feature_preview_service import run as feature_preview_run
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
@@ -220,6 +222,7 @@ def handle_request(
     method: str,
     path: str,
     headers: Mapping[str, str],
+    body: bytes = b"",
     *,
     catalog_cache: CatalogJsonCache,
     object_store: ObjectStore,
@@ -227,12 +230,33 @@ def handle_request(
     bucket_name: str = DEFAULT_BUCKET,
     signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
     allowed_email_domains: tuple[str, ...] = DEFAULT_ALLOWED_EMAIL_DOMAINS,
+    feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
+    feature_index: feature_preview_run.FeatureIndex | None = None,
+    feature_collection_root: str = feature_preview_run.DEFAULT_COLLECTION_ROOT,
+    feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
+    feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
+    feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
     method = method.upper()
     request_path = urlsplit(path).path
     if request_path == "/healthz":
         return text_response(HTTPStatus.OK, "ok", {"Cache-Control": NO_STORE}, include_body=method != "HEAD")
+    if feature_preview_run.LOOKUP_RE.fullmatch(request_path):
+        return handle_feature_lookup(
+            method,
+            path,
+            headers,
+            body,
+            bucket_name=bucket_name,
+            allowed_email_domains=allowed_email_domains,
+            feature_release_resolver=feature_release_resolver,
+            feature_index=feature_index,
+            feature_collection_root=feature_collection_root,
+            feature_max_ids=feature_max_ids,
+            feature_max_fields=feature_max_fields,
+            feature_max_response_bytes=feature_max_response_bytes,
+        )
     if request_path == "/api/pmtiles/signed-url":
         return handle_signed_url(
             method,
@@ -259,6 +283,38 @@ def handle_request(
             now=now,
         )
     return handle_static(method, request_path, object_store=object_store)
+
+
+def handle_feature_lookup(
+    method: str,
+    path: str,
+    headers: Mapping[str, str],
+    body: bytes,
+    *,
+    bucket_name: str,
+    allowed_email_domains: tuple[str, ...],
+    feature_release_resolver: feature_preview_run.ReleaseResolver | None,
+    feature_index: feature_preview_run.FeatureIndex | None,
+    feature_collection_root: str,
+    feature_max_ids: int,
+    feature_max_fields: int,
+    feature_max_response_bytes: int,
+) -> Response:
+    resolver = feature_release_resolver or feature_preview_run.CatalogReleaseResolver(bucket_name=bucket_name)
+    index = feature_index or feature_preview_run.FirestoreFeatureIndex(collection_root=feature_collection_root)
+    return feature_preview_run.handle_request(
+        method,
+        path,
+        headers,
+        body,
+        release_resolver=resolver,
+        feature_index=index,
+        allowed_email_domains=allowed_email_domains,
+        require_iap=True,
+        max_ids=feature_max_ids,
+        max_fields=feature_max_fields,
+        max_response_bytes=feature_max_response_bytes,
+    )
 
 
 def handle_signed_url(
@@ -642,6 +698,18 @@ def allowed_email_domains_from_env() -> tuple[str, ...]:
     return tuple(part.strip().lstrip("@") for part in raw.split(",") if part.strip())
 
 
+def feature_collection_root_from_env() -> str:
+    return os.environ.get("FEATURE_PREVIEW_COLLECTION_ROOT", feature_preview_run.DEFAULT_COLLECTION_ROOT)
+
+
+def int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "")
+    try:
+        return max(1, int(raw)) if raw else default
+    except ValueError:
+        return default
+
+
 def make_handler(
     *,
     catalog_cache: CatalogJsonCache,
@@ -650,16 +718,27 @@ def make_handler(
     bucket_name: str,
     signed_url_ttl_seconds: int,
     allowed_email_domains: tuple[str, ...],
+    feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
+    feature_index: feature_preview_run.FeatureIndex | None = None,
+    feature_collection_root: str = feature_preview_run.DEFAULT_COLLECTION_ROOT,
+    feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
+    feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
+    feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
 ):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            self._send(handle_request_from_self("GET", self))
+            self._send(handle_request_from_self("GET", self, b""))
 
         def do_HEAD(self) -> None:
-            self._send(handle_request_from_self("HEAD", self), include_body=False)
+            self._send(handle_request_from_self("HEAD", self, b""), include_body=False)
 
         def do_OPTIONS(self) -> None:
-            self._send(handle_request_from_self("OPTIONS", self))
+            self._send(handle_request_from_self("OPTIONS", self, b""))
+
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            self._send(handle_request_from_self("POST", self, body))
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
             self.send_response(response.status)
@@ -669,17 +748,24 @@ def make_handler(
             if include_body and response.body:
                 self.wfile.write(response.body)
 
-    def handle_request_from_self(method: str, handler: BaseHTTPRequestHandler) -> Response:
+    def handle_request_from_self(method: str, handler: BaseHTTPRequestHandler, body: bytes) -> Response:
         return handle_request(
             method,
             handler.path,
             handler.headers,
+            body,
             catalog_cache=catalog_cache,
             object_store=object_store,
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
             allowed_email_domains=allowed_email_domains,
+            feature_release_resolver=feature_release_resolver,
+            feature_index=feature_index,
+            feature_collection_root=feature_collection_root,
+            feature_max_ids=feature_max_ids,
+            feature_max_fields=feature_max_fields,
+            feature_max_response_bytes=feature_max_response_bytes,
         )
 
     return Handler
@@ -694,6 +780,11 @@ def main() -> None:
         bucket_name=bucket_name,
         service_account_email=os.environ.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT") or None,
     )
+    feature_release_resolver = feature_preview_run.CatalogReleaseResolver(
+        bucket_name=bucket_name,
+        ttl_seconds=catalog_cache_ttl_from_env(),
+    )
+    feature_index = feature_preview_run.FirestoreFeatureIndex(collection_root=feature_collection_root_from_env())
     handler = make_handler(
         catalog_cache=catalog_cache,
         object_store=object_store,
@@ -701,6 +792,15 @@ def main() -> None:
         bucket_name=bucket_name,
         signed_url_ttl_seconds=signed_url_ttl_from_env(),
         allowed_email_domains=allowed_email_domains_from_env(),
+        feature_release_resolver=feature_release_resolver,
+        feature_index=feature_index,
+        feature_collection_root=feature_collection_root_from_env(),
+        feature_max_ids=int_env("FEATURE_PREVIEW_MAX_IDS", feature_preview_run.DEFAULT_MAX_IDS),
+        feature_max_fields=int_env("FEATURE_PREVIEW_MAX_FIELDS", feature_preview_run.DEFAULT_MAX_FIELDS),
+        feature_max_response_bytes=int_env(
+            "FEATURE_PREVIEW_MAX_RESPONSE_BYTES",
+            feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
+        ),
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()

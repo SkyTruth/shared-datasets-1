@@ -1143,6 +1143,7 @@ function serializeFeature(feature, source) {
     assetSlug: source.asset.slug,
     assetTitle: source.asset.title,
     color: colorForFeature(properties, source),
+    release: source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || "latest",
     sourceLayer: feature.sourceLayer || feature.layer?.["source-layer"] || "",
     geometryType: feature.geometry?.type || geometryTypeFromLayer(feature.layer?.type),
     properties,
