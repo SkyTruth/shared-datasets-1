@@ -100,9 +100,8 @@ the release index and forces `access_tier: private` so the authenticated preview
 viewer signs short-lived GCS URLs for FGB downloads and PMTiles previews. This
 prevents the preview UI from silently linking to production `latest/` objects.
 The generated catalog also preserves every file entry from each preview release
-index in `versions[].files`, including feature-index sidecars, metadata
-sidecars, schemas, manifests, and any other new sidecar datafiles that belong
-to the preview release bundle.
+index in `versions[].files`, including metadata sidecars, schemas, manifests,
+and any other new sidecar datafiles that belong to the preview release bundle.
 
 ## Load Preview Data
 
