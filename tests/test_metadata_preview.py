@@ -9,7 +9,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_WORKFLOW = REPO_ROOT / ".github/workflows/metadata-service-preview.yml"
 PREVIEW_DESTROY_WORKFLOW = REPO_ROOT / ".github/workflows/metadata-service-preview-destroy.yml"
 PREVIEW_INDEX_LOAD_WORKFLOW = REPO_ROOT / ".github/workflows/feature-metadata-preview-index-load.yml"
+ARTIFACT_REGISTRY_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.yml"
 PREVIEW_TF = REPO_ROOT / "terraform/envs/preview"
+PROD_TF = REPO_ROOT / "terraform/envs/prod"
 
 
 class MetadataPreviewTests(unittest.TestCase):
@@ -149,6 +151,33 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertTrue(index_loader.exists())
         self.assertIn("FEATURE_METADATA_FIRESTORE_DATABASE", service_run.read_text())
         self.assertIn("FEATURE_METADATA_FIRESTORE_DATABASE", index_loader.read_text())
+
+    def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
+        artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
+        workflow = ARTIFACT_REGISTRY_IAM_WORKFLOW.read_text()
+
+        self.assertIn(
+            'resource "google_artifact_registry_repository_iam_member" "github_actions_artifact_registry_writer"',
+            artifact_registry_tf,
+        )
+        self.assertIn("google_artifact_registry_repository.jobs.repository_id", artifact_registry_tf)
+        self.assertIn("roles/artifactregistry.writer", artifact_registry_tf)
+        self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
+        self.assertIn("Artifact Registry IAM sync", workflow)
+        self.assertIn("shared-datasets-production", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
+        self.assertIn(
+            "-target=google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
+            workflow,
+        )
+        self.assertIn("allowed_exact", workflow)
+        self.assertIn(
+            "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
+            workflow,
+        )
+        self.assertIn("Refusing automatic Artifact Registry IAM sync", workflow)
+        self.assertNotIn("google_project_iam_member", workflow)
+        self.assertNotIn("roles/artifactregistry.admin", workflow)
 
 
 if __name__ == "__main__":
