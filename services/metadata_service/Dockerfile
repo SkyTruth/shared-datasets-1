@@ -8,8 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "google-cloud-firestore>=2.21.0" \
-    "google-cloud-storage>=2.19.0"
+    "google-cloud-firestore>=2.21.0,<3" \
+    "google-cloud-storage>=2.19.0,<3"
 
 COPY services ./services
 

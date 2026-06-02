@@ -1,0 +1,245 @@
+name: Feature metadata preview index load
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA whose index-loader code should run."
+        required: true
+        default: "main"
+        type: string
+      asset_slug:
+        description: "Exact asset slug to load."
+        required: true
+        type: string
+      release:
+        description: "Concrete release date, YYYY-MM-DD."
+        required: true
+        type: string
+      sidecar_uri:
+        description: "Preview-bucket release .metadata.ndjson.gz URI."
+        required: true
+        type: string
+      sidecar_generation:
+        description: "Required sidecar object generation."
+        required: true
+        type: string
+      schema_uri:
+        description: "Preview-bucket release .schema.json URI."
+        required: true
+        type: string
+      schema_generation:
+        description: "Required schema object generation."
+        required: true
+        type: string
+      manifest_uri:
+        description: "Preview-bucket release .manifest.json URI."
+        required: true
+        type: string
+      manifest_generation:
+        description: "Required manifest object generation."
+        required: true
+        type: string
+      load_id:
+        description: "Optional index load ID. Defaults to github-{run_id}-{run_attempt}."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview
+  INDEX_LOADER_SERVICE_ACCOUNT: metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com
+  FEATURE_METADATA_FIRESTORE_DATABASE: feature-metadata-preview
+  FEATURE_METADATA_COLLECTION_ROOT: feature_metadata
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  load:
+    name: Load preview Firestore feature metadata index
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: feature-metadata-preview-index-load-${{ inputs.asset_slug }}-${{ inputs.release }}
+      cancel-in-progress: false
+
+    env:
+      PREVIEW_REF: ${{ inputs.ref }}
+      ASSET_SLUG: ${{ inputs.asset_slug }}
+      RELEASE: ${{ inputs.release }}
+      SIDECAR_URI: ${{ inputs.sidecar_uri }}
+      SIDECAR_GENERATION: ${{ inputs.sidecar_generation }}
+      SCHEMA_URI: ${{ inputs.schema_uri }}
+      SCHEMA_GENERATION: ${{ inputs.schema_generation }}
+      MANIFEST_URI: ${{ inputs.manifest_uri }}
+      MANIFEST_GENERATION: ${{ inputs.manifest_generation }}
+      REQUESTED_LOAD_ID: ${{ inputs.load_id }}
+
+    steps:
+      - name: Check out preview control plane
+        uses: actions/checkout@v4
+
+      - name: Check out requested source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: preview-source
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+        working-directory: preview-source
+
+      - name: Verify requested source ref supports preview Firestore database
+        run: |
+          set -euo pipefail
+
+          if ! grep -q "FEATURE_METADATA_FIRESTORE_DATABASE" scripts/feature_metadata_index.py; then
+            echo "The requested ref must support FEATURE_METADATA_FIRESTORE_DATABASE before it can load the preview index." >&2
+            exit 1
+          fi
+        working-directory: preview-source
+
+      - name: Validate preview index-load request
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv
+          import os
+          import re
+          from pathlib import Path
+
+          bucket = os.environ["SHARED_DATASETS_BUCKET"]
+          asset_slug = os.environ["ASSET_SLUG"]
+          release = os.environ["RELEASE"]
+          requested_load_id = os.environ.get("REQUESTED_LOAD_ID", "")
+          run_id = os.environ["GITHUB_RUN_ID"]
+          run_attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+
+          if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", asset_slug):
+              raise SystemExit("asset_slug must be lowercase kebab-case")
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", release):
+              raise SystemExit("release must be a concrete YYYY-MM-DD date")
+          for env_name in ("SIDECAR_GENERATION", "SCHEMA_GENERATION", "MANIFEST_GENERATION"):
+              if not re.fullmatch(r"[0-9]+", os.environ[env_name]):
+                  raise SystemExit(f"{env_name.lower()} must be a numeric object generation")
+
+          load_id = requested_load_id or f"github-{run_id}-{run_attempt}"
+          if not re.fullmatch(r"[A-Za-z0-9._-]+", load_id):
+              raise SystemExit("load_id may contain only letters, digits, dots, underscores, and hyphens")
+
+          row = None
+          with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+              for candidate in csv.DictReader(file_obj):
+                  if candidate.get("asset_slug") == asset_slug:
+                      row = candidate
+                      break
+          if row is None:
+              raise SystemExit(f"asset_slug is not in catalog/shared-datasets-catalog.csv: {asset_slug}")
+
+          asset_root = f"{row['category']}/{row['subcategory']}/{asset_slug}"
+          release_prefix = f"gs://{bucket}/{asset_root}/releases/{release}/"
+          expected = {
+              "SIDECAR_URI": ".metadata.ndjson.gz",
+              "SCHEMA_URI": ".schema.json",
+              "MANIFEST_URI": ".manifest.json",
+          }
+          for env_name, suffix in expected.items():
+              uri = os.environ[env_name]
+              if not uri.startswith(release_prefix):
+                  raise SystemExit(f"{env_name.lower()} must be under {release_prefix}")
+              if not uri.endswith(suffix):
+                  raise SystemExit(f"{env_name.lower()} must end with {suffix}")
+
+          work_dir = Path(os.environ["RUNNER_TEMP"]) / "feature-metadata-preview-index-load"
+          work_dir.mkdir(parents=True, exist_ok=True)
+          env_updates = {
+              "LOAD_ID": load_id,
+              "ASSET_ROOT": asset_root,
+              "SIDECAR_PATH": str(work_dir / f"{asset_slug}.metadata.ndjson.gz"),
+              "SCHEMA_PATH": str(work_dir / f"{asset_slug}.schema.json"),
+              "MANIFEST_PATH": str(work_dir / f"{asset_slug}.manifest.json"),
+              "INDEX_LOAD_RECORD": str(work_dir / f"{load_id}.json"),
+              "INDEX_LOAD_URI": f"gs://{bucket}/000-system/metadata-preview/index-loads/{asset_slug}/{release}/{load_id}.json",
+          }
+          with open(os.environ["GITHUB_ENV"], "a") as env_file:
+              for name, value in env_updates.items():
+                  env_file.write(f"{name}={value}\n")
+          PY
+        working-directory: preview-source
+
+      - name: Validate preview index-load record destination
+        run: uv run python scripts/gcs_asset.py validate-path "${INDEX_LOAD_URI}"
+        working-directory: preview-source
+
+      - name: Validate index-load auth configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
+      - name: Authenticate as preview metadata index loader
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Download exact-generation preview metadata bundle
+        run: |
+          set -euo pipefail
+          uv run python scripts/gcs_asset.py download "${SIDECAR_URI}" "${SIDECAR_PATH}" --generation "${SIDECAR_GENERATION}"
+          uv run python scripts/gcs_asset.py download "${SCHEMA_URI}" "${SCHEMA_PATH}" --generation "${SCHEMA_GENERATION}"
+          uv run python scripts/gcs_asset.py download "${MANIFEST_URI}" "${MANIFEST_PATH}" --generation "${MANIFEST_GENERATION}"
+        working-directory: preview-source
+
+      - name: Load preview Firestore index and write local record
+        run: |
+          set -euo pipefail
+          uv run python scripts/feature_metadata_index.py \
+            --sidecar "${SIDECAR_PATH}" \
+            --schema "${SCHEMA_PATH}" \
+            --manifest "${MANIFEST_PATH}" \
+            --asset-slug "${ASSET_SLUG}" \
+            --release "${RELEASE}" \
+            --collection-root "${FEATURE_METADATA_COLLECTION_ROOT}" \
+            --index-load-record "${INDEX_LOAD_RECORD}" \
+            --load-id "${LOAD_ID}" \
+            --sidecar-uri "${SIDECAR_URI}" \
+            --sidecar-generation "${SIDECAR_GENERATION}" \
+            --schema-uri "${SCHEMA_URI}" \
+            --schema-generation "${SCHEMA_GENERATION}" \
+            --manifest-uri "${MANIFEST_URI}" \
+            --manifest-generation "${MANIFEST_GENERATION}"
+        working-directory: preview-source
+
+      - name: Upload preview index-load record no-clobber
+        env:
+          SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+        run: |
+          set -euo pipefail
+          uv run python scripts/gcs_asset.py upload \
+            "${INDEX_LOAD_RECORD}" \
+            "${INDEX_LOAD_URI}" \
+            --content-type "application/json" \
+            --cache-control "no-cache, max-age=0, must-revalidate"
+        working-directory: preview-source

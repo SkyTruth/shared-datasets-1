@@ -63,7 +63,11 @@ class FirestoreFeatureMetadataWriter:
             from google.cloud import firestore
 
             project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-            self._client = firestore.Client(project=project) if project else firestore.Client()
+            database = os.environ.get("FEATURE_METADATA_FIRESTORE_DATABASE") or None
+            kwargs = {"project": project} if project else {}
+            if database:
+                kwargs["database"] = database
+            self._client = firestore.Client(**kwargs)
         return self._client
 
     def _features_collection(self, *, asset_slug: str, release: str, load_id: str):

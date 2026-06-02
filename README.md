@@ -37,6 +37,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
 | Feature metadata lookup API | `docs/feature-metadata-api.md`, `services/metadata_service/` |
+| Feature metadata preview | `docs/feature-metadata-preview.md`, `terraform/envs/preview/`, `.github/workflows/metadata-service-preview.yml`, `.github/workflows/metadata-service-preview-destroy.yml` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
 | TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
@@ -535,6 +536,14 @@ GitHub Actions workflows in the `shared-datasets-production` environment. Local
 `terraform plan`, `terraform validate`, and saved-plan review commands are OK;
 local `terraform apply` and `scripts/terraform_prod_apply.py` are reserved for
 explicitly approved break-glass emergencies.
+
+### Feature Metadata Preview
+
+The feature metadata preview is a single replaceable test slot in
+`shared-datasets-1` for deploying metadata-service changes from a feature
+branch before merge. It uses preview-named GCP resources and a separate
+Terraform state prefix under `terraform/envs/preview/`; see
+`docs/feature-metadata-preview.md` for the GitHub Actions workflow steps.
 
 ## Standard local setup
 
