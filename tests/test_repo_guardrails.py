@@ -246,6 +246,69 @@ class RepoGuardrailsTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_workflow_boundaries_accept_feature_preview_dropdown_dispatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "feature-preview-deploy.yml").write_text(
+                "name: Deploy Feature Branch to Preview\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  preview:\n"
+                "    steps:\n"
+                "      - name: Validate selected ref\n"
+                "        env:\n"
+                "          PREVIEW_REF: ${{ github.ref_name }}\n"
+                "          PREVIEW_SOURCE_REF: ${{ github.ref }}\n"
+                "        run: |\n"
+                "          echo \"Select the branch or tag to deploy from the workflow branch dropdown.\"\n"
+                "      - uses: actions/checkout@v4\n"
+                "        with:\n"
+                "          ref: main\n"
+                "      - uses: actions/checkout@v4\n"
+                "        with:\n"
+                "          ref: ${{ github.ref }}\n"
+                "          path: preview-source\n"
+                "      - uses: google-github-actions/auth@v2\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertEqual(errors, [])
+
+    def test_workflow_boundaries_keep_dropdown_exception_preview_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "unsafe.yml").write_text(
+                "name: Unsafe\n"
+                "on:\n"
+                "  workflow_dispatch:\n"
+                "jobs:\n"
+                "  unsafe:\n"
+                "    steps:\n"
+                "      - name: Validate selected ref\n"
+                "        env:\n"
+                "          PREVIEW_REF: ${{ github.ref_name }}\n"
+                "          PREVIEW_SOURCE_REF: ${{ github.ref }}\n"
+                "        run: |\n"
+                "          echo \"Select the branch or tag to deploy from the workflow branch dropdown.\"\n"
+                "      - uses: actions/checkout@v4\n"
+                "        with:\n"
+                "          ref: main\n"
+                "      - uses: actions/checkout@v4\n"
+                "        with:\n"
+                "          ref: ${{ github.ref }}\n"
+                "      - uses: google-github-actions/auth@v2\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("must validate refs/heads/main" in error for error in errors))
+
     def test_workflow_boundaries_reject_production_uri_in_preview_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

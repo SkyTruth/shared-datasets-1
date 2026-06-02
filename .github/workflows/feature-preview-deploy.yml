@@ -39,10 +39,13 @@ jobs:
             echo "Select the branch or tag to deploy from the workflow branch dropdown." >&2
             exit 1
           fi
-          if [[ "${PREVIEW_SOURCE_REF}" == refs/pull/* ]]; then
-            echo "Pull request refs are not valid preview deploy sources; select a branch or tag." >&2
-            exit 1
-          fi
+          case "${PREVIEW_SOURCE_REF}" in
+            refs/heads/*|refs/tags/*) ;;
+            *)
+              echo "Only branch or tag refs are valid preview deploy sources; select a branch or tag." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Check out preview control plane
         uses: actions/checkout@v4

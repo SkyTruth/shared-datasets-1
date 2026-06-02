@@ -119,6 +119,12 @@ WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS = (
     "Promote staged object manually",
     "github.event.inputs.pr_number == ''",
 )
+FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS = (
+    "PREVIEW_REF: ${{ github.ref_name }}",
+    "PREVIEW_SOURCE_REF: ${{ github.ref }}",
+    "ref: ${{ github.ref }}",
+    "Select the branch or tag to deploy from the workflow branch dropdown.",
+)
 
 
 @dataclass(frozen=True)
@@ -434,7 +440,10 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
 
         uses_gcp_auth = any(marker in text for marker in WORKFLOW_GCP_AUTH_MARKERS)
         if uses_gcp_auth and "workflow_dispatch:" in text:
-            if WORKFLOW_MAIN_REF_GUARD not in text:
+            allows_dropdown_preview_ref = rel.as_posix() == ".github/workflows/feature-preview-deploy.yml" and all(
+                marker in text for marker in FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS
+            )
+            if WORKFLOW_MAIN_REF_GUARD not in text and not allows_dropdown_preview_ref:
                 errors.append(f"{rel}: GCP-auth workflow_dispatch paths must validate refs/heads/main")
             if not any(marker in text for marker in WORKFLOW_TRUSTED_CHECKOUT_MARKERS):
                 errors.append(f"{rel}: GCP-auth workflow_dispatch paths must check out trusted main code")
