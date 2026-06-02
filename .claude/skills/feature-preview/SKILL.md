@@ -44,8 +44,8 @@ feature preview slot, use this skill.
 
 - Deploy or replace the preview with the GitHub Actions workflow named
   `Deploy Feature Branch to Preview`.
-- Run it from `main` and pass the feature branch, tag, or SHA in the `ref`
-  input.
+- Select the feature branch or tag to deploy from the GitHub **Run workflow**
+  branch dropdown.
 - Destroy the preview with `Destroy Preview Environment`.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
