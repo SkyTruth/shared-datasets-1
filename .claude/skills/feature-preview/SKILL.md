@@ -85,8 +85,14 @@ published preview release.
   `Deploy Feature Branch to Preview`.
 - Select the feature branch or tag to deploy from the GitHub **Run workflow**
   branch dropdown.
-- The deploy publishes an initial empty preview catalog web bundle and reports
-  both the preview API URL and the preview catalog viewer URL.
+- Select `preview_data_mode=preserve` when redeploying preview service or
+  catalog viewer code against already loaded preview data. This is the default
+  and rebuilds the preview catalog from existing preview release indexes.
+- Select `preview_data_mode=reset` only when a clean preview slot is intended;
+  it destroys disposable preview bucket and Firestore contents, publishes an
+  empty preview catalog shell, and requires reloading preview data.
+- The deploy reports both the preview API URL and the preview catalog viewer
+  URL.
 - Destroy the preview with `Destroy Preview Environment`.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
