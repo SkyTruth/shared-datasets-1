@@ -10,6 +10,9 @@ PREVIEW_WORKFLOW = REPO_ROOT / ".github/workflows/metadata-service-preview.yml"
 PREVIEW_DESTROY_WORKFLOW = REPO_ROOT / ".github/workflows/metadata-service-preview-destroy.yml"
 PREVIEW_INDEX_LOAD_WORKFLOW = REPO_ROOT / ".github/workflows/feature-metadata-preview-index-load.yml"
 ARTIFACT_REGISTRY_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.yml"
+PREVIEW_TERRAFORM_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.yml"
+PMTILES_CDN_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
+SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 PREVIEW_TF = REPO_ROOT / "terraform/envs/preview"
 PROD_TF = REPO_ROOT / "terraform/envs/prod"
 
@@ -33,9 +36,17 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn('delete_protection_state     = "DELETE_PROTECTION_DISABLED"', main_tf)
         self.assertIn('deletion_policy             = "DELETE"', main_tf)
         self.assertIn('resource "google_cloud_run_v2_service" "metadata_service_preview"', main_tf)
+        self.assertNotIn('module "metadata_service_account"', main_tf)
+        self.assertNotIn('module "metadata_index_loader_service_account"', main_tf)
+        self.assertIn("local.preview_service_account_email", main_tf)
+        self.assertIn("local.preview_loader_member", main_tf)
+        self.assertIn("destroy = false", main_tf)
         self.assertIn('iap_enabled         = true', main_tf)
         self.assertIn('"FEATURE_METADATA_FIRESTORE_DATABASE"', main_tf)
+        self.assertNotIn('resource "google_project_iam_member"', main_tf)
         self.assertIn("metadata_preview_service_uri", outputs_tf)
+        self.assertIn("preview_service_uri", outputs_tf)
+        self.assertIn("preview_bucket", outputs_tf)
 
     def test_preview_deploy_workflow_keeps_control_plane_separate_from_source_ref(self):
         workflow = PREVIEW_WORKFLOW.read_text()
@@ -48,14 +59,34 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("Check out selected feature branch", workflow)
         self.assertIn("ref: ${{ github.ref }}", workflow)
         self.assertIn("path: preview-source", workflow)
+        self.assertIn("IMAGE_NAME: preview-service", workflow)
+        self.assertIn("Validate preview IAM bootstrap", workflow)
+        self.assertIn("Preview IAM bootstrap is incomplete", workflow)
+        self.assertIn("missing_bootstrap=0", workflow)
+        self.assertIn("Missing preview service account", workflow)
+        self.assertIn("Missing preview loader service account", workflow)
+        self.assertIn("Preview Terraform IAM sync", workflow)
+        self.assertIn("metadata-service-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
+        self.assertIn("metadata-index-loader-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
+        self.assertIn("PREVIEW_LOADER_WIF_MEMBER", workflow)
         self.assertIn("preview-source/services/metadata_service/Dockerfile", workflow)
-        self.assertIn("The selected feature branch must support", workflow)
+        self.assertIn("preview Firestore database override", workflow)
+        self.assertIn("Build preview service image", workflow)
+        self.assertIn("PREVIEW_SERVICE_IMAGE", workflow)
+        self.assertNotIn("metadata_service_image=", workflow)
         self.assertNotIn("Branch, tag, or SHA to deploy", workflow)
         self.assertNotIn("inputs.action", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
+        self.assertIn("Release stable preview bootstrap state", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/preview state rm", workflow)
+        self.assertIn("module.metadata_service_account.google_service_account.this", workflow)
+        self.assertIn("module.metadata_index_loader_service_account.google_service_account.this", workflow)
+        self.assertIn("google_service_account_iam_member.metadata_index_loader_github_wif", workflow)
         self.assertIn("Terraform reset plan", workflow)
         self.assertIn("-destroy", workflow)
         self.assertIn("Terraform apply reset plan", workflow)
+        self.assertIn("Wait for preview database ID reuse", workflow)
+        self.assertIn("sleep 330", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview plan", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview apply", workflow)
         self.assertIn("Enforce preview resource-change allowlist", workflow)
@@ -63,9 +94,19 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("google_firestore_database.feature_metadata_preview", workflow)
         self.assertIn("google_cloud_run_v2_service.metadata_service_preview", workflow)
         self.assertIn("SHARED_DATASETS_BUCKET must be", workflow)
-        self.assertIn("FEATURE_METADATA_FIRESTORE_DATABASE must be", workflow)
+        self.assertIn("preview Firestore database must be", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/preview output preview_service_uri", workflow)
         self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
+        self.assertIn("legacy_preview_project_iam_exact", workflow)
+        self.assertIn("Refusing preview reset because a legacy project IAM delete is not scoped to preview", workflow)
+        deploy_create_section = workflow.split("      - name: Terraform plan", 1)[1]
+        self.assertNotIn("google_project_iam_member.metadata_service_firestore_viewer", deploy_create_section)
+        self.assertNotIn("google_project_iam_member.metadata_index_loader_firestore_user", deploy_create_section)
+        self.assertNotIn("module.metadata_service_account.", deploy_create_section)
+        self.assertNotIn("module.metadata_index_loader_service_account.", deploy_create_section)
+        self.assertNotIn("feature metadata preview", workflow.lower())
+        self.assertNotIn("metadata preview reset", workflow.lower())
 
     def test_preview_destroy_workflow_only_runs_destroy_path(self):
         workflow = PREVIEW_DESTROY_WORKFLOW.read_text()
@@ -73,8 +114,17 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("name: Destroy Preview Environment", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("environment: shared-datasets-production", workflow)
+        self.assertIn("name: Destroy feature branch preview", workflow)
+        self.assertIn("Validate main ref", workflow)
+        self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
+        self.assertIn("Destroy Preview Environment may only apply from main", workflow)
         self.assertIn("ref: main", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
+        self.assertIn("Release stable preview bootstrap state", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/preview state rm", workflow)
+        self.assertIn("module.metadata_service_account.google_service_account.this", workflow)
+        self.assertIn("module.metadata_index_loader_service_account.google_service_account.this", workflow)
+        self.assertIn("google_service_account_iam_member.metadata_index_loader_github_wif", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview plan", workflow)
         self.assertIn("-destroy", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview apply", workflow)
@@ -87,6 +137,16 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertNotIn("metadata_service_image=", workflow)
         self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
+        self.assertIn("legacy_preview_project_iam_exact", workflow)
+        self.assertIn("metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com", workflow)
+        self.assertIn("metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com", workflow)
+        self.assertIn("condition must be scoped to", workflow)
+        destroy_allowlist_section = workflow.split("      - name: Enforce preview resource-change allowlist", 1)[1]
+        self.assertNotIn("module.metadata_service_account.", destroy_allowlist_section)
+        self.assertNotIn("module.metadata_index_loader_service_account.", destroy_allowlist_section)
+        self.assertNotIn("google_service_account_iam_member.metadata_index_loader_github_wif", destroy_allowlist_section)
+        self.assertNotIn("feature metadata preview", workflow.lower())
+        self.assertNotIn("metadata preview destroy", workflow.lower())
 
     def test_preview_deploy_workflow_allowlist_patterns_match_real_addresses(self):
         workflow = PREVIEW_WORKFLOW.read_text()
@@ -95,13 +155,13 @@ class MetadataPreviewTests(unittest.TestCase):
             for pattern in re.findall(r're\.compile\(r"([^"]+)"\)', workflow)
         ]
 
-        self.assertTrue(
+        self.assertFalse(
             any(
                 pattern.match("module.metadata_service_account.google_service_account.this")
                 for pattern in patterns
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             any(
                 pattern.match("module.metadata_index_loader_service_account.google_service_account.this")
                 for pattern in patterns
@@ -152,33 +212,200 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("FEATURE_METADATA_FIRESTORE_DATABASE", service_run.read_text())
         self.assertIn("FEATURE_METADATA_FIRESTORE_DATABASE", index_loader.read_text())
 
+    def test_prod_terraform_sync_workflows_share_state_concurrency(self):
+        for workflow_path in (
+            ARTIFACT_REGISTRY_IAM_WORKFLOW,
+            PREVIEW_TERRAFORM_IAM_WORKFLOW,
+            PMTILES_CDN_SYNC_WORKFLOW,
+            SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW,
+        ):
+            with self.subTest(workflow=workflow_path.name):
+                workflow = workflow_path.read_text()
+
+                self.assertIn("group: prod-terraform-state", workflow)
+                self.assertIn("cancel-in-progress: false", workflow)
+
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
         workflow = ARTIFACT_REGISTRY_IAM_WORKFLOW.read_text()
+        custom_role = re.search(
+            r'resource "google_project_iam_custom_role" "artifact_registry_iam_policy_manager" \{(?P<body>.*?)\n\}',
+            artifact_registry_tf,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(custom_role)
+        permissions = re.search(r"permissions = \[(?P<body>.*?)\n  \]", custom_role.group("body"), re.DOTALL)
+        self.assertIsNotNone(permissions)
 
         self.assertIn(
             'resource "google_artifact_registry_repository_iam_member" "github_actions_artifact_registry_writer"',
             artifact_registry_tf,
         )
+        self.assertEqual(
+            [
+                "artifactregistry.repositories.getIamPolicy",
+                "artifactregistry.repositories.setIamPolicy",
+            ],
+            re.findall(r'"([^"]+)"', permissions.group("body")),
+        )
+        self.assertIn(
+            'resource "google_project_iam_member" "github_actions_artifact_registry_iam_policy_manager"',
+            artifact_registry_tf,
+        )
+        self.assertIn("google_project_iam_custom_role.artifact_registry_iam_policy_manager.name", artifact_registry_tf)
         self.assertIn("google_artifact_registry_repository.jobs.repository_id", artifact_registry_tf)
         self.assertIn("roles/artifactregistry.writer", artifact_registry_tf)
         self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
+        self.assertIn("google_project_iam_member.github_actions_artifact_registry_iam_policy_manager", artifact_registry_tf)
         self.assertIn("Artifact Registry IAM sync", workflow)
         self.assertIn("shared-datasets-production", workflow)
+        self.assertIn("group: prod-terraform-state", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
+        self.assertIn(
+            "-target=google_project_iam_custom_role.artifact_registry_iam_policy_manager",
+            workflow,
+        )
+        self.assertIn(
+            "-target=google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+            workflow,
+        )
         self.assertIn(
             "-target=google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
             workflow,
         )
         self.assertIn("allowed_exact", workflow)
         self.assertIn(
+            "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
+            workflow,
+        )
+        self.assertIn(
+            "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+            workflow,
+        )
+        self.assertIn(
             "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
             workflow,
         )
-        self.assertIn("Refusing automatic Artifact Registry IAM sync", workflow)
-        self.assertNotIn("google_project_iam_member", workflow)
+        self.assertIn("Terraform apply Artifact Registry IAM policy manager bootstrap", workflow)
+        self.assertIn("Wait for Artifact Registry IAM policy manager propagation", workflow)
+        self.assertIn("sleep 30", workflow)
+        self.assertIn("Terraform apply Artifact Registry writer binding", workflow)
+        self.assertIn("Refusing automatic Artifact Registry IAM bootstrap", workflow)
+        self.assertIn("Refusing automatic Artifact Registry IAM writer sync", workflow)
+        self.assertNotIn("roles/artifactregistry.admin", artifact_registry_tf)
         self.assertNotIn("roles/artifactregistry.admin", workflow)
 
+    def test_preview_terraform_iam_sync_uses_custom_role_and_allowlist(self):
+        preview_terraform_tf = (PROD_TF / "preview_terraform_iam.tf").read_text()
+        workflow = PREVIEW_TERRAFORM_IAM_WORKFLOW.read_text()
+
+        self.assertIn("import {", preview_terraform_tf)
+        self.assertIn("projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform", preview_terraform_tf)
+        self.assertIn("module.preview_metadata_service_account.google_service_account.this", preview_terraform_tf)
+        self.assertIn("module.preview_metadata_index_loader_service_account.google_service_account.this", preview_terraform_tf)
+        self.assertIn('role_id     = "sharedDatasetsPreviewTerraform"', preview_terraform_tf)
+        self.assertIn('module "preview_metadata_service_account"', preview_terraform_tf)
+        self.assertIn('module "preview_metadata_index_loader_service_account"', preview_terraform_tf)
+        self.assertIn(
+            'resource "google_service_account_iam_member" "preview_metadata_index_loader_github_wif"',
+            preview_terraform_tf,
+        )
+        self.assertIn(
+            'resource "google_project_iam_member" "github_actions_preview_terraform"',
+            preview_terraform_tf,
+        )
+        self.assertIn(
+            'resource "google_project_iam_member" "preview_metadata_service_firestore_viewer"',
+            preview_terraform_tf,
+        )
+        self.assertIn(
+            'resource "google_project_iam_member" "preview_metadata_index_loader_firestore_user"',
+            preview_terraform_tf,
+        )
+        self.assertIn('account_id   = "metadata-service-preview"', preview_terraform_tf)
+        self.assertIn('account_id   = "metadata-index-loader-preview"', preview_terraform_tf)
+        self.assertIn("databases/feature-metadata-preview", preview_terraform_tf)
+        self.assertIn("storage.buckets.create", preview_terraform_tf)
+        self.assertIn("datastore.databases.create", preview_terraform_tf)
+        self.assertIn("datastore.databases.getMetadata", preview_terraform_tf)
+        self.assertIn("datastore.locations.get", preview_terraform_tf)
+        self.assertIn("iam.serviceAccounts.create", preview_terraform_tf)
+        self.assertNotIn("iam.serviceAccounts.delete", preview_terraform_tf)
+        self.assertIn("run.services.create", preview_terraform_tf)
+        self.assertIn("iap.webServices.setIamPolicy", preview_terraform_tf)
+        self.assertIn("resourcemanager.projects.setIamPolicy", preview_terraform_tf)
+        self.assertNotIn("roles/storage.admin", preview_terraform_tf)
+        self.assertNotIn("roles/editor", preview_terraform_tf)
+        self.assertIn("Preview Terraform IAM sync", workflow)
+        self.assertIn("shared-datasets-production", workflow)
+        self.assertIn("Validate main ref", workflow)
+        self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
+        self.assertIn("Preview Terraform IAM sync may only apply from main", workflow)
+        self.assertIn("ref: main", workflow)
+        self.assertIn("terraform/envs/prod/main.tf", workflow)
+        self.assertIn("terraform/envs/prod/preview_terraform_iam.tf", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
+        self.assertIn(
+            "-target=google_project_iam_custom_role.preview_terraform",
+            workflow,
+        )
+        self.assertIn(
+            "-target=module.preview_metadata_service_account.google_service_account.this",
+            workflow,
+        )
+        self.assertIn(
+            "-target=module.preview_metadata_index_loader_service_account.google_service_account.this",
+            workflow,
+        )
+        self.assertIn(
+            "-target=google_project_iam_member.github_actions_preview_terraform",
+            workflow,
+        )
+        self.assertIn(
+            "-target=google_service_account_iam_member.preview_metadata_index_loader_github_wif",
+            workflow,
+        )
+        self.assertIn(
+            "-target=google_project_iam_member.preview_metadata_service_firestore_viewer",
+            workflow,
+        )
+        self.assertIn(
+            "-target=google_project_iam_member.preview_metadata_index_loader_firestore_user",
+            workflow,
+        )
+        self.assertIn("allowed_exact", workflow)
+        self.assertIn(
+            "google_project_iam_custom_role.preview_terraform",
+            workflow,
+        )
+        self.assertIn(
+            "module.preview_metadata_service_account.google_service_account.this",
+            workflow,
+        )
+        self.assertIn(
+            "module.preview_metadata_index_loader_service_account.google_service_account.this",
+            workflow,
+        )
+        self.assertIn(
+            "google_project_iam_member.github_actions_preview_terraform",
+            workflow,
+        )
+        self.assertIn(
+            "google_service_account_iam_member.preview_metadata_index_loader_github_wif",
+            workflow,
+        )
+        self.assertIn(
+            "google_project_iam_member.preview_metadata_service_firestore_viewer",
+            workflow,
+        )
+        self.assertIn(
+            "google_project_iam_member.preview_metadata_index_loader_firestore_user",
+            workflow,
+        )
+        self.assertIn('actions == ["delete"]', workflow)
+        self.assertIn("Refusing automatic preview Terraform IAM sync", workflow)
+        self.assertNotIn("roles/storage.admin", workflow)
+        self.assertNotIn("roles/editor", workflow)
 
 if __name__ == "__main__":
     unittest.main()

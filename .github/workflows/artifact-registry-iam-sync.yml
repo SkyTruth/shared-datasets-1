@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: artifact-registry-iam-sync
+      group: prod-terraform-state
       cancel-in-progress: false
 
     steps:
@@ -92,23 +92,73 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 
-      - name: Terraform plan
+      - name: Terraform plan Artifact Registry IAM policy manager bootstrap
         run: |
           terraform -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
-            -out="${RUNNER_TEMP}/artifact-registry-iam-sync.tfplan" \
+            -out="${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan" \
+            -target=google_project_iam_custom_role.artifact_registry_iam_policy_manager \
+            -target=google_project_iam_member.github_actions_artifact_registry_iam_policy_manager \
+            -var="wdpa_monthly_image=unused-by-artifact-registry-iam-sync" \
+            -var="sea_ice_daily_image=unused-by-artifact-registry-iam-sync" \
+            -var="eamlis_monthly_image=unused-by-artifact-registry-iam-sync"
+
+      - name: Export Artifact Registry IAM policy manager bootstrap plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan.json"
+
+      - name: Enforce Artifact Registry IAM policy manager bootstrap allowlist
+        run: |
+          python - "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan.json" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
+              "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
+          }
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address in allowed_exact:
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing automatic Artifact Registry IAM bootstrap because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply Artifact Registry IAM policy manager bootstrap
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan"
+
+      - name: Wait for Artifact Registry IAM policy manager propagation
+        run: sleep 30
+
+      - name: Terraform plan Artifact Registry writer binding
+        run: |
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -refresh=false \
+            -out="${RUNNER_TEMP}/artifact-registry-writer.tfplan" \
             -target=google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer \
             -var="wdpa_monthly_image=unused-by-artifact-registry-iam-sync" \
             -var="sea_ice_daily_image=unused-by-artifact-registry-iam-sync" \
             -var="eamlis_monthly_image=unused-by-artifact-registry-iam-sync"
 
-      - name: Export Terraform plan JSON
-        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/artifact-registry-iam-sync.tfplan" > "${RUNNER_TEMP}/artifact-registry-iam-sync.tfplan.json"
+      - name: Export Artifact Registry writer binding plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/artifact-registry-writer.tfplan" > "${RUNNER_TEMP}/artifact-registry-writer.tfplan.json"
 
-      - name: Enforce Artifact Registry IAM resource-change allowlist
+      - name: Enforce Artifact Registry writer binding allowlist
         run: |
-          python - "${RUNNER_TEMP}/artifact-registry-iam-sync.tfplan.json" <<'PY'
+          python - "${RUNNER_TEMP}/artifact-registry-writer.tfplan.json" <<'PY'
           import json
           import sys
 
@@ -128,11 +178,11 @@ jobs:
               blocked.append(f"{'/'.join(actions)} {address}")
 
           if blocked:
-              print("Refusing automatic Artifact Registry IAM sync because the Terraform plan changes non-allowlisted resources:")
+              print("Refusing automatic Artifact Registry IAM writer sync because the Terraform plan changes non-allowlisted resources:")
               for item in blocked:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
 
-      - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/artifact-registry-iam-sync.tfplan"
+      - name: Terraform apply Artifact Registry writer binding
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/artifact-registry-writer.tfplan"

@@ -1,24 +1,22 @@
-name: PMTiles CDN sync
+name: Preview Terraform IAM sync
 
 on:
   pull_request:
     branches:
       - main
     paths:
-      - "catalog/shared-datasets-catalog.csv"
-      - "docs/assets/**"
-      - "terraform/envs/prod/pmtiles_cdn.tf"
-      - "terraform/envs/prod/shared_bucket_public.tf"
+      - ".github/workflows/preview-terraform-iam-sync.yml"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/preview_terraform_iam.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
   push:
     branches:
       - main
     paths:
-      - "catalog/shared-datasets-catalog.csv"
-      - "docs/assets/**"
-      - "terraform/envs/prod/pmtiles_cdn.tf"
-      - "terraform/envs/prod/shared_bucket_public.tf"
+      - ".github/workflows/preview-terraform-iam-sync.yml"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/preview_terraform_iam.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
   workflow_dispatch:
@@ -37,7 +35,7 @@ env:
 
 jobs:
   readiness:
-    name: Check PMTiles CDN sync readiness
+    name: Check preview Terraform IAM sync readiness
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
@@ -55,7 +53,7 @@ jobs:
           fi
 
   sync:
-    name: Apply PMTiles CDN route sync
+    name: Apply preview Terraform IAM sync
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
@@ -64,8 +62,19 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Preview Terraform IAM sync may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Validate Terraform auth configuration
         run: |
@@ -86,9 +95,6 @@ jobs:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -102,24 +108,36 @@ jobs:
           terraform -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
-            -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
-            -target=google_compute_url_map.pmtiles_cdn \
-            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
-            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
-            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
+            -out="${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan" \
+            -target=google_project_iam_custom_role.preview_terraform \
+            -target=module.preview_metadata_service_account.google_service_account.this \
+            -target=module.preview_metadata_index_loader_service_account.google_service_account.this \
+            -target=google_project_iam_member.github_actions_preview_terraform \
+            -target=google_service_account_iam_member.preview_metadata_index_loader_github_wif \
+            -target=google_project_iam_member.preview_metadata_service_firestore_viewer \
+            -target=google_project_iam_member.preview_metadata_index_loader_firestore_user \
+            -var="wdpa_monthly_image=unused-by-preview-terraform-iam-sync" \
+            -var="sea_ice_daily_image=unused-by-preview-terraform-iam-sync" \
+            -var="eamlis_monthly_image=unused-by-preview-terraform-iam-sync"
 
       - name: Export Terraform plan JSON
-        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan" > "${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan.json"
 
-      - name: Enforce PMTiles resource-change allowlist
+      - name: Enforce preview Terraform IAM resource-change allowlist
         run: |
-          python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
+          python - "${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan.json" <<'PY'
           import json
           import sys
 
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
-              "google_compute_url_map.pmtiles_cdn",
+              "google_project_iam_custom_role.preview_terraform",
+              "module.preview_metadata_service_account.google_service_account.this",
+              "module.preview_metadata_index_loader_service_account.google_service_account.this",
+              "google_project_iam_member.github_actions_preview_terraform",
+              "google_service_account_iam_member.preview_metadata_index_loader_github_wif",
+              "google_project_iam_member.preview_metadata_service_firestore_viewer",
+              "google_project_iam_member.preview_metadata_index_loader_firestore_user",
           }
 
           blocked = []
@@ -128,60 +146,19 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
+              if actions == ["delete"]:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
               if address in allowed_exact:
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 
           if blocked:
-              print("Refusing automatic PMTiles CDN sync because the Terraform plan changes non-allowlisted resources:")
+              print("Refusing automatic preview Terraform IAM sync because the Terraform plan changes non-allowlisted resources:")
               for item in blocked:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
-
-      - name: Invalidate catalog CDN cache
-        run: |
-          gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
-            --path="/_catalog/*" \
-            --project="${GOOGLE_CLOUD_PROJECT}"
-
-      - name: Verify catalog CDN routes
-        run: |
-          set -euo pipefail
-
-          check_catalog_url() {
-            local url="$1"
-            local expected_content_type="$2"
-            local headers
-            local status
-            local content_type
-
-            for attempt in {1..12}; do
-              headers="$(mktemp)"
-              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
-                status="curl-error"
-              fi
-              content_type="$(awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
-
-              if [[ "$status" == "200" && "$content_type" == *"$expected_content_type"* ]]; then
-                echo "$url returned $status with $content_type"
-                rm -f "$headers"
-                return 0
-              fi
-
-              echo "Attempt ${attempt}: $url returned $status with ${content_type:-missing content-type}; expected 200 and ${expected_content_type}"
-              cat "$headers"
-              rm -f "$headers"
-              sleep 10
-            done
-
-            echo "Catalog CDN route verification failed for $url" >&2
-            return 1
-          }
-
-          check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
-          check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan"
