@@ -62,6 +62,7 @@ Current repo-local skills:
 
 - `.claude/skills/align-virtual-environment/SKILL.md`
 - `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
+- `.claude/skills/feature-preview/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
 - `.claude/skills/publish-shared-dataset/SKILL.md`
 - `.claude/skills/protected-terraform-apply/SKILL.md`
@@ -78,6 +79,10 @@ High-priority triggers:
   documenting a shared dataset asset.
 - Use `deploy-scheduled-ingestion` before deploying or updating Cloud Run and
   Cloud Scheduler ingestion jobs.
+- Use `feature-preview` before deploying, destroying, uploading test
+  data to, or loading data into the feature branch preview environment,
+  including feature preview, preview test dataset, and feature preview
+  requests.
 - Use `protected-terraform-apply` before suggesting, planning, documenting, or
   running any production Terraform apply, `terraform_prod_apply.py`, PMTiles CDN
   sync, GCP IAM/storage/Cloud Run/Scheduler/CDN Terraform mutation, or
@@ -161,6 +166,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
+| Feature preview deploys and test data loads | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md` |
 | Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
 | Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |
@@ -208,6 +214,13 @@ Remote GCS objects:
 - `_scratch/` is noncanonical staging space. Do not cite `_scratch/` objects as
   shared dataset contracts, and do not treat their existence as approval to
   publish.
+- Preview test data for the feature preview does not use production
+  `_scratch/pending-publishes/`, `shared-datasets-publish-plan`, or the
+  `Approved dataset mutation` workflow. Use `feature-preview`: upload
+  disposable preview release bundles directly to
+  `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, record
+  exact generations, and pass those explicit preview-bucket URIs and generations
+  to the preview load workflow.
 
 Dataset metadata and local files:
 

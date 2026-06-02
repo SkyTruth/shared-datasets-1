@@ -62,7 +62,7 @@ preview Terraform state without deleting the live resources. It may also delete
 the two legacy preview-scoped Firestore project IAM bindings that remain in old
 preview Terraform state. The verifier only permits those deletes when the
 member, role, and condition are scoped to the preview service accounts and
-`projects/shared-datasets-1/databases/feature-metadata-preview`.
+`projects/shared-datasets-1/databases/feature-preview`.
 
 ## Destroy The Preview
 
@@ -135,3 +135,15 @@ allowlist refuses non-preview resource changes.
 If the repo later creates a separate GitHub environment and WIF provider for
 preview, update `terraform/envs/preview/variables.tf` and both preview
 workflows together.
+
+## Agent Notes
+
+Use `.claude/skills/feature-preview/SKILL.md` for feature preview,
+preview test dataset, and feature preview requests.
+
+Preview test data is not production publishing. Do not use production
+`_scratch/pending-publishes/`, `shared-datasets-publish-plan`, or the
+`Approved dataset mutation` workflow. Upload disposable release bundles directly
+to `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, stat the
+exact generations, and pass the explicit preview-bucket URIs and generations to
+the preview load workflow inputs documented above.

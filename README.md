@@ -28,6 +28,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Manual dataset add/update/publish workflow | `.claude/skills/publish-shared-dataset/SKILL.md` |
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment procedure | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
+| Feature preview deploys and test-data loads | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md` |
 | Python environment/tooling alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
 | Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
 | Dataset categories and bucket paths | `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md` |
@@ -37,7 +38,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
 | Feature metadata lookup API | `docs/feature-metadata-api.md`, `services/metadata_service/` |
-| Feature branch preview | `docs/feature-metadata-preview.md`, `terraform/envs/preview/`, `Deploy Feature Branch to Preview`, `Destroy Preview Environment`, `Preview Terraform IAM sync` |
+| Feature branch preview | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md`, `terraform/envs/preview/`, `Deploy Feature Branch to Preview`, `Destroy Preview Environment`, `Preview Terraform IAM sync` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
 | TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
@@ -78,6 +79,8 @@ When instructions conflict, follow this order:
 │       ├── align-virtual-environment/
 │       │   └── SKILL.md
 │       ├── deploy-scheduled-ingestion/
+│       │   └── SKILL.md
+│       ├── feature-preview/
 │       │   └── SKILL.md
 │       ├── gcp-shared-datasets/
 │       │   └── SKILL.md
@@ -542,11 +545,18 @@ The feature branch preview is a single replaceable test slot in
 `shared-datasets-1` for deploying and testing selected feature branches before
 merge. It uses preview-named GCP resources and a separate Terraform state
 prefix under `terraform/envs/preview/`; see
-`docs/feature-metadata-preview.md` for the GitHub Actions workflow steps. Run
-the preview deploy workflow from `main` and pass the feature branch, tag, or SHA
-in the `ref` input.
+`.claude/skills/feature-preview/SKILL.md` and
+`docs/feature-preview.md` for the GitHub Actions workflow steps. Run
+the preview deploy workflow from `main` and pass the feature branch, tag, or
+SHA in the `ref` input.
 Stable preview IAM bootstrap is managed by the protected
 `Preview Terraform IAM sync` workflow.
+Preview test data is not production publishing: upload disposable release
+bundles directly to `gs://skytruth-shared-datasets-1-preview/` with safe
+preconditions, record exact generations, and pass those preview-bucket URIs and
+generations to the preview load workflow. Canonical dataset adds and updates
+still use the reviewed `_scratch/pending-publishes/` promotion path in
+`publish-shared-dataset`.
 
 ## Standard local setup
 

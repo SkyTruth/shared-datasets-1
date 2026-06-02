@@ -1,5 +1,5 @@
 locals {
-  preview_firestore_database_resource_name = "projects/${var.project_id}/databases/feature-metadata-preview"
+  preview_firestore_database_resource_name = "projects/${var.project_id}/databases/feature-preview"
 }
 
 import {
@@ -8,13 +8,13 @@ import {
 }
 
 import {
-  to = module.preview_metadata_service_account.google_service_account.this
-  id = "projects/shared-datasets-1/serviceAccounts/metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com"
+  to = module.feature_preview_service_account.google_service_account.this
+  id = "projects/shared-datasets-1/serviceAccounts/feature-preview-service@shared-datasets-1.iam.gserviceaccount.com"
 }
 
 import {
-  to = module.preview_metadata_index_loader_service_account.google_service_account.this
-  id = "projects/shared-datasets-1/serviceAccounts/metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com"
+  to = module.feature_preview_loader_service_account.google_service_account.this
+  id = "projects/shared-datasets-1/serviceAccounts/feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com"
 }
 
 resource "google_project_iam_custom_role" "preview_terraform" {
@@ -82,20 +82,20 @@ resource "google_project_iam_custom_role" "preview_terraform" {
 
 }
 
-module "preview_metadata_service_account" {
+module "feature_preview_service_account" {
   source = "../../modules/service_account"
 
   project_id   = var.project_id
-  account_id   = "metadata-service-preview"
+  account_id   = "feature-preview-service"
   display_name = "Shared datasets feature branch preview service"
 
 }
 
-module "preview_metadata_index_loader_service_account" {
+module "feature_preview_loader_service_account" {
   source = "../../modules/service_account"
 
   project_id   = var.project_id
-  account_id   = "metadata-index-loader-preview"
+  account_id   = "feature-preview-loader"
   display_name = "Shared datasets feature branch preview loader"
 
 }
@@ -106,16 +106,16 @@ resource "google_project_iam_member" "github_actions_preview_terraform" {
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
 
-resource "google_service_account_iam_member" "preview_metadata_index_loader_github_wif" {
-  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.preview_metadata_index_loader_service_account.email}"
+resource "google_service_account_iam_member" "feature_preview_loader_github_wif" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
   member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
 }
 
-resource "google_project_iam_member" "preview_metadata_service_firestore_viewer" {
+resource "google_project_iam_member" "feature_preview_service_firestore_viewer" {
   project = var.project_id
   role    = "roles/datastore.viewer"
-  member  = module.preview_metadata_service_account.member
+  member  = module.feature_preview_service_account.member
 
   condition {
     title       = "preview_firestore_read"
@@ -124,10 +124,10 @@ resource "google_project_iam_member" "preview_metadata_service_firestore_viewer"
   }
 }
 
-resource "google_project_iam_member" "preview_metadata_index_loader_firestore_user" {
+resource "google_project_iam_member" "feature_preview_loader_firestore_user" {
   project = var.project_id
   role    = "roles/datastore.user"
-  member  = module.preview_metadata_index_loader_service_account.member
+  member  = module.feature_preview_loader_service_account.member
 
   condition {
     title       = "preview_firestore_write"

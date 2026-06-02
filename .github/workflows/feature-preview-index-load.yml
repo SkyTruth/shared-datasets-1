@@ -1,4 +1,4 @@
-name: Feature metadata preview index load
+name: Feature preview index load
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       sidecar_uri:
-        description: "Preview-bucket release .metadata.ndjson.gz URI."
+        description: "Preview-bucket release .features.ndjson.gz URI."
         required: true
         type: string
       sidecar_generation:
@@ -52,20 +52,20 @@ permissions:
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview
-  INDEX_LOADER_SERVICE_ACCOUNT: metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com
-  FEATURE_METADATA_FIRESTORE_DATABASE: feature-metadata-preview
-  FEATURE_METADATA_COLLECTION_ROOT: feature_metadata
+  INDEX_LOADER_SERVICE_ACCOUNT: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
+  FEATURE_PREVIEW_FIRESTORE_DATABASE: feature-preview
+  FEATURE_PREVIEW_COLLECTION_ROOT: feature_preview_index
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
 
 jobs:
   load:
-    name: Load preview Firestore feature metadata index
+    name: Load preview Firestore feature index
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: feature-metadata-preview-index-load-${{ inputs.asset_slug }}-${{ inputs.release }}
+      group: feature-preview-index-load-${{ inputs.asset_slug }}-${{ inputs.release }}
       cancel-in-progress: false
 
     env:
@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
 
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Feature metadata preview index load must be run from main; pass loader code in the ref input." >&2
+            echo "Feature preview index load must be run from main; pass loader code in the ref input." >&2
             exit 1
           fi
 
@@ -120,8 +120,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! grep -q "FEATURE_METADATA_FIRESTORE_DATABASE" scripts/feature_metadata_index.py; then
-            echo "The requested ref must support FEATURE_METADATA_FIRESTORE_DATABASE before it can load the preview index." >&2
+          if ! grep -q "FEATURE_PREVIEW_FIRESTORE_DATABASE" scripts/feature_preview_index.py; then
+            echo "The requested ref must support FEATURE_PREVIEW_FIRESTORE_DATABASE before it can load the preview index." >&2
             exit 1
           fi
         working-directory: preview-source
@@ -166,7 +166,7 @@ jobs:
           asset_root = f"{row['category']}/{row['subcategory']}/{asset_slug}"
           release_prefix = f"gs://{bucket}/{asset_root}/releases/{release}/"
           expected = {
-              "SIDECAR_URI": ".metadata.ndjson.gz",
+              "SIDECAR_URI": ".features.ndjson.gz",
               "SCHEMA_URI": ".schema.json",
               "MANIFEST_URI": ".manifest.json",
           }
@@ -177,16 +177,16 @@ jobs:
               if not uri.endswith(suffix):
                   raise SystemExit(f"{env_name.lower()} must end with {suffix}")
 
-          work_dir = Path(os.environ["RUNNER_TEMP"]) / "feature-metadata-preview-index-load"
+          work_dir = Path(os.environ["RUNNER_TEMP"]) / "feature-preview-index-load"
           work_dir.mkdir(parents=True, exist_ok=True)
           env_updates = {
               "LOAD_ID": load_id,
               "ASSET_ROOT": asset_root,
-              "SIDECAR_PATH": str(work_dir / f"{asset_slug}.metadata.ndjson.gz"),
+              "SIDECAR_PATH": str(work_dir / f"{asset_slug}.features.ndjson.gz"),
               "SCHEMA_PATH": str(work_dir / f"{asset_slug}.schema.json"),
               "MANIFEST_PATH": str(work_dir / f"{asset_slug}.manifest.json"),
               "INDEX_LOAD_RECORD": str(work_dir / f"{load_id}.json"),
-              "INDEX_LOAD_URI": f"gs://{bucket}/000-system/metadata-preview/index-loads/{asset_slug}/{release}/{load_id}.json",
+              "INDEX_LOAD_URI": f"gs://{bucket}/000-system/feature-preview/index-loads/{asset_slug}/{release}/{load_id}.json",
           }
           with open(os.environ["GITHUB_ENV"], "a") as env_file:
               for name, value in env_updates.items():
@@ -209,13 +209,13 @@ jobs:
             exit 1
           fi
 
-      - name: Authenticate as preview metadata index loader
+      - name: Authenticate as preview index loader
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
 
-      - name: Download exact-generation preview metadata bundle
+      - name: Download exact-generation preview feature-index bundle
         run: |
           set -euo pipefail
           uv run python scripts/gcs_asset.py download "${SIDECAR_URI}" "${SIDECAR_PATH}" --generation "${SIDECAR_GENERATION}"
@@ -226,13 +226,13 @@ jobs:
       - name: Load preview Firestore index and write local record
         run: |
           set -euo pipefail
-          uv run python scripts/feature_metadata_index.py \
+          uv run python scripts/feature_preview_index.py \
             --sidecar "${SIDECAR_PATH}" \
             --schema "${SCHEMA_PATH}" \
             --manifest "${MANIFEST_PATH}" \
             --asset-slug "${ASSET_SLUG}" \
             --release "${RELEASE}" \
-            --collection-root "${FEATURE_METADATA_COLLECTION_ROOT}" \
+            --collection-root "${FEATURE_PREVIEW_COLLECTION_ROOT}" \
             --index-load-record "${INDEX_LOAD_RECORD}" \
             --load-id "${LOAD_ID}" \
             --sidecar-uri "${SIDECAR_URI}" \

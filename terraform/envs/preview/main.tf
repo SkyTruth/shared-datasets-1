@@ -4,9 +4,9 @@ data "google_project" "current" {
 
 locals {
   iap_service_agent              = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
-  preview_service_account_email  = "${var.metadata_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  preview_service_account_email  = "${var.feature_preview_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
   preview_service_account_member = "serviceAccount:${local.preview_service_account_email}"
-  preview_loader_service_account = "${var.metadata_index_loader_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
+  preview_loader_service_account = "${var.feature_preview_loader_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
   preview_loader_member          = "serviceAccount:${local.preview_loader_service_account}"
 }
 
@@ -28,9 +28,9 @@ resource "google_storage_bucket" "preview_bucket" {
   }
 }
 
-resource "google_firestore_database" "feature_metadata_preview" {
+resource "google_firestore_database" "feature_preview" {
   project                     = var.project_id
-  name                        = var.feature_metadata_firestore_database_id
+  name                        = var.feature_preview_firestore_database_id
   location_id                 = "nam5"
   type                        = "FIRESTORE_NATIVE"
   delete_protection_state     = "DELETE_PROTECTION_DISABLED"
@@ -40,7 +40,7 @@ resource "google_firestore_database" "feature_metadata_preview" {
 }
 
 removed {
-  from = module.metadata_service_account.google_service_account.this
+  from = module.feature_preview_service_account.google_service_account.this
 
   lifecycle {
     destroy = false
@@ -48,7 +48,7 @@ removed {
 }
 
 removed {
-  from = module.metadata_index_loader_service_account.google_service_account.this
+  from = module.feature_preview_loader_service_account.google_service_account.this
 
   lifecycle {
     destroy = false
@@ -56,35 +56,35 @@ removed {
 }
 
 removed {
-  from = google_service_account_iam_member.metadata_index_loader_github_wif
+  from = google_service_account_iam_member.feature_preview_loader_github_wif
 
   lifecycle {
     destroy = false
   }
 }
 
-resource "google_storage_bucket_iam_member" "metadata_service_preview_object_viewer" {
+resource "google_storage_bucket_iam_member" "feature_preview_service_object_viewer" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectViewer"
   member = local.preview_service_account_member
 }
 
-resource "google_storage_bucket_iam_member" "metadata_index_loader_preview_object_viewer" {
+resource "google_storage_bucket_iam_member" "feature_preview_loader_object_viewer" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectViewer"
   member = local.preview_loader_member
 }
 
-resource "google_storage_bucket_iam_member" "metadata_index_loader_preview_index_load_creator" {
+resource "google_storage_bucket_iam_member" "feature_preview_loader_index_load_creator" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectCreator"
   member = local.preview_loader_member
 }
 
-resource "google_cloud_run_v2_service" "metadata_service_preview" {
+resource "google_cloud_run_v2_service" "feature_preview_service" {
   project             = var.project_id
   location            = var.region
-  name                = var.metadata_service_name
+  name                = var.feature_preview_service_name
   deletion_protection = false
   ingress             = "INGRESS_TRAFFIC_ALL"
   launch_stage        = "BETA"
@@ -111,33 +111,33 @@ resource "google_cloud_run_v2_service" "metadata_service_preview" {
       }
 
       env {
-        name  = "FEATURE_METADATA_FIRESTORE_DATABASE"
-        value = google_firestore_database.feature_metadata_preview.name
+        name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
+        value = google_firestore_database.feature_preview.name
       }
 
       env {
-        name  = "FEATURE_METADATA_COLLECTION_ROOT"
-        value = var.feature_metadata_collection_root
+        name  = "FEATURE_PREVIEW_COLLECTION_ROOT"
+        value = var.feature_preview_collection_root
       }
 
       env {
-        name  = "METADATA_ALLOWED_EMAIL_DOMAINS"
-        value = join(",", var.metadata_service_allowed_email_domains)
+        name  = "FEATURE_PREVIEW_ALLOWED_EMAIL_DOMAINS"
+        value = join(",", var.feature_preview_allowed_email_domains)
       }
 
       env {
-        name  = "FEATURE_METADATA_MAX_IDS"
-        value = tostring(var.feature_metadata_max_ids)
+        name  = "FEATURE_PREVIEW_MAX_IDS"
+        value = tostring(var.feature_preview_max_ids)
       }
 
       env {
-        name  = "FEATURE_METADATA_MAX_FIELDS"
-        value = tostring(var.feature_metadata_max_fields)
+        name  = "FEATURE_PREVIEW_MAX_FIELDS"
+        value = tostring(var.feature_preview_max_fields)
       }
 
       env {
-        name  = "FEATURE_METADATA_MAX_RESPONSE_BYTES"
-        value = tostring(var.feature_metadata_max_response_bytes)
+        name  = "FEATURE_PREVIEW_MAX_RESPONSE_BYTES"
+        value = tostring(var.feature_preview_max_response_bytes)
       }
 
       env {
@@ -163,23 +163,23 @@ resource "google_cloud_run_v2_service" "metadata_service_preview" {
     ignore_changes = [launch_stage, scaling]
   }
 
-  depends_on = [google_firestore_database.feature_metadata_preview]
+  depends_on = [google_firestore_database.feature_preview]
 }
 
-resource "google_cloud_run_v2_service_iam_member" "metadata_service_preview_iap_invoker" {
+resource "google_cloud_run_v2_service_iam_member" "feature_preview_service_iap_invoker" {
   project  = var.project_id
   location = var.region
-  name     = google_cloud_run_v2_service.metadata_service_preview.name
+  name     = google_cloud_run_v2_service.feature_preview_service.name
   role     = "roles/run.invoker"
   member   = "serviceAccount:${local.iap_service_agent}"
 }
 
-resource "google_iap_web_cloud_run_service_iam_member" "metadata_service_preview_accessors" {
-  for_each = var.metadata_service_iap_accessor_members
+resource "google_iap_web_cloud_run_service_iam_member" "feature_preview_service_accessors" {
+  for_each = var.feature_preview_iap_accessor_members
 
   project                = var.project_id
   location               = var.region
-  cloud_run_service_name = google_cloud_run_v2_service.metadata_service_preview.name
+  cloud_run_service_name = google_cloud_run_v2_service.feature_preview_service.name
   role                   = "roles/iap.httpsResourceAccessor"
   member                 = each.value
 }
