@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load feature metadata sidecars into Firestore."""
+"""Load preview feature-index sidecars into Firestore."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-DEFAULT_COLLECTION_ROOT = "feature_metadata"
+DEFAULT_COLLECTION_ROOT = "feature_preview_index"
 DEFAULT_BATCH_SIZE = 450
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 
 
-class FeatureMetadataIndexError(RuntimeError):
+class FeaturePreviewIndexError(RuntimeError):
     """Raised when sidecar rows cannot be loaded into the serving index."""
 
 
@@ -34,7 +34,7 @@ class LoadResult:
     dry_run: bool
 
 
-class FirestoreFeatureMetadataWriter:
+class FirestoreFeaturePreviewWriter:
     def __init__(self, *, collection_root: str = DEFAULT_COLLECTION_ROOT, client: Any = None) -> None:
         self.collection_root = collection_root
         self._client = client
@@ -45,7 +45,7 @@ class FirestoreFeatureMetadataWriter:
             from google.cloud import firestore
 
             project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-            database = os.environ.get("FEATURE_METADATA_FIRESTORE_DATABASE") or None
+            database = os.environ.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") or None
             kwargs = {"project": project} if project else {}
             if database:
                 kwargs["database"] = database
@@ -88,9 +88,9 @@ def read_sidecar(path: Path) -> list[dict[str, Any]]:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise FeatureMetadataIndexError(f"{path}:{line_number}: invalid JSON") from exc
+                raise FeaturePreviewIndexError(f"{path}:{line_number}: invalid JSON") from exc
             if not isinstance(record, dict):
-                raise FeatureMetadataIndexError(f"{path}:{line_number}: sidecar row must be a JSON object")
+                raise FeaturePreviewIndexError(f"{path}:{line_number}: sidecar row must be a JSON object")
             records.append(record)
     return records
 
@@ -114,7 +114,7 @@ def validate_records(records: Sequence[Mapping[str, Any]], *, asset_slug: str, r
         if not isinstance(record.get("provenance", {}), Mapping):
             errors.append(f"record {index} provenance must be an object")
     if errors:
-        raise FeatureMetadataIndexError("; ".join(errors))
+        raise FeaturePreviewIndexError("; ".join(errors))
 
 
 def load_sidecar_to_index(
@@ -122,14 +122,14 @@ def load_sidecar_to_index(
     sidecar_path: Path,
     asset_slug: str,
     release: str,
-    writer: FirestoreFeatureMetadataWriter | None,
+    writer: FirestoreFeaturePreviewWriter | None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     dry_run: bool = False,
 ) -> LoadResult:
     if batch_size < 1 or batch_size > 500:
-        raise FeatureMetadataIndexError("batch_size must be between 1 and 500")
+        raise FeaturePreviewIndexError("batch_size must be between 1 and 500")
     if writer is None and not dry_run:
-        raise FeatureMetadataIndexError("writer is required unless dry_run=True")
+        raise FeaturePreviewIndexError("writer is required unless dry_run=True")
 
     records = read_sidecar(sidecar_path)
     validate_records(records, asset_slug=asset_slug, release=release)
@@ -197,10 +197,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         for path in (args.sidecar, args.schema, args.manifest):
             if not path.exists():
-                raise FeatureMetadataIndexError(f"missing input file: {path}")
+                raise FeaturePreviewIndexError(f"missing input file: {path}")
         if args.index_load_record and not (args.load_id and args.sidecar_uri):
-            raise FeatureMetadataIndexError("--load-id and --sidecar-uri are required with --index-load-record")
-        writer = None if args.dry_run else FirestoreFeatureMetadataWriter(collection_root=args.collection_root)
+            raise FeaturePreviewIndexError("--load-id and --sidecar-uri are required with --index-load-record")
+        writer = None if args.dry_run else FirestoreFeaturePreviewWriter(collection_root=args.collection_root)
         result = load_sidecar_to_index(
             sidecar_path=args.sidecar,
             asset_slug=args.asset_slug,
@@ -217,7 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         print(json.dumps(asdict(result), sort_keys=True))
         return 0
-    except FeatureMetadataIndexError as exc:
+    except FeaturePreviewIndexError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts import feature_metadata_index
+from scripts import feature_preview_index
 
 
 def write_sidecar(path: Path, records: list[dict]) -> None:
@@ -24,10 +24,10 @@ class FakeWriter:
         return len(documents)
 
 
-class FeatureMetadataIndexTests(unittest.TestCase):
+class FeaturePreviewIndexTests(unittest.TestCase):
     def test_load_sidecar_validates_and_batches_records(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
+            sidecar = Path(tmp) / "asset.features.ndjson.gz"
             write_sidecar(
                 sidecar,
                 [
@@ -49,7 +49,7 @@ class FeatureMetadataIndexTests(unittest.TestCase):
             )
             writer = FakeWriter()
 
-            result = feature_metadata_index.load_sidecar_to_index(
+            result = feature_preview_index.load_sidecar_to_index(
                 sidecar_path=sidecar,
                 asset_slug="wdpa-marine",
                 release="2026-06-01",
@@ -64,7 +64,7 @@ class FeatureMetadataIndexTests(unittest.TestCase):
 
     def test_duplicate_feature_id_blocks_load(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
+            sidecar = Path(tmp) / "asset.features.ndjson.gz"
             write_sidecar(
                 sidecar,
                 [
@@ -73,8 +73,8 @@ class FeatureMetadataIndexTests(unittest.TestCase):
                 ],
             )
 
-            with self.assertRaisesRegex(feature_metadata_index.FeatureMetadataIndexError, "duplicate feature_id"):
-                feature_metadata_index.load_sidecar_to_index(
+            with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "duplicate feature_id"):
+                feature_preview_index.load_sidecar_to_index(
                     sidecar_path=sidecar,
                     asset_slug="wdpa-marine",
                     release="2026-06-01",

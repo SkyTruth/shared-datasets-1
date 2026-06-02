@@ -12,4 +12,4 @@ RUN python -m pip install --no-cache-dir \
 COPY api/python/src /app/api/python/src
 COPY services /app/services
 
-CMD ["python", "-m", "services.metadata_service.run"]
+CMD ["python", "-m", "services.feature_preview_service.run"]

@@ -110,12 +110,12 @@ jobs:
             -refresh=false \
             -out="${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan" \
             -target=google_project_iam_custom_role.preview_terraform \
-            -target=module.preview_metadata_service_account.google_service_account.this \
-            -target=module.preview_metadata_index_loader_service_account.google_service_account.this \
+            -target=module.feature_preview_service_account.google_service_account.this \
+            -target=module.feature_preview_loader_service_account.google_service_account.this \
             -target=google_project_iam_member.github_actions_preview_terraform \
-            -target=google_service_account_iam_member.preview_metadata_index_loader_github_wif \
-            -target=google_project_iam_member.preview_metadata_service_firestore_viewer \
-            -target=google_project_iam_member.preview_metadata_index_loader_firestore_user \
+            -target=google_service_account_iam_member.feature_preview_loader_github_wif \
+            -target=google_project_iam_member.feature_preview_service_firestore_viewer \
+            -target=google_project_iam_member.feature_preview_loader_firestore_user \
             -var="wdpa_monthly_image=unused-by-preview-terraform-iam-sync" \
             -var="sea_ice_daily_image=unused-by-preview-terraform-iam-sync" \
             -var="eamlis_monthly_image=unused-by-preview-terraform-iam-sync"
@@ -132,12 +132,12 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_project_iam_custom_role.preview_terraform",
-              "module.preview_metadata_service_account.google_service_account.this",
-              "module.preview_metadata_index_loader_service_account.google_service_account.this",
+              "module.feature_preview_service_account.google_service_account.this",
+              "module.feature_preview_loader_service_account.google_service_account.this",
               "google_project_iam_member.github_actions_preview_terraform",
-              "google_service_account_iam_member.preview_metadata_index_loader_github_wif",
-              "google_project_iam_member.preview_metadata_service_firestore_viewer",
-              "google_project_iam_member.preview_metadata_index_loader_firestore_user",
+              "google_service_account_iam_member.feature_preview_loader_github_wif",
+              "google_project_iam_member.feature_preview_service_firestore_viewer",
+              "google_project_iam_member.feature_preview_loader_firestore_user",
           }
 
           blocked = []

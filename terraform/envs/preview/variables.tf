@@ -19,77 +19,77 @@ variable "preview_bucket_name" {
 variable "preview_service_image" {
   description = "Container image URI for the preview Cloud Run service."
   type        = string
-  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/metadata-service:bootstrap-required"
+  default     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/feature-preview-service:bootstrap-required"
 }
 
-variable "metadata_service_name" {
+variable "feature_preview_service_name" {
   description = "Cloud Run service name for the replaceable preview slot."
   type        = string
-  default     = "metadata-service-preview"
+  default     = "feature-preview-service"
 }
 
-variable "metadata_service_account_id" {
+variable "feature_preview_service_account_id" {
   description = "Service account ID for the preview service."
   type        = string
-  default     = "metadata-service-preview"
+  default     = "feature-preview-service"
 }
 
-variable "metadata_index_loader_service_account_id" {
+variable "feature_preview_loader_service_account_id" {
   description = "Service account ID for preview load workflows."
   type        = string
-  default     = "metadata-index-loader-preview"
+  default     = "feature-preview-loader"
 }
 
-variable "feature_metadata_firestore_database_id" {
+variable "feature_preview_firestore_database_id" {
   description = "Named Firestore Native database used only by the preview slot."
   type        = string
-  default     = "feature-metadata-preview"
+  default     = "feature-preview"
 }
 
-variable "feature_metadata_collection_root" {
+variable "feature_preview_collection_root" {
   description = "Root Firestore collection for preview documents."
   type        = string
-  default     = "feature_metadata"
+  default     = "feature_preview_index"
 }
 
-variable "metadata_service_iap_accessor_members" {
+variable "feature_preview_iap_accessor_members" {
   description = "IAM members allowed through direct Cloud Run IAP to the preview service run.app URL."
   type        = set(string)
   default     = ["domain:skytruth.org"]
 }
 
-variable "metadata_service_allowed_email_domains" {
-  description = "Email domains accepted by the preview metadata service after IAP authentication."
+variable "feature_preview_allowed_email_domains" {
+  description = "Email domains accepted by the preview service after IAP authentication."
   type        = list(string)
   default     = ["skytruth.org"]
 }
 
-variable "feature_metadata_max_ids" {
-  description = "Maximum feature IDs accepted by one metadata lookup request."
+variable "feature_preview_max_ids" {
+  description = "Maximum feature IDs accepted by one feature lookup request."
   type        = number
   default     = 500
 }
 
-variable "feature_metadata_max_fields" {
-  description = "Maximum projected fields accepted by one metadata lookup request."
+variable "feature_preview_max_fields" {
+  description = "Maximum projected fields accepted by one feature lookup request."
   type        = number
   default     = 500
 }
 
-variable "feature_metadata_max_response_bytes" {
-  description = "Maximum JSON response size for one metadata lookup request."
+variable "feature_preview_max_response_bytes" {
+  description = "Maximum JSON response size for one feature lookup request."
   type        = number
   default     = 10485760
 }
 
 variable "preview_ref" {
-  description = "Git ref deployed into the replaceable preview slot, for Cloud Run environment metadata only."
+  description = "Git ref deployed into the replaceable preview slot, for Cloud Run environment variables only."
   type        = string
   default     = ""
 }
 
 variable "preview_deploy_sha" {
-  description = "Git SHA deployed into the replaceable preview slot, for Cloud Run environment metadata only."
+  description = "Git SHA deployed into the replaceable preview slot, for Cloud Run environment variables only."
   type        = string
   default     = ""
 }

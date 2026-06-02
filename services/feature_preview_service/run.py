@@ -1,4 +1,4 @@
-"""IAP-protected feature metadata lookup API backed by Firestore."""
+"""IAP-protected feature preview lookup API backed by Firestore."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
-DEFAULT_COLLECTION_ROOT = "feature_metadata"
+DEFAULT_COLLECTION_ROOT = "feature_preview_index"
 DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
 DEFAULT_RELEASE_CACHE_TTL_SECONDS = 60.0
 DEFAULT_MAX_IDS = 500
@@ -135,7 +135,7 @@ class FirestoreFeatureIndex:
             from google.cloud import firestore
 
             project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-            database = os.environ.get("FEATURE_METADATA_FIRESTORE_DATABASE") or None
+            database = os.environ.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") or None
             kwargs = {"project": project} if project else {}
             if database:
                 kwargs["database"] = database
@@ -209,7 +209,7 @@ def handle_request(
     except ApiError as exc:
         return error_response(exc.status, exc.code, exc.message)
     except Exception:
-        return error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "internal", "feature metadata index lookup failed")
+        return error_response(HTTPStatus.INTERNAL_SERVER_ERROR, "internal", "feature preview index lookup failed")
 
 
 def handle_lookup(
@@ -422,19 +422,19 @@ def make_handler(
 
 def main() -> None:
     bucket_name = os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET)
-    collection_root = os.environ.get("FEATURE_METADATA_COLLECTION_ROOT", DEFAULT_COLLECTION_ROOT)
+    collection_root = os.environ.get("FEATURE_PREVIEW_COLLECTION_ROOT", DEFAULT_COLLECTION_ROOT)
     release_resolver = CatalogReleaseResolver(
         bucket_name=bucket_name,
-        ttl_seconds=float_env("FEATURE_METADATA_RELEASE_CACHE_TTL_SECONDS", DEFAULT_RELEASE_CACHE_TTL_SECONDS),
+        ttl_seconds=float_env("FEATURE_PREVIEW_RELEASE_CACHE_TTL_SECONDS", DEFAULT_RELEASE_CACHE_TTL_SECONDS),
     )
     feature_index = FirestoreFeatureIndex(collection_root=collection_root)
     handler = make_handler(
         release_resolver=release_resolver,
         feature_index=feature_index,
-        allowed_email_domains=tuple_env("METADATA_ALLOWED_EMAIL_DOMAINS", DEFAULT_ALLOWED_EMAIL_DOMAINS),
-        max_ids=int_env("FEATURE_METADATA_MAX_IDS", DEFAULT_MAX_IDS),
-        max_fields=int_env("FEATURE_METADATA_MAX_FIELDS", DEFAULT_MAX_FIELDS),
-        max_response_bytes=int_env("FEATURE_METADATA_MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES),
+        allowed_email_domains=tuple_env("FEATURE_PREVIEW_ALLOWED_EMAIL_DOMAINS", DEFAULT_ALLOWED_EMAIL_DOMAINS),
+        max_ids=int_env("FEATURE_PREVIEW_MAX_IDS", DEFAULT_MAX_IDS),
+        max_fields=int_env("FEATURE_PREVIEW_MAX_FIELDS", DEFAULT_MAX_FIELDS),
+        max_response_bytes=int_env("FEATURE_PREVIEW_MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES),
     )
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), handler).serve_forever()
 

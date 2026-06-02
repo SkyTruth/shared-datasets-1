@@ -1,1 +1,0 @@
-"""Feature metadata lookup service."""

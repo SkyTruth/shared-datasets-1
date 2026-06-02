@@ -95,9 +95,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          preview_service_account="metadata-service-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          preview_loader_service_account="metadata-index-loader-preview@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
-          preview_database="projects/${GOOGLE_CLOUD_PROJECT}/databases/feature-metadata-preview"
+          preview_service_account="feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
+          preview_loader_service_account="feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com"
+          preview_database="projects/${GOOGLE_CLOUD_PROJECT}/databases/feature-preview"
           project_number="$(gcloud projects describe "${GOOGLE_CLOUD_PROJECT}" --format='value(projectNumber)')"
           preview_loader_wif_member="principal://iam.googleapis.com/projects/${project_number}/locations/global/workloadIdentityPools/github/subject/repo:SkyTruth/shared-datasets-1:environment:shared-datasets-production"
 
@@ -130,9 +130,9 @@ jobs:
           loader_policy = json.load(open(sys.argv[2]))
           project = os.environ["GOOGLE_CLOUD_PROJECT"]
           terraform_service_account = os.environ["TERRAFORM_SERVICE_ACCOUNT"]
-          preview_database = f"projects/{project}/databases/feature-metadata-preview"
-          preview_service_member = f"serviceAccount:metadata-service-preview@{project}.iam.gserviceaccount.com"
-          preview_loader_member = f"serviceAccount:metadata-index-loader-preview@{project}.iam.gserviceaccount.com"
+          preview_database = f"projects/{project}/databases/feature-preview"
+          preview_service_member = f"serviceAccount:feature-preview-service@{project}.iam.gserviceaccount.com"
+          preview_loader_member = f"serviceAccount:feature-preview-loader@{project}.iam.gserviceaccount.com"
           preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
           loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
 
@@ -179,8 +179,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          test -f preview-source/services/metadata_service/Dockerfile
-          if ! grep -q "FEATURE_METADATA_FIRESTORE_DATABASE" preview-source/services/metadata_service/run.py; then
+          test -f preview-source/services/feature_preview_service/Dockerfile
+          if ! grep -q "FEATURE_PREVIEW_FIRESTORE_DATABASE" preview-source/services/feature_preview_service/run.py; then
             echo "The selected feature branch must support the preview Firestore database override before it can run in preview." >&2
             exit 1
           fi
@@ -199,7 +199,7 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:preview-${safe_ref}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build \
             --platform linux/amd64 \
-            -f preview-source/services/metadata_service/Dockerfile \
+            -f preview-source/services/feature_preview_service/Dockerfile \
             -t "${image_tag}" \
             preview-source
           docker push "${image_tag}"
@@ -223,9 +223,9 @@ jobs:
           set -euo pipefail
 
           bootstrap_addresses=(
-            "module.metadata_service_account.google_service_account.this"
-            "module.metadata_index_loader_service_account.google_service_account.this"
-            "google_service_account_iam_member.metadata_index_loader_github_wif"
+            "module.feature_preview_service_account.google_service_account.this"
+            "module.feature_preview_loader_service_account.google_service_account.this"
+            "google_service_account_iam_member.feature_preview_loader_github_wif"
           )
 
           for address in "${bootstrap_addresses[@]}"; do
@@ -255,28 +255,28 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           legacy_preview_project_iam_exact = {
-              "google_project_iam_member.metadata_service_firestore_viewer": {
+              "google_project_iam_member.feature_preview_service_firestore_viewer": {
                   "role": "roles/datastore.viewer",
-                  "member": "serviceAccount:metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com",
+                  "member": "serviceAccount:feature-preview-service@shared-datasets-1.iam.gserviceaccount.com",
               },
-              "google_project_iam_member.metadata_index_loader_firestore_user": {
+              "google_project_iam_member.feature_preview_loader_firestore_user": {
                   "role": "roles/datastore.user",
-                  "member": "serviceAccount:metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com",
+                  "member": "serviceAccount:feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com",
               },
           }
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
-              "google_firestore_database.feature_metadata_preview",
-              "google_storage_bucket_iam_member.metadata_service_preview_object_viewer",
-              "google_storage_bucket_iam_member.metadata_index_loader_preview_object_viewer",
-              "google_storage_bucket_iam_member.metadata_index_loader_preview_index_load_creator",
-              "google_cloud_run_v2_service.metadata_service_preview",
-              "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker",
+              "google_firestore_database.feature_preview",
+              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+              "google_cloud_run_v2_service.feature_preview_service",
+              "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
           } | set(legacy_preview_project_iam_exact)
           allowed_patterns = [
-              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_preview_accessors\["),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_service_accessors\["),
           ]
-          expected_database = "projects/shared-datasets-1/databases/feature-metadata-preview"
+          expected_database = "projects/shared-datasets-1/databases/feature-preview"
 
           def planned_values(resource):
               change = resource.get("change", {})
@@ -347,7 +347,7 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           for resource in plan.get("resource_changes", []):
-              if resource.get("address") != "google_firestore_database.feature_metadata_preview":
+              if resource.get("address") != "google_firestore_database.feature_preview":
                   continue
               if resource.get("change", {}).get("actions", []) == ["delete"]:
                   print("1")
@@ -388,22 +388,22 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
-              "google_firestore_database.feature_metadata_preview",
-              "google_storage_bucket_iam_member.metadata_service_preview_object_viewer",
-              "google_storage_bucket_iam_member.metadata_index_loader_preview_object_viewer",
-              "google_storage_bucket_iam_member.metadata_index_loader_preview_index_load_creator",
-              "google_cloud_run_v2_service.metadata_service_preview",
-              "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker",
+              "google_firestore_database.feature_preview",
+              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+              "google_cloud_run_v2_service.feature_preview_service",
+              "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
           }
           allowed_patterns = [
-              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_preview_accessors\["),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_service_accessors\["),
           ]
           expected = {
               "bucket": "skytruth-shared-datasets-1-preview",
-              "service": "metadata-service-preview",
-              "database": "feature-metadata-preview",
-              "service_account": "metadata-service-preview",
-              "index_loader_service_account": "metadata-index-loader-preview",
+              "service": "feature-preview-service",
+              "database": "feature-preview",
+              "service_account": "feature-preview-service",
+              "index_loader_service_account": "feature-preview-loader",
           }
 
           def planned_values(resource):
@@ -440,21 +440,21 @@ jobs:
                   values = planned_values(resource)
                   if address == "google_storage_bucket.preview_bucket":
                       require_value(value_violations, address, values, "name", expected["bucket"])
-                  elif address == "google_firestore_database.feature_metadata_preview":
+                  elif address == "google_firestore_database.feature_preview":
                       require_value(value_violations, address, values, "name", expected["database"])
-                  elif address == "google_cloud_run_v2_service.metadata_service_preview":
+                  elif address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
                       env = cloud_run_env(values)
                       if env:
                           if env.get("SHARED_DATASETS_BUCKET") != expected["bucket"]:
                               value_violations.append(f"{address} SHARED_DATASETS_BUCKET must be {expected['bucket']!r}")
-                          if env.get("FEATURE_METADATA_FIRESTORE_DATABASE") != expected["database"]:
+                          if env.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") != expected["database"]:
                               value_violations.append(
                                   f"{address} preview Firestore database must be {expected['database']!r}"
                               )
-                  elif address == "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker":
+                  elif address == "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker":
                       require_value(value_violations, address, values, "name", expected["service"])
-                  elif address.startswith("google_iap_web_cloud_run_service_iam_member.metadata_service_preview_accessors"):
+                  elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_service_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
                   elif address.startswith("google_storage_bucket_iam_member."):
                       require_value(value_violations, address, values, "bucket", expected["bucket"])

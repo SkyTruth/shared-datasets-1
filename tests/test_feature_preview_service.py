@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from services.metadata_service import run
+from services.feature_preview_service import run
 
 
 class FakeResolver:
@@ -40,7 +40,7 @@ def lookup(body, headers=None):
     return response, index
 
 
-class MetadataServiceTests(unittest.TestCase):
+class FeaturePreviewServiceTests(unittest.TestCase):
     def test_lookup_requires_iap_identity(self):
         response = run.handle_request(
             "POST",
