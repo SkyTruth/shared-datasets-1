@@ -2,6 +2,15 @@ name: Deploy Feature Branch to Preview
 
 on:
   workflow_dispatch:
+    inputs:
+      preview_data_mode:
+        description: "Preview data handling"
+        type: choice
+        required: true
+        default: preserve
+        options:
+          - preserve
+          - reset
 permissions:
   contents: read
   id-token: write
@@ -36,6 +45,7 @@ jobs:
     env:
       PREVIEW_REF: ${{ github.ref_name }}
       PREVIEW_SOURCE_REF: ${{ github.ref }}
+      PREVIEW_DATA_MODE: ${{ github.event.inputs.preview_data_mode || 'preserve' }}
 
     steps:
       - name: Validate selected ref
@@ -53,6 +63,15 @@ jobs:
               exit 1
               ;;
           esac
+
+          case "${PREVIEW_DATA_MODE}" in
+            preserve|reset) ;;
+            *)
+              echo "Preview data mode must be either preserve or reset." >&2
+              exit 1
+              ;;
+          esac
+          echo "Preview data mode: ${PREVIEW_DATA_MODE}"
 
       - name: Check out preview control plane
         uses: actions/checkout@v4
@@ -281,6 +300,7 @@ jobs:
           done
 
       - name: Terraform reset plan
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: |
           set -euo pipefail
 
@@ -290,12 +310,15 @@ jobs:
             -out="${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
 
       - name: Export Terraform reset plan JSON
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
 
       - name: Terraform apply reset plan
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
 
       - name: Wait for preview database ID reuse
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
         run: |
           set -euo pipefail
 
@@ -474,10 +497,24 @@ jobs:
           terraform -chdir=terraform/envs/preview output preview_bucket
           terraform -chdir=terraform/envs/preview output preview_firestore_database
 
-      - name: Build initial preview catalog web bundle
+      - name: Collect preview release indexes
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/preview-release-indexes"
+          if [[ "${PREVIEW_DATA_MODE}" != "preserve" ]]; then
+            echo "Preview data reset requested; building catalog without prior release indexes."
+            exit 0
+          fi
+
+          if gcloud storage ls "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" >/dev/null 2>&1; then
+            gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" "${RUNNER_TEMP}/preview-release-indexes/"
+          else
+            echo "No existing preview release indexes found; building catalog shell."
+          fi
+
+      - name: Build preview catalog web bundle
+        run: |
+          set -euo pipefail
           uv run python scripts/catalog_site.py \
             --bucket "${SHARED_DATASETS_BUCKET}" \
             --release-index-dir "${RUNNER_TEMP}/preview-release-indexes" \
@@ -493,7 +530,7 @@ jobs:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
 
-      - name: Publish initial preview catalog web bundle
+      - name: Publish preview catalog web bundle
         env:
           SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
         run: |
