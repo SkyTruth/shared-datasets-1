@@ -407,6 +407,15 @@ jobs:
               if actual is not None and actual != expected_value:
                   violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
 
+          def require_env_value(violations, address, env, key, expected_value, label=None):
+              label = label or key
+              if key not in env:
+                  violations.append(f"{address} {label} must be {expected_value!r}")
+                  return
+              actual = env[key]
+              if actual is not None and actual != expected_value:
+                  violations.append(f"{address} {label} must be {expected_value!r}")
+
           def cloud_run_env(values):
               template = values.get("template") or []
               if not template or not isinstance(template, list):
@@ -434,34 +443,52 @@ jobs:
                       require_value(value_violations, address, values, "name", expected["service"])
                       env = cloud_run_env(values)
                       if env:
-                          if env.get("SHARED_DATASETS_BUCKET") != expected["bucket"]:
-                              value_violations.append(f"{address} SHARED_DATASETS_BUCKET must be {expected['bucket']!r}")
-                          if env.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") != expected["database"]:
-                              value_violations.append(
-                                  f"{address} preview Firestore database must be {expected['database']!r}"
-                              )
-                          if env.get("FEATURE_PREVIEW_COLLECTION_ROOT") != expected["collection_root"]:
-                              value_violations.append(
-                                  f"{address} preview collection root must be {expected['collection_root']!r}"
-                              )
+                          require_env_value(value_violations, address, env, "SHARED_DATASETS_BUCKET", expected["bucket"])
+                          require_env_value(
+                              value_violations,
+                              address,
+                              env,
+                              "FEATURE_PREVIEW_FIRESTORE_DATABASE",
+                              expected["database"],
+                              "preview Firestore database",
+                          )
+                          require_env_value(
+                              value_violations,
+                              address,
+                              env,
+                              "FEATURE_PREVIEW_COLLECTION_ROOT",
+                              expected["collection_root"],
+                              "preview collection root",
+                          )
                   elif address == "google_cloud_run_v2_service.feature_preview_catalog_viewer":
                       require_value(value_violations, address, values, "name", expected["catalog_viewer"])
                       env = cloud_run_env(values)
                       if env:
-                          if env.get("SHARED_DATASETS_BUCKET") != expected["bucket"]:
-                              value_violations.append(f"{address} SHARED_DATASETS_BUCKET must be {expected['bucket']!r}")
-                          if env.get("SHARED_DATASETS_SITE_PREFIX") != "_catalog/web":
-                              value_violations.append(f"{address} SHARED_DATASETS_SITE_PREFIX must be '_catalog/web'")
-                          if env.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT") != f"{expected['service_account']}@shared-datasets-1.iam.gserviceaccount.com":
-                              value_violations.append(f"{address} signer must use the preview service account")
-                          if env.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") != expected["database"]:
-                              value_violations.append(
-                                  f"{address} preview Firestore database must be {expected['database']!r}"
-                              )
-                          if env.get("FEATURE_PREVIEW_COLLECTION_ROOT") != expected["collection_root"]:
-                              value_violations.append(
-                                  f"{address} preview collection root must be {expected['collection_root']!r}"
-                              )
+                          require_env_value(value_violations, address, env, "SHARED_DATASETS_BUCKET", expected["bucket"])
+                          require_env_value(value_violations, address, env, "SHARED_DATASETS_SITE_PREFIX", "_catalog/web")
+                          require_env_value(
+                              value_violations,
+                              address,
+                              env,
+                              "CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT",
+                              f"{expected['service_account']}@shared-datasets-1.iam.gserviceaccount.com",
+                          )
+                          require_env_value(
+                              value_violations,
+                              address,
+                              env,
+                              "FEATURE_PREVIEW_FIRESTORE_DATABASE",
+                              expected["database"],
+                              "preview Firestore database",
+                          )
+                          require_env_value(
+                              value_violations,
+                              address,
+                              env,
+                              "FEATURE_PREVIEW_COLLECTION_ROOT",
+                              expected["collection_root"],
+                              "preview collection root",
+                          )
                   elif address == "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker":
                       require_value(value_violations, address, values, "name", expected["service"])
                   elif address == "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker":
