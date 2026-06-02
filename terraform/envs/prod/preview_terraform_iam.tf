@@ -7,16 +7,6 @@ import {
   id = "projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform"
 }
 
-import {
-  to = module.feature_preview_service_account.google_service_account.this
-  id = "projects/shared-datasets-1/serviceAccounts/feature-preview-service@shared-datasets-1.iam.gserviceaccount.com"
-}
-
-import {
-  to = module.feature_preview_loader_service_account.google_service_account.this
-  id = "projects/shared-datasets-1/serviceAccounts/feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com"
-}
-
 resource "google_project_iam_custom_role" "preview_terraform" {
   project     = var.project_id
   role_id     = "sharedDatasetsPreviewTerraform"

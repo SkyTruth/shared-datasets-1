@@ -303,8 +303,8 @@ class FeaturePreviewTests(unittest.TestCase):
 
         self.assertIn("import {", preview_terraform_tf)
         self.assertIn("projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform", preview_terraform_tf)
-        self.assertIn("module.feature_preview_service_account.google_service_account.this", preview_terraform_tf)
-        self.assertIn("module.feature_preview_loader_service_account.google_service_account.this", preview_terraform_tf)
+        self.assertNotIn("serviceAccounts/feature-preview-service", preview_terraform_tf)
+        self.assertNotIn("serviceAccounts/feature-preview-loader", preview_terraform_tf)
         self.assertIn('role_id     = "sharedDatasetsPreviewTerraform"', preview_terraform_tf)
         self.assertIn('module "feature_preview_service_account"', preview_terraform_tf)
         self.assertIn('module "feature_preview_loader_service_account"', preview_terraform_tf)
