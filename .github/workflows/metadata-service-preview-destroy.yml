@@ -1,0 +1,174 @@
+name: Destroy Preview Environment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  destroy:
+    name: Destroy feature metadata preview
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: metadata-service-preview
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out preview control plane
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER or GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/preview init -input=false
+
+      - name: Terraform destroy plan
+        run: |
+          set -euo pipefail
+
+          terraform -chdir=terraform/envs/preview plan \
+            -destroy \
+            -input=false \
+            -out="${RUNNER_TEMP}/metadata-preview-destroy.tfplan"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/metadata-preview-destroy.tfplan" > "${RUNNER_TEMP}/metadata-preview-destroy.tfplan.json"
+
+      - name: Enforce preview resource-change allowlist
+        run: |
+          python - "${RUNNER_TEMP}/metadata-preview-destroy.tfplan.json" <<'PY'
+          import json
+          import re
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_storage_bucket.preview_bucket",
+              "google_firestore_database.feature_metadata_preview",
+              "google_project_iam_member.metadata_service_firestore_viewer",
+              "google_project_iam_member.metadata_index_loader_firestore_user",
+              "google_storage_bucket_iam_member.metadata_service_preview_object_viewer",
+              "google_storage_bucket_iam_member.metadata_index_loader_preview_object_viewer",
+              "google_storage_bucket_iam_member.metadata_index_loader_preview_index_load_creator",
+              "google_service_account_iam_member.metadata_index_loader_github_wif",
+              "google_cloud_run_v2_service.metadata_service_preview",
+              "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker",
+          }
+          allowed_patterns = [
+              re.compile(r"^module\.metadata_service_account\."),
+              re.compile(r"^module\.metadata_index_loader_service_account\."),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.metadata_service_preview_accessors\["),
+          ]
+          expected = {
+              "bucket": "skytruth-shared-datasets-1-preview",
+              "service": "metadata-service-preview",
+              "database": "feature-metadata-preview",
+              "service_account": "metadata-service-preview",
+              "index_loader_service_account": "metadata-index-loader-preview",
+          }
+
+          def planned_values(resource):
+              change = resource.get("change", {})
+              for key in ("after", "before"):
+                  value = change.get(key)
+                  if isinstance(value, dict):
+                      return value
+              return {}
+
+          def require_value(violations, address, values, key, expected_value):
+              actual = values.get(key)
+              if actual is not None and actual != expected_value:
+                  violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
+
+          def require_contains(violations, address, values, key, expected_value):
+              actual = values.get(key)
+              if actual is not None and expected_value not in str(actual):
+                  violations.append(f"{address} {key} must contain {expected_value!r}")
+
+          blocked = []
+          value_violations = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
+                  values = planned_values(resource)
+                  if address == "google_storage_bucket.preview_bucket":
+                      require_value(value_violations, address, values, "name", expected["bucket"])
+                  elif address == "google_firestore_database.feature_metadata_preview":
+                      require_value(value_violations, address, values, "name", expected["database"])
+                  elif address == "google_cloud_run_v2_service.metadata_service_preview":
+                      require_value(value_violations, address, values, "name", expected["service"])
+                  elif address == "google_cloud_run_v2_service_iam_member.metadata_service_preview_iap_invoker":
+                      require_value(value_violations, address, values, "name", expected["service"])
+                  elif address.startswith("google_iap_web_cloud_run_service_iam_member.metadata_service_preview_accessors"):
+                      require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
+                  elif address.startswith("module.metadata_service_account."):
+                      require_value(value_violations, address, values, "account_id", expected["service_account"])
+                  elif address.startswith("module.metadata_index_loader_service_account."):
+                      require_value(value_violations, address, values, "account_id", expected["index_loader_service_account"])
+                  elif address.startswith("google_storage_bucket_iam_member."):
+                      require_value(value_violations, address, values, "bucket", expected["bucket"])
+                  elif address.startswith("google_project_iam_member."):
+                      condition = values.get("condition") or []
+                      if condition and isinstance(condition, list):
+                          require_contains(
+                              value_violations,
+                              address,
+                              condition[0],
+                              "expression",
+                              f"databases/{expected['database']}",
+                          )
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing metadata preview destroy because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          if value_violations:
+              print("Refusing metadata preview destroy because an allowlisted resource is not constrained to preview names:")
+              for item in value_violations:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply destroy plan
+        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/metadata-preview-destroy.tfplan"

@@ -36,6 +36,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
+| Feature metadata preview | `docs/feature-metadata-preview.md`, `terraform/envs/preview/`, `.github/workflows/metadata-service-preview.yml`, `.github/workflows/metadata-service-preview-destroy.yml` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
 | TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |
@@ -529,6 +530,14 @@ uv run python scripts/terraform_prod_apply.py
 The wrapper reads the current Cloud Run job images when image variables are not
 provided, creates a saved plan, applies that plan, and reports the result to
 Slack. Direct Terraform still works but will not send deployment summaries.
+
+### Feature Metadata Preview
+
+The feature metadata preview is a single replaceable test slot in
+`shared-datasets-1` for deploying metadata-service changes from a feature
+branch before merge. It uses preview-named GCP resources and a separate
+Terraform state prefix under `terraform/envs/preview/`; see
+`docs/feature-metadata-preview.md` for the GitHub Actions workflow steps.
 
 ## Standard local setup
 
