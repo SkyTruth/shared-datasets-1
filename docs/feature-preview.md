@@ -20,16 +20,24 @@ Selection:
 
 - In the GitHub **Run workflow** branch dropdown, select the branch or tag to
   deploy into the preview slot.
+- In **Preview data handling**, choose `preserve` to update the preview services
+  and catalog viewer while keeping the existing preview bucket, release indexes,
+  and Firestore index. Choose `reset` only when you want a clean preview slot
+  and are prepared to reload preview data.
 
 The selected branch or tag is both the workflow ref and the preview source ref.
 The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
 under `preview-source/`. It builds the preview service and preview catalog
 viewer images from the selected branch after verifying the protected preview
-IAM bootstrap, plans and applies a saved `terraform/envs/preview` destroy reset
-from the `main` control-plane checkout, then plans and applies the new preview
-stack for the selected branch, publishes an initial preview catalog web bundle,
-and prints the preview service and catalog viewer Cloud Run URLs.
+IAM bootstrap. In `preserve` mode, it plans and applies the updated preview
+stack without first destroying the preview bucket or Firestore database, then
+rebuilds the catalog web bundle from existing preview release indexes. In
+`reset` mode, it first plans and applies a saved `terraform/envs/preview`
+destroy reset from the `main` control-plane checkout, waits if the preview
+Firestore database ID needs reuse time, then creates the new preview stack and
+publishes a catalog shell. In both modes, it prints the preview service and
+catalog viewer Cloud Run URLs.
 
 This split is intentional. The workflow branch dropdown provides the source that
 is deployed into the preview slot, while the workflow checks out `main` for the
@@ -42,10 +50,12 @@ merge from `main` before using the preview workflow.
 
 To replace the preview with a different feature branch, run the same workflow
 again and select the new branch or tag in the workflow branch dropdown. There is
-only one active preview slot; each deploy first tears down the previous preview
-bucket, Firestore database, Cloud Run services, and preview bucket/IAP IAM
-bindings before creating the new preview deployment. This clears previous
-preview data that is no longer present in the selected ref.
+only one active preview slot. Use `preserve` when you are iterating on preview
+service or catalog viewer code against already loaded test data. Use `reset`
+when you need to tear down the previous preview bucket, Firestore database,
+Cloud Run services, and preview bucket/IAP IAM bindings before creating the new
+preview deployment. Reset clears previous preview data that is no longer present
+in the selected ref.
 
 The deploy workflow does not own the stable conditioned project IAM grants that
 let the preview service and preview loader use the preview Firestore database,
@@ -87,9 +97,11 @@ The deploy workflow creates an IAP-protected preview catalog viewer at the
 `preview_catalog_viewer_uri` Terraform output. It serves `_catalog/web/` from
 `gs://skytruth-shared-datasets-1-preview/`, not from the production bucket.
 
-The initial deploy publishes a catalog shell with no listed assets. The
-`Feature preview index load` workflow refreshes that catalog after each
-successful load by downloading every preview release index under
+Preserve-mode deploys rebuild the catalog from existing release indexes under
+`gs://skytruth-shared-datasets-1-preview/_catalog/releases/*.json`. Reset-mode
+deploys publish a catalog shell with no listed assets until preview data is
+loaded again. The `Feature preview index load` workflow refreshes that catalog
+after each successful load by downloading every preview release index under
 `gs://skytruth-shared-datasets-1-preview/_catalog/releases/*.json`, rebuilding
 the catalog web bundle, and publishing it back to the preview bucket with
 generation preconditions.
