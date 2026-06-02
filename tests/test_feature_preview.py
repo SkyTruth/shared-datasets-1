@@ -131,10 +131,18 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("google_firestore_database.feature_preview", workflow)
         self.assertIn("google_cloud_run_v2_service.feature_preview_service", workflow)
         self.assertIn("google_cloud_run_v2_service.feature_preview_catalog_viewer", workflow)
-        self.assertIn("SHARED_DATASETS_BUCKET must be", workflow)
-        self.assertIn("SHARED_DATASETS_SITE_PREFIX must be", workflow)
-        self.assertIn("preview Firestore database must be", workflow)
-        self.assertIn("preview collection root must be", workflow)
+        self.assertIn("def require_env_value", workflow)
+        self.assertIn("if actual is not None and actual != expected_value", workflow)
+        self.assertIn(
+            'require_env_value(value_violations, address, env, "SHARED_DATASETS_BUCKET", expected["bucket"])',
+            workflow,
+        )
+        self.assertIn(
+            'require_env_value(value_violations, address, env, "SHARED_DATASETS_SITE_PREFIX", "_catalog/web")',
+            workflow,
+        )
+        self.assertIn('"preview Firestore database"', workflow)
+        self.assertIn('"preview collection root"', workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_service_uri", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_catalog_viewer_uri", workflow)
         self.assertIn("Collect preview release indexes", workflow)
