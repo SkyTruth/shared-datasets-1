@@ -21,6 +21,7 @@ Selection:
 - In the GitHub **Run workflow** branch dropdown, select the branch or tag to
   deploy into the preview slot.
 
+The selected branch or tag is both the workflow ref and the preview source ref.
 The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
 under `preview-source/`. It builds the preview service image from the selected
