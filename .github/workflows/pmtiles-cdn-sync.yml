@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: pmtiles-cdn-sync
+      group: prod-terraform-state
       cancel-in-progress: false
 
     steps:

@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: scratch-cleanup-iam-sync
+      group: prod-terraform-state
       cancel-in-progress: false
 
     steps:
