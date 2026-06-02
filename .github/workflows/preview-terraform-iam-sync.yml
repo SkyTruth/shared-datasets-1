@@ -109,8 +109,6 @@ jobs:
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/preview-terraform-iam-sync.tfplan" \
-            -target='google_project_service.required["cloudresourcemanager.googleapis.com"]' \
-            -target='google_project_service.required["firestore.googleapis.com"]' \
             -target=google_project_iam_custom_role.preview_terraform \
             -target=module.preview_metadata_service_account.google_service_account.this \
             -target=module.preview_metadata_index_loader_service_account.google_service_account.this \
@@ -133,8 +131,6 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
-              'google_project_service.required["cloudresourcemanager.googleapis.com"]',
-              'google_project_service.required["firestore.googleapis.com"]',
               "google_project_iam_custom_role.preview_terraform",
               "module.preview_metadata_service_account.google_service_account.this",
               "module.preview_metadata_index_loader_service_account.google_service_account.this",

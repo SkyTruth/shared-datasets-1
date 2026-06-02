@@ -221,7 +221,6 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("google_artifact_registry_repository.jobs.repository_id", artifact_registry_tf)
         self.assertIn("roles/artifactregistry.writer", artifact_registry_tf)
         self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
-        self.assertIn("cloudresourcemanager.googleapis.com", (PROD_TF / "main.tf").read_text())
         self.assertIn("Artifact Registry IAM sync", workflow)
         self.assertIn("shared-datasets-production", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
@@ -289,14 +288,6 @@ class MetadataPreviewTests(unittest.TestCase):
         self.assertIn("terraform/envs/prod/preview_terraform_iam.tf", workflow)
         self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
         self.assertIn(
-            '-target=\'google_project_service.required["cloudresourcemanager.googleapis.com"]\'',
-            workflow,
-        )
-        self.assertIn(
-            '-target=\'google_project_service.required["firestore.googleapis.com"]\'',
-            workflow,
-        )
-        self.assertIn(
             "-target=google_project_iam_custom_role.preview_terraform",
             workflow,
         )
@@ -325,14 +316,6 @@ class MetadataPreviewTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("allowed_exact", workflow)
-        self.assertIn(
-            'google_project_service.required["cloudresourcemanager.googleapis.com"]',
-            workflow,
-        )
-        self.assertIn(
-            'google_project_service.required["firestore.googleapis.com"]',
-            workflow,
-        )
         self.assertIn(
             "google_project_iam_custom_role.preview_terraform",
             workflow,

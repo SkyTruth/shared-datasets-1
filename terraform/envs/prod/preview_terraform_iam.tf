@@ -80,7 +80,6 @@ resource "google_project_iam_custom_role" "preview_terraform" {
     "storage.objects.list",
   ]
 
-  depends_on = [google_project_service.required]
 }
 
 module "preview_metadata_service_account" {
@@ -90,7 +89,6 @@ module "preview_metadata_service_account" {
   account_id   = "metadata-service-preview"
   display_name = "Shared datasets feature branch preview service"
 
-  depends_on = [google_project_service.required]
 }
 
 module "preview_metadata_index_loader_service_account" {
@@ -100,7 +98,6 @@ module "preview_metadata_index_loader_service_account" {
   account_id   = "metadata-index-loader-preview"
   display_name = "Shared datasets feature branch preview loader"
 
-  depends_on = [google_project_service.required]
 }
 
 resource "google_project_iam_member" "github_actions_preview_terraform" {
