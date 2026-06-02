@@ -208,6 +208,7 @@ function versionsFromReleaseIndex(asset, releaseIndex) {
       pmtiles_path: pmtilesPath || null,
       pmtiles_url: pmtilesPath ? gsToHttps(pmtilesPath) : null,
       available_formats: releaseFormats(asset, files),
+      files: releaseFiles(files),
       source_version: release.source_version || "",
       rows: release.rows ?? null,
       release_path: release.release_path || "",
@@ -241,6 +242,12 @@ function releaseFilePath(file) {
 function releaseFileSha256(file) {
   const value = String(file?.sha256 || "").trim();
   return /^[a-f0-9]{64}$/i.test(value) ? value : "";
+}
+
+function releaseFiles(files) {
+  return files
+    .filter((file) => releaseFilePath(file))
+    .map((file) => ({ ...file, path: releaseFilePath(file) }));
 }
 
 function releaseFormats(asset, files) {

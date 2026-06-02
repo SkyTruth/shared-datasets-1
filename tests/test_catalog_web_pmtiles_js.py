@@ -72,6 +72,14 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertNotIn(".blob()", app)
         self.assertNotIn("createObjectURL", app)
 
+    def test_runtime_release_index_hydration_preserves_all_release_files(self):
+        app = (REPO_ROOT / "web/catalog/app.js").read_text()
+
+        self.assertIn("files: releaseFiles(files)", app)
+        self.assertIn("function releaseFiles(files)", app)
+        self.assertIn(".filter((file) => releaseFilePath(file))", app)
+        self.assertIn(".map((file) => ({ ...file, path: releaseFilePath(file) }))", app)
+
 
 if __name__ == "__main__":
     unittest.main()

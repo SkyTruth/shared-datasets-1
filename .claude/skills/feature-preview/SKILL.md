@@ -40,12 +40,53 @@ If the user asks to add, update, upload, or publish a canonical shared dataset,
 use `publish-shared-dataset` instead. If the user asks to test a dataset in the
 feature preview slot, use this skill.
 
+## Preview Upload Intake Rule
+
+Treat preview requests phrased as "add this," "upload this," "load this," or
+"put this in sidecar preview" as requests to build a complete disposable
+preview release bundle, not as permission to upload only the supplied file.
+Use the supplied file as source material when needed, infer or confirm the asset
+slug, category, subcategory, release date, source version, and required
+companion artifacts, then build and validate the preview bundle before any
+success report.
+
+For vector preview releases, the expected bundle normally includes:
+
+- Canonical FGB or approved vector source transformed for preview use.
+- Lightweight PMTiles for map display, with compact feature properties such as
+  `feature_id`.
+- Feature-index sidecar ending `.features.ndjson.gz`.
+- Schema JSON ending `.schema.json`.
+- Manifest JSON ending `.manifest.json`.
+- Release index at `_catalog/releases/{asset-slug}.json`.
+- Run record under the asset `runs/` prefix when a release attempt succeeds,
+  fails, or is repaired.
+
+Validate PMTiles with the same standard as canonical publish artifacts before
+uploading or marking the preview bundle successful. Do not trust a `.pmtiles`
+filename or a successful Tippecanoe exit code. Confirm the PMTiles magic bytes,
+run `pmtiles verify`, inspect `pmtiles show` metadata, and decode representative
+tiles to verify expected layers and compact feature properties. If the local
+tool produced MBTiles/SQLite, convert it with `pmtiles convert` and validate
+the converted archive before upload.
+
+Do not report the preview publication, release bundle, or upload as successful
+while a required companion artifact failed to generate or validate. If PMTiles
+is expected for the preview and PMTiles generation fails, keep or replace remote
+manifest, release-index, and run records with an explicit failed status; retain
+local artifacts in the standard temp workspace for diagnosis; and report the
+blocking failure instead of calling the preview release complete. Use scratch or
+preview-bucket failed run records for evidence, but do not cite them as a
+published preview release.
+
 ## Deploy Or Destroy Preview
 
 - Deploy or replace the preview with the GitHub Actions workflow named
   `Deploy Feature Branch to Preview`.
 - Select the feature branch or tag to deploy from the GitHub **Run workflow**
   branch dropdown.
+- The deploy publishes an initial empty preview catalog web bundle and reports
+  both the preview API URL and the preview catalog viewer URL.
 - Destroy the preview with `Destroy Preview Environment`.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
@@ -58,8 +99,10 @@ feature preview slot, use this skill.
 gs://skytruth-shared-datasets-1-preview/
 ```
 
-2. Build or collect the preview release bundle outside the repo tree. The
-   preview service expects release artifacts under:
+2. Build or collect the complete preview release bundle outside the repo tree.
+   Do not upload the supplied source file by itself unless the user explicitly
+   asked for a scratch-only diagnostic upload. The preview service expects
+   release artifacts under:
 
 ```text
 gs://skytruth-shared-datasets-1-preview/{category}/{subcategory}/{asset-slug}/releases/YYYY-MM-DD/
@@ -113,8 +156,17 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    - `sidecar_generation`, `schema_generation`, `manifest_generation`
    - optional `load_id`
 
-7. Report the preview bucket paths, generations, workflow run, and any retained
-   local temp work directory.
+7. Confirm that the index-load workflow refreshed the preview catalog viewer.
+   The viewer includes only preview-bucket release-index assets, materializes
+   top-level "latest" from those release indexes, and treats every preview asset
+   as private so the authenticated viewer signs short-lived preview-bucket URLs.
+   The generated catalog must preserve every release-index `files` entry in
+   `versions[].files`, including feature-index sidecars, metadata sidecars,
+   schemas, manifests, and any other new sidecar datafiles in the preview
+   release bundle.
+
+8. Report the preview bucket paths, generations, workflow run, preview catalog
+   viewer refresh status, and any retained local temp work directory.
 
 ## Safety Rules
 

@@ -114,6 +114,7 @@ jobs:
             -target=module.feature_preview_loader_service_account.google_service_account.this \
             -target=google_project_iam_member.github_actions_preview_terraform \
             -target=google_service_account_iam_member.feature_preview_loader_github_wif \
+            -target=google_service_account_iam_member.feature_preview_service_self_sign_blob \
             -target=google_project_iam_member.feature_preview_service_firestore_viewer \
             -target=google_project_iam_member.feature_preview_loader_firestore_user \
             -var="wdpa_monthly_image=unused-by-preview-terraform-iam-sync" \
@@ -136,6 +137,7 @@ jobs:
               "module.feature_preview_loader_service_account.google_service_account.this",
               "google_project_iam_member.github_actions_preview_terraform",
               "google_service_account_iam_member.feature_preview_loader_github_wif",
+              "google_service_account_iam_member.feature_preview_service_self_sign_blob",
               "google_project_iam_member.feature_preview_service_firestore_viewer",
               "google_project_iam_member.feature_preview_loader_firestore_user",
           }

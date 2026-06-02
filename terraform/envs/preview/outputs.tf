@@ -14,6 +14,14 @@ output "preview_service_uri" {
   value = google_cloud_run_v2_service.feature_preview_service.uri
 }
 
+output "preview_catalog_viewer_service_name" {
+  value = google_cloud_run_v2_service.feature_preview_catalog_viewer.name
+}
+
+output "preview_catalog_viewer_uri" {
+  value = google_cloud_run_v2_service.feature_preview_catalog_viewer.uri
+}
+
 output "preview_service_account" {
   value = local.preview_service_account_email
 }

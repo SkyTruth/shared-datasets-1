@@ -26,6 +26,13 @@ resource "google_storage_bucket" "preview_bucket" {
   hierarchical_namespace {
     enabled = true
   }
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD", "OPTIONS"]
+    response_header = ["Content-Length", "Content-Range", "ETag", "Range"]
+    max_age_seconds = 3600
+  }
 }
 
 resource "google_firestore_database" "feature_preview" {
@@ -77,7 +84,7 @@ resource "google_storage_bucket_iam_member" "feature_preview_loader_object_viewe
 
 resource "google_storage_bucket_iam_member" "feature_preview_loader_index_load_creator" {
   bucket = google_storage_bucket.preview_bucket.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectUser"
   member = local.preview_loader_member
 }
 

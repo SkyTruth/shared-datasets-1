@@ -9,6 +9,27 @@ Use this skill for manual dataset additions and updates in `shared-datasets-1`.
 It covers the dataset-facing workflow. Load `gcp-shared-datasets` before any
 remote GCS inspection or write.
 
+## Trigger Discipline
+
+Treat plain-language requests such as "add this dataset," "upload this file,"
+"put this data in shared-datasets," or "publish this" as official manual
+dataset intake requests unless the user explicitly says scratch-only,
+diagnostic-only, or no publication workflow. Do not satisfy those requests by
+copying the supplied file to GCS alone.
+
+The default deliverable is a complete reviewed publish proposal: discover
+source metadata, choose taxonomy and asset slug, build every required approved
+artifact and companion file, update asset documentation and catalog outputs,
+stage all promotion candidates with generation safety, and open the reviewed PR
+with a publish plan. For vector assets, that normally means canonical FGB,
+PMTiles display tiles, metadata sidecar, schema, manifest, README/catalog
+updates, and release/run metadata where the asset layout requires them.
+
+If any required artifact fails to build or validate, the publish request is not
+complete. Record the failure, retain diagnostic artifacts in the standard temp
+workspace or reviewed scratch area as appropriate, and report the blocker
+instead of calling the upload successful.
+
 ## Required Context
 
 Read these before choosing names, paths, formats, or remote writes:
@@ -155,6 +176,15 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   catalog inspector. Do not use Tippecanoe `--exclude-all`; the repo vector
   helper rejects it, and manual multi-layer builds must verify decoded feature
   properties before publication.
+- A PMTiles artifact is valid only after archive-level and content-level
+  checks pass. Do not trust the file extension or a successful Tippecanoe exit
+  code. For every PMTiles build, verify that the file is not MBTiles/SQLite,
+  confirm the PMTiles magic bytes, run `pmtiles verify`, inspect `pmtiles show`
+  for min/max zoom, tile type, compression, layer metadata, and bounds, and
+  decode representative tiles to confirm the expected layer and compact feature
+  properties such as `feature_id`. If the build tool produced MBTiles, convert
+  it with `pmtiles convert` and validate the converted archive before upload.
+  Record these validation commands in the PR or final response.
 - Release-oriented vector assets use a strict artifact set: canonical FGB with
   `feature_id` and
   `feature_hash`, PMTiles projected to geometry plus `feature_id`, a canonical

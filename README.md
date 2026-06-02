@@ -548,15 +548,18 @@ prefix under `terraform/envs/preview/`; see
 `.claude/skills/feature-preview/SKILL.md` and
 `docs/feature-preview.md` for the GitHub Actions workflow steps. Run
 the preview deploy workflow by selecting the feature branch or tag in the
-GitHub **Run workflow** branch dropdown.
+GitHub **Run workflow** branch dropdown. The deploy prints both the preview API
+URL and an IAP-protected preview catalog viewer URL.
 Stable preview IAM bootstrap is managed by the protected
 `Preview Terraform IAM sync` workflow.
 Preview test data is not production publishing: upload disposable release
 bundles directly to `gs://skytruth-shared-datasets-1-preview/` with safe
 preconditions, record exact generations, and pass those preview-bucket URIs and
-generations to the preview load workflow. Canonical dataset adds and updates
-still use the reviewed `_scratch/pending-publishes/` promotion path in
-`publish-shared-dataset`.
+generations to the preview load workflow. The load workflow refreshes the
+preview catalog viewer from preview-bucket release indexes, shows only
+preview-loaded assets, and preserves the full release `files` list for sidecar
+datafiles. Canonical dataset adds and updates still use the reviewed
+`_scratch/pending-publishes/` promotion path in `publish-shared-dataset`.
 
 ## Standard local setup
 

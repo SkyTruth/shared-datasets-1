@@ -20,6 +20,7 @@ PROD_TF = REPO_ROOT / "terraform/envs/prod"
 class FeaturePreviewTests(unittest.TestCase):
     def test_preview_terraform_uses_isolated_preview_resources(self):
         main_tf = (PREVIEW_TF / "main.tf").read_text()
+        catalog_viewer_tf = (PREVIEW_TF / "catalog_viewer.tf").read_text()
         variables_tf = (PREVIEW_TF / "variables.tf").read_text()
         versions_tf = (PREVIEW_TF / "versions.tf").read_text()
         outputs_tf = (PREVIEW_TF / "outputs.tf").read_text()
@@ -27,24 +28,35 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn('prefix = "000-system/terraform/state/preview"', versions_tf)
         self.assertIn('default     = "skytruth-shared-datasets-1-preview"', variables_tf)
         self.assertIn('default     = "feature-preview-service"', variables_tf)
+        self.assertIn('default     = "feature-preview-catalog-viewer"', variables_tf)
         self.assertIn('default     = "feature-preview-loader"', variables_tf)
         self.assertIn('default     = "feature-preview"', variables_tf)
+        self.assertIn("preview_catalog_viewer_image", variables_tf)
         self.assertIn('resource "google_storage_bucket" "preview_bucket"', main_tf)
         self.assertIn('force_destroy               = true', main_tf)
         self.assertIn('public_access_prevention    = "enforced"', main_tf)
+        self.assertIn('method          = ["GET", "HEAD", "OPTIONS"]', main_tf)
         self.assertIn('resource "google_firestore_database" "feature_preview"', main_tf)
         self.assertIn('delete_protection_state     = "DELETE_PROTECTION_DISABLED"', main_tf)
         self.assertIn('deletion_policy             = "DELETE"', main_tf)
         self.assertIn('resource "google_cloud_run_v2_service" "feature_preview_service"', main_tf)
+        self.assertIn('resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer"', catalog_viewer_tf)
+        self.assertIn('"SHARED_DATASETS_SITE_PREFIX"', catalog_viewer_tf)
+        self.assertIn('"CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT"', catalog_viewer_tf)
+        self.assertIn("local.preview_service_account_email", catalog_viewer_tf)
+        self.assertIn('resource "google_cloud_run_v2_service_iam_member" "feature_preview_catalog_viewer_iap_invoker"', catalog_viewer_tf)
+        self.assertIn('resource "google_iap_web_cloud_run_service_iam_member" "feature_preview_catalog_viewer_accessors"', catalog_viewer_tf)
         self.assertNotIn('module "feature_preview_service_account"', main_tf)
         self.assertNotIn('module "feature_preview_loader_service_account"', main_tf)
         self.assertIn("local.preview_service_account_email", main_tf)
         self.assertIn("local.preview_loader_member", main_tf)
         self.assertIn("destroy = false", main_tf)
         self.assertIn('iap_enabled         = true', main_tf)
+        self.assertIn('iap_enabled         = true', catalog_viewer_tf)
         self.assertIn('"FEATURE_PREVIEW_FIRESTORE_DATABASE"', main_tf)
         self.assertNotIn('resource "google_project_iam_member"', main_tf)
         self.assertIn("preview_service_uri", outputs_tf)
+        self.assertIn("preview_catalog_viewer_uri", outputs_tf)
         self.assertIn("preview_bucket", outputs_tf)
 
     def test_preview_deploy_workflow_keeps_control_plane_separate_from_source_ref(self):
@@ -66,6 +78,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.ref }}", workflow)
         self.assertIn("path: preview-source", workflow)
         self.assertIn("IMAGE_NAME: preview-service", workflow)
+        self.assertIn("CATALOG_VIEWER_IMAGE_NAME: preview-catalog-viewer", workflow)
         self.assertIn("Validate preview IAM bootstrap", workflow)
         self.assertIn("Preview IAM bootstrap is incomplete", workflow)
         self.assertIn("missing_bootstrap=0", workflow)
@@ -75,10 +88,15 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("feature-preview-service@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
         self.assertIn("feature-preview-loader@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com", workflow)
         self.assertIn("PREVIEW_LOADER_WIF_MEMBER", workflow)
+        self.assertIn("preview service self signBlob binding", workflow)
         self.assertIn("preview-source/services/feature_preview_service/Dockerfile", workflow)
+        self.assertIn("preview-source/services/catalog_viewer/Dockerfile", workflow)
         self.assertIn("preview Firestore database override", workflow)
+        self.assertIn("catalog viewer site-prefix override", workflow)
         self.assertIn("Build preview service image", workflow)
+        self.assertIn("Build preview catalog viewer image", workflow)
         self.assertIn("PREVIEW_SERVICE_IMAGE", workflow)
+        self.assertIn("PREVIEW_CATALOG_VIEWER_IMAGE", workflow)
         self.assertNotIn("feature_preview_service_image=", workflow)
         self.assertNotIn("inputs.action", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview init", workflow)
@@ -93,14 +111,23 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("Wait for preview database ID reuse", workflow)
         self.assertIn("sleep 330", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview plan", workflow)
+        self.assertIn('-var="preview_catalog_viewer_image=${PREVIEW_CATALOG_VIEWER_IMAGE}"', workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview apply", workflow)
         self.assertIn("Enforce preview resource-change allowlist", workflow)
         self.assertIn("google_storage_bucket.preview_bucket", workflow)
         self.assertIn("google_firestore_database.feature_preview", workflow)
         self.assertIn("google_cloud_run_v2_service.feature_preview_service", workflow)
+        self.assertIn("google_cloud_run_v2_service.feature_preview_catalog_viewer", workflow)
         self.assertIn("SHARED_DATASETS_BUCKET must be", workflow)
+        self.assertIn("SHARED_DATASETS_SITE_PREFIX must be", workflow)
         self.assertIn("preview Firestore database must be", workflow)
         self.assertIn("terraform -chdir=terraform/envs/preview output preview_service_uri", workflow)
+        self.assertIn("terraform -chdir=terraform/envs/preview output preview_catalog_viewer_uri", workflow)
+        self.assertIn("Build initial preview catalog web bundle", workflow)
+        self.assertIn("--release-index-assets-only", workflow)
+        self.assertIn("--latest-from-release-index", workflow)
+        self.assertIn("--force-access-tier private", workflow)
+        self.assertIn("Publish initial preview catalog web bundle", workflow)
         self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
         self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
@@ -135,6 +162,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("google_storage_bucket.preview_bucket", workflow)
         self.assertIn("google_firestore_database.feature_preview", workflow)
         self.assertIn("google_cloud_run_v2_service.feature_preview_service", workflow)
+        self.assertIn("google_cloud_run_v2_service.feature_preview_catalog_viewer", workflow)
         self.assertNotIn("preview-source", workflow)
         self.assertNotIn("docker build", workflow)
         self.assertNotIn("feature_preview_service_image=", workflow)
@@ -174,8 +202,22 @@ class FeaturePreviewTests(unittest.TestCase):
                 for pattern in patterns
             )
         )
+        self.assertTrue(
+            any(
+                pattern.match(
+                    'google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors["user:jona@skytruth.org"]'
+                )
+                for pattern in patterns
+            )
+        )
         self.assertFalse(
             any(pattern.match("google_iap_web_cloud_run_service_iam_member.feature_preview_service_accessors") for pattern in patterns)
+        )
+        self.assertFalse(
+            any(
+                pattern.match("google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors")
+                for pattern in patterns
+            )
         )
 
     def test_preview_index_load_uses_preview_bucket_database_and_source_ref(self):
@@ -192,6 +234,8 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com", workflow)
         self.assertIn("FEATURE_PREVIEW_FIRESTORE_DATABASE: feature-preview", workflow)
         self.assertIn("FEATURE_PREVIEW_COLLECTION_ROOT: feature_preview_index", workflow)
+        self.assertIn("CATALOG_WEB_CACHE_CONTROL", workflow)
+        self.assertIn("group: feature-preview-index-load", workflow)
         self.assertIn("Verify requested source ref supports preview Firestore database", workflow)
         self.assertIn("working-directory: preview-source", workflow)
         self.assertIn('release_prefix = f"gs://{bucket}/{asset_root}/releases/{release}/"', workflow)
@@ -199,8 +243,18 @@ class FeaturePreviewTests(unittest.TestCase):
             'gs://{bucket}/000-system/feature-preview/index-loads/{asset_slug}/{release}/{load_id}.json',
             workflow,
         )
+        self.assertIn('RELEASE_INDEX_URI": f"gs://{bucket}/_catalog/releases/{asset_slug}.json"', workflow)
+        self.assertIn('uv run python scripts/gcs_asset.py stat "${RELEASE_INDEX_URI}"', workflow)
         self.assertIn("--collection-root \"${FEATURE_PREVIEW_COLLECTION_ROOT}\"", workflow)
         self.assertIn("SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: \"1\"", workflow)
+        self.assertIn("Download preview release indexes", workflow)
+        self.assertIn('gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"', workflow)
+        self.assertIn("Build refreshed preview catalog web bundle", workflow)
+        self.assertIn("--release-index-assets-only", workflow)
+        self.assertIn("--latest-from-release-index", workflow)
+        self.assertIn("--force-access-tier private", workflow)
+        self.assertIn("Publish refreshed preview catalog web bundle", workflow)
+        self.assertIn('scripts/catalog_web_publish.py', workflow)
         self.assertNotIn("skytruth-shared-datasets-1/", workflow)
         self.assertNotIn("--replace-generation", workflow)
         self.assertNotIn("--unsafe-overwrite", workflow)
@@ -317,6 +371,11 @@ class FeaturePreviewTests(unittest.TestCase):
             preview_terraform_tf,
         )
         self.assertIn(
+            'resource "google_service_account_iam_member" "feature_preview_service_self_sign_blob"',
+            preview_terraform_tf,
+        )
+        self.assertIn("google_project_iam_custom_role.catalog_viewer_sign_blob.name", preview_terraform_tf)
+        self.assertIn(
             'resource "google_project_iam_member" "github_actions_preview_terraform"',
             preview_terraform_tf,
         )
@@ -372,6 +431,10 @@ class FeaturePreviewTests(unittest.TestCase):
             workflow,
         )
         self.assertIn(
+            "-target=google_service_account_iam_member.feature_preview_service_self_sign_blob",
+            workflow,
+        )
+        self.assertIn(
             "-target=google_project_iam_member.feature_preview_service_firestore_viewer",
             workflow,
         )
@@ -398,6 +461,10 @@ class FeaturePreviewTests(unittest.TestCase):
         )
         self.assertIn(
             "google_service_account_iam_member.feature_preview_loader_github_wif",
+            workflow,
+        )
+        self.assertIn(
+            "google_service_account_iam_member.feature_preview_service_self_sign_blob",
             workflow,
         )
         self.assertIn(
