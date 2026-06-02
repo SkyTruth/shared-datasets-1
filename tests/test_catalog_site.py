@@ -150,6 +150,24 @@ def write_release_index(root: Path, slug: str, *, latest_date: str = "2026-05-02
                         "path": f"{root_path}/releases/{date}/{slug}.pmtiles",
                         "sha256": "b" * 64,
                     },
+                    {
+                        "format": "ndgeojson",
+                        "role": "feature_index",
+                        "path": f"{root_path}/releases/{date}/{slug}.features.ndjson.gz",
+                        "generation": 1001,
+                    },
+                    {
+                        "format": "json",
+                        "role": "schema",
+                        "path": f"{root_path}/releases/{date}/{slug}.schema.json",
+                        "generation": 1002,
+                    },
+                    {
+                        "format": "json",
+                        "role": "manifest",
+                        "path": f"{root_path}/releases/{date}/{slug}.manifest.json",
+                        "generation": 1003,
+                    },
                 ],
             }
         )
@@ -205,6 +223,18 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["versions"][0]["canonical_path"], "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb")
         self.assertEqual(asset["versions"][0]["pmtiles_url"], "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles")
         self.assertEqual(asset["versions"][0]["pmtiles_sha256"], "b" * 64)
+        self.assertEqual(
+            [file_entry["path"] for file_entry in asset["versions"][0]["files"]],
+            [
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.features.ndjson.gz",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.schema.json",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.manifest.json",
+            ],
+        )
+        self.assertEqual(asset["versions"][0]["files"][2]["role"], "feature_index")
+        self.assertEqual(asset["versions"][0]["files"][4]["generation"], 1003)
         self.assertIn("non-commercial", asset["license_flags"])
         self.assertIn("attribution-required", asset["license_flags"])
         self.assertEqual(asset["bounds"], [-10.5, 20.25, 30.75, 40.125])
@@ -237,6 +267,63 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["source_url"], "https://example.test/source")
         self.assertEqual(asset["citation"], "Example citation")
         self.assertIn("Reusable example boundary dataset", asset["description"])
+
+    def test_preview_catalog_can_use_release_index_latest_and_force_private_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp))
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                release_index_assets_only=True,
+                latest_from_release_index=True,
+                force_access_tier="private",
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        asset = payload["assets"][0]
+        self.assertEqual(asset["access_tier"], "private")
+        self.assertEqual(
+            asset["canonical_path"],
+            "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
+        )
+        self.assertEqual(
+            asset["public_url"],
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
+        )
+        self.assertEqual(
+            asset["pmtiles_path"],
+            "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
+        )
+        self.assertEqual(
+            asset["pmtiles_url"],
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
+        )
+        self.assertEqual(asset["canonical_sha256"], "a" * 64)
+        self.assertEqual(asset["pmtiles_sha256"], "b" * 64)
+        self.assertEqual(asset["row_count"], 12345)
+
+    def test_release_index_assets_only_omits_assets_without_preview_release_indexes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_path, categories_path, docs_dir = write_fixture(Path(tmp), MIXED_ACCESS_CATALOG)
+            (docs_dir / "private-asset.md").write_text(DOC.replace("example-asset", "private-asset"))
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                release_index_assets_only=True,
+                latest_from_release_index=True,
+                force_access_tier="private",
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        self.assertEqual([asset["slug"] for asset in payload["assets"]], ["example-asset"])
 
     def test_build_catalog_payload_keeps_public_and_private_assets_visible(self):
         with tempfile.TemporaryDirectory() as tmp:

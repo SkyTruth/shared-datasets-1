@@ -9,7 +9,7 @@ import datetime as dt
 import json
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import quote
@@ -77,6 +77,7 @@ class CatalogVersion:
     pmtiles_path: str | None
     pmtiles_url: str | None
     available_formats: list[str]
+    files: list[dict[str, Any]] = field(default_factory=list)
     source_version: str = ""
     rows: int | None = None
     release_path: str = ""
@@ -820,6 +821,20 @@ def release_file_sha256(file_entry: Any) -> str:
     return value if re.fullmatch(r"[a-fA-F0-9]{64}", value) else ""
 
 
+def release_files(files: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            continue
+        path = release_file_path(file_entry)
+        if not path:
+            continue
+        normalized_entry = {str(key): value for key, value in file_entry.items() if str(key)}
+        normalized_entry["path"] = path
+        normalized.append(normalized_entry)
+    return normalized
+
+
 def basename(path: str) -> str:
     return next(reversed([part for part in path.split("/") if part]), "")
 
@@ -886,6 +901,7 @@ def release_versions_from_index(
         row_count = release.get("rows")
         if not isinstance(row_count, int):
             row_count = None
+        normalized_files = release_files(files)
         seen_dates.add(date)
         versions.append(
             CatalogVersion(
@@ -895,6 +911,7 @@ def release_versions_from_index(
                 pmtiles_path=release_pmtiles_path or None,
                 pmtiles_url=gs_to_https(release_pmtiles_path) if release_pmtiles_path else None,
                 available_formats=release_formats_from_files(available_formats, files, canonical_format),
+                files=normalized_files,
                 source_version=str(release.get("source_version") or ""),
                 rows=row_count,
                 release_path=str(release.get("release_path") or ""),
@@ -1120,6 +1137,43 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
     )
 
 
+def release_index_exists(release_index_dir: Path | None, slug: str) -> bool:
+    return release_index_dir is not None and (release_index_dir / f"{slug}.json").exists()
+
+
+def latest_version_for_asset(asset: CatalogAsset) -> CatalogVersion | None:
+    latest_date = ""
+    if isinstance(asset.latest_release, dict):
+        latest_date = str(asset.latest_release.get("date") or "")
+    if latest_date:
+        for version in asset.versions:
+            if version.date == latest_date:
+                return version
+    return asset.versions[0] if asset.versions else None
+
+
+def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | None:
+    latest_version = latest_version_for_asset(asset)
+    if latest_version is None:
+        return None
+    formats = latest_version.available_formats or asset.available_formats
+    pmtiles_path = latest_version.pmtiles_path if "pmtiles" in formats else None
+    return replace(
+        asset,
+        canonical_path=latest_version.canonical_path,
+        available_formats=formats,
+        has_pmtiles="pmtiles" in formats,
+        has_geojson="geojson" in formats,
+        has_csv="csv" in formats,
+        public_url=latest_version.public_url,
+        pmtiles_path=pmtiles_path,
+        pmtiles_url=latest_version.pmtiles_url if pmtiles_path else None,
+        canonical_sha256=latest_version.canonical_sha256 or asset.canonical_sha256,
+        pmtiles_sha256=latest_version.pmtiles_sha256 or asset.pmtiles_sha256,
+        row_count=latest_version.rows if latest_version.rows is not None else asset.row_count,
+    )
+
+
 def build_catalog_payload(
     *,
     catalog_path: Path,
@@ -1128,8 +1182,13 @@ def build_catalog_payload(
     bucket: str,
     site_prefix: str,
     release_index_dir: Path | None = Path("_catalog/releases"),
+    release_index_assets_only: bool = False,
+    latest_from_release_index: bool = False,
+    force_access_tier: str | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
+    if force_access_tier is not None and force_access_tier not in ACCESS_TIERS:
+        raise CatalogSiteError(f"force_access_tier must be one of: {', '.join(sorted(ACCESS_TIERS))}")
     categories = load_categories(categories_path)
     rows = load_catalog_rows(catalog_path)
     effective_release_index_dir = release_index_dir
@@ -1138,9 +1197,19 @@ def build_catalog_payload(
     seen: set[str] = set()
     assets: list[CatalogAsset] = []
     for index, row in enumerate(rows, start=2):
+        slug = row.get("asset_slug", "").strip()
+        if release_index_assets_only and not release_index_exists(effective_release_index_dir, slug):
+            continue
         validate_row(row=row, row_number=index, categories=categories, seen=seen, docs_dir=docs_dir)
-        seen.add(row["asset_slug"].strip())
-        assets.append(asset_from_row(row, docs_dir, release_index_dir=effective_release_index_dir))
+        seen.add(slug)
+        asset = asset_from_row(row, docs_dir, release_index_dir=effective_release_index_dir)
+        if latest_from_release_index:
+            asset = asset_with_latest_from_release_index(asset)
+            if asset is None:
+                continue
+        if force_access_tier is not None:
+            asset = replace(asset, access_tier=force_access_tier)
+        assets.append(asset)
     assets.sort(key=lambda asset: asset.sort_key, reverse=True)
     return {
         "schema_version": 1,
@@ -1188,6 +1257,9 @@ def build_site(
     bucket: str,
     site_prefix: str,
     release_index_dir: Path | None = Path("_catalog/releases"),
+    release_index_assets_only: bool = False,
+    latest_from_release_index: bool = False,
+    force_access_tier: str | None = None,
     generated_at: str | None = None,
 ) -> list[Path]:
     payload = build_catalog_payload(
@@ -1197,6 +1269,9 @@ def build_site(
         bucket=bucket,
         site_prefix=site_prefix,
         release_index_dir=release_index_dir,
+        release_index_assets_only=release_index_assets_only,
+        latest_from_release_index=latest_from_release_index,
+        force_access_tier=force_access_tier,
         generated_at=generated_at,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1223,6 +1298,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=Path("_catalog/releases"),
         help="Optional local directory of _catalog/releases/*.json files to merge into catalog.json.",
     )
+    parser.add_argument(
+        "--release-index-assets-only",
+        action="store_true",
+        help="Include only assets with a local release-index JSON file.",
+    )
+    parser.add_argument(
+        "--latest-from-release-index",
+        action="store_true",
+        help="Use the release-index latest release as each asset's top-level latest reference.",
+    )
+    parser.add_argument(
+        "--force-access-tier",
+        choices=sorted(ACCESS_TIERS),
+        help="Override emitted asset access_tier values, for private preview deployments.",
+    )
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
     return parser.parse_args(argv)
 
@@ -1238,6 +1328,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         bucket=args.bucket,
         site_prefix=args.site_prefix,
         release_index_dir=args.release_index_dir,
+        release_index_assets_only=args.release_index_assets_only,
+        latest_from_release_index=args.latest_from_release_index,
+        force_access_tier=args.force_access_tier,
         generated_at=args.generated_at,
     )
     print(json.dumps({"output": str(args.out), "files": [str(path) for path in written]}, indent=2))

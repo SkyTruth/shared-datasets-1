@@ -20,6 +20,11 @@ being removed. Public browser access should use `tiles.skytruth.org/_catalog/`.
 The authenticated internal entry point is the IAP-protected Cloud Run `run.app`
 URL exposed by the Terraform `catalog_viewer_uri` output.
 
+The feature-branch preview environment has a separate IAP-protected catalog
+viewer backed by `gs://skytruth-shared-datasets-1-preview/`; see
+`docs/feature-preview.md`. It is refreshed by the preview index-load workflow
+and intentionally lists only assets with preview-bucket release indexes.
+
 ## Build locally
 
 ```bash
@@ -58,6 +63,9 @@ fetches `_catalog/releases/{asset-slug}.json` and replaces that fallback with
 the complete release history from the bucket-side release index. This keeps the
 release selector current after cron jobs run without requiring a Git commit or a
 tracked `last_updated` edit.
+Release-index-backed `versions[]` entries preserve the complete release
+`files` list, including sidecar datafiles such as feature indexes, metadata
+sidecars, schemas, and manifests.
 
 The browser-facing freshness labels are `Latest release` for the newest
 successful dataset release and `Last check-in` for the most recent success or
@@ -290,11 +298,11 @@ should represent release dates that include the canonical format.
 
 ## Authenticated viewer infrastructure
 
-Terraform owns the IAP-protected Cloud Run viewer. It does not require a
-SkyTruth custom domain or load balancer; direct Cloud Run IAP protects the
-service's generated `run.app` URL. Build and push an immutable viewer image,
-then update `catalog_viewer_image` in Terraform by PR. The protected production
-workflow applies after review and merge:
+Production Terraform owns the production IAP-protected Cloud Run viewer. It
+does not require a SkyTruth custom domain or load balancer; direct Cloud Run IAP
+protects the service's generated `run.app` URL. Build and push an immutable
+viewer image, then update `catalog_viewer_image` in Terraform by PR. The
+protected production workflow applies after review and merge:
 
 ```bash
 IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:$(date -u +%Y%m%d%H%M%S)

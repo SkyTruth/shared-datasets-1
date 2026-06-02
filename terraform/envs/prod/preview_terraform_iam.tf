@@ -102,6 +102,12 @@ resource "google_service_account_iam_member" "feature_preview_loader_github_wif"
   member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"
 }
 
+resource "google_service_account_iam_member" "feature_preview_service_self_sign_blob" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_service_account.email}"
+  role               = google_project_iam_custom_role.catalog_viewer_sign_blob.name
+  member             = module.feature_preview_service_account.member
+}
+
 resource "google_project_iam_member" "feature_preview_service_firestore_viewer" {
   project = var.project_id
   role    = "roles/datastore.viewer"

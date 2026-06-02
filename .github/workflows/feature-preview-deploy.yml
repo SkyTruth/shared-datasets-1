@@ -11,9 +11,16 @@ env:
   REGION: us-central1
   ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
   IMAGE_NAME: preview-service
+  CATALOG_VIEWER_IMAGE_NAME: preview-catalog-viewer
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview
+  INDEX_LOADER_SERVICE_ACCOUNT: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
+  CATALOG_WEB_CACHE_CONTROL: "no-cache, max-age=0, must-revalidate"
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
   TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
@@ -60,6 +67,21 @@ jobs:
 
       - name: Record checked-out SHA
         run: echo "PREVIEW_DEPLOY_SHA=$(git rev-parse HEAD)" >> "${GITHUB_ENV}"
+        working-directory: preview-source
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync selected branch dependencies
+        run: uv sync --frozen
         working-directory: preview-source
 
       - name: Validate Terraform auth configuration
@@ -109,24 +131,29 @@ jobs:
           fi
 
           gcloud projects get-iam-policy "${GOOGLE_CLOUD_PROJECT}" --format=json > "${RUNNER_TEMP}/preview-project-iam.json"
+          gcloud iam service-accounts get-iam-policy "${preview_service_account}" \
+            --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format=json > "${RUNNER_TEMP}/preview-service-iam.json"
           gcloud iam service-accounts get-iam-policy "${preview_loader_service_account}" \
             --project="${GOOGLE_CLOUD_PROJECT}" \
             --format=json > "${RUNNER_TEMP}/preview-loader-iam.json"
           export PREVIEW_LOADER_WIF_MEMBER="${preview_loader_wif_member}"
 
-          python - "${RUNNER_TEMP}/preview-project-iam.json" "${RUNNER_TEMP}/preview-loader-iam.json" <<'PY'
+          python - "${RUNNER_TEMP}/preview-project-iam.json" "${RUNNER_TEMP}/preview-service-iam.json" "${RUNNER_TEMP}/preview-loader-iam.json" <<'PY'
           import json
           import os
           import sys
 
           project_policy = json.load(open(sys.argv[1]))
-          loader_policy = json.load(open(sys.argv[2]))
+          service_policy = json.load(open(sys.argv[2]))
+          loader_policy = json.load(open(sys.argv[3]))
           project = os.environ["GOOGLE_CLOUD_PROJECT"]
           terraform_service_account = os.environ["TERRAFORM_SERVICE_ACCOUNT"]
           preview_database = f"projects/{project}/databases/feature-preview"
           preview_service_member = f"serviceAccount:feature-preview-service@{project}.iam.gserviceaccount.com"
           preview_loader_member = f"serviceAccount:feature-preview-loader@{project}.iam.gserviceaccount.com"
           preview_terraform_role = f"projects/{project}/roles/sharedDatasetsPreviewTerraform"
+          preview_sign_blob_role = f"projects/{project}/roles/sharedDatasetsCatalogViewerSignBlob"
           loader_wif_member = os.environ["PREVIEW_LOADER_WIF_MEMBER"]
 
           def project_binding_exists(role, member, condition_title=None):
@@ -142,10 +169,10 @@ jobs:
                       return True
               return False
 
-          def service_account_binding_exists(role, member):
+          def service_account_binding_exists(policy, role, member):
               return any(
                   binding.get("role") == role and member in binding.get("members", [])
-                  for binding in loader_policy.get("bindings", [])
+                  for binding in policy.get("bindings", [])
               )
 
           missing = []
@@ -155,7 +182,9 @@ jobs:
               missing.append("preview service Firestore read binding")
           if not project_binding_exists("roles/datastore.user", preview_loader_member, "preview_firestore_write"):
               missing.append("preview loader Firestore write binding")
-          if not service_account_binding_exists("roles/iam.workloadIdentityUser", loader_wif_member):
+          if not service_account_binding_exists(service_policy, preview_sign_blob_role, preview_service_member):
+              missing.append("preview service self signBlob binding")
+          if not service_account_binding_exists(loader_policy, "roles/iam.workloadIdentityUser", loader_wif_member):
               missing.append("preview loader Workload Identity binding")
 
           if missing:
@@ -168,13 +197,18 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-      - name: Verify selected feature branch contains preview service
+      - name: Verify selected feature branch contains preview services
         run: |
           set -euo pipefail
 
           test -f preview-source/services/feature_preview_service/Dockerfile
           if ! grep -q "FEATURE_PREVIEW_FIRESTORE_DATABASE" preview-source/services/feature_preview_service/run.py; then
             echo "The selected feature branch must support the preview Firestore database override before it can run in preview." >&2
+            exit 1
+          fi
+          test -f preview-source/services/catalog_viewer/Dockerfile
+          if ! grep -q "SHARED_DATASETS_SITE_PREFIX" preview-source/services/catalog_viewer/run.py; then
+            echo "The selected feature branch must support the catalog viewer site-prefix override before it can run in preview." >&2
             exit 1
           fi
 
@@ -201,7 +235,26 @@ jobs:
             echo "Could not resolve immutable image digest for ${image_tag}" >&2
             exit 1
           fi
+          echo "SAFE_PREVIEW_REF=${safe_ref}" >> "${GITHUB_ENV}"
           echo "PREVIEW_SERVICE_IMAGE=${image_digest}" >> "${GITHUB_ENV}"
+
+      - name: Build preview catalog viewer image
+        run: |
+          set -euo pipefail
+
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${CATALOG_VIEWER_IMAGE_NAME}:preview-${SAFE_PREVIEW_REF}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build \
+            --platform linux/amd64 \
+            -f preview-source/services/catalog_viewer/Dockerfile \
+            -t "${image_tag}" \
+            preview-source
+          docker push "${image_tag}"
+          image_digest="$(gcloud artifacts docker images describe "${image_tag}" --format='value(image_summary.fully_qualified_digest)')"
+          if [[ -z "${image_digest}" || "${image_digest}" != *@sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${image_tag}" >&2
+            exit 1
+          fi
+          echo "PREVIEW_CATALOG_VIEWER_IMAGE=${image_digest}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -278,6 +331,7 @@ jobs:
             -input=false \
             -out="${RUNNER_TEMP}/feature-branch-preview.tfplan" \
             -var="preview_service_image=${PREVIEW_SERVICE_IMAGE}" \
+            -var="preview_catalog_viewer_image=${PREVIEW_CATALOG_VIEWER_IMAGE}" \
             -var="preview_ref=${PREVIEW_REF}" \
             -var="preview_deploy_sha=${PREVIEW_DEPLOY_SHA}"
 
@@ -299,14 +353,18 @@ jobs:
               "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
               "google_cloud_run_v2_service.feature_preview_service",
+              "google_cloud_run_v2_service.feature_preview_catalog_viewer",
               "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
+              "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker",
           }
           allowed_patterns = [
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_service_accessors\["),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_catalog_viewer_accessors\["),
           ]
           expected = {
               "bucket": "skytruth-shared-datasets-1-preview",
               "service": "feature-preview-service",
+              "catalog_viewer": "feature-preview-catalog-viewer",
               "database": "feature-preview",
               "service_account": "feature-preview-service",
               "index_loader_service_account": "feature-preview-loader",
@@ -358,10 +416,24 @@ jobs:
                               value_violations.append(
                                   f"{address} preview Firestore database must be {expected['database']!r}"
                               )
+                  elif address == "google_cloud_run_v2_service.feature_preview_catalog_viewer":
+                      require_value(value_violations, address, values, "name", expected["catalog_viewer"])
+                      env = cloud_run_env(values)
+                      if env:
+                          if env.get("SHARED_DATASETS_BUCKET") != expected["bucket"]:
+                              value_violations.append(f"{address} SHARED_DATASETS_BUCKET must be {expected['bucket']!r}")
+                          if env.get("SHARED_DATASETS_SITE_PREFIX") != "_catalog/web":
+                              value_violations.append(f"{address} SHARED_DATASETS_SITE_PREFIX must be '_catalog/web'")
+                          if env.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT") != f"{expected['service_account']}@shared-datasets-1.iam.gserviceaccount.com":
+                              value_violations.append(f"{address} signer must use the preview service account")
                   elif address == "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker":
                       require_value(value_violations, address, values, "name", expected["service"])
+                  elif address == "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker":
+                      require_value(value_violations, address, values, "name", expected["catalog_viewer"])
                   elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_service_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
+                  elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors"):
+                      require_value(value_violations, address, values, "cloud_run_service_name", expected["catalog_viewer"])
                   elif address.startswith("google_storage_bucket_iam_member."):
                       require_value(value_violations, address, values, "bucket", expected["bucket"])
                   continue
@@ -385,5 +457,36 @@ jobs:
       - name: Report preview outputs
         run: |
           terraform -chdir=terraform/envs/preview output preview_service_uri
+          terraform -chdir=terraform/envs/preview output preview_catalog_viewer_uri
           terraform -chdir=terraform/envs/preview output preview_bucket
           terraform -chdir=terraform/envs/preview output preview_firestore_database
+
+      - name: Build initial preview catalog web bundle
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/preview-release-indexes"
+          uv run python scripts/catalog_site.py \
+            --bucket "${SHARED_DATASETS_BUCKET}" \
+            --release-index-dir "${RUNNER_TEMP}/preview-release-indexes" \
+            --release-index-assets-only \
+            --latest-from-release-index \
+            --force-access-tier private \
+            --out "${RUNNER_TEMP}/preview-catalog-web"
+        working-directory: preview-source
+
+      - name: Authenticate as preview catalog publisher
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Publish initial preview catalog web bundle
+        env:
+          SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+        run: |
+          set -euo pipefail
+          uv run python scripts/catalog_web_publish.py \
+            --source "${RUNNER_TEMP}/preview-catalog-web" \
+            --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
+            --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
+        working-directory: preview-source

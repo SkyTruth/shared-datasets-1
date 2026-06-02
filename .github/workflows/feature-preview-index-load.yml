@@ -55,6 +55,7 @@ env:
   INDEX_LOADER_SERVICE_ACCOUNT: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
   FEATURE_PREVIEW_FIRESTORE_DATABASE: feature-preview
   FEATURE_PREVIEW_COLLECTION_ROOT: feature_preview_index
+  CATALOG_WEB_CACHE_CONTROL: "no-cache, max-age=0, must-revalidate"
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
@@ -65,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: feature-preview-index-load-${{ inputs.asset_slug }}-${{ inputs.release }}
+      group: feature-preview-index-load
       cancel-in-progress: false
 
     env:
@@ -187,6 +188,7 @@ jobs:
               "MANIFEST_PATH": str(work_dir / f"{asset_slug}.manifest.json"),
               "INDEX_LOAD_RECORD": str(work_dir / f"{load_id}.json"),
               "INDEX_LOAD_URI": f"gs://{bucket}/000-system/feature-preview/index-loads/{asset_slug}/{release}/{load_id}.json",
+              "RELEASE_INDEX_URI": f"gs://{bucket}/_catalog/releases/{asset_slug}.json",
           }
           with open(os.environ["GITHUB_ENV"], "a") as env_file:
               for name, value in env_updates.items():
@@ -215,12 +217,19 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
 
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Download exact-generation preview feature-index bundle
         run: |
           set -euo pipefail
           uv run python scripts/gcs_asset.py download "${SIDECAR_URI}" "${SIDECAR_PATH}" --generation "${SIDECAR_GENERATION}"
           uv run python scripts/gcs_asset.py download "${SCHEMA_URI}" "${SCHEMA_PATH}" --generation "${SCHEMA_GENERATION}"
           uv run python scripts/gcs_asset.py download "${MANIFEST_URI}" "${MANIFEST_PATH}" --generation "${MANIFEST_GENERATION}"
+        working-directory: preview-source
+
+      - name: Confirm preview release index exists
+        run: uv run python scripts/gcs_asset.py stat "${RELEASE_INDEX_URI}"
         working-directory: preview-source
 
       - name: Load preview Firestore index and write local record
@@ -253,4 +262,33 @@ jobs:
             "${INDEX_LOAD_URI}" \
             --content-type "application/json" \
             --cache-control "no-cache, max-age=0, must-revalidate"
+        working-directory: preview-source
+
+      - name: Download preview release indexes
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/preview-release-indexes"
+          gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" "${RUNNER_TEMP}/preview-release-indexes/"
+
+      - name: Build refreshed preview catalog web bundle
+        run: |
+          set -euo pipefail
+          uv run python scripts/catalog_site.py \
+            --bucket "${SHARED_DATASETS_BUCKET}" \
+            --release-index-dir "${RUNNER_TEMP}/preview-release-indexes" \
+            --release-index-assets-only \
+            --latest-from-release-index \
+            --force-access-tier private \
+            --out "${RUNNER_TEMP}/preview-catalog-web"
+        working-directory: preview-source
+
+      - name: Publish refreshed preview catalog web bundle
+        env:
+          SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+        run: |
+          set -euo pipefail
+          uv run python scripts/catalog_web_publish.py \
+            --source "${RUNNER_TEMP}/preview-catalog-web" \
+            --destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/web" \
+            --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
         working-directory: preview-source

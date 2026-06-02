@@ -24,33 +24,35 @@ Selection:
 The selected branch or tag is both the workflow ref and the preview source ref.
 The protected workflow keeps the preview control plane checked out from `main`
 at the workspace root and checks out the selected workflow branch separately
-under `preview-source/`. It builds the preview service image from the selected
-branch after verifying the protected preview IAM bootstrap, plans and applies
-a saved `terraform/envs/preview` destroy reset from the `main` control-plane
-checkout, then plans and applies the new preview stack for the selected branch
-and prints the preview Cloud Run URL.
+under `preview-source/`. It builds the preview service and preview catalog
+viewer images from the selected branch after verifying the protected preview
+IAM bootstrap, plans and applies a saved `terraform/envs/preview` destroy reset
+from the `main` control-plane checkout, then plans and applies the new preview
+stack for the selected branch, publishes an initial preview catalog web bundle,
+and prints the preview service and catalog viewer Cloud Run URLs.
 
 This split is intentional. The workflow branch dropdown provides the source that
 is deployed into the preview slot, while the workflow checks out `main` for the
 reviewed Terraform control plane.
 
-The selected feature branch must include the baseline preview service source and
-support the preview Firestore database override. `main` carries those mechanics;
-feature branches should rebase or merge from `main` before using the preview
-workflow.
+The selected feature branch must include the baseline preview service source,
+catalog viewer source, catalog site generator, and preview Firestore database
+override. `main` carries those mechanics; feature branches should rebase or
+merge from `main` before using the preview workflow.
 
 To replace the preview with a different feature branch, run the same workflow
 again and select the new branch or tag in the workflow branch dropdown. There is
 only one active preview slot; each deploy first tears down the previous preview
-bucket, Firestore database, Cloud Run service, and preview bucket/IAP IAM
+bucket, Firestore database, Cloud Run services, and preview bucket/IAP IAM
 bindings before creating the new preview deployment. This clears previous
 preview data that is no longer present in the selected ref.
 
 The deploy workflow does not own the stable conditioned project IAM grants that
 let the preview service and preview loader use the preview Firestore database,
-the stable preview service accounts, or the preview loader Workload Identity
-binding. Those bootstrap resources are managed by the protected GitHub Actions
-workflow named `Preview Terraform IAM sync` from
+the stable preview service accounts, the preview service self-signing grant used
+for catalog viewer signed URLs, or the preview loader Workload Identity binding.
+Those bootstrap resources are managed by the protected GitHub Actions workflow
+named `Preview Terraform IAM sync` from
 `terraform/envs/prod/preview_terraform_iam.tf`.
 That sync owns creation of `feature-preview-service` and
 `feature-preview-loader`; deploy and destroy only validate or use those stable
@@ -72,12 +74,35 @@ Use the GitHub Actions workflow named `Destroy Preview Environment`. The
 protected workflow applies only from `main`, checks out the reviewed `main`
 control plane, plans `terraform/envs/preview` with `-destroy`, enforces the
 preview-resource allowlist, and applies only that saved destroy plan. This
-removes the preview Cloud Run service, preview bucket contents, preview
+removes the preview Cloud Run services, preview bucket contents, preview
 Firestore database, preview IAM bindings owned by the preview root. It does not
 delete the stable preview service accounts or loader Workload Identity binding.
 It may delete the same legacy preview-scoped Firestore project IAM bindings
 described above so the preview state can converge onto the protected IAM sync
 workflow.
+
+## Preview Catalog Viewer
+
+The deploy workflow creates an IAP-protected preview catalog viewer at the
+`preview_catalog_viewer_uri` Terraform output. It serves `_catalog/web/` from
+`gs://skytruth-shared-datasets-1-preview/`, not from the production bucket.
+
+The initial deploy publishes a catalog shell with no listed assets. The
+`Feature preview index load` workflow refreshes that catalog after each
+successful load by downloading every preview release index under
+`gs://skytruth-shared-datasets-1-preview/_catalog/releases/*.json`, rebuilding
+the catalog web bundle, and publishing it back to the preview bucket with
+generation preconditions.
+
+The preview catalog intentionally includes only assets with preview-bucket
+release indexes. It materializes each asset's top-level "latest" reference from
+the release index and forces `access_tier: private` so the authenticated preview
+viewer signs short-lived GCS URLs for FGB downloads and PMTiles previews. This
+prevents the preview UI from silently linking to production `latest/` objects.
+The generated catalog also preserves every file entry from each preview release
+index in `versions[].files`, including feature-index sidecars, metadata
+sidecars, schemas, manifests, and any other new sidecar datafiles that belong
+to the preview release bundle.
 
 ## Load Preview Data
 
@@ -121,8 +146,9 @@ Inputs:
 The workflow keeps the preview workflow code checked out at the workspace root
 and checks out the requested `ref` under `preview-source/` for the catalog and
 loader code. It authenticates with the preview loader identity, downloads the
-exact preview objects, loads documents into the preview Firestore database, and
-writes a load record back to the preview bucket.
+exact preview objects, loads documents into the preview Firestore database,
+writes a load record back to the preview bucket, and refreshes the preview
+catalog viewer bundle from the preview release indexes.
 
 Branches based on current `main` satisfy the preview loader requirements.
 

@@ -119,14 +119,18 @@ jobs:
               "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
               "google_cloud_run_v2_service.feature_preview_service",
+              "google_cloud_run_v2_service.feature_preview_catalog_viewer",
               "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
+              "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker",
           } | set(legacy_preview_project_iam_exact)
           allowed_patterns = [
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_service_accessors\["),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_catalog_viewer_accessors\["),
           ]
           expected = {
               "bucket": "skytruth-shared-datasets-1-preview",
               "service": "feature-preview-service",
+              "catalog_viewer": "feature-preview-catalog-viewer",
               "database": "feature-preview",
               "service_account": "feature-preview-service",
               "index_loader_service_account": "feature-preview-loader",
@@ -177,10 +181,16 @@ jobs:
                       require_value(value_violations, address, values, "name", expected["database"])
                   elif address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
+                  elif address == "google_cloud_run_v2_service.feature_preview_catalog_viewer":
+                      require_value(value_violations, address, values, "name", expected["catalog_viewer"])
                   elif address == "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker":
                       require_value(value_violations, address, values, "name", expected["service"])
+                  elif address == "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker":
+                      require_value(value_violations, address, values, "name", expected["catalog_viewer"])
                   elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_service_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
+                  elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors"):
+                      require_value(value_violations, address, values, "cloud_run_service_name", expected["catalog_viewer"])
                   elif address.startswith("google_storage_bucket_iam_member."):
                       require_value(value_violations, address, values, "bucket", expected["bucket"])
                   elif address in legacy_preview_project_iam_exact:

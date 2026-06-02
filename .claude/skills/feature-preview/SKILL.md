@@ -85,6 +85,8 @@ published preview release.
   `Deploy Feature Branch to Preview`.
 - Select the feature branch or tag to deploy from the GitHub **Run workflow**
   branch dropdown.
+- The deploy publishes an initial empty preview catalog web bundle and reports
+  both the preview API URL and the preview catalog viewer URL.
 - Destroy the preview with `Destroy Preview Environment`.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
@@ -154,8 +156,17 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    - `sidecar_generation`, `schema_generation`, `manifest_generation`
    - optional `load_id`
 
-7. Report the preview bucket paths, generations, workflow run, and any retained
-   local temp work directory.
+7. Confirm that the index-load workflow refreshed the preview catalog viewer.
+   The viewer includes only preview-bucket release-index assets, materializes
+   top-level "latest" from those release indexes, and treats every preview asset
+   as private so the authenticated viewer signs short-lived preview-bucket URLs.
+   The generated catalog must preserve every release-index `files` entry in
+   `versions[].files`, including feature-index sidecars, metadata sidecars,
+   schemas, manifests, and any other new sidecar datafiles in the preview
+   release bundle.
+
+8. Report the preview bucket paths, generations, workflow run, preview catalog
+   viewer refresh status, and any retained local temp work directory.
 
 ## Safety Rules
 
