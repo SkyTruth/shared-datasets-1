@@ -51,6 +51,9 @@ the stable preview service accounts, or the preview loader Workload Identity
 binding. Those bootstrap resources are managed by the protected GitHub Actions
 workflow named `Preview Terraform IAM sync` from
 `terraform/envs/prod/preview_terraform_iam.tf`.
+That sync owns creation of `feature-preview-service` and
+`feature-preview-loader`; deploy and destroy only validate or use those stable
+identities.
 That sync workflow applies only from `main` after the reviewed control-plane
 changes have landed. Deploy validates those bootstrap resources before Docker
 build or Terraform reset, and fails without mutating the preview slot if the
