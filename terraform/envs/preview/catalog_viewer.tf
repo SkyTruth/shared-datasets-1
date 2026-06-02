@@ -33,6 +33,16 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       }
 
       env {
+        name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
+        value = google_firestore_database.feature_preview.name
+      }
+
+      env {
+        name  = "FEATURE_PREVIEW_COLLECTION_ROOT"
+        value = var.feature_preview_collection_root
+      }
+
+      env {
         name  = "CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT"
         value = local.preview_service_account_email
       }
@@ -50,6 +60,21 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       env {
         name  = "CATALOG_VIEWER_CATALOG_TTL_SECONDS"
         value = tostring(var.preview_catalog_viewer_catalog_ttl_seconds)
+      }
+
+      env {
+        name  = "FEATURE_PREVIEW_MAX_IDS"
+        value = tostring(var.feature_preview_max_ids)
+      }
+
+      env {
+        name  = "FEATURE_PREVIEW_MAX_FIELDS"
+        value = tostring(var.feature_preview_max_fields)
+      }
+
+      env {
+        name  = "FEATURE_PREVIEW_MAX_RESPONSE_BYTES"
+        value = tostring(var.feature_preview_max_response_bytes)
       }
 
       env {

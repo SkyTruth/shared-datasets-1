@@ -12,6 +12,7 @@ const state = {
   colorFieldByReference: {},
   colorFieldsByReference: {},
   docsRequestSerial: 0,
+  featureLookupSerial: 0,
 };
 
 function createZoomSelectionButton() {
@@ -1153,13 +1154,123 @@ async function renderPmtiles(assets) {
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
       onColorLegendChange: renderColorLegend,
-      onFeatureSelect: renderFeatureInspector,
+      onFeatureSelect: handleFeatureSelect,
     });
     setZoomSelectionEnabled(false);
   } catch (error) {
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
   }
+}
+
+async function handleFeatureSelect(features) {
+  const selectedFeatures = Array.isArray(features) ? features : [features].filter(Boolean);
+  const requestSerial = ++state.featureLookupSerial;
+  renderFeatureInspector(selectedFeatures);
+  if (!selectedFeatures.length) {
+    return;
+  }
+  const enriched = await enrichFeatureMetadata(selectedFeatures);
+  if (requestSerial !== state.featureLookupSerial) {
+    return;
+  }
+  renderFeatureInspector(enriched);
+}
+
+async function enrichFeatureMetadata(features) {
+  const groups = featureLookupGroups(features);
+  if (!groups.length) {
+    return features;
+  }
+  const enrichedByKey = new Map();
+  await Promise.all(
+    groups.map(async (group) => {
+      try {
+        const lookup = await lookupFeatureMetadata(group);
+        for (const feature of group.features) {
+          const featureId = featureIdFor(feature);
+          const item = lookup.get(featureId);
+          if (!item?.found) {
+            continue;
+          }
+          enrichedByKey.set(featureLookupKey(feature), enrichFeature(feature, item));
+        }
+      } catch (error) {
+        console.warn(`Could not load feature metadata for ${group.assetSlug}:`, error);
+      }
+    })
+  );
+  return features.map((feature) => enrichedByKey.get(featureLookupKey(feature)) || feature);
+}
+
+function featureLookupGroups(features) {
+  const groups = new Map();
+  for (const feature of features) {
+    const featureId = featureIdFor(feature);
+    const assetSlug = String(feature?.assetSlug || "").trim();
+    const release = String(feature?.release || "latest").trim();
+    if (!featureId || !assetSlug || !release) {
+      continue;
+    }
+    const key = `${assetSlug}\n${release}`;
+    if (!groups.has(key)) {
+      groups.set(key, { assetSlug, release, ids: new Set(), features: [] });
+    }
+    const group = groups.get(key);
+    group.ids.add(featureId);
+    group.features.push(feature);
+  }
+  return [...groups.values()];
+}
+
+async function lookupFeatureMetadata(group) {
+  const response = await fetch(featureMetadataLookupUrl(group.assetSlug, group.release), {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ids: [...group.ids],
+      include_provenance: true,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`feature metadata lookup returned HTTP ${response.status}`);
+  }
+  const payload = await response.json();
+  const lookup = new Map();
+  for (const item of Array.isArray(payload.items) ? payload.items : []) {
+    lookup.set(String(item?.id || ""), item);
+  }
+  return lookup;
+}
+
+function featureMetadataLookupUrl(assetSlug, release) {
+  return `/v1/assets/${encodeURIComponent(assetSlug)}/releases/${encodeURIComponent(release)}:lookup`;
+}
+
+function enrichFeature(feature, item) {
+  const featureId = featureIdFor(feature);
+  return {
+    ...feature,
+    featureHash: item.feature_hash || feature.featureHash || "",
+    provenance: item.provenance || feature.provenance || null,
+    properties: {
+      feature_id: featureId,
+      ...(item.properties || {}),
+    },
+  };
+}
+
+function featureLookupKey(feature) {
+  return `${feature?.assetSlug || ""}\n${feature?.release || ""}\n${featureIdFor(feature)}\n${feature?.sourceLayer || ""}`;
+}
+
+function featureIdFor(feature) {
+  return String(feature?.properties?.feature_id || feature?.properties?.FEATURE_ID || "").trim();
 }
 
 function mapUnavailableMessage(error, mapAssets) {
@@ -1447,7 +1558,7 @@ function appendFeatureHit(feature) {
   swatch.style.background = feature.color || "var(--accent)";
   title.append(swatch, document.createTextNode(feature.assetTitle || "Dataset feature"));
   const meta = document.createElement("span");
-  meta.textContent = [feature.sourceLayer, feature.geometryType].filter(Boolean).join(" / ");
+  meta.textContent = [feature.sourceLayer, feature.geometryType, feature.release].filter(Boolean).join(" / ");
   hitHeader.append(title, meta);
   hit.append(hitHeader);
 
