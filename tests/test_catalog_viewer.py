@@ -426,6 +426,28 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
 
+    def test_feature_index_download_accepts_features_sidecar_format(self):
+        store = FakeStore(catalog_payload())
+        release_index = json.loads(store.static["releases/wdpa-marine.json"].body)
+        release_index["releases"][0]["files"][-1] = {
+            "format": "features",
+            "path": PUBLIC_FEATURE_INDEX_RELEASE_PATH,
+        }
+        store.static["releases/wdpa-marine.json"] = StaticObject(
+            json.dumps(release_index, separators=(",", ":")).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+        response, _signer = download_url_request(
+            "wdpa-marine",
+            version="2026-05-01",
+            fmt="feature_index",
+            store=store,
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+
     def test_feature_index_download_latest_uses_release_index_latest(self):
         response, _signer = download_url_request("wdpa-marine", fmt="feature_index")
 

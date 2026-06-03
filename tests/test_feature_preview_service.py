@@ -217,6 +217,20 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
         self.assertEqual(resolved.sidecar_generation, 1001)
 
+    def test_catalog_resolver_accepts_features_format_sidecar(self):
+        resolver = run.CatalogReleaseResolver(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(
+                release_index_bucket(release_index_payload(sidecar_format="features", sidecar_role=None))
+            ),
+            ttl_seconds=0,
+        )
+
+        resolved = resolver.resolve("wdpa-marine", "latest")
+
+        self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
+        self.assertEqual(resolved.sidecar_generation, 1001)
+
     def test_lookup_requires_iap_identity(self):
         response = run.handle_request(
             "POST",

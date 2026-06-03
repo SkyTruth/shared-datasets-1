@@ -463,7 +463,7 @@ def is_feature_index_file(item: Mapping[str, Any], path: str) -> bool:
         return False
     role = str(item.get("role") or "").strip()
     format_name = str(item.get("format") or "").strip()
-    return role == "feature_index" or format_name in {"feature_index", "features_ndjson_gzip"}
+    return role == "feature_index" or format_name in {"feature_index", "features_ndjson_gzip", "features"}
 
 
 def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> dict[str, dict[str, Any]]:

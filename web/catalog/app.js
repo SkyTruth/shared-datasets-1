@@ -1371,7 +1371,7 @@ function featureMetadataSidecarFile(assetSlug, release) {
     const format = String(file?.format || "").trim();
     return (
       path.endsWith(".features.ndjson.gz") &&
-      (role === "feature_index" || format === "feature_index" || format === "features_ndjson_gzip")
+      (role === "feature_index" || format === "feature_index" || format === "features_ndjson_gzip" || format === "features")
     );
   });
 }

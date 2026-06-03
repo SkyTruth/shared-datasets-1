@@ -92,6 +92,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("function featureMetadataDownloadUrl", app)
         self.assertIn('format: "feature_index"', app)
         self.assertIn('format === "features_ndjson_gzip"', app)
+        self.assertIn('format === "features"', app)
         self.assertIn("parseFeatureMetadataSidecar", app)
         self.assertIn("DecompressionStream", app)
         self.assertIn('credentials: "include"', app)

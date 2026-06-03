@@ -555,9 +555,7 @@ def release_file_for_role(files: Any, role: str, suffix: str) -> str:
             continue
         entry_role = str(file_entry.get("role") or "").strip()
         entry_format = str(file_entry.get("format") or "").strip()
-        if entry_role == role or (
-            role == "feature_index" and entry_format in {"feature_index", "features_ndjson_gzip"}
-        ):
+        if entry_role == role or (role == "feature_index" and entry_format in {"feature_index", "features_ndjson_gzip", "features"}):
             return file_path
     return ""
 
