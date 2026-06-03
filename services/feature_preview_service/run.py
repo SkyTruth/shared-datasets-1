@@ -1,11 +1,13 @@
-"""IAP-protected feature preview lookup API backed by Firestore."""
+"""IAP-protected feature preview lookup API backed by release sidecars."""
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -43,6 +45,8 @@ class ResolvedRelease:
     requested_release: str
     resolved_release: str
     release_index_generation: int | None
+    sidecar_uri: str = ""
+    sidecar_generation: int | None = None
 
 
 class ReleaseResolver(Protocol):
@@ -51,7 +55,15 @@ class ReleaseResolver(Protocol):
 
 
 class FeatureIndex(Protocol):
-    def lookup(self, asset_slug: str, release: str, feature_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def lookup(
+        self,
+        asset_slug: str,
+        release: str,
+        feature_ids: list[str],
+        *,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ) -> dict[str, dict[str, Any]]:
         ...
 
 
@@ -101,9 +113,11 @@ class CatalogReleaseResolver:
                 raise ApiError(HTTPStatus.NOT_FOUND, "not_found", f"{asset_slug} has no latest release")
         else:
             resolved = release
-        if not any(isinstance(item, Mapping) and item.get("date") == resolved for item in releases):
+        release_entry = release_index_entry(releases, resolved)
+        if release_entry is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "not_found", f"release {resolved} is not indexed")
-        return ResolvedRelease(release, resolved, generation)
+        sidecar_uri, sidecar_generation = feature_index_sidecar(release_entry)
+        return ResolvedRelease(release, resolved, generation, sidecar_uri, sidecar_generation)
 
     def _load_release_index(self, asset_slug: str) -> tuple[dict[str, Any], int | None]:
         now = self._clock()
@@ -124,6 +138,105 @@ class CatalogReleaseResolver:
         return payload, generation
 
 
+class GcsSidecarFeatureIndex:
+    def __init__(self, *, bucket_name: str, client: Any = None) -> None:
+        self.bucket_name = bucket_name
+        self._client = client
+        self._cache: dict[tuple[str, str, str, int], dict[str, dict[str, Any]]] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def client(self):
+        if self._client is None:
+            from google.cloud import storage
+
+            project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+            self._client = storage.Client(project=project) if project else storage.Client()
+        return self._client
+
+    def lookup(
+        self,
+        asset_slug: str,
+        release: str,
+        feature_ids: list[str],
+        *,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ) -> dict[str, dict[str, Any]]:
+        records = self._release_records(
+            asset_slug=asset_slug,
+            release=release,
+            sidecar_uri=sidecar_uri,
+            sidecar_generation=sidecar_generation,
+        )
+        return {feature_id: records[feature_id] for feature_id in feature_ids if feature_id in records}
+
+    def _release_records(
+        self,
+        *,
+        asset_slug: str,
+        release: str,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ) -> dict[str, dict[str, Any]]:
+        if not sidecar_uri or sidecar_generation is None:
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not indexed")
+        cache_key = (asset_slug, release, sidecar_uri, sidecar_generation)
+        with self._lock:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+            records = self._load_sidecar(
+                asset_slug=asset_slug,
+                release=release,
+                sidecar_uri=sidecar_uri,
+                sidecar_generation=sidecar_generation,
+            )
+            self._cache[cache_key] = records
+            return records
+
+    def _load_sidecar(
+        self,
+        *,
+        asset_slug: str,
+        release: str,
+        sidecar_uri: str,
+        sidecar_generation: int,
+    ) -> dict[str, dict[str, Any]]:
+        try:
+            bucket_name, object_name = split_gs_uri(sidecar_uri)
+        except ValueError as exc:
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar URI is invalid") from exc
+        if bucket_name != self.bucket_name:
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is outside the configured bucket")
+
+        blob = self.client.bucket(bucket_name).blob(object_name)
+        try:
+            blob.reload()
+        except Exception as exc:
+            if exc.__class__.__name__ == "NotFound":
+                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
+            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar metadata lookup failed") from exc
+
+        actual_generation = as_int(getattr(blob, "generation", None))
+        if actual_generation is not None and actual_generation != sidecar_generation:
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed")
+
+        try:
+            try:
+                payload = blob.download_as_bytes(if_generation_match=sidecar_generation)
+            except TypeError:
+                payload = blob.download_as_bytes()
+        except Exception as exc:
+            if exc.__class__.__name__ == "NotFound":
+                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
+            if exc.__class__.__name__ == "PreconditionFailed":
+                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed") from exc
+            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar download failed") from exc
+
+        return parse_sidecar_records(payload, asset_slug=asset_slug, release=release)
+
+
 class FirestoreFeatureIndex:
     def __init__(self, *, collection_root: str = DEFAULT_COLLECTION_ROOT, client: Any = None) -> None:
         self.collection_root = collection_root
@@ -142,7 +255,15 @@ class FirestoreFeatureIndex:
             self._client = firestore.Client(**kwargs)
         return self._client
 
-    def lookup(self, asset_slug: str, release: str, feature_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def lookup(
+        self,
+        asset_slug: str,
+        release: str,
+        feature_ids: list[str],
+        *,
+        sidecar_uri: str = "",
+        sidecar_generation: int | None = None,
+    ) -> dict[str, dict[str, Any]]:
         features = (
             self.client.collection(self.collection_root)
             .document(asset_slug)
@@ -227,7 +348,13 @@ def handle_lookup(
     request = parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
     resolved = release_resolver.resolve(asset_slug, release)
     unique_ids = list(dict.fromkeys(request["ids"]))
-    documents = feature_index.lookup(asset_slug, resolved.resolved_release, unique_ids)
+    documents = feature_index.lookup(
+        asset_slug,
+        resolved.resolved_release,
+        unique_ids,
+        sidecar_uri=resolved.sidecar_uri,
+        sidecar_generation=resolved.sidecar_generation,
+    )
     items = [response_item(feature_id, documents.get(feature_id), request["fields"], request["include_provenance"]) for feature_id in unique_ids]
     payload = {
         "asset_slug": asset_slug,
@@ -306,6 +433,103 @@ def response_item(
     if include_provenance:
         item["provenance"] = dict(document.get("provenance") or {})
     return item
+
+
+def release_index_entry(releases: Any, release: str) -> Mapping[str, Any] | None:
+    if not isinstance(releases, list):
+        return None
+    for item in releases:
+        if isinstance(item, Mapping) and item.get("date") == release:
+            return item
+    return None
+
+
+def feature_index_sidecar(release_entry: Mapping[str, Any]) -> tuple[str, int]:
+    files = release_entry.get("files") or []
+    if not isinstance(files, list):
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release files are not indexed")
+    for item in files:
+        if not isinstance(item, Mapping):
+            continue
+        path = str(item.get("path") or "")
+        generation = as_int(item.get("generation"))
+        if item.get("role") == "feature_index" and path.endswith(".features.ndjson.gz") and generation is not None:
+            return path, generation
+    raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release feature-index sidecar is not indexed")
+
+
+def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> dict[str, dict[str, Any]]:
+    try:
+        text = gzip.decompress(payload).decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not valid gzip NDJSON") from exc
+
+    records: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            errors.append(f"line {line_number} is not valid JSON")
+            continue
+        if not isinstance(record, Mapping):
+            errors.append(f"line {line_number} is not a JSON object")
+            continue
+        feature_id = str(record.get("feature_id") or "")
+        if not FEATURE_ID_RE.fullmatch(feature_id):
+            errors.append(f"line {line_number} has invalid feature_id")
+            continue
+        if feature_id in records:
+            errors.append(f"duplicate feature_id: {feature_id}")
+            continue
+        if record.get("asset_slug") not in (None, asset_slug):
+            errors.append(f"line {line_number} asset_slug does not match {asset_slug}")
+            continue
+        if record.get("release") not in (None, release):
+            errors.append(f"line {line_number} release does not match {release}")
+            continue
+        properties = record.get("properties")
+        if not isinstance(properties, Mapping):
+            errors.append(f"line {line_number} properties must be an object")
+            continue
+        provenance = record.get("provenance", {})
+        if not isinstance(provenance, Mapping):
+            errors.append(f"line {line_number} provenance must be an object")
+            continue
+        records[feature_id] = {
+            "asset_slug": asset_slug,
+            "release": release,
+            "feature_id": feature_id,
+            "feature_hash": record.get("feature_hash"),
+            "properties": dict(properties),
+            "provenance": dict(provenance),
+        }
+    if errors:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "; ".join(errors[:10]))
+    if not records:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar contains no records")
+    return records
+
+
+def split_gs_uri(uri: str) -> tuple[str, str]:
+    if not uri.startswith("gs://"):
+        raise ValueError(f"expected gs:// URI, got {uri!r}")
+    rest = uri[5:]
+    bucket, separator, object_name = rest.partition("/")
+    if not bucket or not separator or not object_name:
+        raise ValueError(f"expected gs:// object URI, got {uri!r}")
+    return bucket, object_name
+
+
+def as_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def authenticated_user_email(headers: Mapping[str, str]) -> str:
@@ -422,12 +646,11 @@ def make_handler(
 
 def main() -> None:
     bucket_name = os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET)
-    collection_root = os.environ.get("FEATURE_PREVIEW_COLLECTION_ROOT", DEFAULT_COLLECTION_ROOT)
     release_resolver = CatalogReleaseResolver(
         bucket_name=bucket_name,
         ttl_seconds=float_env("FEATURE_PREVIEW_RELEASE_CACHE_TTL_SECONDS", DEFAULT_RELEASE_CACHE_TTL_SECONDS),
     )
-    feature_index = FirestoreFeatureIndex(collection_root=collection_root)
+    feature_index = GcsSidecarFeatureIndex(bucket_name=bucket_name)
     handler = make_handler(
         release_resolver=release_resolver,
         feature_index=feature_index,

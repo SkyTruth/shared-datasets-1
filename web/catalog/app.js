@@ -13,6 +13,8 @@ const state = {
   colorFieldsByReference: {},
   docsRequestSerial: 0,
   featureLookupSerial: 0,
+  featureMetadataCache: new Map(),
+  featureMetadataRequests: new Map(),
 };
 
 function createZoomSelectionButton() {
@@ -1138,6 +1140,7 @@ async function renderPmtiles(assets) {
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
   clearColorLegend();
   clearFeatureInspector();
+  warmFeatureMetadataCaches(rawMapAssets);
 
   try {
     if (!state.mapModule) {
@@ -1224,32 +1227,164 @@ function featureLookupGroups(features) {
 }
 
 async function lookupFeatureMetadata(group) {
-  const response = await fetch(featureMetadataLookupUrl(group.assetSlug, group.release), {
-    method: "POST",
-    cache: "no-store",
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      ids: [...group.ids],
-      include_provenance: true,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(`feature metadata lookup returned HTTP ${response.status}`);
+  if (!featureMetadataSidecarFile(group.assetSlug, group.release)) {
+    return new Map();
   }
-  const payload = await response.json();
+  const index = await featureMetadataIndex(group.assetSlug, group.release);
   const lookup = new Map();
-  for (const item of Array.isArray(payload.items) ? payload.items : []) {
-    lookup.set(String(item?.id || ""), item);
+  for (const featureId of group.ids) {
+    const item = index.get(featureId);
+    lookup.set(featureId, item || { id: featureId, found: false });
   }
   return lookup;
 }
 
-function featureMetadataLookupUrl(assetSlug, release) {
-  return `/v1/assets/${encodeURIComponent(assetSlug)}/releases/${encodeURIComponent(release)}:lookup`;
+function warmFeatureMetadataCaches(assets) {
+  const seen = new Set();
+  for (const asset of assets) {
+    const assetSlug = String(asset?.slug || "").trim();
+    const release = featureMetadataRelease(asset);
+    if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release)) {
+      continue;
+    }
+    const key = featureMetadataCacheKey(assetSlug, release);
+    if (seen.has(key) || state.featureMetadataCache.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    featureMetadataIndex(assetSlug, release).catch((error) => {
+      console.warn(`Could not warm feature metadata cache for ${assetSlug}:`, error);
+    });
+  }
+}
+
+async function featureMetadataIndex(assetSlug, release) {
+  const key = featureMetadataCacheKey(assetSlug, release);
+  if (state.featureMetadataCache.has(key)) {
+    return state.featureMetadataCache.get(key);
+  }
+  if (!state.featureMetadataRequests.has(key)) {
+    const request = downloadFeatureMetadataIndex(assetSlug, release)
+      .then((lookup) => {
+        state.featureMetadataCache.set(key, lookup);
+        return lookup;
+      })
+      .finally(() => {
+        state.featureMetadataRequests.delete(key);
+      });
+    state.featureMetadataRequests.set(key, request);
+  }
+  return state.featureMetadataRequests.get(key);
+}
+
+async function downloadFeatureMetadataIndex(assetSlug, release) {
+  const response = await fetch(featureMetadataDownloadUrl(assetSlug, release), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `feature metadata download URL returned HTTP ${response.status}`);
+  }
+  const downloadUrl = String(payload.download_url || "").trim();
+  if (!downloadUrl) {
+    throw new Error("feature metadata download URL response did not include download_url");
+  }
+  const sidecarResponse = await fetch(downloadUrl, { cache: "no-store" });
+  if (!sidecarResponse.ok) {
+    throw new Error(`feature metadata sidecar returned HTTP ${sidecarResponse.status}`);
+  }
+  return parseFeatureMetadataSidecar(await gzipNdjsonText(sidecarResponse));
+}
+
+async function gzipNdjsonText(response) {
+  const payload = await response.arrayBuffer();
+  if ("DecompressionStream" in window) {
+    try {
+      const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return await new Response(stream).text();
+    } catch (_error) {
+      // Some servers may already decode gzip through Content-Encoding.
+    }
+  }
+  return new TextDecoder("utf-8").decode(payload);
+}
+
+function parseFeatureMetadataSidecar(text) {
+  const lookup = new Map();
+  for (const [index, line] of String(text || "").split(/\r?\n/).entries()) {
+    if (!line.trim()) {
+      continue;
+    }
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`feature metadata sidecar line ${index + 1} is not valid JSON`);
+    }
+    const featureId = String(record?.feature_id || "").trim();
+    if (!featureId) {
+      throw new Error(`feature metadata sidecar line ${index + 1} is missing feature_id`);
+    }
+    if (lookup.has(featureId)) {
+      throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
+    }
+    lookup.set(featureId, {
+      id: featureId,
+      found: true,
+      feature_hash: record.feature_hash || "",
+      properties: record.properties && typeof record.properties === "object" ? record.properties : {},
+      provenance: record.provenance && typeof record.provenance === "object" ? record.provenance : {},
+    });
+  }
+  return lookup;
+}
+
+function featureMetadataDownloadUrl(assetSlug, release) {
+  const params = new URLSearchParams({
+    slug: assetSlug,
+    format: "feature_index",
+    version: release || "latest",
+  });
+  return `/api/download-url?${params.toString()}`;
+}
+
+function featureMetadataCacheKey(assetSlug, release) {
+  return `${assetSlug}\n${release || "latest"}`;
+}
+
+function featureMetadataRelease(asset) {
+  return String(asset?.date || asset?.latest_release?.date || asset?.last_updated || "latest").trim();
+}
+
+function featureMetadataSidecarFile(assetSlug, release) {
+  const reference = assetReferenceForRelease(assetSlug, release);
+  const files = Array.isArray(reference?.files)
+    ? reference.files
+    : Array.isArray(reference?.latest_release?.files)
+      ? reference.latest_release.files
+      : [];
+  return files.find((file) => {
+    const path = releaseFilePath(file);
+    return String(file?.role || "").trim() === "feature_index" && path.endsWith(".features.ndjson.gz");
+  });
+}
+
+function assetReferenceForRelease(assetSlug, release) {
+  const asset = state.assets.find((candidate) => candidate.slug === assetSlug);
+  if (!asset) {
+    return null;
+  }
+  const releaseDate = String(release || "latest").trim();
+  const latestDate = String(asset.latest_release?.date || asset.last_updated || "").trim();
+  if (releaseDate === "latest" || releaseDate === latestDate) {
+    return asset;
+  }
+  const version = Array.isArray(asset.versions)
+    ? asset.versions.find((candidate) => String(candidate?.date || "").trim() === releaseDate)
+    : null;
+  return version ? { ...asset, ...version } : asset;
 }
 
 function enrichFeature(feature, item) {
