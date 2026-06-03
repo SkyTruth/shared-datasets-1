@@ -2,6 +2,10 @@ const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css";
 const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
 const MISSING_COLOR = "#949d97";
+const FEATURE_ID_PROPERTY = "feature_id";
+const FEATURE_STATE_COLOR_FIELD = "colorizeField";
+const FEATURE_STATE_COLOR_VALUE = "colorizeValue";
+const METADATA_FOCUS_FILTER_ID_LIMIT = 8000;
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
 const CATEGORICAL_NUMERIC_VALUE_LIMIT = 12;
@@ -72,6 +76,7 @@ export async function renderMapPreview({
   onColorFieldsChange = () => {},
   onColorLegendChange = () => {},
   onFeatureSelect = () => {},
+  loadFeatureMetadataColorValues = null,
 }) {
   const requestedAssets = (Array.isArray(assets) && assets.length ? assets : [asset]).filter(Boolean);
   const mapAssets = requestedAssets.filter((candidate) => candidate.pmtiles_url);
@@ -176,7 +181,16 @@ export async function renderMapPreview({
     focusedLegendValue: "",
     fieldSignature: "",
     colorSignature: "",
+    colorSampleSerial: 0,
     refreshTimer: null,
+    tileColorFields: [],
+    metadataColorFields: [],
+    metadataColorFieldsLoaded: false,
+    metadataColorFieldsPromise: null,
+    metadataColorField: "",
+    metadataColorValuesLoaded: false,
+    metadataColorValuesByFeatureId: new Map(),
+    metadataColorValueSource: typeof loadFeatureMetadataColorValues === "function" ? loadFeatureMetadataColorValues : null,
     onColorFieldsChange: singleDataset ? onColorFieldsChange : () => {},
     onColorLegendChange: singleDataset ? onColorLegendChange : () => {},
   };
@@ -216,6 +230,24 @@ export function setColorizeField(fieldName) {
   }
 
   refreshColorSample(context);
+}
+
+export function refreshColorizeMetadata() {
+  const context = activeColorContext;
+  if (!context || !context.map || context.mapSources.length !== 1) {
+    return;
+  }
+  context.metadataColorFields = [];
+  context.metadataColorFieldsLoaded = false;
+  context.metadataColorFieldsPromise = null;
+  context.metadataColorField = "";
+  context.metadataColorValuesLoaded = false;
+  context.metadataColorValuesByFeatureId = new Map();
+  context.colorSignature = "";
+  refreshAvailableFields(context);
+  if (context.colorField) {
+    refreshColorSample(context);
+  }
 }
 
 export function toggleCategoricalFocus(value) {
@@ -298,9 +330,14 @@ function focusedRenderedLegendBounds(context) {
 }
 
 function featureMatchesLegendFocus(feature, context) {
-  const field = context.colorMode?.field;
+  const mode = context.colorMode;
+  const field = mode?.field;
   if (!field) {
     return false;
+  }
+  if (mode.valueSource === "metadata") {
+    const featureId = featureIdForProperties(feature?.properties);
+    return Boolean(featureId && mode.featureIdsByValue?.get(context.focusedLegendValue)?.has(featureId));
   }
   return normalizedValue(feature?.properties?.[field]) === context.focusedLegendValue;
 }
@@ -645,6 +682,7 @@ function styleFor(mapSources, basemap) {
     sources[source.sourceId] = {
       type: "vector",
       url: `pmtiles://${source.asset.pmtiles_url}`,
+      promoteId: FEATURE_ID_PROPERTY,
     };
     for (const layer of source.sourceLayers) {
       layers.push({
@@ -744,22 +782,130 @@ function refreshAvailableFields(context) {
       }
     }
   }
-  const availableFields = uniqueStrings([...fields]);
+  context.tileColorFields = uniqueStrings([...fields]);
+  notifyAvailableFields(context);
+  refreshMetadataColorFields(context);
+}
+
+function notifyAvailableFields(context) {
+  const availableFields = uniqueStrings([...(context.tileColorFields || []), ...(context.metadataColorFields || [])]);
   const signature = availableFields.join("\n");
   context.availableFields = availableFields;
-  if (signature !== context.fieldSignature) {
-    context.fieldSignature = signature;
-    context.onColorFieldsChange(availableFields);
+  if (signature === context.fieldSignature) {
+    return;
   }
+  context.fieldSignature = signature;
+  context.onColorFieldsChange(availableFields);
+}
+
+function refreshMetadataColorFields(context) {
+  if (
+    !context.metadataColorValueSource ||
+    context.mapSources.length !== 1 ||
+    context.metadataColorFieldsLoaded ||
+    context.metadataColorFieldsPromise
+  ) {
+    return;
+  }
+  const source = context.mapSources[0];
+  context.metadataColorFieldsPromise = Promise.resolve(context.metadataColorValueSource(source.asset, ""))
+    .then((result) => {
+      if (activeColorContext !== context) return;
+      context.metadataColorFields = normalizedMetadataFields(result);
+      context.metadataColorFieldsLoaded = true;
+      notifyAvailableFields(context);
+      if (context.colorField && colorFieldValueSource(context, context.colorField) === "metadata") {
+        refreshColorSample(context);
+      }
+    })
+    .catch((error) => {
+      if (activeColorContext === context) {
+        console.warn(`Could not load feature metadata fields for ${source.asset.slug}:`, error);
+      }
+    })
+    .finally(() => {
+      if (activeColorContext === context) {
+        context.metadataColorFieldsPromise = null;
+      }
+    });
 }
 
 function refreshColorSample(context) {
   if (!context.colorField) {
     return;
   }
+  const valueSource = colorFieldValueSource(context, context.colorField);
+  if (valueSource === "metadata") {
+    refreshMetadataColorSample(context, context.colorField);
+    return;
+  }
   const samples = sampleFieldValues(context, context.colorField);
   const mode = inferColorMode(context.colorField, samples.values);
+  mode.valueSource = "tile";
   mode.boundsByValue = samples.boundsByValue;
+  const signature = colorModeSignature(mode);
+  const previousFocus = context.focusedLegendValue;
+  context.colorMode = mode;
+  syncFocusedLegendValue(context);
+  if (signature !== context.colorSignature || previousFocus !== context.focusedLegendValue) {
+    context.colorSignature = signature;
+    applyColorMode(context);
+    notifyColorLegend(context);
+  }
+}
+
+function colorFieldValueSource(context, field) {
+  if ((context.tileColorFields || []).includes(field)) {
+    return "tile";
+  }
+  if ((context.metadataColorFields || []).includes(field)) {
+    return "metadata";
+  }
+  return "tile";
+}
+
+function refreshMetadataColorSample(context, field) {
+  if (context.metadataColorField === field && context.metadataColorValuesLoaded) {
+    applyMetadataColorValues(context, field, context.metadataColorValuesByFeatureId);
+    return;
+  }
+  const source = context.mapSources[0];
+  const requestSerial = ++context.colorSampleSerial;
+  Promise.resolve(context.metadataColorValueSource(source.asset, field))
+    .then((result) => {
+      if (activeColorContext !== context || requestSerial !== context.colorSampleSerial || context.colorField !== field) {
+        return;
+      }
+      context.metadataColorFields = normalizedMetadataFields(result);
+      context.metadataColorFieldsLoaded = true;
+      notifyAvailableFields(context);
+      const valuesByFeatureId = normalizedMetadataValues(result);
+      context.metadataColorField = field;
+      context.metadataColorValuesLoaded = true;
+      context.metadataColorValuesByFeatureId = valuesByFeatureId;
+      applyMetadataColorValues(context, field, valuesByFeatureId);
+    })
+    .catch((error) => {
+      if (activeColorContext !== context || requestSerial !== context.colorSampleSerial) {
+        return;
+      }
+      console.warn(`Could not load feature metadata color field ${field}:`, error);
+      context.colorMode = { type: "dataset" };
+      context.colorSignature = "";
+      context.focusedLegendValue = "";
+      applyDatasetColors(context);
+      applyFocusFilters(context);
+      notifyColorLegend(context);
+    });
+}
+
+function applyMetadataColorValues(context, field, valuesByFeatureId) {
+  applyMetadataFeatureState(context, field, valuesByFeatureId);
+  const samples = sampleMetadataFieldValues(context, field, valuesByFeatureId);
+  const mode = inferColorMode(field, samples.values);
+  mode.valueSource = "metadata";
+  mode.boundsByValue = samples.boundsByValue;
+  mode.featureIdsByValue = metadataFeatureIdsByValue(valuesByFeatureId);
   const signature = colorModeSignature(mode);
   const previousFocus = context.focusedLegendValue;
   context.colorMode = mode;
@@ -801,6 +947,101 @@ function sampleFieldValues(context, field) {
     }
   }
   return { values, boundsByValue };
+}
+
+function sampleMetadataFieldValues(context, field, valuesByFeatureId) {
+  const values = [];
+  const boundsByValue = new Map();
+  let seen = 0;
+  const random = seededRandom(hashString(`metadata:${field}`));
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      for (const feature of querySourceLayerFeatures(context.map, source, layer)) {
+        const featureId = featureIdForProperties(feature.properties);
+        if (!featureId || !valuesByFeatureId.has(featureId)) {
+          continue;
+        }
+        const raw = valuesByFeatureId.get(featureId);
+        if (isEmptyValue(raw)) {
+          continue;
+        }
+        seen += 1;
+        const item = { raw, text: normalizedValue(raw) };
+        const bounds = boundsFromFeatureGeometry(feature.geometry);
+        if (bounds && item.text) {
+          boundsByValue.set(item.text, combineTwoBounds(boundsByValue.get(item.text), bounds));
+        }
+        if (values.length < SAMPLE_LIMIT) {
+          values.push(item);
+        } else {
+          const replacementIndex = Math.floor(random() * seen);
+          if (replacementIndex < SAMPLE_LIMIT) {
+            values[replacementIndex] = item;
+          }
+        }
+      }
+    }
+  }
+  return { values, boundsByValue };
+}
+
+function normalizedMetadataFields(result) {
+  return uniqueStrings(Array.isArray(result?.fields) ? result.fields : []);
+}
+
+function normalizedMetadataValues(result) {
+  if (result?.valuesByFeatureId instanceof Map) {
+    return result.valuesByFeatureId;
+  }
+  if (result?.valuesByFeatureId && typeof result.valuesByFeatureId === "object") {
+    return new Map(Object.entries(result.valuesByFeatureId));
+  }
+  return new Map();
+}
+
+function metadataFeatureIdsByValue(valuesByFeatureId) {
+  const byValue = new Map();
+  for (const [featureId, raw] of valuesByFeatureId.entries()) {
+    const value = normalizedValue(raw);
+    if (!featureId || !value) {
+      continue;
+    }
+    if (!byValue.has(value)) {
+      byValue.set(value, new Set());
+    }
+    byValue.get(value).add(String(featureId));
+  }
+  return byValue;
+}
+
+function applyMetadataFeatureState(context, field, valuesByFeatureId) {
+  for (const source of context.mapSources) {
+    for (const layer of source.sourceLayers) {
+      for (const feature of querySourceLayerFeatures(context.map, source, layer)) {
+        const featureId = featureIdForProperties(feature.properties);
+        if (!featureId) {
+          continue;
+        }
+        const raw = valuesByFeatureId.has(featureId) ? valuesByFeatureId.get(featureId) : "";
+        setFeatureColorState(context.map, source.sourceId, layer.sourceLayer, featureId, field, normalizedValue(raw));
+      }
+    }
+  }
+}
+
+function setFeatureColorState(map, sourceId, sourceLayer, featureId, field, value) {
+  try {
+    map.setFeatureState(
+      { source: sourceId, sourceLayer, id: featureId },
+      {
+        [FEATURE_STATE_COLOR_FIELD]: field,
+        [FEATURE_STATE_COLOR_VALUE]: value,
+      }
+    );
+  } catch {
+    // Feature state depends on promoted feature IDs. Tiles without feature_id
+    // remain usable through the normal dataset color fallback.
+  }
 }
 
 function querySourceLayerFeatures(map, source, layer) {
@@ -908,15 +1149,16 @@ function gradientLegendValues(items) {
 }
 
 function colorModeSignature(mode) {
+  const valueSource = mode.valueSource || "tile";
   if (mode.type === "numeric") {
-    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}|${(mode.legendValues || []).join("\u001f")}`;
+    return `${mode.type}|${valueSource}|${mode.field}|${mode.min}|${mode.max}|${(mode.legendValues || []).join("\u001f")}`;
   }
   if (mode.type === "temporal") {
-    return `${mode.type}|${mode.field}|${mode.min}|${mode.max}|${(mode.values || []).join("\u001f")}|${(
+    return `${mode.type}|${valueSource}|${mode.field}|${mode.min}|${mode.max}|${(mode.values || []).join("\u001f")}|${(
       mode.legendValues || []
     ).join("\u001f")}`;
   }
-  return `${mode.type}|${mode.field}|${mode.min ?? ""}|${mode.max ?? ""}|${(mode.values || []).join("\u001f")}`;
+  return `${mode.type}|${valueSource}|${mode.field}|${mode.min ?? ""}|${mode.max ?? ""}|${(mode.values || []).join("\u001f")}`;
 }
 
 function applyColorMode(context) {
@@ -1005,6 +1247,13 @@ function layerFilter(geometryType, mode, focusedValue) {
   if (!modeSupportsLegendFocus(mode) || !mode.field || !focusedValue) {
     return geometryFilter;
   }
+  if (mode.valueSource === "metadata") {
+    const featureIds = [...(mode.featureIdsByValue?.get(focusedValue) || [])];
+    if (!featureIds.length || featureIds.length > METADATA_FOCUS_FILTER_ID_LIMIT) {
+      return geometryFilter;
+    }
+    return ["all", geometryFilter, ["in", featureIdStringExpression(), ["literal", featureIds]]];
+  }
   return ["all", geometryFilter, ["==", fieldStringExpression(mode.field), focusedValue]];
 }
 
@@ -1035,6 +1284,9 @@ function legendColorForValue(mode, value, basemap) {
 }
 
 function colorExpressionForMode(mode, basemap) {
+  if (mode.valueSource === "metadata") {
+    return metadataColorExpressionForMode(mode, basemap);
+  }
   if (mode.type === "numeric") {
     return numericColorExpression(mode.field, mode.min, mode.max, basemap);
   }
@@ -1042,6 +1294,16 @@ function colorExpressionForMode(mode, basemap) {
     return temporalColorExpression(mode.field, mode.values, mode.min, mode.max, basemap);
   }
   return categoricalColorExpression(mode.field, mode.values);
+}
+
+function metadataColorExpressionForMode(mode, basemap) {
+  if (mode.type === "numeric") {
+    return metadataNumericColorExpression(mode.field, mode.min, mode.max, basemap);
+  }
+  if (mode.type === "temporal") {
+    return metadataTemporalColorExpression(mode.field, mode.values, mode.min, mode.max, basemap);
+  }
+  return metadataCategoricalColorExpression(mode.field, mode.values);
 }
 
 function numericColorExpression(field, min, max, basemap) {
@@ -1052,6 +1314,19 @@ function numericColorExpression(field, min, max, basemap) {
   return [
     "case",
     ["all", presentExpression(field), ["!=", numericValue, sentinel]],
+    ["interpolate", ["linear"], numericValue, min, ramp[0], midpoint, ramp[1], max, ramp[2]],
+    MISSING_COLOR,
+  ];
+}
+
+function metadataNumericColorExpression(field, min, max, basemap) {
+  const ramp = NUMERIC_RAMPS[basemap] || NUMERIC_RAMPS.map;
+  const midpoint = min + (max - min) / 2;
+  const sentinel = min - Math.max(1, Math.abs(max - min));
+  const numericValue = ["to-number", metadataFieldStringExpression(), sentinel];
+  return [
+    "case",
+    ["all", metadataPresentExpression(field), ["!=", numericValue, sentinel]],
     ["interpolate", ["linear"], numericValue, min, ramp[0], midpoint, ramp[1], max, ramp[2]],
     MISSING_COLOR,
   ];
@@ -1071,6 +1346,25 @@ function temporalColorExpression(field, values, min, max, basemap) {
   return ["case", presentExpression(field), ["match", fieldStringExpression(field), ...matches, MISSING_COLOR], MISSING_COLOR];
 }
 
+function metadataTemporalColorExpression(field, values, min, max, basemap) {
+  const matches = [];
+  for (const value of values) {
+    const parsed = parseTemporalValue(value);
+    if (parsed !== null) {
+      matches.push(value, gradientColor(parsed.value, min, max, basemap));
+    }
+  }
+  if (!matches.length) {
+    return MISSING_COLOR;
+  }
+  return [
+    "case",
+    metadataPresentExpression(field),
+    ["match", metadataFieldStringExpression(), ...matches, MISSING_COLOR],
+    MISSING_COLOR,
+  ];
+}
+
 function categoricalColorExpression(field, values) {
   const matches = values.flatMap((value) => [value, categoricalColor(value)]);
   if (!matches.length) {
@@ -1079,12 +1373,41 @@ function categoricalColorExpression(field, values) {
   return ["case", presentExpression(field), ["match", fieldStringExpression(field), ...matches, MISSING_COLOR], MISSING_COLOR];
 }
 
+function metadataCategoricalColorExpression(field, values) {
+  const matches = values.flatMap((value) => [value, categoricalColor(value)]);
+  if (!matches.length) {
+    return MISSING_COLOR;
+  }
+  return [
+    "case",
+    metadataPresentExpression(field),
+    ["match", metadataFieldStringExpression(), ...matches, MISSING_COLOR],
+    MISSING_COLOR,
+  ];
+}
+
 function presentExpression(field) {
   return ["all", ["has", field], ["!=", fieldStringExpression(field), ""]];
 }
 
 function fieldStringExpression(field) {
   return ["to-string", ["coalesce", ["get", field], ""]];
+}
+
+function featureIdStringExpression() {
+  return ["to-string", ["coalesce", ["get", FEATURE_ID_PROPERTY], ["get", "FEATURE_ID"], ""]];
+}
+
+function metadataPresentExpression(field) {
+  return [
+    "all",
+    ["==", ["to-string", ["coalesce", ["feature-state", FEATURE_STATE_COLOR_FIELD], ""]], field],
+    ["!=", metadataFieldStringExpression(), ""],
+  ];
+}
+
+function metadataFieldStringExpression() {
+  return ["to-string", ["coalesce", ["feature-state", FEATURE_STATE_COLOR_VALUE], ""]];
 }
 
 function enableFeatureInspection(map, mapSources, onFeatureSelect) {
@@ -1155,7 +1478,10 @@ function colorForFeature(properties, source) {
   if (!mode || mode.type === "dataset" || !mode.field) {
     return source.color;
   }
-  const value = properties?.[mode.field];
+  const value =
+    mode.valueSource === "metadata"
+      ? activeColorContext.metadataColorValuesByFeatureId?.get(featureIdForProperties(properties))
+      : properties?.[mode.field];
   if (isEmptyValue(value)) {
     return MISSING_COLOR;
   }
@@ -1168,6 +1494,10 @@ function colorForFeature(properties, source) {
     return temporal === null ? MISSING_COLOR : gradientColor(temporal.value, mode.min, mode.max, activeColorContext.basemap);
   }
   return categoricalColor(normalizedValue(value));
+}
+
+function featureIdForProperties(properties) {
+  return String(properties?.[FEATURE_ID_PROPERTY] || properties?.FEATURE_ID || "").trim();
 }
 
 function geometryTypeFromLayer(layerType) {

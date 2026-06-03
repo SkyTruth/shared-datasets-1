@@ -339,6 +339,7 @@ function wireEvents() {
     state.metadataLocale = normalizeMetadataLocale(elements.metadataLanguage.value);
     renderMetadataSidecarPath(selectedMetadataLanguageAsset());
     warmFeatureMetadataCaches(selectedMapReferences());
+    state.mapModule?.refreshColorizeMetadata?.();
     refreshFeatureInspectorMetadata();
   });
   elements.zoomSelection.addEventListener("click", () => {
@@ -1190,6 +1191,7 @@ async function renderPmtiles(assets) {
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
       onColorLegendChange: renderColorLegend,
       onFeatureSelect: handleFeatureSelect,
+      loadFeatureMetadataColorValues,
     });
     setZoomSelectionEnabled(false);
   } catch (error) {
@@ -1394,6 +1396,54 @@ function parseFeatureMetadataSidecar(text) {
     lookup.set(featureId, item);
   }
   return lookup;
+}
+
+async function loadFeatureMetadataColorValues(asset, field) {
+  const assetSlug = String(asset?.slug || "").trim();
+  const release = featureMetadataRelease(asset);
+  const locale = state.metadataLocale || activeMetadataLocale();
+  if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release, locale)) {
+    return { fields: [], valuesByFeatureId: new Map() };
+  }
+  const index = await featureMetadataIndex(assetSlug, release, locale);
+  const fields = featureMetadataColorFields(index);
+  const selectedField = String(field || "").trim();
+  if (!selectedField || !fields.includes(selectedField)) {
+    return { fields, valuesByFeatureId: new Map() };
+  }
+  const valuesByFeatureId = new Map();
+  for (const [featureId, item] of index.entries()) {
+    const properties = item?.properties && typeof item.properties === "object" ? item.properties : {};
+    if (!Object.prototype.hasOwnProperty.call(properties, selectedField)) {
+      continue;
+    }
+    const value = properties[selectedField];
+    if (!featureMetadataValueIsEmpty(value)) {
+      valuesByFeatureId.set(String(featureId), value);
+    }
+  }
+  return { fields, valuesByFeatureId };
+}
+
+function featureMetadataColorFields(index) {
+  const fields = new Set();
+  for (const item of index.values()) {
+    const properties = item?.properties && typeof item.properties === "object" ? item.properties : {};
+    for (const field of Object.keys(properties)) {
+      fields.add(field);
+    }
+  }
+  return [...fields].sort(collator.compare);
+}
+
+function featureMetadataValueIsEmpty(value) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value === "object") {
+    return false;
+  }
+  return String(value).trim() === "";
 }
 
 function featureMetadataDownloadUrl(assetSlug, release, locale = state.metadataLocale) {

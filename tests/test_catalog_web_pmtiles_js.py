@@ -111,6 +111,29 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("ext_id: item.ext_id", app)
         self.assertIn("source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || \"latest\"", map_preview)
 
+    def test_catalog_viewer_colorizes_selected_sidecar_metadata_field(self):
+        app = (REPO_ROOT / "web/catalog/app.js").read_text()
+        map_preview = (REPO_ROOT / "web/catalog/map-preview.js").read_text()
+
+        self.assertIn("loadFeatureMetadataColorValues", app)
+        self.assertIn("featureMetadataColorFields", app)
+        self.assertIn("valuesByFeatureId.set(String(featureId), value)", app)
+        self.assertIn("state.mapModule?.refreshColorizeMetadata?.()", app)
+        self.assertIn("loadFeatureMetadataColorValues,", app)
+        self.assertIn("loadFeatureMetadataColorValues = null", map_preview)
+        self.assertIn("metadataColorValueSource", map_preview)
+        self.assertIn("metadataColorFields", map_preview)
+        self.assertIn("colorFieldValueSource(context, context.colorField) === \"metadata\"", map_preview)
+        self.assertIn("refreshMetadataColorSample", map_preview)
+        self.assertIn("applyMetadataFeatureState", map_preview)
+        self.assertIn("map.setFeatureState", map_preview)
+        self.assertIn("FEATURE_STATE_COLOR_VALUE", map_preview)
+        self.assertIn("promoteId: FEATURE_ID_PROPERTY", map_preview)
+        self.assertIn("metadataColorExpressionForMode", map_preview)
+        self.assertIn("metadataFeatureIdsByValue", map_preview)
+        self.assertIn("featureIdForProperties", map_preview)
+        self.assertIn("activeColorContext.metadataColorValuesByFeatureId?.get", map_preview)
+
     def test_catalog_viewer_has_metadata_language_selector_and_sidecar_path(self):
         app = (REPO_ROOT / "web/catalog/app.js").read_text()
         html = (REPO_ROOT / "web/catalog/index.html").read_text()
