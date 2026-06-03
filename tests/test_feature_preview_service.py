@@ -1,9 +1,86 @@
 from __future__ import annotations
 
+import gzip
 import json
 import unittest
 
 from services.feature_preview_service import run
+
+
+PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
+SIDECAR_URI = (
+    f"gs://{PREVIEW_BUCKET}/100-geographic-reference/130-protected-areas/"
+    "wdpa-marine/releases/2026-06-01/wdpa-marine.features.ndjson.gz"
+)
+SIDECAR_OBJECT = SIDECAR_URI.removeprefix(f"gs://{PREVIEW_BUCKET}/")
+
+
+class NotFound(Exception):
+    pass
+
+
+class FakeGcsBlob:
+    def __init__(
+        self,
+        name: str,
+        payload,
+        generation: int | None = 1,
+        *,
+        missing: bool = False,
+        fail_reload: bool = False,
+        fail_download: bool = False,
+    ) -> None:
+        self.name = name
+        self.payload = payload
+        self.generation = generation
+        self.missing = missing
+        self.fail_reload = fail_reload
+        self.fail_download = fail_download
+        self.reload_count = 0
+        self.download_count = 0
+
+    def reload(self) -> None:
+        self.reload_count += 1
+        if self.missing:
+            raise NotFound(self.name)
+        if self.fail_reload:
+            raise RuntimeError("metadata unavailable")
+
+    def download_as_text(self) -> str:
+        if self.missing:
+            raise NotFound(self.name)
+        if isinstance(self.payload, bytes):
+            return self.payload.decode("utf-8")
+        return json.dumps(self.payload)
+
+    def download_as_bytes(self, **kwargs) -> bytes:
+        self.download_count += 1
+        if self.missing:
+            raise NotFound(self.name)
+        if self.fail_download:
+            raise RuntimeError("download failed")
+        expected_generation = kwargs.get("if_generation_match")
+        if expected_generation is not None and self.generation is not None and int(expected_generation) != int(self.generation):
+            raise RuntimeError("generation mismatch")
+        if isinstance(self.payload, bytes):
+            return self.payload
+        return json.dumps(self.payload).encode("utf-8")
+
+
+class FakeGcsBucket:
+    def __init__(self, blobs: dict[str, FakeGcsBlob]) -> None:
+        self.blobs = blobs
+
+    def blob(self, name: str) -> FakeGcsBlob:
+        return self.blobs.get(name, FakeGcsBlob(name, b"", missing=True))
+
+
+class FakeGcsClient:
+    def __init__(self, bucket: FakeGcsBucket) -> None:
+        self.bucket_obj = bucket
+
+    def bucket(self, _name: str) -> FakeGcsBucket:
+        return self.bucket_obj
 
 
 class FakeResolver:
@@ -11,12 +88,20 @@ class FakeResolver:
         if asset_slug != "wdpa-marine":
             raise run.ApiError(404, "not_found", "missing asset")
         resolved = "2026-06-01" if release == "latest" else release
-        return run.ResolvedRelease(release, resolved, 7)
+        return run.ResolvedRelease(release, resolved, 7, SIDECAR_URI, 1001)
 
 
 class FakeIndex:
-    def lookup(self, asset_slug: str, release: str, feature_ids: list[str]):
-        self.last_lookup = (asset_slug, release, feature_ids)
+    def lookup(
+        self,
+        asset_slug: str,
+        release: str,
+        feature_ids: list[str],
+        *,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ):
+        self.last_lookup = (asset_slug, release, feature_ids, sidecar_uri, sidecar_generation)
         return {
             "src:id:1": {
                 "feature_id": "src:id:1",
@@ -25,6 +110,61 @@ class FakeIndex:
                 "provenance": {"source": "test"},
             }
         }
+
+
+def release_index_payload(*, include_sidecar: bool = True, sidecar_generation: int = 1001) -> dict:
+    files = [
+        {
+            "format": "fgb",
+            "path": (
+                f"gs://{PREVIEW_BUCKET}/100-geographic-reference/130-protected-areas/"
+                "wdpa-marine/releases/2026-06-01/wdpa-marine.fgb"
+            ),
+        }
+    ]
+    if include_sidecar:
+        files.append(
+            {
+                "format": "ndgeojson",
+                "role": "feature_index",
+                "path": SIDECAR_URI,
+                "generation": sidecar_generation,
+            }
+        )
+    release = {"date": "2026-06-01", "files": files}
+    return {
+        "asset_slug": "wdpa-marine",
+        "latest_release": release,
+        "releases": [release],
+    }
+
+
+def release_index_bucket(payload: dict) -> FakeGcsBucket:
+    return FakeGcsBucket(
+        {
+            "_catalog/releases/wdpa-marine.json": FakeGcsBlob(
+                "_catalog/releases/wdpa-marine.json",
+                payload,
+                generation=7,
+            )
+        }
+    )
+
+
+def sidecar_bytes(records: list[dict]) -> bytes:
+    lines = [json.dumps(record, sort_keys=True, separators=(",", ":")) for record in records]
+    return gzip.compress(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def sidecar_record(feature_id: str = "src:id:1", *, name: str = "A") -> dict:
+    return {
+        "asset_slug": "wdpa-marine",
+        "release": "2026-06-01",
+        "feature_id": feature_id,
+        "feature_hash": "sha256:a",
+        "properties": {"name": name, "status": "active"},
+        "provenance": {"source": "test"},
+    }
 
 
 def lookup(body, headers=None):
@@ -41,6 +181,20 @@ def lookup(body, headers=None):
 
 
 class FeaturePreviewServiceTests(unittest.TestCase):
+    def test_catalog_resolver_extracts_sidecar_uri_and_generation(self):
+        resolver = run.CatalogReleaseResolver(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(release_index_bucket(release_index_payload())),
+            ttl_seconds=0,
+        )
+
+        resolved = resolver.resolve("wdpa-marine", "latest")
+
+        self.assertEqual(resolved.resolved_release, "2026-06-01")
+        self.assertEqual(resolved.release_index_generation, 7)
+        self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
+        self.assertEqual(resolved.sidecar_generation, 1001)
+
     def test_lookup_requires_iap_identity(self):
         response = run.handle_request(
             "POST",
@@ -57,7 +211,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         response, index = lookup({"ids": ["src:id:1", "src:id:2"], "fields": ["name"], "include_provenance": True})
 
         self.assertEqual(response.status, 200)
-        self.assertEqual(index.last_lookup, ("wdpa-marine", "2026-06-01", ["src:id:1", "src:id:2"]))
+        self.assertEqual(index.last_lookup, ("wdpa-marine", "2026-06-01", ["src:id:1", "src:id:2"], SIDECAR_URI, 1001))
         payload = json.loads(response.body)
         self.assertEqual(payload["resolved_release"], "2026-06-01")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
@@ -71,6 +225,146 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
         self.assertEqual(cached.status, 304)
         self.assertEqual(cached.body, b"")
+
+    def test_sidecar_cache_returns_found_and_missing_features(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record()]), generation=1001)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            json.dumps({"ids": ["src:id:1", "src:id:2"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
+            release_resolver=FakeResolver(),
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
+        self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
+        self.assertEqual(payload["items"][1], {"id": "src:id:2", "found": False})
+        self.assertEqual(sidecar_blob.download_count, 1)
+
+    def test_sidecar_cache_reuses_loaded_release(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record()]), generation=1001)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        for _index in range(2):
+            response = run.handle_request(
+                "POST",
+                "/v1/assets/wdpa-marine/releases/latest:lookup",
+                {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+                json.dumps({"ids": ["src:id:1"]}).encode("utf-8"),
+                release_resolver=FakeResolver(),
+                feature_index=index,
+            )
+            self.assertEqual(response.status, 200)
+
+        self.assertEqual(sidecar_blob.download_count, 1)
+
+    def test_sidecar_cache_key_includes_generation(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("src:id:1", name="A")]), generation=1001)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        first = index.lookup("wdpa-marine", "2026-06-01", ["src:id:1"], sidecar_uri=SIDECAR_URI, sidecar_generation=1001)
+        sidecar_blob.payload = sidecar_bytes([sidecar_record("src:id:2", name="B")])
+        sidecar_blob.generation = 1002
+        second = index.lookup("wdpa-marine", "2026-06-01", ["src:id:2"], sidecar_uri=SIDECAR_URI, sidecar_generation=1002)
+
+        self.assertEqual(first["src:id:1"]["properties"]["name"], "A")
+        self.assertEqual(second["src:id:2"]["properties"]["name"], "B")
+        self.assertEqual(sidecar_blob.download_count, 2)
+
+    def test_missing_feature_index_file_returns_not_ready(self):
+        resolver = run.CatalogReleaseResolver(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(release_index_bucket(release_index_payload(include_sidecar=False))),
+            ttl_seconds=0,
+        )
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            b'{"ids":["src:id:1"]}',
+            release_resolver=resolver,
+            feature_index=FakeIndex(),
+        )
+
+        self.assertEqual(response.status, 409)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "index_not_ready")
+
+    def test_missing_sidecar_object_returns_not_ready(self):
+        index = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, client=FakeGcsClient(FakeGcsBucket({})))
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            b'{"ids":["src:id:1"]}',
+            release_resolver=FakeResolver(),
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 409)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "index_not_ready")
+
+    def test_sidecar_download_failure_returns_unavailable(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, b"", generation=1001, fail_download=True)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            b'{"ids":["src:id:1"]}',
+            release_resolver=FakeResolver(),
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 503)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "index_unavailable")
+
+    def test_bad_sidecar_contents_return_not_ready(self):
+        duplicate = sidecar_record("src:id:1")
+        cases = {
+            "bad gzip": b"not gzip",
+            "bad ndjson": gzip.compress(b"{bad\n"),
+            "duplicate feature_id": sidecar_bytes([duplicate, duplicate]),
+        }
+
+        for label, payload in cases.items():
+            with self.subTest(label=label):
+                sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, payload, generation=1001)
+                index = run.GcsSidecarFeatureIndex(
+                    bucket_name=PREVIEW_BUCKET,
+                    client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+                )
+
+                response = run.handle_request(
+                    "POST",
+                    "/v1/assets/wdpa-marine/releases/latest:lookup",
+                    {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+                    b'{"ids":["src:id:1"]}',
+                    release_resolver=FakeResolver(),
+                    feature_index=index,
+                )
+
+                self.assertEqual(response.status, 409)
+                self.assertEqual(json.loads(response.body)["error"]["code"], "index_not_ready")
 
 
 if __name__ == "__main__":

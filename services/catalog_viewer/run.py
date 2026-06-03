@@ -301,7 +301,7 @@ def handle_feature_lookup(
     feature_max_response_bytes: int,
 ) -> Response:
     resolver = feature_release_resolver or feature_preview_run.CatalogReleaseResolver(bucket_name=bucket_name)
-    index = feature_index or feature_preview_run.FirestoreFeatureIndex(collection_root=feature_collection_root)
+    index = feature_index or feature_preview_run.GcsSidecarFeatureIndex(bucket_name=bucket_name)
     return feature_preview_run.handle_request(
         method,
         path,
@@ -459,8 +459,10 @@ def resolve_download_gs_uri(
     *,
     object_store: ObjectStore,
 ) -> str:
+    if format_name == "feature_index":
+        return resolve_feature_index_gs_uri(asset, version, object_store=object_store)
     if format_name != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb")
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or feature_index")
     if str(asset.get("canonical_format") or "").strip() != "fgb":
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
     if version != "latest" and not DATE_RE.fullmatch(version):
@@ -475,6 +477,51 @@ def resolve_download_gs_uri(
     if not gs_uri.lower().endswith(".fgb"):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog download path is not an FGB")
     return gs_uri
+
+
+def resolve_feature_index_gs_uri(
+    asset: Mapping[str, Any],
+    version: str,
+    *,
+    object_store: ObjectStore,
+) -> str:
+    if version != "latest" and not DATE_RE.fullmatch(version):
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
+
+    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
+    if release_index:
+        releases = release_index.get("releases") or []
+        if version == "latest":
+            latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
+            latest_date = str(latest.get("date") or "") if latest else ""
+            release = (release_index_release(release_index, latest_date) if latest_date else None) or latest
+            if release is None and isinstance(releases, list) and releases and isinstance(releases[0], Mapping):
+                release = releases[0]
+        else:
+            release = release_index_release(release_index, version)
+        if release:
+            gs_uri = release_file_for_role(release.get("files"), "feature_index", ".features.ndjson.gz")
+            if gs_uri:
+                return gs_uri
+
+    versions = asset.get("versions") or []
+    if isinstance(versions, list):
+        target_date = version
+        if version == "latest":
+            latest = asset.get("latest_release") if isinstance(asset.get("latest_release"), Mapping) else None
+            target_date = str(latest.get("date") or "") if latest else ""
+            if not target_date and versions and isinstance(versions[0], Mapping):
+                target_date = str(versions[0].get("date") or "")
+        for candidate in versions:
+            if not isinstance(candidate, Mapping):
+                continue
+            if str(candidate.get("date") or "") != target_date:
+                continue
+            gs_uri = release_file_for_role(candidate.get("files"), "feature_index", ".features.ndjson.gz")
+            if gs_uri:
+                return gs_uri
+
+    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a feature-index sidecar")
 
 
 def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
@@ -494,6 +541,18 @@ def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_st
                 continue
             if str(candidate.get("date") or "") == version:
                 return str(candidate.get("canonical_path") or "").strip()
+    return ""
+
+
+def release_file_for_role(files: Any, role: str, suffix: str) -> str:
+    if not isinstance(files, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
+    for file_entry in files:
+        if not isinstance(file_entry, Mapping):
+            continue
+        file_path = str(file_entry.get("path") or "").strip()
+        if str(file_entry.get("role") or "").strip() == role and file_path.startswith("gs://") and file_path.endswith(suffix):
+            return file_path
     return ""
 
 
@@ -784,7 +843,7 @@ def main() -> None:
         bucket_name=bucket_name,
         ttl_seconds=catalog_cache_ttl_from_env(),
     )
-    feature_index = feature_preview_run.FirestoreFeatureIndex(collection_root=feature_collection_root_from_env())
+    feature_index = feature_preview_run.GcsSidecarFeatureIndex(bucket_name=bucket_name)
     handler = make_handler(
         catalog_cache=catalog_cache,
         object_store=object_store,

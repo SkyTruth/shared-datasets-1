@@ -299,7 +299,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertTrue(catalog_viewer_dockerfile.exists())
         self.assertTrue(index_loader.exists())
         self.assertIn("FEATURE_PREVIEW_FIRESTORE_DATABASE", service_run.read_text())
-        self.assertIn("feature_preview_run.FirestoreFeatureIndex", catalog_viewer_run.read_text())
+        self.assertIn("feature_preview_run.GcsSidecarFeatureIndex", catalog_viewer_run.read_text())
         self.assertIn("FEATURE_PREVIEW_COLLECTION_ROOT", catalog_viewer_run.read_text())
         self.assertIn("FEATURE_PREVIEW_FIRESTORE_DATABASE", index_loader.read_text())
         self.assertIn("google-cloud-firestore", service_dockerfile.read_text())
