@@ -233,6 +233,27 @@ resource "google_compute_url_map" "pmtiles_cdn" {
       }
     }
 
+    path_rule {
+      paths   = ["/private/*"]
+      service = google_compute_backend_bucket.pmtiles_cdn.self_link
+
+      route_action {
+        cors_policy {
+          allow_credentials = false
+          allow_headers     = ["Accept", "Content-Type", "Origin"]
+          allow_methods     = ["GET", "HEAD", "OPTIONS"]
+          allow_origins     = local.pmtiles_browser_allowed_origins
+          disabled          = false
+          expose_headers    = ["Cache-Control", "Content-Encoding", "Content-Length", "Content-Type", "ETag"]
+          max_age           = 3600
+        }
+
+        url_rewrite {
+          path_prefix_rewrite = "/"
+        }
+      }
+    }
+
     dynamic "path_rule" {
       for_each = local.pmtiles_redirector_enabled ? toset(["redirect"]) : toset([])
 
@@ -291,6 +312,13 @@ resource "google_compute_url_map" "pmtiles_cdn" {
     path                = "/_catalog/web/catalog.json"
     service             = google_compute_backend_bucket.pmtiles_cdn.self_link
     expected_output_url = "https://${var.pmtiles_cdn_host}/_catalog/web/catalog.json"
+  }
+
+  test {
+    host                = var.pmtiles_cdn_host
+    path                = "/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    service             = google_compute_backend_bucket.pmtiles_cdn.self_link
+    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
   }
 
   depends_on = [google_project_service.required]
@@ -371,4 +399,11 @@ resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_cookie_signers" 
   secret_id = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value
+}
+
+resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_catalog_viewer_signer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = module.catalog_viewer_service_account.member
 }
