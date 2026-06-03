@@ -46,6 +46,32 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
             pmtiles_cdn_tf,
         )
 
+    def test_private_metadata_route_rewrites_to_bucket_object_path_without_credentials(self):
+        pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
+
+        self.assertIn('paths   = ["/private/*"]', pmtiles_cdn_tf)
+        self.assertIn("allow_credentials = false", pmtiles_cdn_tf)
+        self.assertIn('allow_methods     = ["GET", "HEAD", "OPTIONS"]', pmtiles_cdn_tf)
+        self.assertIn("allow_origins     = local.pmtiles_browser_allowed_origins", pmtiles_cdn_tf)
+        self.assertIn(
+            'expose_headers    = ["Cache-Control", "Content-Encoding", "Content-Length", "Content-Type", "ETag"]',
+            pmtiles_cdn_tf,
+        )
+        self.assertIn('path_prefix_rewrite = "/"', pmtiles_cdn_tf)
+        self.assertIn(
+            'path                = "/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            pmtiles_cdn_tf,
+        )
+        self.assertIn(
+            'expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            pmtiles_cdn_tf,
+        )
+        self.assertIn(
+            'resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_catalog_viewer_signer"',
+            pmtiles_cdn_tf,
+        )
+        self.assertIn("member    = module.catalog_viewer_service_account.member", pmtiles_cdn_tf)
+
 
 if __name__ == "__main__":
     unittest.main()

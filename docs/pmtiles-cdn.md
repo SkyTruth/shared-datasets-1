@@ -9,12 +9,28 @@ https://tiles.skytruth.org/pmtiles/public/{asset}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{asset}.pmtiles
 ```
 
+Private release artifacts that are not PMTiles, including generated localized
+metadata sidecars, use signed URLs under a separate private artifact route:
+
+```text
+https://tiles.skytruth.org/private/{bucket-object-path}?Expires=...&KeyName=...&Signature=...
+```
+
+The `/private/` URL-map rule strips that prefix before fetching from
+`gs://skytruth-shared-datasets-1/{bucket-object-path}`. The route is intended
+for trusted resolver output, not catalog-authored public URLs. Unsigned
+requests to private release artifacts must not return readable bytes after
+cutover.
+
 The internal catalog viewer does not depend on these routes for private map
 preview. It is a Cloud Run service in `shared-datasets-1`, protected by direct
 Cloud Run IAP on its generated `run.app` URL, and it resolves private PMTiles
 through short-lived signed `storage.googleapis.com` URLs from
 `/api/pmtiles/signed-url?slug={asset-slug}`. The CDN remains the compatibility
-path for downstream consumers that use `tiles.skytruth.org` directly.
+path for downstream consumers that use `tiles.skytruth.org` directly. For
+private metadata sidecars, the production catalog viewer may return a signed
+`tiles.skytruth.org/private/...` URL from `/api/download-url`; private FGB and
+PMTiles download behavior remains signed GCS.
 
 Public-tier PMTiles are anonymously readable. Private-tier PMTiles are present
 in the public catalog but require application authorization and a valid
@@ -44,6 +60,9 @@ The production Terraform stack owns:
 - Public `_catalog/*` routes on `tiles.skytruth.org` so catalog CSV, generated
   catalog web files, docs Markdown, and release indexes remain freely readable
   after direct public GCS access is removed.
+- A signed private artifact route from `/private/*` to canonical bucket object
+  paths, used by the catalog viewer for private metadata sidecars when CDN
+  signing is configured.
 - URL map rules from `/pmtiles/{access-tier}/{asset}.pmtiles` paths to
   canonical `latest/{asset}.pmtiles` objects, generated from active PMTiles
   catalog rows.
@@ -77,6 +96,9 @@ As of May 12, 2026:
 - The URL map serves latest PMTiles through `/pmtiles/{tier}/{asset}.pmtiles`.
 - The URL map serves public catalog files through `/_catalog/*` so the catalog
   remains freely readable after direct public GCS access is removed.
+- The URL map accepts signed private release-artifact URLs through
+  `/private/{bucket-object-path}`, including
+  `{asset}.metadata.{locale}.ndjson.gz` sidecars.
 - The backend bucket has signed request key
   `shared-datasets-pmtiles-v1`.
 - The PMTiles CDN signing-key secret has an enabled version.
@@ -213,6 +235,17 @@ The cookie value must contain `URLPrefix`, `Expires`, `KeyName`, and
 `Signature`, in that order, using HMAC-SHA1 over the unsigned policy.
 Preserve base64url padding if the runtime emits it. The HMAC key is the decoded
 raw 16-byte key, not the encoded secret text.
+
+The catalog viewer uses the same Cloud CDN key for private metadata sidecar
+signed URLs. Those URLs sign the exact object URL, for example:
+
+```text
+https://tiles.skytruth.org/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
+```
+
+Use signed URLs for metadata sidecars, not signed cookies, because the frontend
+fetches exactly one metadata sidecar for the active locale and does not need a
+broader PMTiles cookie session.
 
 ## Consumer Runtime Contract
 
@@ -410,6 +443,16 @@ Live checks after CDN cutover and direct public GCS removal:
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.
 - Expired or malformed cookie returns `403`.
+- Unsigned `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests return
+  `403` or another non-readable status.
+- `/api/download-url?...format=metadata&locale={locale}` for an authorized
+  private asset returns one signed
+  `https://tiles.skytruth.org/private/...metadata.{locale}.ndjson.gz` URL when
+  that locale exists, or one signed canonical `.metadata.ndjson.gz` fallback
+  URL when it does not.
+- Fetching the signed private metadata URL returns `200` with
+  `application/x-ndjson`, `application/gzip`, or gzip-compatible metadata
+  headers.
 - CORS preflight from each configured exact consumer origin allows credentials
   and `Range`; a non-configured `Origin` such as `https://skytruth.org` or
   `https://evilskytruth.org` is rejected.
