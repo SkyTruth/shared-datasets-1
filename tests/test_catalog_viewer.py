@@ -31,6 +31,10 @@ PUBLIC_PMTILES_RELEASE_PATH = (
     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
     "wdpa-marine/releases/2026-05-01/wdpa-marine.pmtiles"
 )
+PUBLIC_FEATURE_INDEX_RELEASE_PATH = (
+    "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
+    "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
+)
 
 
 class FakeStore:
@@ -48,6 +52,7 @@ class FakeStore:
                                 "files": [
                                     {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
                                     {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
+                                    {"format": "ndgeojson", "role": "feature_index", "path": PUBLIC_FEATURE_INDEX_RELEASE_PATH},
                                 ],
                             }
                         ],
@@ -86,6 +91,11 @@ class FakeFeatureReleaseResolver:
             requested_release=release,
             resolved_release="2026-05-01" if release == "latest" else release,
             release_index_generation=12345,
+            sidecar_uri=(
+                "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/"
+                "marine-regions-eez/releases/2026-05-01/marine-regions-eez.features.ndjson.gz"
+            ),
+            sidecar_generation=1001,
         )
 
 
@@ -105,8 +115,16 @@ class FakeFeatureIndex:
             }
         }
 
-    def lookup(self, asset_slug: str, release: str, feature_ids: list[str]) -> dict[str, dict]:
-        self.calls.append((asset_slug, release, list(feature_ids)))
+    def lookup(
+        self,
+        asset_slug: str,
+        release: str,
+        feature_ids: list[str],
+        *,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ) -> dict[str, dict]:
+        self.calls.append((asset_slug, release, list(feature_ids), sidecar_uri, sidecar_generation))
         return {feature_id: self.documents[feature_id] for feature_id in feature_ids if feature_id in self.documents}
 
 
@@ -364,6 +382,42 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(table_response.status, 400)
         self.assertEqual(outside_response.status, 502)
 
+    def test_feature_index_download_uses_release_sidecar(self):
+        response, signer = download_url_request("wdpa-marine", version="2026-05-01", fmt="feature_index")
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(
+            payload["download_url"],
+            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz",
+        )
+        self.assertEqual(payload["filename"], "wdpa-marine.features.ndjson.gz")
+        self.assertEqual(signer.calls, [])
+
+    def test_feature_index_download_latest_uses_release_index_latest(self):
+        response, _signer = download_url_request("wdpa-marine", fmt="feature_index")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+
+    def test_private_feature_index_download_returns_signed_url(self):
+        catalog = catalog_payload()
+        catalog["assets"][0]["access_tier"] = "private"
+        response, signer = download_url_request(
+            "wdpa-marine",
+            version="2026-05-01",
+            fmt="feature_index",
+            headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            catalog=catalog,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/signed-private.pmtiles"))
+        self.assertEqual(payload["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(signer.calls[0][0], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+
     def test_feature_metadata_lookup_requires_authenticated_iap_identity(self):
         response, resolver, index = feature_lookup_request({"ids": ["src:MRGID:48943"]})
 
@@ -384,7 +438,18 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["resolved_release"], "2026-05-01")
         self.assertEqual(payload["release_index_generation"], 12345)
         self.assertEqual(resolver.calls, [("marine-regions-eez", "latest")])
-        self.assertEqual(index.calls, [("marine-regions-eez", "2026-05-01", ["src:MRGID:48943"])])
+        self.assertEqual(
+            index.calls,
+            [
+                (
+                    "marine-regions-eez",
+                    "2026-05-01",
+                    ["src:MRGID:48943"],
+                    "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/marine-regions-eez/releases/2026-05-01/marine-regions-eez.features.ndjson.gz",
+                    1001,
+                )
+            ],
+        )
         self.assertEqual(payload["items"][0]["id"], "src:MRGID:48943")
         self.assertTrue(payload["items"][0]["found"])
         self.assertEqual(payload["items"][0]["feature_hash"], "hash-48943")
