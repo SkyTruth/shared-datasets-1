@@ -22,3 +22,4 @@ Current skills:
 - `shared-datasets-compliance-audit`
 - `static-catalog-web-preview`
 - `sync-docs-with-code`
+- `update-feature-metadata-translations`

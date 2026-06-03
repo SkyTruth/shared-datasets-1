@@ -124,6 +124,33 @@ The service returns `Cache-Control: no-store` while it is IAP-only. Successful
 lookup responses include an ETag, and callers may use `If-None-Match` for
 repeat requests.
 
+## Locale-Specific Sidecar Downloads
+
+For static catalog feature inspection, the browser does not call the lookup API
+or fetch a translation overlay. It calls the catalog viewer download resolver
+for one metadata sidecar URL:
+
+```http
+GET /api/download-url?slug={asset_slug}&format=metadata&version={release_or_latest}&locale=es
+```
+
+The resolver first looks for `{asset-slug}.metadata.es.ndjson.gz` in the
+selected release's `files` list. If that materialized localized view is absent,
+it falls back to the canonical `{asset-slug}.metadata.ndjson.gz`. Successful
+responses include `requested_locale`, `resolved_locale`, and
+`metadata_locale_fallback` so clients can log fallback behavior, but the browser
+still fetches exactly one metadata sidecar and parses the same record shape.
+
+Localized sidecars are generated during publish/build/index preparation from
+the canonical sidecar and `{asset-slug}.metadata-translations.csv`. Translation
+rows are keyed by `feature_id`, property field, locale, and source-value hash.
+Rows whose hash no longer matches the canonical property value are stale; the
+generator reports and skips them so the localized view falls back to canonical
+properties for that field. After an approved publish plan promotes a new
+translation source CSV, `.github/workflows/metadata-localization.yml` reruns
+the materialization pipeline for that source and writes generated localized
+sidecars with generation preconditions from the approved publisher environment.
+
 ## Operations
 
 Index load status is written only under:

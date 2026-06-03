@@ -151,7 +151,7 @@ Inputs:
 - `asset_slug`: exact asset slug.
 - `release`: concrete `YYYY-MM-DD` release.
 - `sidecar_uri`, `schema_uri`, and `manifest_uri`: preview-bucket release
-  artifact URIs.
+  `.metadata.ndjson.gz`, `.schema.json`, and `.manifest.json` artifact URIs.
 - `sidecar_generation`, `schema_generation`, and `manifest_generation`: exact
   GCS object generations.
 - `load_id`: optional; when omitted, the workflow uses
