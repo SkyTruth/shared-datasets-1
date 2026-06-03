@@ -31,9 +31,9 @@ Rules:
   reproducible release feature model plus release manifest. The FGB remains the
   canonical vector artifact for consumers, but do not treat FGB alone as the
   only release truth.
-- Release-oriented PMTiles should be intentionally lightweight: geometry plus a
-  stable `feature_id` property only. Full attributes belong in the FGB and
-  metadata sidecar.
+- Release-oriented PMTiles should be intentionally lightweight: geometry plus
+  stable `feature_id` and `ext_id` properties only. Full attributes and display
+  labels belong in the FGB and metadata sidecar/API.
 - Shared vector `.pmtiles` display artifacts should use the repo vector
   helper's auto maxzoom policy: generate the canonical FGB first, profile the
   FGB, then choose maxzoom from source scale/resolution metadata and measured
@@ -160,7 +160,7 @@ Required release artifacts for vector releases:
 | File | Role |
 |---|---|
 | `{asset-slug}.fgb` | Truth-preserving canonical vector artifact with full attributes, `feature_id`, and `feature_hash`. |
-| `{asset-slug}.pmtiles` | Lightweight display artifact with geometry and `feature_id` only. |
+| `{asset-slug}.pmtiles` | Lightweight display artifact with geometry, `feature_id`, and `ext_id` only. |
 | `{asset-slug}.metadata.ndjson.gz` | Canonical durable metadata sidecar, one JSON object per `feature_id`. |
 | `{asset-slug}.schema.json` | Field names, types, nullable fields, reserved fields, and projection allowlist. |
 | `{asset-slug}.manifest.json` | Source inputs, artifact paths, checksums, destination generations for non-manifest artifacts, schema version, ID strategy, validation, and note that index status is tracked under `index-loads/`. The manifest does not embed its own object generation. |
@@ -306,11 +306,14 @@ feature_metadata:
 
 ### Localized Name Sidecars
 
-Localized PMTiles display names use a same-asset CSV sidecar keyed by a stable
+Localized display names use a same-asset CSV sidecar keyed by a stable
 canonical FGB `ext_id` column. Datasets without localized display names omit
-this metadata. Any dataset that publishes localized display names must declare
-`localized_names` in the asset-doc frontmatter and must stage a localization
-CSV at `latest/{asset-slug}-localizations.csv`:
+this metadata. Release-oriented PMTiles do not carry `name` or `name_*`
+properties; they carry `feature_id` and `ext_id`, and feature inspectors or
+apps resolve display labels through the metadata API or localization sidecar.
+Any dataset that publishes localized display names must declare
+`localized_names` in the asset-doc frontmatter and must stage a localization CSV
+at `latest/{asset-slug}-localizations.csv`:
 
 ```yaml
 localized_names:
@@ -342,31 +345,27 @@ review states must be `source_provided`, `machine_translated`, or
 `human_reviewed`; the asset-doc aggregate `review_state` may also be `mixed`
 when a locale has values from more than one state.
 
-The canonical FGB must contain a unique nonblank `ext_id` column. The
-localization CSV must contain one unique nonblank row for every current FGB
-`ext_id`. The fallback `name` value is required for every row. Blank localized
-values must have blank review states, and nonblank localized values must have a
-review state. PMTiles generation joins the canonical FGB to the localization
-CSV and writes `ext_id`, `name`, and declared nonblank `name_*` values into
-feature properties. Per-value review-state fields stay in the CSV and catalog
-metadata by default; they are not written into PMTiles properties.
+The canonical FGB must contain a unique nonblank `ext_id` column, and PMTiles
+must carry the same `ext_id` value as a feature property. The localization CSV
+must contain one unique nonblank row for every current FGB `ext_id`. The
+fallback `name` value is required for every row. Blank localized values must
+have blank review states, and nonblank localized values must have a review
+state. Per-value review-state fields stay in the CSV and catalog metadata.
 
-Translation-only updates rebuild the PMTiles archive from the unchanged FGB and
-the updated localization CSV. PMTiles cannot be patched in place because
-properties are embedded inside tile payloads. For versioned assets, a
-translation-only release should copy the byte-identical current FGB into the
-new release directory, publish the updated localization CSV under release and
-`latest/`, publish the rebuilt PMTiles under release and `latest/`, and rebuild
-the release index after promotion.
+Translation-only updates publish the updated localization CSV and reload or
+refresh the metadata index. For versioned assets, a translation-only release
+should copy the byte-identical current FGB and PMTiles into the new release
+directory, publish the updated localization CSV under release and `latest/`,
+and rebuild the release index after promotion.
 
 Use `generated_group_id` only when an asset needs generated group-level
 addressing and lacks a useful provider row ID. The generated native column is
 `shared_datasets_group_id`, produced with `shared-datasets-group-id:v1`.
 `shared_datasets_group_id` must be a native property/column in the canonical
-vector/table artifact and must be preserved in PMTiles feature properties.
-Do not generate this column by default for every asset; first evaluate provider
-IDs and group/search needs, and leave `generated_group_id` absent when no
-curator-approved grouping field exists.
+vector/table artifact and metadata sidecar. Do not generate this column by
+default for every asset; first evaluate provider IDs and group/search needs,
+and leave `generated_group_id` absent when no curator-approved grouping field
+exists.
 Agents must present provider ID candidates and grouping/search field candidates
 before generating `shared_datasets_group_id`; if the current request has not
 selected a grouping field, stop at the options step. Use the standard decision

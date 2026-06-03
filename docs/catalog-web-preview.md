@@ -84,7 +84,7 @@ license-text-derived flags.
 provider identity-field candidates, distinct values, duplicate counts, and short
 profile notes. `search_fields` surfaces curator-selected high-value filter
 fields that are not provider IDs. `localized_names` records the official
-localization CSV sidecar and PMTiles property contract, including `storage`,
+localization CSV sidecar and metadata lookup contract, including `storage`,
 `join_key`, `localization_file`, available locales, declared fields, aggregate
 per-locale review state, and fallback field when present.
 `generated_group_id` records the policy and counts for a native

@@ -182,17 +182,18 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   confirm the PMTiles magic bytes, run `pmtiles verify`, inspect `pmtiles show`
   for min/max zoom, tile type, compression, layer metadata, and bounds, and
   decode representative tiles to confirm the expected layer and compact feature
-  properties such as `feature_id`. If the build tool produced MBTiles, convert
+  properties such as `feature_id` and `ext_id`. If the build tool produced MBTiles, convert
   it with `pmtiles convert` and validate the converted archive before upload.
   Record these validation commands in the PR or final response.
 - Release-oriented vector assets use a strict artifact set: canonical FGB with
   `feature_id` and
-  `feature_hash`, PMTiles projected to geometry plus `feature_id`, a canonical
+  `feature_hash`, PMTiles projected to geometry plus `feature_id` and `ext_id`, a canonical
   `{asset-slug}.metadata.ndjson.gz` sidecar, `{asset-slug}.schema.json`, and
   `{asset-slug}.manifest.json`. Use `scripts/release_feature_model.py` helpers
   for IDs, hashes, sidecar serialization, validation, and manifest creation.
   Use `--pmtiles-feature-id-property feature_id` with `scripts/vector_asset.py`
-  to build lightweight metadata-lookup tiles.
+  to build lightweight metadata-lookup tiles containing `feature_id` and
+  `ext_id`.
 - Shared vector PMTiles display artifacts should use `scripts/vector_asset.py
   build` auto maxzoom. The helper generates the FGB, profiles it, then chooses
   maxzoom from source scale/resolution hints and measured geometry detail. It
@@ -272,15 +273,14 @@ For normal asset metadata changes:
    explicitly rejects provider and grouping options but still requires row-level
    addresses.
    If `generated_group_id` is present, `shared_datasets_group_id` must be a
-   native property/column in the canonical FGB/table and must be preserved in
-   PMTiles feature properties. For vector builds, pass
+   native property/column in the canonical FGB/table and metadata sidecar. For vector builds, pass
    `--group-id-field FIELD` to `scripts/vector_asset.py build`; the helper
-   automatically validates that the column survives both artifacts.
+   automatically validates that the column survives in the canonical artifact.
    If `generated_row_id` is present, `shared_datasets_row_id` must be a native
-   property/column in the canonical FGB/table and must be preserved in PMTiles
-   feature properties. For vector builds, pass `--generate-row-id` to
-   `scripts/vector_asset.py build`; the helper automatically validates that the
-   column survives both artifacts.
+   property/column in the canonical FGB/table and metadata sidecar. For vector
+   builds, pass `--generate-row-id` to `scripts/vector_asset.py build`; the
+   helper automatically validates that the column survives in the canonical
+   artifact.
 6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
    band semantics, dtype, nodata, units, scale/offset, and sampling where
    applicable.

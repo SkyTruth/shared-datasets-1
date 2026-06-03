@@ -149,8 +149,8 @@ uv run python scripts/vector_asset.py build ./source.fgb \
   --pmtiles-feature-id-property feature_id
 ```
 
-This keeps PMTiles lightweight while preserving click-to-metadata joins through
-the Cloud Run metadata service.
+This keeps PMTiles lightweight with `feature_id` and `ext_id` properties while
+preserving click-to-metadata joins through the Cloud Run metadata service.
 
 Generated group IDs are opt-in. Present provider ID candidates and
 grouping/search field candidates before adding `--group-id-field`. Use the
@@ -181,9 +181,10 @@ new dated release directory that contains only PMTiles unless PMTiles is the
 canonical format; release-index dates should correspond to releases that include
 the canonical asset file.
 
-For localized PMTiles, the canonical FGB remains the geometry and analytical
-source and must contain unique nonblank `ext_id` values. Store fallback and
-translated display names in a same-asset CSV sidecar named
+For localized display names, the canonical FGB remains the geometry and
+analytical source and must contain unique nonblank `ext_id` values. PMTiles
+carry `feature_id` and `ext_id` only; store fallback and translated display
+names in a same-asset CSV sidecar named
 `{asset-slug}-localizations.csv` with required columns `ext_id`, `name`, and
 `name_review_state`, plus optional `name_{locale_code}` /
 `name_{locale_code}_review_state` pairs. Use:
@@ -199,18 +200,13 @@ uv run python scripts/localized_vector_asset.py validate-localizations \
   --fgb ./example-asset.fgb \
   --localizations ./example-asset-localizations.csv \
   --asset-doc docs/assets/example-asset.md
-
-uv run python scripts/localized_vector_asset.py build-pmtiles \
-  --fgb ./example-asset.fgb \
-  --localizations ./example-asset-localizations.csv \
-  --asset-slug example-asset \
-  --output ./example-asset.pmtiles
 ```
 
 A translation-only release should stage a byte-identical current FGB copy for
 `releases/YYYY-MM-DD/`, the updated localization CSV for release and `latest/`,
-and the rebuilt PMTiles for release and `latest/`. Do not update
-`latest/{asset-slug}.fgb` for translation-only changes.
+and a byte-identical current PMTiles copy for release and `latest/`. Reload or
+refresh the metadata index so display-label lookups see the updated CSV-derived
+metadata. Do not update `latest/{asset-slug}.fgb` for translation-only changes.
 
 `--tile-simplify` is for dense display tiles only. It is applied in the streamed
 PMTiles conversion and does not simplify the canonical FGB.

@@ -288,7 +288,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(commands[0].kind, "pipeline")
         self.assertNotIn("-sql", commands[0].source)
 
-    def test_pmtiles_feature_id_property_projects_tiles_to_feature_id_only(self):
+    def test_pmtiles_feature_id_property_projects_tiles_to_metadata_lookup_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -311,7 +311,7 @@ class VectorAssetTests(unittest.TestCase):
                 feature_min_dimension_m_p10=None,
                 feature_min_dimension_m_p25=None,
                 envelope_like=False,
-                property_keys=("feature_id", "name", "source_id"),
+                property_keys=("feature_id", "ext_id", "name", "source_id"),
             )
 
         commands = vector_asset.pmtiles_commands(plan, 12, profile=profile)
@@ -320,14 +320,14 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn(vector_asset.FEATURE_HASH_COLUMN, plan.required_properties)
         self.assertEqual(
             plan.required_fgb_properties,
-            (vector_asset.FEATURE_ID_COLUMN, vector_asset.FEATURE_HASH_COLUMN),
+            (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN, vector_asset.FEATURE_HASH_COLUMN),
         )
-        self.assertEqual(plan.required_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN,))
-        self.assertEqual(plan.exact_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN,))
+        self.assertEqual(plan.required_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN))
+        self.assertEqual(plan.exact_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN))
         self.assertEqual(plan.pmtiles_feature_id_property, vector_asset.FEATURE_ID_COLUMN)
         self.assertEqual(commands[0].kind, "pipeline")
         sql = commands[0].source[commands[0].source.index("-sql") + 1]
-        self.assertEqual(sql, 'SELECT "feature_id" FROM "example_asset"')
+        self.assertEqual(sql, 'SELECT "feature_id", "ext_id" FROM "example_asset"')
 
     def test_pmtiles_feature_id_property_must_use_standard_feature_id_name(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -631,7 +631,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertTrue(result.valid)
         self.assertEqual(result.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
 
-    def test_metadata_mode_validation_requires_fgb_hash_and_pmtiles_feature_id_only(self):
+    def test_metadata_mode_validation_requires_fgb_hash_and_pmtiles_lookup_ids_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
@@ -679,6 +679,7 @@ class VectorAssetTests(unittest.TestCase):
                                             {
                                                 "properties": {
                                                     vector_asset.FEATURE_ID_COLUMN: "src:id:1",
+                                                    vector_asset.EXT_ID_COLUMN: "1",
                                                     "name": "extra",
                                                 }
                                             }
@@ -699,9 +700,13 @@ class VectorAssetTests(unittest.TestCase):
                 result = vector_asset.validate_outputs(
                     fgb,
                     pmtiles,
-                    required_fgb_properties=(vector_asset.FEATURE_ID_COLUMN, vector_asset.FEATURE_HASH_COLUMN),
-                    required_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN,),
-                    exact_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN,),
+                    required_fgb_properties=(
+                        vector_asset.FEATURE_ID_COLUMN,
+                        vector_asset.EXT_ID_COLUMN,
+                        vector_asset.FEATURE_HASH_COLUMN,
+                    ),
+                    required_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN),
+                    exact_pmtiles_properties=(vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN),
                 )
 
         self.assertFalse(result.valid)

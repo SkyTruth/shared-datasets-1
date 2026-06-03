@@ -94,7 +94,7 @@ files:
 - path: latest/example-asset-localizations.csv
   format: csv
   role: localization
-  purpose: Feature display-name localizations joined into PMTiles
+  purpose: Feature display-name localizations keyed by ext_id for metadata/API use
 - path: releases/YYYY-MM-DD/example-asset.fgb
   format: fgb
   role: release
@@ -336,6 +336,21 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(asset["canonical_sha256"], "a" * 64)
         self.assertEqual(asset["pmtiles_sha256"], "b" * 64)
         self.assertEqual(asset["row_count"], 12345)
+        self.assertEqual(
+            [file_entry["path"] for file_entry in asset["versions"][0]["files"]],
+            [
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.metadata.ndjson.gz",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.schema.json",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.manifest.json",
+            ],
+        )
+        self.assertEqual(asset["versions"][0]["files"][2]["format"], "metadata")
+        self.assertEqual(asset["versions"][0]["files"][2]["generation"], 1001)
+        self.assertEqual(asset["versions"][0]["files"][3]["role"], "schema")
+        self.assertEqual(asset["versions"][0]["files"][4]["role"], "manifest")
+        self.assertEqual(asset["versions"][0]["files"][4]["generation"], 1003)
 
     def test_release_index_assets_only_omits_assets_without_preview_release_indexes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -678,7 +693,7 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(len(active_assets), expected_active_assets)
         self.assertTrue(all(asset["canonical_path"].startswith("gs://") for asset in active_assets))
         self.assertTrue(all(asset["release_index_url"].endswith(f"/{asset['slug']}.json") for asset in active_assets))
-        self.assertTrue(any(asset["versions"] for asset in active_assets))
+        self.assertTrue(all(isinstance(asset["versions"], list) for asset in active_assets))
         self.assertTrue(any(asset["pmtiles_url"] for asset in active_assets))
 
 

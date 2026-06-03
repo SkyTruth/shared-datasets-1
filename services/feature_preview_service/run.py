@@ -116,7 +116,7 @@ class CatalogReleaseResolver:
         release_entry = release_index_entry(releases, resolved)
         if release_entry is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "not_found", f"release {resolved} is not indexed")
-        sidecar_uri, sidecar_generation = feature_index_sidecar(release_entry)
+        sidecar_uri, sidecar_generation = metadata_sidecar(release_entry)
         return ResolvedRelease(release, resolved, generation, sidecar_uri, sidecar_generation)
 
     def _load_release_index(self, asset_slug: str) -> tuple[dict[str, Any], int | None]:
@@ -420,16 +420,20 @@ def response_item(
     include_provenance: bool,
 ) -> dict[str, Any]:
     if document is None:
-        return {"id": feature_id, "found": False}
-    properties = dict(document.get("properties") or {})
+        return {"feature_id": feature_id, "found": False}
+    source_properties = dict(document.get("properties") or {})
+    ext_id = str(document.get("ext_id") or source_properties.get("ext_id") or "").strip()
+    properties = dict(source_properties)
     if fields is not None:
-        properties = {field: properties[field] for field in fields if field in properties}
+        properties = {field: source_properties.get(field) for field in fields}
     item = {
-        "id": feature_id,
+        "feature_id": feature_id,
         "found": True,
         "feature_hash": document.get("feature_hash"),
         "properties": properties,
     }
+    if ext_id:
+        item["ext_id"] = ext_id
     if include_provenance:
         item["provenance"] = dict(document.get("provenance") or {})
     return item
@@ -444,7 +448,7 @@ def release_index_entry(releases: Any, release: str) -> Mapping[str, Any] | None
     return None
 
 
-def feature_index_sidecar(release_entry: Mapping[str, Any]) -> tuple[str, int]:
+def metadata_sidecar(release_entry: Mapping[str, Any]) -> tuple[str, int]:
     files = release_entry.get("files") or []
     if not isinstance(files, list):
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release files are not indexed")
@@ -453,9 +457,17 @@ def feature_index_sidecar(release_entry: Mapping[str, Any]) -> tuple[str, int]:
             continue
         path = str(item.get("path") or "")
         generation = as_int(item.get("generation"))
-        if item.get("role") == "feature_index" and path.endswith(".features.ndjson.gz") and generation is not None:
+        if is_metadata_file(item, path) and generation is not None:
             return path, generation
-    raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release feature-index sidecar is not indexed")
+    raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release metadata sidecar is not indexed")
+
+
+def is_metadata_file(item: Mapping[str, Any], path: str) -> bool:
+    if not path.endswith(".metadata.ndjson.gz"):
+        return False
+    role = str(item.get("role") or "").strip()
+    format_name = str(item.get("format") or "").strip()
+    return role == "metadata" or format_name == "metadata"
 
 
 def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> dict[str, dict[str, Any]]:
@@ -533,7 +545,7 @@ def as_int(value: Any) -> int | None:
 
 
 def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or header_value(headers, "X-Forwarded-Email") or ""
+    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
     raw = raw.strip()
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]

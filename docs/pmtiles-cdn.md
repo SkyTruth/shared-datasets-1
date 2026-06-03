@@ -261,13 +261,13 @@ Do not emit direct
 browser URLs for shared-dataset PMTiles. If the consumer config response is
 cached, bump its cache key as part of the change. PMTiles layer/config responses
 should also preserve catalog `localized_names` metadata when present so browser
-labels, popups, and feature inspectors can choose `name` or the declared
-`name_${locale_code}` property instead of hardcoding source-native fields.
-Localized canonical data lives in the same-asset localization CSV sidecar keyed
-by `ext_id`; PMTiles consumers do not need to fetch the CSV unless they are
-building a custom join. Use each translation entry's aggregate `review_state`
-to distinguish source-provided names, machine translations, human-reviewed
-translations, and mixed review state in user-facing confidence cues.
+labels, popups, and feature inspectors can resolve display labels through the
+metadata API or same-asset localization CSV instead of hardcoding source-native
+fields. Localized canonical data lives in the localization CSV sidecar keyed by
+`ext_id`; PMTiles carry `feature_id` and `ext_id`, not `name` or `name_*`
+fields. Use each translation entry's aggregate `review_state` to distinguish
+source-provided names, machine translations, human-reviewed translations, and
+mixed review state in user-facing confidence cues.
 
 Before mounting a private PMTiles layer, the frontend should call the session
 endpoint, preferably through `ensurePmtilesCdnSession`:
