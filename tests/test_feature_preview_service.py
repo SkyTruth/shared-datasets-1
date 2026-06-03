@@ -112,7 +112,13 @@ class FakeIndex:
         }
 
 
-def release_index_payload(*, include_sidecar: bool = True, sidecar_generation: int = 1001) -> dict:
+def release_index_payload(
+    *,
+    include_sidecar: bool = True,
+    sidecar_generation: int = 1001,
+    sidecar_format: str = "ndgeojson",
+    sidecar_role: str | None = "feature_index",
+) -> dict:
     files = [
         {
             "format": "fgb",
@@ -123,14 +129,14 @@ def release_index_payload(*, include_sidecar: bool = True, sidecar_generation: i
         }
     ]
     if include_sidecar:
-        files.append(
-            {
-                "format": "ndgeojson",
-                "role": "feature_index",
-                "path": SIDECAR_URI,
-                "generation": sidecar_generation,
-            }
-        )
+        sidecar = {
+            "format": sidecar_format,
+            "path": SIDECAR_URI,
+            "generation": sidecar_generation,
+        }
+        if sidecar_role is not None:
+            sidecar["role"] = sidecar_role
+        files.append(sidecar)
     release = {"date": "2026-06-01", "files": files}
     return {
         "asset_slug": "wdpa-marine",
@@ -192,6 +198,22 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
         self.assertEqual(resolved.resolved_release, "2026-06-01")
         self.assertEqual(resolved.release_index_generation, 7)
+        self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
+        self.assertEqual(resolved.sidecar_generation, 1001)
+
+    def test_catalog_resolver_accepts_legacy_feature_sidecar_format(self):
+        resolver = run.CatalogReleaseResolver(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(
+                release_index_bucket(
+                    release_index_payload(sidecar_format="features_ndjson_gzip", sidecar_role=None)
+                )
+            ),
+            ttl_seconds=0,
+        )
+
+        resolved = resolver.resolve("wdpa-marine", "latest")
+
         self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
         self.assertEqual(resolved.sidecar_generation, 1001)
 

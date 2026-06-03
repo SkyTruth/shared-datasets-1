@@ -453,9 +453,17 @@ def feature_index_sidecar(release_entry: Mapping[str, Any]) -> tuple[str, int]:
             continue
         path = str(item.get("path") or "")
         generation = as_int(item.get("generation"))
-        if item.get("role") == "feature_index" and path.endswith(".features.ndjson.gz") and generation is not None:
+        if is_feature_index_file(item, path) and generation is not None:
             return path, generation
     raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "release feature-index sidecar is not indexed")
+
+
+def is_feature_index_file(item: Mapping[str, Any], path: str) -> bool:
+    if not path.endswith(".features.ndjson.gz"):
+        return False
+    role = str(item.get("role") or "").strip()
+    format_name = str(item.get("format") or "").strip()
+    return role == "feature_index" or format_name in {"feature_index", "features_ndjson_gzip"}
 
 
 def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> dict[str, dict[str, Any]]:

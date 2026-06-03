@@ -551,7 +551,13 @@ def release_file_for_role(files: Any, role: str, suffix: str) -> str:
         if not isinstance(file_entry, Mapping):
             continue
         file_path = str(file_entry.get("path") or "").strip()
-        if str(file_entry.get("role") or "").strip() == role and file_path.startswith("gs://") and file_path.endswith(suffix):
+        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
+            continue
+        entry_role = str(file_entry.get("role") or "").strip()
+        entry_format = str(file_entry.get("format") or "").strip()
+        if entry_role == role or (
+            role == "feature_index" and entry_format in {"feature_index", "features_ndjson_gzip"}
+        ):
             return file_path
     return ""
 

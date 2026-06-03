@@ -1367,7 +1367,12 @@ function featureMetadataSidecarFile(assetSlug, release) {
       : [];
   return files.find((file) => {
     const path = releaseFilePath(file);
-    return String(file?.role || "").trim() === "feature_index" && path.endsWith(".features.ndjson.gz");
+    const role = String(file?.role || "").trim();
+    const format = String(file?.format || "").trim();
+    return (
+      path.endsWith(".features.ndjson.gz") &&
+      (role === "feature_index" || format === "feature_index" || format === "features_ndjson_gzip")
+    );
   });
 }
 
