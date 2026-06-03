@@ -90,15 +90,15 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("featureMetadataRequests", app)
         self.assertIn("warmFeatureMetadataCaches(rawMapAssets)", app)
         self.assertIn("function featureMetadataDownloadUrl", app)
-        self.assertIn('format: "feature_index"', app)
-        self.assertIn('format === "features_ndjson_gzip"', app)
-        self.assertIn('format === "features"', app)
+        self.assertIn('format: "metadata"', app)
+        self.assertIn('path.endsWith(".metadata.ndjson.gz")', app)
         self.assertIn("parseFeatureMetadataSidecar", app)
         self.assertIn("DecompressionStream", app)
         self.assertIn('credentials: "include"', app)
         self.assertNotIn(":lookup", app)
         self.assertIn("item.properties", app)
         self.assertIn("feature_id: featureId", app)
+        self.assertIn("ext_id: item.ext_id", app)
         self.assertIn("source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || \"latest\"", map_preview)
 
 

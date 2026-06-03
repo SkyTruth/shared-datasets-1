@@ -1234,7 +1234,7 @@ async function lookupFeatureMetadata(group) {
   const lookup = new Map();
   for (const featureId of group.ids) {
     const item = index.get(featureId);
-    lookup.set(featureId, item || { id: featureId, found: false });
+    lookup.set(featureId, item || { feature_id: featureId, found: false });
   }
   return lookup;
 }
@@ -1330,13 +1330,19 @@ function parseFeatureMetadataSidecar(text) {
     if (lookup.has(featureId)) {
       throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
     }
-    lookup.set(featureId, {
-      id: featureId,
+    const properties = record.properties && typeof record.properties === "object" ? record.properties : {};
+    const extId = String(record?.ext_id || properties.ext_id || "").trim();
+    const item = {
+      feature_id: featureId,
       found: true,
       feature_hash: record.feature_hash || "",
-      properties: record.properties && typeof record.properties === "object" ? record.properties : {},
+      properties,
       provenance: record.provenance && typeof record.provenance === "object" ? record.provenance : {},
-    });
+    };
+    if (extId) {
+      item.ext_id = extId;
+    }
+    lookup.set(featureId, item);
   }
   return lookup;
 }
@@ -1344,7 +1350,7 @@ function parseFeatureMetadataSidecar(text) {
 function featureMetadataDownloadUrl(assetSlug, release) {
   const params = new URLSearchParams({
     slug: assetSlug,
-    format: "feature_index",
+    format: "metadata",
     version: release || "latest",
   });
   return `/api/download-url?${params.toString()}`;
@@ -1369,10 +1375,7 @@ function featureMetadataSidecarFile(assetSlug, release) {
     const path = releaseFilePath(file);
     const role = String(file?.role || "").trim();
     const format = String(file?.format || "").trim();
-    return (
-      path.endsWith(".features.ndjson.gz") &&
-      (role === "feature_index" || format === "feature_index" || format === "features_ndjson_gzip" || format === "features")
-    );
+    return path.endsWith(".metadata.ndjson.gz") && (role === "metadata" || format === "metadata");
   });
 }
 
@@ -1400,6 +1403,7 @@ function enrichFeature(feature, item) {
     provenance: item.provenance || feature.provenance || null,
     properties: {
       feature_id: featureId,
+      ...(item.ext_id ? { ext_id: item.ext_id } : {}),
       ...(item.properties || {}),
     },
   };

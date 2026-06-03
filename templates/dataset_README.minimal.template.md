@@ -102,10 +102,10 @@ files:
     format: "{format}"
     role: "canonical"
     purpose: "Canonical file"
-  - path: "latest/{asset-slug}-localizations.csv"
-    format: "csv"
-    role: "localization"
-    purpose: "Feature display-name localizations joined into PMTiles"
+- path: "latest/{asset-slug}-localizations.csv"
+  format: "csv"
+  role: "localization"
+  purpose: "Feature display-name localizations keyed by ext_id for metadata/API use"
   - path: "latest/{asset-slug}.metadata.ndjson.gz"
     format: "ndjson_gzip"
     role: "metadata"
@@ -143,19 +143,19 @@ Populate `row_count` and `data_profile` in frontmatter from the canonical
 artifact after conversion. For identifier candidates, count distinct and
 duplicate values over non-empty values in the canonical artifact.
 If `generated_group_id` is present, `shared_datasets_group_id` must be a native
-property/column in the canonical file and PMTiles feature properties.
+property/column in the canonical file and metadata sidecar.
 If `generated_row_id` is present, `shared_datasets_row_id` must be a native
-property/column in the canonical file and PMTiles feature properties, and must
-be documented as a last-resort row address rather than a provider/entity/group
-ID.
-If the asset publishes localized PMTiles display names, keep the consumer-facing
+property/column in the canonical file and metadata sidecar, and must be
+documented as a last-resort row address rather than a provider/entity/group ID.
+If the asset publishes localized display names, keep the consumer-facing
 localization source in `latest/{asset-slug}-localizations.csv`, keyed by
-`ext_id`, declare it in `localized_names`, and preserve `name` plus declared
+`ext_id`, and declare it in `localized_names`. Resolve display labels through
+the metadata API or localization sidecar; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
 must keep unique nonblank `ext_id` values but does not need native localized
 name columns.
 For vector assets, keep `feature_id` and `feature_hash` in the canonical FGB,
-keep only `feature_id` in PMTiles, publish the metadata
+keep `feature_id` and `ext_id` in PMTiles, publish the metadata
 sidecar/schema/manifest files, and declare them in `feature_metadata`.
 
 ## Raster metadata

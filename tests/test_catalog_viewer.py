@@ -31,9 +31,9 @@ PUBLIC_PMTILES_RELEASE_PATH = (
     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
     "wdpa-marine/releases/2026-05-01/wdpa-marine.pmtiles"
 )
-PUBLIC_FEATURE_INDEX_RELEASE_PATH = (
+PUBLIC_METADATA_RELEASE_PATH = (
     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
-    "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
+    "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz"
 )
 
 
@@ -52,7 +52,7 @@ class FakeStore:
                                 "files": [
                                     {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
                                     {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
-                                    {"format": "ndgeojson", "role": "feature_index", "path": PUBLIC_FEATURE_INDEX_RELEASE_PATH},
+                                    {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
                                 ],
                             }
                         ],
@@ -93,7 +93,7 @@ class FakeFeatureReleaseResolver:
             release_index_generation=12345,
             sidecar_uri=(
                 "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/"
-                "marine-regions-eez/releases/2026-05-01/marine-regions-eez.features.ndjson.gz"
+                "marine-regions-eez/releases/2026-05-01/marine-regions-eez.metadata.ndjson.gz"
             ),
             sidecar_generation=1001,
         )
@@ -107,6 +107,7 @@ class FakeFeatureIndex:
                 "feature_id": "src:MRGID:48943",
                 "feature_hash": "hash-48943",
                 "properties": {
+                    "ext_id": "48943",
                     "GEONAME": "Overlapping claim: Canada / United States",
                     "MRGID": 48943,
                     "SOVEREIGN1": "Canada",
@@ -391,25 +392,28 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(table_response.status, 400)
         self.assertEqual(outside_response.status, 502)
 
-    def test_feature_index_download_uses_release_sidecar(self):
-        response, signer = download_url_request("wdpa-marine", version="2026-05-01", fmt="feature_index")
+    def test_metadata_download_uses_release_sidecar(self):
+        response, signer = download_url_request("wdpa-marine", version="2026-05-01", fmt="metadata")
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
         self.assertEqual(
             payload["download_url"],
-            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz",
+            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
         )
-        self.assertEqual(payload["filename"], "wdpa-marine.features.ndjson.gz")
+        self.assertEqual(payload["filename"], "wdpa-marine.metadata.ndjson.gz")
         self.assertEqual(signer.calls, [])
 
-    def test_feature_index_download_accepts_legacy_sidecar_format(self):
+    def test_metadata_download_rejects_old_feature_index_sidecar(self):
         store = FakeStore(catalog_payload())
         release_index = json.loads(store.static["releases/wdpa-marine.json"].body)
         release_index["releases"][0]["files"][-1] = {
-            "format": "features_ndjson_gzip",
-            "path": PUBLIC_FEATURE_INDEX_RELEASE_PATH,
+            "format": "feature_index",
+            "path": (
+                "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
+                "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
+            ),
         }
         store.static["releases/wdpa-marine.json"] = StaticObject(
             json.dumps(release_index, separators=(",", ":")).encode("utf-8"),
@@ -419,48 +423,25 @@ class CatalogViewerTests(unittest.TestCase):
         response, _signer = download_url_request(
             "wdpa-marine",
             version="2026-05-01",
-            fmt="feature_index",
+            fmt="metadata",
             store=store,
         )
 
-        self.assertEqual(response.status, 200)
-        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(response.status, 404)
 
-    def test_feature_index_download_accepts_features_sidecar_format(self):
-        store = FakeStore(catalog_payload())
-        release_index = json.loads(store.static["releases/wdpa-marine.json"].body)
-        release_index["releases"][0]["files"][-1] = {
-            "format": "features",
-            "path": PUBLIC_FEATURE_INDEX_RELEASE_PATH,
-        }
-        store.static["releases/wdpa-marine.json"] = StaticObject(
-            json.dumps(release_index, separators=(",", ":")).encode("utf-8"),
-            "application/json; charset=utf-8",
-        )
-
-        response, _signer = download_url_request(
-            "wdpa-marine",
-            version="2026-05-01",
-            fmt="feature_index",
-            store=store,
-        )
+    def test_metadata_download_latest_uses_release_index_latest(self):
+        response, _signer = download_url_request("wdpa-marine", fmt="metadata")
 
         self.assertEqual(response.status, 200)
-        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
 
-    def test_feature_index_download_latest_uses_release_index_latest(self):
-        response, _signer = download_url_request("wdpa-marine", fmt="feature_index")
-
-        self.assertEqual(response.status, 200)
-        self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
-
-    def test_private_feature_index_download_returns_signed_url(self):
+    def test_private_metadata_download_returns_signed_url(self):
         catalog = catalog_payload()
         catalog["assets"][0]["access_tier"] = "private"
         response, signer = download_url_request(
             "wdpa-marine",
             version="2026-05-01",
-            fmt="feature_index",
+            fmt="metadata",
             headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
             catalog=catalog,
         )
@@ -468,8 +449,8 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
         self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/signed-private.pmtiles"))
-        self.assertEqual(payload["gs_uri"], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
-        self.assertEqual(signer.calls[0][0], PUBLIC_FEATURE_INDEX_RELEASE_PATH)
+        self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
+        self.assertEqual(signer.calls[0][0], PUBLIC_METADATA_RELEASE_PATH)
 
     def test_feature_metadata_lookup_requires_authenticated_iap_identity(self):
         response, resolver, index = feature_lookup_request({"ids": ["src:MRGID:48943"]})
@@ -498,13 +479,14 @@ class CatalogViewerTests(unittest.TestCase):
                     "marine-regions-eez",
                     "2026-05-01",
                     ["src:MRGID:48943"],
-                    "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/marine-regions-eez/releases/2026-05-01/marine-regions-eez.features.ndjson.gz",
+                    "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/marine-regions-eez/releases/2026-05-01/marine-regions-eez.metadata.ndjson.gz",
                     1001,
                 )
             ],
         )
-        self.assertEqual(payload["items"][0]["id"], "src:MRGID:48943")
+        self.assertEqual(payload["items"][0]["feature_id"], "src:MRGID:48943")
         self.assertTrue(payload["items"][0]["found"])
+        self.assertEqual(payload["items"][0]["ext_id"], "48943")
         self.assertEqual(payload["items"][0]["feature_hash"], "hash-48943")
         self.assertEqual(payload["items"][0]["properties"]["GEONAME"], "Overlapping claim: Canada / United States")
         self.assertEqual(payload["items"][0]["properties"]["MRGID"], 48943)

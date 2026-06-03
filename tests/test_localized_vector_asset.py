@@ -74,7 +74,7 @@ files:
 - path: latest/example-asset-localizations.csv
   format: csv
   role: localization
-  purpose: Feature display-name localizations joined into PMTiles
+  purpose: Feature display-name localizations keyed by ext_id for metadata/API use
 ---
 
 # Example Asset
@@ -286,7 +286,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
             ):
                 result = localized_vector_asset.validate_pmtiles_properties(
                     pmtiles_path=pmtiles,
-                    required_properties=("ext_id", "name"),
+                    required_properties=("feature_id", "ext_id"),
                     pmtiles_bin="pmtiles",
                     profile=None,
                     decode_zoom=0,
@@ -294,6 +294,13 @@ class LocalizedVectorAssetTests(unittest.TestCase):
 
         self.assertFalse(result["valid"])
         self.assertIn("could not verify required PMTiles properties", "\n".join(result["errors"]))
+
+    def test_metadata_lookup_feature_keeps_only_lookup_ids(self):
+        result = localized_vector_asset.metadata_lookup_feature(
+            feature({"feature_id": "src:id:a", "ext_id": "a", "name": "Alpha", "name_es": "Alfa"})
+        )
+
+        self.assertEqual(result["properties"], {"feature_id": "src:id:a", "ext_id": "a"})
 
     def test_build_pmtiles_warns_but_allows_orphaned_localization_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -346,7 +353,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 mock.patch.object(localized_vector_asset, "load_fgb_key_profile", return_value=fgb_profile),
                 mock.patch.object(localized_vector_asset, "profile_fgb", return_value=mock.Mock(bounds=None)),
                 mock.patch.object(localized_vector_asset, "profile_payload", return_value={"recommendation": {"maxzoom": 8}}),
-                mock.patch.object(localized_vector_asset, "run_localized_pipeline"),
+                mock.patch.object(localized_vector_asset, "run_metadata_lookup_pipeline"),
                 mock.patch.object(
                     localized_vector_asset,
                     "validate_pmtiles_properties",
@@ -467,8 +474,8 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                     {
                         "type": "FeatureCollection",
                         "features": [
-                            feature({"ext_id": "a", "source_name": "Alpha"}),
-                            feature({"ext_id": "b", "source_name": "Beta"}),
+                            feature({"feature_id": "src:id:a", "ext_id": "a", "source_name": "Alpha"}),
+                            feature({"feature_id": "src:id:b", "ext_id": "b", "source_name": "Beta"}),
                         ],
                     }
                 )

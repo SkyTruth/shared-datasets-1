@@ -516,18 +516,21 @@ def response_item(
     include_provenance: bool,
 ) -> dict[str, Any]:
     if document is None:
-        return {"feature_id": feature_id, "status": "missing"}
+        return {"feature_id": feature_id, "found": False}
     properties = document.get("properties") if isinstance(document.get("properties"), Mapping) else {}
+    ext_id = str(document.get("ext_id") or properties.get("ext_id") or "").strip()
     if fields is None:
         projected = dict(properties)
     else:
         projected = {field: properties.get(field) for field in fields}
     item = {
         "feature_id": feature_id,
-        "status": "found",
+        "found": True,
         "feature_hash": document.get("feature_hash"),
         "properties": projected,
     }
+    if ext_id:
+        item["ext_id"] = ext_id
     if include_provenance:
         item["provenance"] = document.get("provenance") or {}
     return item

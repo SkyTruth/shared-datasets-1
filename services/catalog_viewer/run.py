@@ -459,10 +459,10 @@ def resolve_download_gs_uri(
     *,
     object_store: ObjectStore,
 ) -> str:
-    if format_name == "feature_index":
-        return resolve_feature_index_gs_uri(asset, version, object_store=object_store)
+    if format_name == "metadata":
+        return resolve_metadata_sidecar_gs_uri(asset, version, object_store=object_store)
     if format_name != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or feature_index")
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or metadata")
     if str(asset.get("canonical_format") or "").strip() != "fgb":
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
     if version != "latest" and not DATE_RE.fullmatch(version):
@@ -479,7 +479,7 @@ def resolve_download_gs_uri(
     return gs_uri
 
 
-def resolve_feature_index_gs_uri(
+def resolve_metadata_sidecar_gs_uri(
     asset: Mapping[str, Any],
     version: str,
     *,
@@ -500,7 +500,7 @@ def resolve_feature_index_gs_uri(
         else:
             release = release_index_release(release_index, version)
         if release:
-            gs_uri = release_file_for_role(release.get("files"), "feature_index", ".features.ndjson.gz")
+            gs_uri = release_file_for_role(release.get("files"), "metadata", ".metadata.ndjson.gz")
             if gs_uri:
                 return gs_uri
 
@@ -517,11 +517,11 @@ def resolve_feature_index_gs_uri(
                 continue
             if str(candidate.get("date") or "") != target_date:
                 continue
-            gs_uri = release_file_for_role(candidate.get("files"), "feature_index", ".features.ndjson.gz")
+            gs_uri = release_file_for_role(candidate.get("files"), "metadata", ".metadata.ndjson.gz")
             if gs_uri:
                 return gs_uri
 
-    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a feature-index sidecar")
+    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a metadata sidecar")
 
 
 def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
@@ -555,7 +555,7 @@ def release_file_for_role(files: Any, role: str, suffix: str) -> str:
             continue
         entry_role = str(file_entry.get("role") or "").strip()
         entry_format = str(file_entry.get("format") or "").strip()
-        if entry_role == role or (role == "feature_index" and entry_format in {"feature_index", "features_ndjson_gzip", "features"}):
+        if entry_role == role or entry_format == role:
             return file_path
     return ""
 

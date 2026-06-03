@@ -94,7 +94,7 @@ files:
 - path: latest/example-asset-localizations.csv
   format: csv
   role: localization
-  purpose: Feature display-name localizations joined into PMTiles
+  purpose: Feature display-name localizations keyed by ext_id for metadata/API use
 - path: releases/YYYY-MM-DD/example-asset.fgb
   format: fgb
   role: release
@@ -151,9 +151,8 @@ def write_release_index(root: Path, slug: str, *, latest_date: str = "2026-05-02
                         "sha256": "b" * 64,
                     },
                     {
-                        "format": "ndgeojson",
-                        "role": "feature_index",
-                        "path": f"{root_path}/releases/{date}/{slug}.features.ndjson.gz",
+                        "format": "metadata",
+                        "path": f"{root_path}/releases/{date}/{slug}.metadata.ndjson.gz",
                         "generation": 1001,
                     },
                     {
@@ -228,12 +227,12 @@ class CatalogSiteTests(unittest.TestCase):
             [
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
-                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.features.ndjson.gz",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.metadata.ndjson.gz",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.schema.json",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.manifest.json",
             ],
         )
-        self.assertEqual(asset["versions"][0]["files"][2]["role"], "feature_index")
+        self.assertEqual(asset["versions"][0]["files"][2]["format"], "metadata")
         self.assertEqual(asset["versions"][0]["files"][4]["generation"], 1003)
         self.assertIn("non-commercial", asset["license_flags"])
         self.assertIn("attribution-required", asset["license_flags"])
@@ -342,12 +341,12 @@ class CatalogSiteTests(unittest.TestCase):
             [
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.fgb",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.pmtiles",
-                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.features.ndjson.gz",
+                "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.metadata.ndjson.gz",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.schema.json",
                 "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-02/example-asset.manifest.json",
             ],
         )
-        self.assertEqual(asset["versions"][0]["files"][2]["role"], "feature_index")
+        self.assertEqual(asset["versions"][0]["files"][2]["format"], "metadata")
         self.assertEqual(asset["versions"][0]["files"][2]["generation"], 1001)
         self.assertEqual(asset["versions"][0]["files"][3]["role"], "schema")
         self.assertEqual(asset["versions"][0]["files"][4]["role"], "manifest")
