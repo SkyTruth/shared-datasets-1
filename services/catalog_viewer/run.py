@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -199,6 +202,35 @@ class GcsV4UrlSigner:
         )
 
 
+class CloudCdnSignedUrlSigner:
+    def __init__(
+        self,
+        *,
+        bucket_name: str,
+        base_url: str,
+        key_name: str,
+        key: bytes,
+    ) -> None:
+        if len(key) != 16:
+            raise ValueError("Cloud CDN signed URL key must decode to 16 raw bytes")
+        self._bucket_name = bucket_name
+        self._base_url = base_url.rstrip("/") + "/"
+        self._key_name = key_name
+        self._key = key
+
+    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
+        bucket_name, object_name = split_gs_uri(gs_uri)
+        if bucket_name != self._bucket_name:
+            raise ValueError(f"CDN metadata object must be in gs://{self._bucket_name}/")
+        object_path = quote(object_name, safe="/")
+        url = f"{self._base_url}{object_path}"
+        expires = int(expires_at.timestamp())
+        unsigned_url = f"{url}?Expires={expires}&KeyName={quote(self._key_name, safe='')}"
+        digest = hmac.new(self._key, unsigned_url.encode("utf-8"), hashlib.sha1).digest()
+        signature = base64.urlsafe_b64encode(digest).decode("ascii")
+        return f"{unsigned_url}&Signature={quote(signature, safe='')}"
+
+
 def default_credentials():
     import google.auth
 
@@ -231,6 +263,8 @@ def handle_request(
     signer: UrlSigner,
     bucket_name: str = DEFAULT_BUCKET,
     signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
+    metadata_cdn_signer: UrlSigner | None = None,
+    metadata_cdn_ttl_seconds: int | None = None,
     allowed_email_domains: tuple[str, ...] = DEFAULT_ALLOWED_EMAIL_DOMAINS,
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
@@ -281,6 +315,8 @@ def handle_request(
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
+            metadata_cdn_signer=metadata_cdn_signer,
+            metadata_cdn_ttl_seconds=metadata_cdn_ttl_seconds,
             allowed_email_domains=allowed_email_domains,
             now=now,
         )
@@ -391,6 +427,8 @@ def handle_download_url(
     signer: UrlSigner,
     bucket_name: str,
     signed_url_ttl_seconds: int,
+    metadata_cdn_signer: UrlSigner | None,
+    metadata_cdn_ttl_seconds: int | None,
     allowed_email_domains: tuple[str, ...],
     now: Callable[[], dt.datetime],
 ) -> Response:
@@ -434,9 +472,14 @@ def handle_download_url(
             return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
         if not email_domain_allowed(email, allowed_email_domains):
             return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
-        expires_at = now() + dt.timedelta(seconds=signed_url_ttl_seconds)
+        private_signer = signer
+        private_ttl_seconds = signed_url_ttl_seconds
+        if format_name == "metadata" and metadata_cdn_signer is not None:
+            private_signer = metadata_cdn_signer
+            private_ttl_seconds = metadata_cdn_ttl_seconds or signed_url_ttl_seconds
+        expires_at = now() + dt.timedelta(seconds=private_ttl_seconds)
         payload = {
-            "download_url": signer.sign(gs_uri, expires_at),
+            "download_url": private_signer.sign(gs_uri, expires_at),
             "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "filename": filename,
             "gs_uri": gs_uri,
@@ -839,6 +882,71 @@ def int_env(name: str, default: int) -> int:
         return default
 
 
+def metadata_cdn_signed_url_ttl_from_env(default: int) -> int:
+    return int_env("CATALOG_VIEWER_METADATA_CDN_SIGNED_URL_TTL_SECONDS", default)
+
+
+def metadata_cdn_signer_from_env(bucket_name: str) -> UrlSigner | None:
+    base_url = os.environ.get("CATALOG_VIEWER_METADATA_CDN_BASE_URL", "").strip()
+    key_name = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_KEY_NAME", "").strip()
+    secret_id = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_SECRET_ID", "").strip()
+    if not any((base_url, key_name, secret_id)):
+        return None
+    if not all((base_url, key_name, secret_id)):
+        raise ValueError(
+            "CATALOG_VIEWER_METADATA_CDN_BASE_URL, CATALOG_VIEWER_CDN_SIGNING_KEY_NAME, "
+            "and CATALOG_VIEWER_CDN_SIGNING_SECRET_ID must be set together"
+        )
+    secret_version = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_SECRET_VERSION", "latest").strip() or "latest"
+    secret_name = secret_manager_version_name(secret_id, secret_version)
+    encoded_key = read_secret_manager_text(secret_name)
+    return CloudCdnSignedUrlSigner(
+        bucket_name=bucket_name,
+        base_url=base_url,
+        key_name=key_name,
+        key=decode_cdn_signing_key(encoded_key),
+    )
+
+
+def secret_manager_version_name(secret_id: str, version: str) -> str:
+    secret_id = secret_id.strip().strip("/")
+    version = (version or "latest").strip() or "latest"
+    if secret_id.startswith("projects/") and "/versions/" in secret_id:
+        return secret_id
+    if secret_id.startswith("projects/"):
+        return f"{secret_id}/versions/{version}"
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+    if not project:
+        raise ValueError("GOOGLE_CLOUD_PROJECT is required when the CDN signing secret id is not fully qualified")
+    return f"projects/{project}/secrets/{secret_id}/versions/{version}"
+
+
+def read_secret_manager_text(version_name: str) -> str:
+    from google.auth.transport.requests import AuthorizedSession
+
+    session = AuthorizedSession(default_credentials())
+    response = session.get(f"https://secretmanager.googleapis.com/v1/{version_name}:access", timeout=10)
+    if response.status_code != 200:
+        raise RuntimeError(f"unable to access Secret Manager version {version_name}: HTTP {response.status_code}")
+    payload = response.json().get("payload", {})
+    encoded = payload.get("data")
+    if not isinstance(encoded, str) or not encoded:
+        raise RuntimeError(f"Secret Manager version {version_name} returned no payload data")
+    return base64.b64decode(encoded).decode("utf-8").strip()
+
+
+def decode_cdn_signing_key(encoded_key: str) -> bytes:
+    normalized = encoded_key.strip()
+    padded = normalized + ("=" * (-len(normalized) % 4))
+    try:
+        key = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("Cloud CDN signing key secret must contain base64url text") from exc
+    if len(key) != 16:
+        raise ValueError("Cloud CDN signing key secret must decode to 16 raw bytes")
+    return key
+
+
 def make_handler(
     *,
     catalog_cache: CatalogJsonCache,
@@ -846,6 +954,8 @@ def make_handler(
     signer: UrlSigner,
     bucket_name: str,
     signed_url_ttl_seconds: int,
+    metadata_cdn_signer: UrlSigner | None = None,
+    metadata_cdn_ttl_seconds: int | None = None,
     allowed_email_domains: tuple[str, ...],
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
@@ -888,6 +998,8 @@ def make_handler(
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
+            metadata_cdn_signer=metadata_cdn_signer,
+            metadata_cdn_ttl_seconds=metadata_cdn_ttl_seconds,
             allowed_email_domains=allowed_email_domains,
             feature_release_resolver=feature_release_resolver,
             feature_index=feature_index,
@@ -905,6 +1017,7 @@ def main() -> None:
     site_prefix = site_prefix_from_env()
     object_store = GcsCatalogWebStore(bucket_name=bucket_name, site_prefix=site_prefix)
     catalog_cache = CatalogJsonCache(loader=object_store.read_catalog_json, ttl_seconds=catalog_cache_ttl_from_env())
+    signed_url_ttl_seconds = signed_url_ttl_from_env()
     signer = GcsV4UrlSigner(
         bucket_name=bucket_name,
         service_account_email=os.environ.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT") or None,
@@ -919,7 +1032,9 @@ def main() -> None:
         object_store=object_store,
         signer=signer,
         bucket_name=bucket_name,
-        signed_url_ttl_seconds=signed_url_ttl_from_env(),
+        signed_url_ttl_seconds=signed_url_ttl_seconds,
+        metadata_cdn_signer=metadata_cdn_signer_from_env(bucket_name),
+        metadata_cdn_ttl_seconds=metadata_cdn_signed_url_ttl_from_env(signed_url_ttl_seconds),
         allowed_email_domains=allowed_email_domains_from_env(),
         feature_release_resolver=feature_release_resolver,
         feature_index=feature_index,

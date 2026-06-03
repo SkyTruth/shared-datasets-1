@@ -7,6 +7,7 @@ on:
     paths:
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
+      - "terraform/envs/prod/catalog_viewer.tf"
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"
@@ -17,6 +18,7 @@ on:
     paths:
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
+      - "terraform/envs/prod/catalog_viewer.tf"
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"
@@ -115,6 +117,8 @@ jobs:
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
             -target=google_compute_url_map.pmtiles_cdn \
+            -target=google_cloud_run_v2_service.catalog_viewer \
+            -target=google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer \
             -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
             -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
@@ -131,6 +135,8 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_compute_url_map.pmtiles_cdn",
+              "google_cloud_run_v2_service.catalog_viewer",
+              "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
           }
 
           blocked = []

@@ -24,6 +24,10 @@ The feature-branch preview environment has a separate IAP-protected catalog
 viewer backed by `gs://skytruth-shared-datasets-1-preview/`; see
 `docs/feature-preview.md`. It is refreshed by the preview index-load workflow
 and intentionally lists only assets with preview-bucket release indexes.
+Preview-bucket objects are not served by the production
+`https://tiles.skytruth.org/private/` CDN route. Private preview artifacts,
+including localized metadata sidecars, continue to resolve through the preview
+viewer as signed GCS URLs unless a separate preview CDN is explicitly created.
 
 ## Build locally
 
@@ -93,7 +97,10 @@ metadata sidecars in the release index. The browser asks `/api/download-url` for
 one materialized `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar when present
 or the canonical `{asset-slug}.metadata.ndjson.gz` fallback when absent. The
 browser never fetches a separate translation overlay and does not merge
-translation rows over canonical metadata.
+translation rows over canonical metadata. In production, private shared-bucket
+metadata responses may use one signed
+`https://tiles.skytruth.org/private/{bucket-object-path}` URL; public metadata
+and preview-bucket metadata may continue to use one GCS URL.
 `generated_group_id` records the policy and counts for a native
 `shared_datasets_group_id` feature property when an asset needs generated group
 IDs. `generated_row_id` records the policy and warning for a native

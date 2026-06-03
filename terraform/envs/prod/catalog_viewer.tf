@@ -105,6 +105,31 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
       }
 
       env {
+        name  = "CATALOG_VIEWER_METADATA_CDN_BASE_URL"
+        value = "https://${var.pmtiles_cdn_host}/private"
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_CDN_SIGNING_KEY_NAME"
+        value = var.pmtiles_cdn_signed_request_key_name
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_CDN_SIGNING_SECRET_ID"
+        value = google_secret_manager_secret.pmtiles_cdn_signed_request_key.id
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_CDN_SIGNING_SECRET_VERSION"
+        value = "latest"
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_METADATA_CDN_SIGNED_URL_TTL_SECONDS"
+        value = tostring(var.catalog_viewer_signed_url_ttl_seconds)
+      }
+
+      env {
         name  = "CATALOG_VIEWER_CATALOG_TTL_SECONDS"
         value = tostring(var.catalog_viewer_catalog_ttl_seconds)
       }
@@ -125,6 +150,7 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
   depends_on = [
     google_artifact_registry_repository.jobs,
     google_project_service.required,
+    google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer,
   ]
 }
 
