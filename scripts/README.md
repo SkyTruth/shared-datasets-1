@@ -192,10 +192,11 @@ manifests. Use `feature_metadata_index.py --dry-run` to validate a sidecar
 without writing Firestore, and without `--dry-run` only from an approved runtime
 that is meant to refresh the rebuildable serving index.
 
-## Localized PMTiles sidecars
+## Localized display-name sidecars
 
-Localized PMTiles use a same-asset CSV sidecar rather than localized columns in
-the canonical FGB. The FGB must have a unique nonblank `ext_id`; the
+Localized display names use a same-asset CSV sidecar rather than localized
+columns in the canonical FGB or PMTiles. The FGB and PMTiles must have a unique
+nonblank `ext_id`; PMTiles also carry `feature_id` for metadata lookup. The
 localization CSV must have `ext_id`, fallback `name`, `name_review_state`, and
 optional `name_{locale_code}` / `name_{locale_code}_review_state` pairs.
 
@@ -219,20 +220,20 @@ uv run python scripts/localized_vector_asset.py validate-localizations \
   --asset-doc docs/assets/example-asset.md
 ```
 
-Build PMTiles from the unchanged FGB geometry plus localization CSV:
+Build release-oriented PMTiles from the unchanged FGB geometry plus metadata
+lookup IDs:
 
 ```bash
-uv run python scripts/localized_vector_asset.py build-pmtiles \
-  --fgb ./example-asset.fgb \
-  --localizations ./example-asset-localizations.csv \
+uv run python scripts/vector_asset.py build \
+  ./example-asset.fgb \
   --asset-slug example-asset \
-  --output ./example-asset.pmtiles
+  --pmtiles-feature-id-property feature_id
 ```
 
-The helper streams FGB features through `ogr2ogr`, overlays `name` and declared
-nonblank `name_*` properties from the CSV, and sends the result to Tippecanoe.
-Review-state fields stay in the CSV and catalog metadata by default. For PR
-descriptions, `draft-publish-plan` can draft the data-object promotion list,
+The vector helper projects PMTiles properties to `feature_id` and `ext_id`.
+Display labels are resolved through the metadata API or localization sidecar.
+Review-state fields stay in the CSV and catalog metadata. For PR descriptions,
+`draft-publish-plan` can draft the data-object promotion list,
 including the translation-only shape that leaves `latest/{asset-slug}.fgb`
 unchanged.
 

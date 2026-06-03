@@ -60,9 +60,11 @@ Rules:
   "items": [
     {
       "feature_id": "src:id:1",
-      "status": "found",
+      "ext_id": "123",
+      "found": true,
       "feature_hash": "sha256:...",
       "properties": {
+        "ext_id": "123",
         "name": "Example"
       },
       "provenance": {
@@ -71,7 +73,7 @@ Rules:
     },
     {
       "feature_id": "src:id:missing",
-      "status": "missing"
+      "found": false
     }
   ],
   "limits": {
@@ -84,10 +86,13 @@ Rules:
 ```
 
 Duplicate IDs preserve request order in `items`; the backend lookup is
-deduplicated. Missing IDs are item-level results in a `200` response after the
-index is confirmed ready. Unknown fields are rejected against the release schema
-before Firestore lookup, even if every requested ID is missing. Explicit valid
-fields that are absent from a particular document return `null`.
+deduplicated. Missing IDs are item-level `"found": false` results in a `200`
+response after the index is confirmed ready. Lookup requests are keyed by
+`feature_id`; when a found document has an `ext_id` property, the response also
+mirrors it as top-level `ext_id` for PMTiles clients. Unknown fields are
+rejected against the release schema before Firestore lookup, even if every
+requested ID is missing. Explicit valid fields that are absent from a particular
+document return `null`.
 
 ## Errors
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -27,6 +30,8 @@ NO_CACHE = "no-cache, max-age=0, must-revalidate"
 NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
+LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
 ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
 
 
@@ -197,6 +202,35 @@ class GcsV4UrlSigner:
         )
 
 
+class CloudCdnSignedUrlSigner:
+    def __init__(
+        self,
+        *,
+        bucket_name: str,
+        base_url: str,
+        key_name: str,
+        key: bytes,
+    ) -> None:
+        if len(key) != 16:
+            raise ValueError("Cloud CDN signed URL key must decode to 16 raw bytes")
+        self._bucket_name = bucket_name
+        self._base_url = base_url.rstrip("/") + "/"
+        self._key_name = key_name
+        self._key = key
+
+    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
+        bucket_name, object_name = split_gs_uri(gs_uri)
+        if bucket_name != self._bucket_name:
+            raise ValueError(f"CDN metadata object must be in gs://{self._bucket_name}/")
+        object_path = quote(object_name, safe="/")
+        url = f"{self._base_url}{object_path}"
+        expires = int(expires_at.timestamp())
+        unsigned_url = f"{url}?Expires={expires}&KeyName={quote(self._key_name, safe='')}"
+        digest = hmac.new(self._key, unsigned_url.encode("utf-8"), hashlib.sha1).digest()
+        signature = base64.urlsafe_b64encode(digest).decode("ascii")
+        return f"{unsigned_url}&Signature={quote(signature, safe='')}"
+
+
 def default_credentials():
     import google.auth
 
@@ -229,6 +263,8 @@ def handle_request(
     signer: UrlSigner,
     bucket_name: str = DEFAULT_BUCKET,
     signed_url_ttl_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
+    metadata_cdn_signer: UrlSigner | None = None,
+    metadata_cdn_ttl_seconds: int | None = None,
     allowed_email_domains: tuple[str, ...] = DEFAULT_ALLOWED_EMAIL_DOMAINS,
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
@@ -279,6 +315,8 @@ def handle_request(
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
+            metadata_cdn_signer=metadata_cdn_signer,
+            metadata_cdn_ttl_seconds=metadata_cdn_ttl_seconds,
             allowed_email_domains=allowed_email_domains,
             now=now,
         )
@@ -300,6 +338,12 @@ def handle_feature_lookup(
     feature_max_fields: int,
     feature_max_response_bytes: int,
 ) -> Response:
+    if method != "OPTIONS":
+        email = authenticated_user_email(headers)
+        if not email:
+            return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
+        if not email_domain_allowed(email, allowed_email_domains):
+            return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
     resolver = feature_release_resolver or feature_preview_run.CatalogReleaseResolver(bucket_name=bucket_name)
     index = feature_index or feature_preview_run.GcsSidecarFeatureIndex(bucket_name=bucket_name)
     return feature_preview_run.handle_request(
@@ -389,6 +433,8 @@ def handle_download_url(
     signer: UrlSigner,
     bucket_name: str,
     signed_url_ttl_seconds: int,
+    metadata_cdn_signer: UrlSigner | None,
+    metadata_cdn_ttl_seconds: int | None,
     allowed_email_domains: tuple[str, ...],
     now: Callable[[], dt.datetime],
 ) -> Response:
@@ -403,6 +449,7 @@ def handle_download_url(
 
     format_name = (first_query_value(path, "format") or "fgb").lower()
     version = first_query_value(path, "version") or "latest"
+    locale = first_query_value(path, "locale") if format_name == "metadata" else ""
     try:
         catalog = catalog_cache.get()
     except CatalogUnavailable:
@@ -413,7 +460,7 @@ def handle_download_url(
         return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown asset slug"})
 
     try:
-        gs_uri = resolve_download_gs_uri(asset, format_name, version, object_store=object_store)
+        gs_uri = resolve_download_gs_uri(asset, format_name, version, locale=locale, object_store=object_store)
         download_bucket, _object_name = split_gs_uri(gs_uri)
     except DownloadResolutionError as exc:
         return json_response(exc.status, {"error": exc.message})
@@ -431,25 +478,31 @@ def handle_download_url(
             return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
         if not email_domain_allowed(email, allowed_email_domains):
             return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
-        expires_at = now() + dt.timedelta(seconds=signed_url_ttl_seconds)
+        private_signer = signer
+        private_ttl_seconds = signed_url_ttl_seconds
+        if format_name == "metadata" and metadata_cdn_signer is not None:
+            private_signer = metadata_cdn_signer
+            private_ttl_seconds = metadata_cdn_ttl_seconds or signed_url_ttl_seconds
+        expires_at = now() + dt.timedelta(seconds=private_ttl_seconds)
         payload = {
-            "download_url": signer.sign(gs_uri, expires_at),
+            "download_url": private_signer.sign(gs_uri, expires_at),
             "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             "filename": filename,
             "gs_uri": gs_uri,
         }
+        if format_name == "metadata":
+            payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
         return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
-    return json_response(
-        HTTPStatus.OK,
-        {
-            "download_url": gs_to_https(gs_uri),
-            "expires_at": None,
-            "filename": filename,
-            "gs_uri": gs_uri,
-        },
-        include_body=method != "HEAD",
-    )
+    payload = {
+        "download_url": gs_to_https(gs_uri),
+        "expires_at": None,
+        "filename": filename,
+        "gs_uri": gs_uri,
+    }
+    if format_name == "metadata":
+        payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
+    return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
 
 def resolve_download_gs_uri(
@@ -457,12 +510,13 @@ def resolve_download_gs_uri(
     format_name: str,
     version: str,
     *,
+    locale: str = "",
     object_store: ObjectStore,
 ) -> str:
-    if format_name == "feature_index":
-        return resolve_feature_index_gs_uri(asset, version, object_store=object_store)
+    if format_name == "metadata":
+        return resolve_metadata_sidecar_gs_uri(asset, version, locale=locale, object_store=object_store)
     if format_name != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or feature_index")
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or metadata")
     if str(asset.get("canonical_format") or "").strip() != "fgb":
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
     if version != "latest" and not DATE_RE.fullmatch(version):
@@ -479,69 +533,47 @@ def resolve_download_gs_uri(
     return gs_uri
 
 
-def resolve_feature_index_gs_uri(
+def resolve_metadata_sidecar_gs_uri(
     asset: Mapping[str, Any],
     version: str,
     *,
+    locale: str = "",
     object_store: ObjectStore,
 ) -> str:
     if version != "latest" and not DATE_RE.fullmatch(version):
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
+    normalized_locale = normalize_metadata_locale(locale)
 
     release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index:
-        releases = release_index.get("releases") or []
-        if version == "latest":
-            latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
-            latest_date = str(latest.get("date") or "") if latest else ""
-            release = (release_index_release(release_index, latest_date) if latest_date else None) or latest
-            if release is None and isinstance(releases, list) and releases and isinstance(releases[0], Mapping):
-                release = releases[0]
-        else:
-            release = release_index_release(release_index, version)
-        if release:
-            gs_uri = release_file_for_role(release.get("files"), "feature_index", ".features.ndjson.gz")
-            if gs_uri:
-                return gs_uri
+    if release_index is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    if version == "latest":
+        latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
+        latest_date = str(latest.get("date") or "") if latest else ""
+        if not DATE_RE.fullmatch(latest_date):
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest_release.date is invalid")
+        release = release_index_release(release_index, latest_date) or latest
+    else:
+        release = release_index_release(release_index, version)
+    if release:
+        gs_uri = release_file_for_metadata_locale(release.get("files"), normalized_locale)
+        if gs_uri:
+            return gs_uri
 
-    versions = asset.get("versions") or []
-    if isinstance(versions, list):
-        target_date = version
-        if version == "latest":
-            latest = asset.get("latest_release") if isinstance(asset.get("latest_release"), Mapping) else None
-            target_date = str(latest.get("date") or "") if latest else ""
-            if not target_date and versions and isinstance(versions[0], Mapping):
-                target_date = str(versions[0].get("date") or "")
-        for candidate in versions:
-            if not isinstance(candidate, Mapping):
-                continue
-            if str(candidate.get("date") or "") != target_date:
-                continue
-            gs_uri = release_file_for_role(candidate.get("files"), "feature_index", ".features.ndjson.gz")
-            if gs_uri:
-                return gs_uri
-
-    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a feature-index sidecar")
+    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a metadata sidecar")
 
 
 def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
     release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index:
-        release = release_index_release(release_index, version)
-        if release:
-            gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
-            if not gs_uri:
-                raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
-            return gs_uri
-
-    versions = asset.get("versions") or []
-    if isinstance(versions, list):
-        for candidate in versions:
-            if not isinstance(candidate, Mapping):
-                continue
-            if str(candidate.get("date") or "") == version:
-                return str(candidate.get("canonical_path") or "").strip()
-    return ""
+    if release_index is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    release = release_index_release(release_index, version)
+    if not release:
+        return ""
+    gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
+    if not gs_uri:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
+    return gs_uri
 
 
 def release_file_for_role(files: Any, role: str, suffix: str) -> str:
@@ -551,8 +583,71 @@ def release_file_for_role(files: Any, role: str, suffix: str) -> str:
         if not isinstance(file_entry, Mapping):
             continue
         file_path = str(file_entry.get("path") or "").strip()
-        if str(file_entry.get("role") or "").strip() == role and file_path.startswith("gs://") and file_path.endswith(suffix):
+        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
+            continue
+        entry_role = str(file_entry.get("role") or "").strip()
+        entry_format = str(file_entry.get("format") or "").strip()
+        if entry_role == role or entry_format == role:
             return file_path
+    return ""
+
+
+def normalize_metadata_locale(locale: str) -> str:
+    normalized = str(locale or "").strip().lower().replace("-", "_")
+    if not normalized:
+        return ""
+    if not FIELD_SAFE_LOCALE_RE.fullmatch(normalized):
+        raise DownloadResolutionError(
+            HTTPStatus.BAD_REQUEST,
+            "locale must be a field-safe BCP 47 code such as es, fr, pt_br, or zh_hans",
+        )
+    return normalized
+
+
+def metadata_locale_from_uri(uri: str) -> str:
+    match = LOCALIZED_METADATA_RE.search(basename(uri))
+    return match.group("locale") if match and match.group("locale") else ""
+
+
+def metadata_locale_payload(*, requested_locale: str, resolved_uri: str) -> dict[str, str | bool | None]:
+    normalized_requested = normalize_metadata_locale(requested_locale)
+    resolved_locale = metadata_locale_from_uri(resolved_uri)
+    return {
+        "requested_locale": normalized_requested or None,
+        "resolved_locale": resolved_locale or None,
+        "metadata_locale_fallback": bool(normalized_requested and normalized_requested != resolved_locale),
+    }
+
+
+def release_file_for_metadata_locale(files: Any, locale: str) -> str:
+    if not isinstance(files, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
+    normalized_locale = normalize_metadata_locale(locale)
+    if normalized_locale:
+        localized = release_file_for_exact_metadata_locale(files, normalized_locale)
+        if localized:
+            return localized
+    return release_file_for_exact_metadata_locale(files, "")
+
+
+def release_file_for_exact_metadata_locale(files: list[Any], locale: str) -> str:
+    suffix = f".metadata.{locale}.ndjson.gz" if locale else ".metadata.ndjson.gz"
+    for file_entry in files:
+        if not isinstance(file_entry, Mapping):
+            continue
+        file_path = str(file_entry.get("path") or "").strip()
+        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
+            continue
+        entry_role = str(file_entry.get("role") or "").strip()
+        entry_format = str(file_entry.get("format") or "").strip()
+        if entry_role != "metadata" and entry_format != "metadata":
+            continue
+        declared_locale = normalize_metadata_locale(str(file_entry.get("locale") or ""))
+        if locale and declared_locale and declared_locale != locale:
+            continue
+        if not locale and declared_locale:
+            continue
+        return file_path
     return ""
 
 
@@ -569,8 +664,10 @@ def read_release_index(object_store: ObjectStore, slug: str) -> Mapping[str, Any
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid") from exc
     if not isinstance(payload, Mapping):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid")
+    if payload.get("schema_version") != 1:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index schema_version is invalid")
     release_slug = str(payload.get("asset_slug") or "")
-    if release_slug and release_slug != slug:
+    if release_slug != slug:
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index asset slug does not match")
     return payload
 
@@ -657,7 +754,7 @@ def first_query_value(path: str, key: str) -> str:
 
 
 def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or header_value(headers, "X-Forwarded-Email") or ""
+    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
     raw = raw.strip()
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
@@ -769,6 +866,67 @@ def int_env(name: str, default: int) -> int:
         return default
 
 
+def metadata_cdn_signed_url_ttl_from_env(default: int) -> int:
+    return int_env("CATALOG_VIEWER_METADATA_CDN_SIGNED_URL_TTL_SECONDS", default)
+
+
+def metadata_cdn_signer_from_env(bucket_name: str) -> UrlSigner | None:
+    base_url = os.environ.get("CATALOG_VIEWER_METADATA_CDN_BASE_URL", "").strip()
+    key_name = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_KEY_NAME", "").strip()
+    secret_id = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_SECRET_ID", "").strip()
+    if not any((base_url, key_name, secret_id)):
+        return None
+    if not all((base_url, key_name, secret_id)):
+        raise ValueError(
+            "CATALOG_VIEWER_METADATA_CDN_BASE_URL, CATALOG_VIEWER_CDN_SIGNING_KEY_NAME, "
+            "and CATALOG_VIEWER_CDN_SIGNING_SECRET_ID must be set together"
+        )
+    secret_name = secret_manager_version_name(secret_id)
+    encoded_key = read_secret_manager_text(secret_name)
+    return CloudCdnSignedUrlSigner(
+        bucket_name=bucket_name,
+        base_url=base_url,
+        key_name=key_name,
+        key=decode_cdn_signing_key(encoded_key),
+    )
+
+
+def secret_manager_version_name(secret_id: str) -> str:
+    secret_id = secret_id.strip().strip("/")
+    if not re.fullmatch(r"projects/[^/]+/secrets/[^/]+/versions/[^/]+", secret_id):
+        raise ValueError(
+            "CATALOG_VIEWER_CDN_SIGNING_SECRET_ID must be a full Secret Manager version resource "
+            "like projects/{project}/secrets/{secret}/versions/{version}"
+        )
+    return secret_id
+
+
+def read_secret_manager_text(version_name: str) -> str:
+    from google.auth.transport.requests import AuthorizedSession
+
+    session = AuthorizedSession(default_credentials())
+    response = session.get(f"https://secretmanager.googleapis.com/v1/{version_name}:access", timeout=10)
+    if response.status_code != 200:
+        raise RuntimeError(f"unable to access Secret Manager version {version_name}: HTTP {response.status_code}")
+    payload = response.json().get("payload", {})
+    encoded = payload.get("data")
+    if not isinstance(encoded, str) or not encoded:
+        raise RuntimeError(f"Secret Manager version {version_name} returned no payload data")
+    return base64.b64decode(encoded).decode("utf-8").strip()
+
+
+def decode_cdn_signing_key(encoded_key: str) -> bytes:
+    normalized = encoded_key.strip()
+    padded = normalized + ("=" * (-len(normalized) % 4))
+    try:
+        key = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise ValueError("Cloud CDN signing key secret must contain base64url text") from exc
+    if len(key) != 16:
+        raise ValueError("Cloud CDN signing key secret must decode to 16 raw bytes")
+    return key
+
+
 def make_handler(
     *,
     catalog_cache: CatalogJsonCache,
@@ -776,6 +934,8 @@ def make_handler(
     signer: UrlSigner,
     bucket_name: str,
     signed_url_ttl_seconds: int,
+    metadata_cdn_signer: UrlSigner | None = None,
+    metadata_cdn_ttl_seconds: int | None = None,
     allowed_email_domains: tuple[str, ...],
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
@@ -818,6 +978,8 @@ def make_handler(
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
+            metadata_cdn_signer=metadata_cdn_signer,
+            metadata_cdn_ttl_seconds=metadata_cdn_ttl_seconds,
             allowed_email_domains=allowed_email_domains,
             feature_release_resolver=feature_release_resolver,
             feature_index=feature_index,
@@ -835,6 +997,7 @@ def main() -> None:
     site_prefix = site_prefix_from_env()
     object_store = GcsCatalogWebStore(bucket_name=bucket_name, site_prefix=site_prefix)
     catalog_cache = CatalogJsonCache(loader=object_store.read_catalog_json, ttl_seconds=catalog_cache_ttl_from_env())
+    signed_url_ttl_seconds = signed_url_ttl_from_env()
     signer = GcsV4UrlSigner(
         bucket_name=bucket_name,
         service_account_email=os.environ.get("CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT") or None,
@@ -849,7 +1012,9 @@ def main() -> None:
         object_store=object_store,
         signer=signer,
         bucket_name=bucket_name,
-        signed_url_ttl_seconds=signed_url_ttl_from_env(),
+        signed_url_ttl_seconds=signed_url_ttl_seconds,
+        metadata_cdn_signer=metadata_cdn_signer_from_env(bucket_name),
+        metadata_cdn_ttl_seconds=metadata_cdn_signed_url_ttl_from_env(signed_url_ttl_seconds),
         allowed_email_domains=allowed_email_domains_from_env(),
         feature_release_resolver=feature_release_resolver,
         feature_index=feature_index,

@@ -109,7 +109,7 @@ files:
 - path: latest/example-asset-localizations.csv
   format: csv
   role: localization
-  purpose: Feature display-name localizations joined into PMTiles
+  purpose: Feature display-name localizations keyed by ext_id for metadata/API use
 ---
 
 # Example Asset
@@ -244,7 +244,7 @@ class CatalogDocsTests(unittest.TestCase):
         self.assertIn("storage: localization_csv_v1", rendered)
         self.assertIn("generated_group_id:", rendered)
         self.assertIn("| `latest/example-asset.pmtiles` | `pmtiles` | `companion` | Web map tiles |", rendered)
-        self.assertIn("| `latest/example-asset-localizations.csv` | `csv` | `localization` | Feature display-name localizations joined into PMTiles |", rendered)
+        self.assertIn("| `latest/example-asset-localizations.csv` | `csv` | `localization` | Feature display-name localizations keyed by ext_id for metadata/API use |", rendered)
 
     def test_localized_names_metadata_is_validated(self):
         metadata = {
@@ -479,11 +479,11 @@ files:\n""",
             "- path: latest/example-asset-localizations.csv\n"
             "  format: csv\n"
             "  role: localization\n"
-            "  purpose: Feature display-name localizations joined into PMTiles\n",
+            "  purpose: Feature display-name localizations keyed by ext_id for metadata/API use\n",
             "- path: latest/example-asset-localizations.csv\n"
             "  format: csv\n"
             "  role: localization\n"
-            "  purpose: Feature display-name localizations joined into PMTiles\n"
+            "  purpose: Feature display-name localizations keyed by ext_id for metadata/API use\n"
             "- path: latest/example-asset.metadata.ndjson.gz\n"
             "  format: ndjson_gzip\n"
             "  role: metadata\n"

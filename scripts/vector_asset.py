@@ -44,7 +44,9 @@ SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 FEATURE_ID_COLUMN = "feature_id"
+EXT_ID_COLUMN = "ext_id"
 FEATURE_HASH_COLUMN = "feature_hash"
+PMTILES_METADATA_COLUMNS = (FEATURE_ID_COLUMN, EXT_ID_COLUMN)
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GROUP_ID_VRT_SOURCE_LAYER = "source"
@@ -431,10 +433,10 @@ def build_plan(
     )
     if pmtiles_feature_id_property:
         required_fgb_property_tuple = tuple(
-            dict.fromkeys((*base_required_property_tuple, FEATURE_ID_COLUMN, FEATURE_HASH_COLUMN))
+            dict.fromkeys((*base_required_property_tuple, *PMTILES_METADATA_COLUMNS, FEATURE_HASH_COLUMN))
         )
-        required_pmtiles_property_tuple = (FEATURE_ID_COLUMN,)
-        exact_pmtiles_property_tuple = (FEATURE_ID_COLUMN,)
+        required_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
+        exact_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
         required_property_tuple = tuple(
             dict.fromkeys((*required_fgb_property_tuple, *required_pmtiles_property_tuple))
         )
@@ -702,8 +704,9 @@ def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | 
 def pmtiles_feature_id_sql(plan: VectorBuildPlan) -> str | None:
     if not plan.pmtiles_feature_id_property:
         return None
+    columns = ", ".join(sql_identifier(column) for column in PMTILES_METADATA_COLUMNS)
     return (
-        f"SELECT {sql_identifier(plan.pmtiles_feature_id_property)} "
+        f"SELECT {columns} "
         f"FROM {sql_identifier(plan.layer_name)}"
     )
 
@@ -912,8 +915,8 @@ def write_pmtiles_profile(
     feature_id_sql = pmtiles_feature_id_sql(plan)
     if feature_id_sql is not None:
         payload["pmtiles_property_projection"] = {
-            "mode": "feature_id_only",
-            "property": plan.pmtiles_feature_id_property,
+            "mode": "metadata_lookup",
+            "properties": list(PMTILES_METADATA_COLUMNS),
         }
     if synthetic_sql is not None:
         payload["pmtiles_synthetic_properties"] = {SYNTHETIC_PMTILES_PROPERTY: plan.layer_name}
@@ -1428,7 +1431,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--pmtiles-feature-id-property",
         default=None,
         help=(
-            "Project PMTiles feature properties down to this stable feature ID column. "
+            f"Project PMTiles feature properties down to {FEATURE_ID_COLUMN} and {EXT_ID_COLUMN}. "
             f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
         ),
     )

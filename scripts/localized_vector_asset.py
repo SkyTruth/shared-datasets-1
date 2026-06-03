@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and validate localized PMTiles from a canonical FGB plus localization CSV."""
+"""Validate localization sidecars and build metadata-lookup PMTiles."""
 
 from __future__ import annotations
 
@@ -477,52 +477,22 @@ def seed_localizations(
     }
 
 
-def localization_rows_by_ext_id(rows: Sequence[dict[str, str]]) -> dict[str, dict[str, str]]:
-    return {as_text(row.get(JOIN_KEY)).strip(): row for row in rows if as_text(row.get(JOIN_KEY)).strip()}
-
-
 def localized_output_fields(csv_profile: LocalizationCsvProfile) -> tuple[str, ...]:
     return (FALLBACK_FIELD, *csv_profile.locale_fields)
 
 
-def strip_existing_localized_properties(properties: dict[str, Any]) -> dict[str, Any]:
-    cleaned: dict[str, Any] = {}
-    for key, value in properties.items():
-        key_text = str(key)
-        if key_text in {FALLBACK_FIELD, FALLBACK_REVIEW_STATE_FIELD}:
-            continue
-        if key_text.endswith("_review_state") and LOCALIZED_FIELD_RE.fullmatch(key_text[: -len("_review_state")]):
-            continue
-        if LOCALIZED_FIELD_RE.fullmatch(key_text):
-            continue
-        cleaned[key_text] = value
-    return cleaned
-
-
-def localized_feature(
-    feature: dict[str, Any],
-    *,
-    localization_by_id: dict[str, dict[str, str]],
-    locale_fields: Sequence[str],
-) -> dict[str, Any]:
+def metadata_lookup_feature(feature: dict[str, Any]) -> dict[str, Any]:
     properties = feature.get("properties") or {}
     if not isinstance(properties, dict):
         raise LocalizedVectorAssetError("feature properties must be an object")
+    feature_id = as_text(properties.get(vector_asset.FEATURE_ID_COLUMN)).strip()
+    if not feature_id:
+        raise LocalizedVectorAssetError("feature is missing feature_id during PMTiles metadata projection")
     ext_id = as_text(properties.get(JOIN_KEY)).strip()
     if not ext_id:
-        raise LocalizedVectorAssetError("feature is missing ext_id during PMTiles localization")
-    localization = localization_by_id.get(ext_id)
-    if localization is None:
-        raise LocalizedVectorAssetError(f"localization CSV is missing ext_id {ext_id!r}")
+        raise LocalizedVectorAssetError("feature is missing ext_id during PMTiles metadata projection")
     next_feature = dict(feature)
-    next_properties = strip_existing_localized_properties(properties)
-    next_properties[JOIN_KEY] = ext_id
-    next_properties[FALLBACK_FIELD] = as_text(localization.get(FALLBACK_FIELD)).strip()
-    for field in locale_fields:
-        value = as_text(localization.get(field)).strip()
-        if value:
-            next_properties[field] = value
-    next_feature["properties"] = next_properties
+    next_feature["properties"] = {vector_asset.FEATURE_ID_COLUMN: feature_id, JOIN_KEY: ext_id}
     return next_feature
 
 
@@ -582,7 +552,7 @@ def build_pmtiles_plan(
     csv_profile, _rows = validate_localization_csv(localizations)
     if csv_profile.errors:
         raise LocalizedVectorAssetError("; ".join(csv_profile.errors))
-    required_properties = (JOIN_KEY, FALLBACK_FIELD)
+    required_properties = (vector_asset.FEATURE_ID_COLUMN, JOIN_KEY)
     effective_tippecanoe_args = (*vector_asset.DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args)
     vector_asset.validate_tippecanoe_args(
         effective_tippecanoe_args,
@@ -611,7 +581,7 @@ def build_pmtiles_plan(
         "-n",
         asset_slug.replace("-", " ").title(),
         "-N",
-        f"{asset_slug.replace('-', ' ').title()} localized vector tiles",
+        f"{asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
         *effective_tippecanoe_args,
     ]
     return LocalizedPmtilesPlan(
@@ -647,19 +617,17 @@ def build_pmtiles_plan(
         ),
         commands=(
             {
-                "kind": "localized_pipeline_source",
+                "kind": "metadata_lookup_pipeline_source",
                 "argv": [ogr2ogr_bin, "-f", "GeoJSONSeq", "-t_srs", "EPSG:4326", "/vsistdout/", str(fgb)],
             },
-            {"kind": "localized_pipeline_sink", "argv": tippecanoe_command},
+            {"kind": "metadata_lookup_pipeline_sink", "argv": tippecanoe_command},
         ),
     )
 
 
-def run_localized_pipeline(
+def run_metadata_lookup_pipeline(
     plan: LocalizedPmtilesPlan,
     *,
-    localization_rows: Sequence[dict[str, str]],
-    locale_fields: Sequence[str],
     resolved_maxzoom: int,
 ) -> None:
     source_command = [plan.ogr2ogr_bin, "-f", "GeoJSONSeq", "-t_srs", "EPSG:4326", "/vsistdout/", plan.fgb_path]
@@ -679,10 +647,9 @@ def run_localized_pipeline(
         "-n",
         plan.asset_slug.replace("-", " ").title(),
         "-N",
-        f"{plan.asset_slug.replace('-', ' ').title()} localized vector tiles",
+        f"{plan.asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
         *plan.tippecanoe_extra_args,
     ]
-    localization_by_id = localization_rows_by_ext_id(localization_rows)
     source = subprocess.Popen(source_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if source.stdout is None:
         raise LocalizedVectorAssetError(f"pipeline source did not expose stdout: {shlex.join(source_command)}")
@@ -706,7 +673,7 @@ def run_localized_pipeline(
             feature = json.loads(line)
             sink.stdin.write(
                 json.dumps(
-                    localized_feature(feature, localization_by_id=localization_by_id, locale_fields=locale_fields),
+                    metadata_lookup_feature(feature),
                     ensure_ascii=False,
                     separators=(",", ":"),
                 )
@@ -731,7 +698,7 @@ def run_localized_pipeline(
     sink_returncode = sink.wait()
     if source_returncode != 0 or sink_returncode != 0:
         details = [
-            "localized PMTiles streaming pipeline failed.",
+            "metadata lookup PMTiles streaming pipeline failed.",
             f"source command: {shlex.join(source_command)}",
             f"sink command: {shlex.join(sink_command)}",
         ]
@@ -812,7 +779,7 @@ def build_pmtiles(plan: LocalizedPmtilesPlan, *, overwrite: bool = False) -> dic
     if overwrite and output.exists():
         output.unlink()
 
-    csv_profile, rows = validate_localization_csv(Path(plan.localization_path))
+    csv_profile, _rows = validate_localization_csv(Path(plan.localization_path))
     if csv_profile.errors:
         raise LocalizedVectorAssetError("; ".join(csv_profile.errors))
     fgb_profile = load_fgb_key_profile(Path(plan.fgb_path), ext_id_field=JOIN_KEY, ogr2ogr_bin=plan.ogr2ogr_bin)
@@ -844,15 +811,13 @@ def build_pmtiles(plan: LocalizedPmtilesPlan, *, overwrite: bool = False) -> dic
     if recommendation.maxzoom is None or recommendation.status != "recommended":
         raise LocalizedVectorAssetError(f"could not resolve PMTiles maxzoom: {recommendation.reason}")
 
-    run_localized_pipeline(
+    run_metadata_lookup_pipeline(
         plan,
-        localization_rows=rows,
-        locale_fields=csv_profile.locale_fields,
         resolved_maxzoom=recommendation.maxzoom,
     )
     validation = validate_pmtiles_properties(
         pmtiles_path=output,
-        required_properties=(JOIN_KEY, FALLBACK_FIELD),
+        required_properties=(vector_asset.FEATURE_ID_COLUMN, JOIN_KEY),
         pmtiles_bin=plan.pmtiles_bin,
         profile=profile,
         decode_zoom=plan.minzoom,
@@ -1118,7 +1083,10 @@ def build_parser() -> argparse.ArgumentParser:
     seed_parser.add_argument("--dry-run", action="store_true")
     seed_parser.set_defaults(func=cmd_seed_localizations)
 
-    build_parser_ = subparsers.add_parser("build-pmtiles", help="Build localized PMTiles from a canonical FGB and localization CSV.")
+    build_parser_ = subparsers.add_parser(
+        "build-pmtiles",
+        help="Build metadata-lookup PMTiles from a canonical FGB while validating localization CSV coverage.",
+    )
     build_parser_.add_argument("--fgb", type=Path, required=True)
     build_parser_.add_argument("--localizations", type=Path, required=True)
     build_parser_.add_argument("--asset-slug", required=True)

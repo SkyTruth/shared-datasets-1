@@ -27,7 +27,7 @@ class FakeWriter:
 class FeaturePreviewIndexTests(unittest.TestCase):
     def test_load_sidecar_validates_and_batches_records(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sidecar = Path(tmp) / "asset.features.ndjson.gz"
+            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
             write_sidecar(
                 sidecar,
                 [
@@ -64,7 +64,7 @@ class FeaturePreviewIndexTests(unittest.TestCase):
 
     def test_duplicate_feature_id_blocks_load(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sidecar = Path(tmp) / "asset.features.ndjson.gz"
+            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
             write_sidecar(
                 sidecar,
                 [

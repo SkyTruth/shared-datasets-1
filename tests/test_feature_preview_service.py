@@ -10,7 +10,7 @@ from services.feature_preview_service import run
 PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
 SIDECAR_URI = (
     f"gs://{PREVIEW_BUCKET}/100-geographic-reference/130-protected-areas/"
-    "wdpa-marine/releases/2026-06-01/wdpa-marine.features.ndjson.gz"
+    "wdpa-marine/releases/2026-06-01/wdpa-marine.metadata.ndjson.gz"
 )
 SIDECAR_OBJECT = SIDECAR_URI.removeprefix(f"gs://{PREVIEW_BUCKET}/")
 
@@ -106,13 +106,19 @@ class FakeIndex:
             "src:id:1": {
                 "feature_id": "src:id:1",
                 "feature_hash": "sha256:a",
-                "properties": {"name": "A", "status": "active"},
+                "properties": {"ext_id": "1", "name": "A", "status": "active"},
                 "provenance": {"source": "test"},
             }
         }
 
 
-def release_index_payload(*, include_sidecar: bool = True, sidecar_generation: int = 1001) -> dict:
+def release_index_payload(
+    *,
+    include_sidecar: bool = True,
+    sidecar_generation: int = 1001,
+    sidecar_format: str = "metadata",
+    sidecar_role: str | None = None,
+) -> dict:
     files = [
         {
             "format": "fgb",
@@ -123,14 +129,14 @@ def release_index_payload(*, include_sidecar: bool = True, sidecar_generation: i
         }
     ]
     if include_sidecar:
-        files.append(
-            {
-                "format": "ndgeojson",
-                "role": "feature_index",
-                "path": SIDECAR_URI,
-                "generation": sidecar_generation,
-            }
-        )
+        sidecar = {
+            "format": sidecar_format,
+            "path": SIDECAR_URI,
+            "generation": sidecar_generation,
+        }
+        if sidecar_role is not None:
+            sidecar["role"] = sidecar_role
+        files.append(sidecar)
     release = {"date": "2026-06-01", "files": files}
     return {
         "asset_slug": "wdpa-marine",
@@ -162,7 +168,7 @@ def sidecar_record(feature_id: str = "src:id:1", *, name: str = "A") -> dict:
         "release": "2026-06-01",
         "feature_id": feature_id,
         "feature_hash": "sha256:a",
-        "properties": {"name": name, "status": "active"},
+        "properties": {"ext_id": feature_id.removeprefix("src:id:"), "name": name, "status": "active"},
         "provenance": {"source": "test"},
     }
 
@@ -195,11 +201,37 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(resolved.sidecar_uri, SIDECAR_URI)
         self.assertEqual(resolved.sidecar_generation, 1001)
 
+    def test_catalog_resolver_rejects_non_metadata_sidecar_format(self):
+        for sidecar_format in ("fgb", "pmtiles"):
+            with self.subTest(sidecar_format=sidecar_format):
+                resolver = run.CatalogReleaseResolver(
+                    bucket_name=PREVIEW_BUCKET,
+                    client=FakeGcsClient(
+                        release_index_bucket(release_index_payload(sidecar_format=sidecar_format, sidecar_role=None))
+                    ),
+                    ttl_seconds=0,
+                )
+
+                with self.assertRaisesRegex(run.ApiError, "release metadata sidecar is not indexed"):
+                    resolver.resolve("wdpa-marine", "latest")
+
     def test_lookup_requires_iap_identity(self):
         response = run.handle_request(
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {},
+            b'{"ids":["src:id:1"]}',
+            release_resolver=FakeResolver(),
+            feature_index=FakeIndex(),
+        )
+
+        self.assertEqual(response.status, 401)
+
+    def test_lookup_rejects_forwarded_email_without_iap_identity(self):
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Forwarded-Email": "jona@skytruth.org"},
             b'{"ids":["src:id:1"]}',
             release_resolver=FakeResolver(),
             feature_index=FakeIndex(),
@@ -216,7 +248,8 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(payload["resolved_release"], "2026-06-01")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
-        self.assertEqual(payload["items"][1], {"id": "src:id:2", "found": False})
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
         self.assertIn("ETag", response.headers)
 
     def test_lookup_supports_etag_not_modified(self):
@@ -246,7 +279,8 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
-        self.assertEqual(payload["items"][1], {"id": "src:id:2", "found": False})
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
         self.assertEqual(sidecar_blob.download_count, 1)
 
     def test_sidecar_cache_reuses_loaded_release(self):
@@ -285,7 +319,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(second["src:id:2"]["properties"]["name"], "B")
         self.assertEqual(sidecar_blob.download_count, 2)
 
-    def test_missing_feature_index_file_returns_not_ready(self):
+    def test_missing_metadata_sidecar_file_returns_not_ready(self):
         resolver = run.CatalogReleaseResolver(
             bucket_name=PREVIEW_BUCKET,
             client=FakeGcsClient(release_index_bucket(release_index_payload(include_sidecar=False))),

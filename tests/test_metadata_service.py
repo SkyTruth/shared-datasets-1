@@ -23,7 +23,7 @@ class FakeResolver:
                 schema_generation=43,
                 manifest_generation=44,
                 index_load_id="load-1",
-                schema_fields=("name", "source_id", "nullable_field"),
+                schema_fields=("ext_id", "name", "source_id", "nullable_field"),
             )
         if release == "2026-05-01":
             return ResolvedRelease(
@@ -33,7 +33,7 @@ class FakeResolver:
                 schema_generation=43,
                 manifest_generation=44,
                 index_load_id="load-1",
-                schema_fields=("name", "source_id", "nullable_field"),
+                schema_fields=("ext_id", "name", "source_id", "nullable_field"),
             )
         raise AssertionError("unexpected release")
 
@@ -50,13 +50,13 @@ class FakeIndex:
             "src:id:1": {
                 "feature_id": "src:id:1",
                 "feature_hash": "sha256:abc",
-                "properties": {"name": "A", "source_id": "1"},
+                "properties": {"ext_id": "1", "name": "A", "source_id": "1"},
                 "provenance": {"source": "fixture"},
             },
             "src:id:2": {
                 "feature_id": "src:id:2",
                 "feature_hash": "sha256:def",
-                "properties": {"name": "B", "source_id": "2"},
+                "properties": {"ext_id": "2", "name": "B", "source_id": "2"},
                 "provenance": {"source": "fixture"},
             },
         }
@@ -219,8 +219,10 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(payload["index_load_id"], "load-1")
         self.assertEqual(payload["deduplicated_lookup_count"], 2)
         self.assertEqual([item["feature_id"] for item in payload["items"]], ["src:id:1", "src:id:1", "src:id:missing"])
+        self.assertTrue(payload["items"][0]["found"])
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
         self.assertEqual(payload["items"][0]["provenance"], {"source": "fixture"})
-        self.assertEqual(payload["items"][2]["status"], "missing")
+        self.assertEqual(payload["items"][2], {"feature_id": "src:id:missing", "found": False})
         self.assertEqual(resolver.calls, [("example-asset", "latest")])
         self.assertEqual(index.calls, [("example-asset", "2026-05-01", "load-1", ["src:id:1", "src:id:missing"])])
 
