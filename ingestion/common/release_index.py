@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +29,7 @@ FORMAT_EXTENSIONS = {
     ".tif": "cog",
     ".tiff": "cog",
 }
+LOCALIZED_METADATA_RE = re.compile(r"\.metadata\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$")
 
 
 class ReleaseIndexError(RuntimeError):
@@ -135,10 +137,17 @@ def update_release_index(
 
 def infer_format(path: str) -> str:
     lowered = path.lower()
+    if LOCALIZED_METADATA_RE.search(lowered):
+        return "metadata"
     for suffix, format_name in FORMAT_EXTENSIONS.items():
         if lowered.endswith(suffix):
             return format_name
     return "unknown"
+
+
+def metadata_locale_from_path(path: str) -> str:
+    match = LOCALIZED_METADATA_RE.search(path.lower())
+    return match.group("locale") if match else ""
 
 
 def path_from_info(value: Any) -> str:
@@ -158,6 +167,10 @@ def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = Non
         "path": path,
         "format": format_name,
     }
+    locale = metadata_locale_from_path(path)
+    if locale:
+        entry["role"] = "metadata"
+        entry["locale"] = locale
     if isinstance(value, dict):
         for key in ("generation", "size", "content_type", "sha256"):
             if value.get(key) is not None:

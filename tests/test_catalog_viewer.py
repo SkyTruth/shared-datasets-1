@@ -35,6 +35,10 @@ PUBLIC_METADATA_RELEASE_PATH = (
     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
     "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz"
 )
+PUBLIC_METADATA_ES_RELEASE_PATH = (
+    "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
+    "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
+)
 
 
 class FakeStore:
@@ -53,6 +57,13 @@ class FakeStore:
                                     {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
                                     {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
                                     {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
+                                    {
+                                        "format": "metadata",
+                                        "role": "metadata",
+                                        "locale": "es",
+                                        "path": PUBLIC_METADATA_ES_RELEASE_PATH,
+                                        "generation": 1004,
+                                    },
                                 ],
                             }
                         ],
@@ -190,6 +201,7 @@ def download_url_request(
     *,
     version: str = "latest",
     fmt: str = "fgb",
+    locale: str = "",
     headers=None,
     signer=None,
     catalog=None,
@@ -199,7 +211,7 @@ def download_url_request(
     signer = signer or FakeSigner()
     return handle_request(
         "GET",
-        f"/api/download-url?slug={slug}&format={fmt}&version={version}",
+        f"/api/download-url?slug={slug}&format={fmt}&version={version}" + (f"&locale={locale}" if locale else ""),
         headers or {},
         catalog_cache=CatalogJsonCache(loader=store.read_catalog_json),
         object_store=store,
@@ -408,13 +420,20 @@ class CatalogViewerTests(unittest.TestCase):
     def test_metadata_download_rejects_old_feature_index_sidecar(self):
         store = FakeStore(catalog_payload())
         release_index = json.loads(store.static["releases/wdpa-marine.json"].body)
-        release_index["releases"][0]["files"][-1] = {
-            "format": "feature_index",
-            "path": (
-                "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
-                "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
-            ),
-        }
+        release_index["releases"][0]["files"] = [
+            file_entry
+            for file_entry in release_index["releases"][0]["files"]
+            if file_entry.get("locale") != "es" and file_entry.get("format") != "metadata"
+        ]
+        release_index["releases"][0]["files"].append(
+            {
+                "format": "feature_index",
+                "path": (
+                    "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
+                    "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
+                ),
+            }
+        )
         store.static["releases/wdpa-marine.json"] = StaticObject(
             json.dumps(release_index, separators=(",", ":")).encode("utf-8"),
             "application/json; charset=utf-8",
@@ -434,6 +453,27 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
+
+    def test_metadata_download_uses_locale_sidecar_when_available(self):
+        response, _signer = download_url_request("wdpa-marine", fmt="metadata", locale="es")
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_ES_RELEASE_PATH)
+        self.assertEqual(payload["filename"], "wdpa-marine.metadata.es.ndjson.gz")
+        self.assertEqual(payload["requested_locale"], "es")
+        self.assertEqual(payload["resolved_locale"], "es")
+        self.assertFalse(payload["metadata_locale_fallback"])
+
+    def test_metadata_download_falls_back_to_canonical_sidecar_when_locale_is_missing(self):
+        response, _signer = download_url_request("wdpa-marine", fmt="metadata", locale="fr")
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
+        self.assertEqual(payload["requested_locale"], "fr")
+        self.assertIsNone(payload["resolved_locale"])
+        self.assertTrue(payload["metadata_locale_fallback"])
 
     def test_private_metadata_download_returns_signed_url(self):
         catalog = catalog_payload()

@@ -422,6 +422,37 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_run"]["status"], "success")
         self.assertNotIn("run_record_path", index["latest_run"])
 
+    def test_rebuild_index_marks_localized_metadata_sidecars_with_locale(self):
+        bucket = FakeBucket()
+        canonical = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        canonical.exists = True
+        canonical.generation = 8
+        canonical.size = 13
+        source_sidecar = bucket.blob("asset/releases/2026-05-01/asset.metadata.ndjson.gz")
+        source_sidecar.exists = True
+        source_sidecar.generation = 9
+        source_sidecar.size = 21
+        localized_sidecar = bucket.blob("asset/releases/2026-05-01/asset.metadata.es.ndjson.gz")
+        localized_sidecar.exists = True
+        localized_sidecar.generation = 10
+        localized_sidecar.size = 34
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_format": "fgb",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        files = {item["path"]: item for item in index["latest_release"]["files"]}
+        self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz"]["format"], "metadata")
+        self.assertNotIn("locale", files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz"])
+        self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["format"], "metadata")
+        self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["role"], "metadata")
+        self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["locale"], "es")
+
     def test_rebuild_index_ignores_display_only_release_blobs_without_canonical_format(self):
         bucket = FakeBucket()
         canonical = bucket.blob("asset/releases/2026-05-01/asset.fgb")

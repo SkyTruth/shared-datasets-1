@@ -27,6 +27,8 @@ NO_CACHE = "no-cache, max-age=0, must-revalidate"
 NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
+LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
 ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
 
 
@@ -403,6 +405,7 @@ def handle_download_url(
 
     format_name = (first_query_value(path, "format") or "fgb").lower()
     version = first_query_value(path, "version") or "latest"
+    locale = first_query_value(path, "locale") if format_name == "metadata" else ""
     try:
         catalog = catalog_cache.get()
     except CatalogUnavailable:
@@ -413,7 +416,7 @@ def handle_download_url(
         return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown asset slug"})
 
     try:
-        gs_uri = resolve_download_gs_uri(asset, format_name, version, object_store=object_store)
+        gs_uri = resolve_download_gs_uri(asset, format_name, version, locale=locale, object_store=object_store)
         download_bucket, _object_name = split_gs_uri(gs_uri)
     except DownloadResolutionError as exc:
         return json_response(exc.status, {"error": exc.message})
@@ -438,18 +441,19 @@ def handle_download_url(
             "filename": filename,
             "gs_uri": gs_uri,
         }
+        if format_name == "metadata":
+            payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
         return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
-    return json_response(
-        HTTPStatus.OK,
-        {
-            "download_url": gs_to_https(gs_uri),
-            "expires_at": None,
-            "filename": filename,
-            "gs_uri": gs_uri,
-        },
-        include_body=method != "HEAD",
-    )
+    payload = {
+        "download_url": gs_to_https(gs_uri),
+        "expires_at": None,
+        "filename": filename,
+        "gs_uri": gs_uri,
+    }
+    if format_name == "metadata":
+        payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
+    return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
 
 def resolve_download_gs_uri(
@@ -457,10 +461,11 @@ def resolve_download_gs_uri(
     format_name: str,
     version: str,
     *,
+    locale: str = "",
     object_store: ObjectStore,
 ) -> str:
     if format_name == "metadata":
-        return resolve_metadata_sidecar_gs_uri(asset, version, object_store=object_store)
+        return resolve_metadata_sidecar_gs_uri(asset, version, locale=locale, object_store=object_store)
     if format_name != "fgb":
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or metadata")
     if str(asset.get("canonical_format") or "").strip() != "fgb":
@@ -483,10 +488,12 @@ def resolve_metadata_sidecar_gs_uri(
     asset: Mapping[str, Any],
     version: str,
     *,
+    locale: str = "",
     object_store: ObjectStore,
 ) -> str:
     if version != "latest" and not DATE_RE.fullmatch(version):
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
+    normalized_locale = normalize_metadata_locale(locale)
 
     release_index = read_release_index(object_store, str(asset.get("slug") or ""))
     if release_index:
@@ -500,7 +507,7 @@ def resolve_metadata_sidecar_gs_uri(
         else:
             release = release_index_release(release_index, version)
         if release:
-            gs_uri = release_file_for_role(release.get("files"), "metadata", ".metadata.ndjson.gz")
+            gs_uri = release_file_for_metadata_locale(release.get("files"), normalized_locale)
             if gs_uri:
                 return gs_uri
 
@@ -517,7 +524,7 @@ def resolve_metadata_sidecar_gs_uri(
                 continue
             if str(candidate.get("date") or "") != target_date:
                 continue
-            gs_uri = release_file_for_role(candidate.get("files"), "metadata", ".metadata.ndjson.gz")
+            gs_uri = release_file_for_metadata_locale(candidate.get("files"), normalized_locale)
             if gs_uri:
                 return gs_uri
 
@@ -557,6 +564,65 @@ def release_file_for_role(files: Any, role: str, suffix: str) -> str:
         entry_format = str(file_entry.get("format") or "").strip()
         if entry_role == role or entry_format == role:
             return file_path
+    return ""
+
+
+def normalize_metadata_locale(locale: str) -> str:
+    normalized = str(locale or "").strip().lower().replace("-", "_")
+    if not normalized:
+        return ""
+    if not FIELD_SAFE_LOCALE_RE.fullmatch(normalized):
+        raise DownloadResolutionError(
+            HTTPStatus.BAD_REQUEST,
+            "locale must be a field-safe BCP 47 code such as es, fr, pt_br, or zh_hans",
+        )
+    return normalized
+
+
+def metadata_locale_from_uri(uri: str) -> str:
+    match = LOCALIZED_METADATA_RE.search(basename(uri))
+    return match.group("locale") if match and match.group("locale") else ""
+
+
+def metadata_locale_payload(*, requested_locale: str, resolved_uri: str) -> dict[str, str | bool | None]:
+    normalized_requested = normalize_metadata_locale(requested_locale)
+    resolved_locale = metadata_locale_from_uri(resolved_uri)
+    return {
+        "requested_locale": normalized_requested or None,
+        "resolved_locale": resolved_locale or None,
+        "metadata_locale_fallback": bool(normalized_requested and normalized_requested != resolved_locale),
+    }
+
+
+def release_file_for_metadata_locale(files: Any, locale: str) -> str:
+    if not isinstance(files, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
+    normalized_locale = normalize_metadata_locale(locale)
+    if normalized_locale:
+        localized = release_file_for_exact_metadata_locale(files, normalized_locale)
+        if localized:
+            return localized
+    return release_file_for_exact_metadata_locale(files, "")
+
+
+def release_file_for_exact_metadata_locale(files: list[Any], locale: str) -> str:
+    suffix = f".metadata.{locale}.ndjson.gz" if locale else ".metadata.ndjson.gz"
+    for file_entry in files:
+        if not isinstance(file_entry, Mapping):
+            continue
+        file_path = str(file_entry.get("path") or "").strip()
+        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
+            continue
+        entry_role = str(file_entry.get("role") or "").strip()
+        entry_format = str(file_entry.get("format") or "").strip()
+        if entry_role != "metadata" and entry_format != "metadata":
+            continue
+        declared_locale = normalize_metadata_locale(str(file_entry.get("locale") or ""))
+        if locale and declared_locale and declared_locale != locale:
+            continue
+        if not locale and declared_locale:
+            continue
+        return file_path
     return ""
 
 

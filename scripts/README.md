@@ -182,6 +182,7 @@ Release feature metadata helpers live in:
 
 ```text
 scripts/release_feature_model.py
+scripts/feature_metadata_localization.py
 scripts/feature_metadata_index.py
 ```
 
@@ -191,6 +192,56 @@ stable `feature_id` values, compute separate `feature_hash` values, serialize
 manifests. Use `feature_metadata_index.py --dry-run` to validate a sidecar
 without writing Firestore, and without `--dry-run` only from an approved runtime
 that is meant to refresh the rebuildable serving index.
+
+Use `feature_metadata_localization.py` to materialize generated locale-specific
+metadata views from the canonical sidecar plus an editable translation source:
+
+```bash
+uv run python scripts/feature_metadata_localization.py \
+  --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
+  --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
+  --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
+  --translatable-field name \
+  --locale es \
+  --output-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.es.ndjson.gz" \
+  --asset-slug example-asset \
+  --release 2026-05-01 \
+  --report "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.es.report.json"
+```
+
+Generate every locale present in a translation source with deterministic
+localized filenames and one report per locale:
+
+```bash
+uv run python scripts/feature_metadata_localization.py \
+  --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
+  --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
+  --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
+  --all-locales \
+  --output-dir "$WORK_ROOT/vector-assets/example-asset/publish" \
+  --report-dir "$WORK_ROOT/vector-assets/example-asset/reports" \
+  --asset-slug example-asset \
+  --release 2026-05-01 \
+  --report "$WORK_ROOT/vector-assets/example-asset/reports/localization-summary.json"
+```
+
+Translation rows are keyed by `feature_id`, `field`, `locale`, and
+`source_value_hash`. The generator applies only rows whose source hash still
+matches the canonical property value, reports stale rows, leaves untranslated
+values canonical, rejects duplicate keys, and writes deterministic gzip NDJSON.
+The catalog viewer resolver serves one localized sidecar for the active locale
+when available and falls back to the canonical sidecar when it is not.
+
+`feature_metadata_translation_pipeline.py` is the GitHub Actions pipeline entry
+point for reviewed translation-source updates. The
+`Feature metadata localization materialization` workflow runs after the
+approved dataset mutation workflow succeeds, extracts any promoted
+`{asset-slug}.metadata-translations.csv` objects from the reviewed publish
+plan, downloads the sibling canonical sidecar and schema, materializes all
+available locale sidecars, and uploads those generated sidecars with current
+generation preconditions from the approved publisher environment. Manual
+dispatch can run the same pipeline for an explicit canonical translation-source
+URI.
 
 ## Localized display-name sidecars
 
@@ -231,8 +282,10 @@ uv run python scripts/vector_asset.py build \
 ```
 
 The vector helper projects PMTiles properties to `feature_id` and `ext_id`.
-Display labels are resolved through the metadata API or localization sidecar.
-Review-state fields stay in the CSV and catalog metadata. For PR descriptions,
+Display labels for release-oriented catalog preview maps are resolved through
+the metadata API or one materialized locale-specific metadata sidecar, not by
+fetching a translation overlay in the browser. Review-state fields stay in the
+CSV and catalog metadata. For PR descriptions,
 `draft-publish-plan` can draft the data-object promotion list,
 including the translation-only shape that leaves `latest/{asset-slug}.fgb`
 unchanged.

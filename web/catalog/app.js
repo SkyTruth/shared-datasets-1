@@ -13,6 +13,8 @@ const state = {
   colorFieldsByReference: {},
   docsRequestSerial: 0,
   featureLookupSerial: 0,
+  inspectedFeatures: [],
+  metadataLocale: "",
   featureMetadataCache: new Map(),
   featureMetadataRequests: new Map(),
 };
@@ -81,6 +83,8 @@ const elements = {
   versionSelect: document.querySelector("#version-select"),
   pmtiles: document.querySelector("#detail-pmtiles"),
   pmtilesRow: document.querySelector("#pmtiles-path-row"),
+  metadata: document.querySelector("#detail-metadata"),
+  metadataRow: document.querySelector("#metadata-path-row"),
   source: document.querySelector("#detail-source"),
   sourceUrlRow: document.querySelector("#detail-source-url-row"),
   sourceUrl: document.querySelector("#detail-source-url"),
@@ -99,6 +103,8 @@ const elements = {
   colorLegend: document.querySelector("#color-legend"),
   featureInspector: document.querySelector("#feature-inspector"),
   basemap: document.querySelector("#basemap-select"),
+  metadataLanguageControl: document.querySelector("#metadata-language-control"),
+  metadataLanguage: document.querySelector("#metadata-language-select"),
   zoomSelection: createZoomSelectionButton(),
   colorizeControl: document.querySelector("#colorize-control"),
   colorize: document.querySelector("#colorize-select"),
@@ -107,6 +113,7 @@ const elements = {
   copyGs: document.querySelector("#copy-gs"),
   copyUrl: document.querySelector("#copy-url"),
   copyPmtiles: document.querySelector("#copy-pmtiles"),
+  copyMetadata: document.querySelector("#copy-metadata"),
   metaGrid: document.querySelector(".meta-grid"),
   pathSection: document.querySelector(".path-section"),
   sourceSection: document.querySelector(".source-section"),
@@ -119,9 +126,22 @@ const elements = {
 
 const collator = new Intl.Collator("en", { sensitivity: "base" });
 const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
+const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
+
+function activeMetadataLocale() {
+  const params = new URLSearchParams(window.location.search);
+  return normalizeMetadataLocale(params.get("locale") || navigator.language || "");
+}
+
+function normalizeMetadataLocale(value) {
+  const locale = String(value || "").trim().toLowerCase().replaceAll("-", "_");
+  return FIELD_SAFE_LOCALE_RE.test(locale) ? locale : "";
+}
 
 async function init() {
   try {
+    state.metadataLocale = activeMetadataLocale();
     const response = await fetch(cacheBustedUrl("./catalog.json", Date.now()), { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`catalog.json returned HTTP ${response.status}`);
@@ -281,6 +301,7 @@ function wireEvents() {
   elements.copyGs.addEventListener("click", () => copyValue(elements.gs.textContent, elements.copyGs));
   elements.copyUrl.addEventListener("click", () => copyValue(elements.url.textContent, elements.copyUrl));
   elements.copyPmtiles.addEventListener("click", () => copyValue(elements.pmtiles.textContent, elements.copyPmtiles));
+  elements.copyMetadata.addEventListener("click", () => copyValue(elements.metadata.textContent, elements.copyMetadata));
   elements.downloadFgb.addEventListener("click", handleFgbDownloadClick);
   elements.docsCopyMarkdown.addEventListener("click", () =>
     copyValue(elements.docsCopyMarkdown.dataset.markdown || "", elements.docsCopyMarkdown)
@@ -313,6 +334,12 @@ function wireEvents() {
   elements.basemap.addEventListener("change", () => {
     state.basemap = elements.basemap.value === "satellite" ? "satellite" : "map";
     renderSelectedPmtiles();
+  });
+  elements.metadataLanguage.addEventListener("change", () => {
+    state.metadataLocale = normalizeMetadataLocale(elements.metadataLanguage.value);
+    renderMetadataSidecarPath(selectedMetadataLanguageAsset());
+    warmFeatureMetadataCaches(selectedMapReferences());
+    refreshFeatureInspectorMetadata();
   });
   elements.zoomSelection.addEventListener("click", () => {
     const zoomed = state.mapModule?.zoomToSelection?.();
@@ -1119,6 +1146,8 @@ async function renderPmtiles(assets) {
   setZoomSelectionEnabled(false);
   if (!rawMapAssets.length) {
     elements.pmtilesRow.hidden = true;
+    resetMetadataLanguageControl();
+    renderMetadataSidecarPath(null);
     elements.mapSection.hidden = true;
     resetColorizeControl();
     resetLayerControl();
@@ -1136,6 +1165,9 @@ async function renderPmtiles(assets) {
   const selectedLayer = prepareLayerControl(layerAsset);
   const colorizeAsset = selectedColorizeAsset(rawMapAssets);
   const colorField = prepareColorizeControl(colorizeAsset);
+  const metadataAsset = selectedMetadataLanguageAsset(rawMapAssets);
+  prepareMetadataLanguageControl(metadataAsset);
+  renderMetadataSidecarPath(metadataAsset);
   elements.mapSection.hidden = false;
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
   clearColorLegend();
@@ -1168,11 +1200,26 @@ async function renderPmtiles(assets) {
 
 async function handleFeatureSelect(features) {
   const selectedFeatures = Array.isArray(features) ? features : [features].filter(Boolean);
+  state.inspectedFeatures = selectedFeatures;
   const requestSerial = ++state.featureLookupSerial;
   renderFeatureInspector(selectedFeatures);
   if (!selectedFeatures.length) {
     return;
   }
+  const enriched = await enrichFeatureMetadata(selectedFeatures);
+  if (requestSerial !== state.featureLookupSerial) {
+    return;
+  }
+  renderFeatureInspector(enriched);
+}
+
+async function refreshFeatureInspectorMetadata() {
+  const selectedFeatures = state.inspectedFeatures;
+  if (!Array.isArray(selectedFeatures) || !selectedFeatures.length) {
+    return;
+  }
+  const requestSerial = ++state.featureLookupSerial;
+  renderFeatureInspector(selectedFeatures);
   const enriched = await enrichFeatureMetadata(selectedFeatures);
   if (requestSerial !== state.featureLookupSerial) {
     return;
@@ -1208,6 +1255,7 @@ async function enrichFeatureMetadata(features) {
 
 function featureLookupGroups(features) {
   const groups = new Map();
+  const locale = state.metadataLocale || activeMetadataLocale();
   for (const feature of features) {
     const featureId = featureIdFor(feature);
     const assetSlug = String(feature?.assetSlug || "").trim();
@@ -1215,9 +1263,9 @@ function featureLookupGroups(features) {
     if (!featureId || !assetSlug || !release) {
       continue;
     }
-    const key = `${assetSlug}\n${release}`;
+    const key = `${assetSlug}\n${release}\n${locale}`;
     if (!groups.has(key)) {
-      groups.set(key, { assetSlug, release, ids: new Set(), features: [] });
+      groups.set(key, { assetSlug, release, locale, ids: new Set(), features: [] });
     }
     const group = groups.get(key);
     group.ids.add(featureId);
@@ -1227,10 +1275,10 @@ function featureLookupGroups(features) {
 }
 
 async function lookupFeatureMetadata(group) {
-  if (!featureMetadataSidecarFile(group.assetSlug, group.release)) {
+  if (!featureMetadataSidecarFile(group.assetSlug, group.release, group.locale)) {
     return new Map();
   }
-  const index = await featureMetadataIndex(group.assetSlug, group.release);
+  const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
   const lookup = new Map();
   for (const featureId of group.ids) {
     const item = index.get(featureId);
@@ -1241,30 +1289,31 @@ async function lookupFeatureMetadata(group) {
 
 function warmFeatureMetadataCaches(assets) {
   const seen = new Set();
+  const locale = state.metadataLocale || activeMetadataLocale();
   for (const asset of assets) {
     const assetSlug = String(asset?.slug || "").trim();
     const release = featureMetadataRelease(asset);
-    if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release)) {
+    if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release, locale)) {
       continue;
     }
-    const key = featureMetadataCacheKey(assetSlug, release);
+    const key = featureMetadataCacheKey(assetSlug, release, locale);
     if (seen.has(key) || state.featureMetadataCache.has(key)) {
       continue;
     }
     seen.add(key);
-    featureMetadataIndex(assetSlug, release).catch((error) => {
+    featureMetadataIndex(assetSlug, release, locale).catch((error) => {
       console.warn(`Could not warm feature metadata cache for ${assetSlug}:`, error);
     });
   }
 }
 
-async function featureMetadataIndex(assetSlug, release) {
-  const key = featureMetadataCacheKey(assetSlug, release);
+async function featureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
+  const key = featureMetadataCacheKey(assetSlug, release, locale);
   if (state.featureMetadataCache.has(key)) {
     return state.featureMetadataCache.get(key);
   }
   if (!state.featureMetadataRequests.has(key)) {
-    const request = downloadFeatureMetadataIndex(assetSlug, release)
+    const request = downloadFeatureMetadataIndex(assetSlug, release, locale)
       .then((lookup) => {
         state.featureMetadataCache.set(key, lookup);
         return lookup;
@@ -1277,8 +1326,8 @@ async function featureMetadataIndex(assetSlug, release) {
   return state.featureMetadataRequests.get(key);
 }
 
-async function downloadFeatureMetadataIndex(assetSlug, release) {
-  const response = await fetch(featureMetadataDownloadUrl(assetSlug, release), {
+async function downloadFeatureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
+  const response = await fetch(featureMetadataDownloadUrl(assetSlug, release, locale), {
     cache: "no-store",
     credentials: "include",
     headers: { Accept: "application/json" },
@@ -1347,36 +1396,30 @@ function parseFeatureMetadataSidecar(text) {
   return lookup;
 }
 
-function featureMetadataDownloadUrl(assetSlug, release) {
+function featureMetadataDownloadUrl(assetSlug, release, locale = state.metadataLocale) {
   const params = new URLSearchParams({
     slug: assetSlug,
     format: "metadata",
     version: release || "latest",
   });
+  const normalizedLocale = normalizeMetadataLocale(locale);
+  if (normalizedLocale) {
+    params.set("locale", normalizedLocale);
+  }
   return `/api/download-url?${params.toString()}`;
 }
 
-function featureMetadataCacheKey(assetSlug, release) {
-  return `${assetSlug}\n${release || "latest"}`;
+function featureMetadataCacheKey(assetSlug, release, locale = state.metadataLocale) {
+  return `${assetSlug}\n${release || "latest"}\n${normalizeMetadataLocale(locale)}`;
 }
 
 function featureMetadataRelease(asset) {
   return String(asset?.date || asset?.latest_release?.date || asset?.last_updated || "latest").trim();
 }
 
-function featureMetadataSidecarFile(assetSlug, release) {
+function featureMetadataSidecarFile(assetSlug, release, locale = state.metadataLocale) {
   const reference = assetReferenceForRelease(assetSlug, release);
-  const files = Array.isArray(reference?.files)
-    ? reference.files
-    : Array.isArray(reference?.latest_release?.files)
-      ? reference.latest_release.files
-      : [];
-  return files.find((file) => {
-    const path = releaseFilePath(file);
-    const role = String(file?.role || "").trim();
-    const format = String(file?.format || "").trim();
-    return path.endsWith(".metadata.ndjson.gz") && (role === "metadata" || format === "metadata");
-  });
+  return metadataSidecarFileForReference(reference, locale);
 }
 
 function assetReferenceForRelease(assetSlug, release) {
@@ -1443,6 +1486,124 @@ function selectedLayerAsset(assets = selectedReferences()) {
     return null;
   }
   return mapAssets[0];
+}
+
+function selectedMetadataLanguageAsset(assets = selectedReferences()) {
+  const mapAssets = assets.filter((asset) => asset?.pmtiles_url);
+  if (state.selectedSlugs.length !== 1 || mapAssets.length !== 1) {
+    return null;
+  }
+  return mapAssets[0];
+}
+
+function prepareMetadataLanguageControl(asset) {
+  if (!asset) {
+    resetMetadataLanguageControl();
+    return "";
+  }
+  const locales = availableMetadataLocales(asset);
+  if (!locales.length) {
+    resetMetadataLanguageControl();
+    state.metadataLocale = "";
+    return "";
+  }
+  const selected = selectedMetadataLocale(asset, locales);
+  elements.metadataLanguageControl.hidden = false;
+  elements.metadataLanguage.replaceChildren(new Option("Source", ""));
+  for (const locale of locales) {
+    elements.metadataLanguage.append(new Option(formatLocaleLabel(locale), locale));
+  }
+  elements.metadataLanguage.disabled = false;
+  elements.metadataLanguage.value = selected;
+  state.metadataLocale = selected;
+  return selected;
+}
+
+function resetMetadataLanguageControl() {
+  elements.metadataLanguageControl.hidden = true;
+  elements.metadataLanguage.disabled = true;
+  elements.metadataLanguage.replaceChildren(new Option("Source", ""));
+  elements.metadataLanguage.value = "";
+}
+
+function selectedMetadataLocale(asset, locales = availableMetadataLocales(asset)) {
+  const current = normalizeMetadataLocale(state.metadataLocale || activeMetadataLocale());
+  return current && locales.includes(current) ? current : "";
+}
+
+function availableMetadataLocales(asset) {
+  const locales = new Set();
+  for (const file of metadataSidecarFiles(asset)) {
+    const locale = metadataFileLocale(file);
+    if (locale) {
+      locales.add(locale);
+    }
+  }
+  return [...locales].sort(collator.compare);
+}
+
+function metadataSidecarFiles(asset) {
+  const files = Array.isArray(asset?.files)
+    ? asset.files
+    : Array.isArray(asset?.latest_release?.files)
+      ? asset.latest_release.files
+      : [];
+  return files.filter((file) => {
+    const path = releaseFilePath(file);
+    const role = String(file?.role || "").trim();
+    const format = String(file?.format || "").trim();
+    return path.endsWith(".ndjson.gz") && (role === "metadata" || format === "metadata") && path.includes(".metadata");
+  });
+}
+
+function metadataFileLocale(file) {
+  const declared = normalizeMetadataLocale(file?.locale || "");
+  if (declared) {
+    return declared;
+  }
+  const match = basename(releaseFilePath(file)).match(LOCALIZED_METADATA_FILE_RE);
+  return match ? normalizeMetadataLocale(match[1]) : "";
+}
+
+function metadataSidecarFileForReference(asset, locale = state.metadataLocale) {
+  const files = metadataSidecarFiles(asset);
+  const normalizedLocale = normalizeMetadataLocale(locale);
+  if (normalizedLocale) {
+    const localized = files.find((file) => {
+      const path = releaseFilePath(file);
+      const declaredLocale = metadataFileLocale(file);
+      return path.endsWith(`.metadata.${normalizedLocale}.ndjson.gz`) && (!declaredLocale || declaredLocale === normalizedLocale);
+    });
+    if (localized) {
+      return localized;
+    }
+  }
+  return files.find((file) => releaseFilePath(file).endsWith(".metadata.ndjson.gz") && !metadataFileLocale(file)) || null;
+}
+
+function renderMetadataSidecarPath(asset) {
+  const file = metadataSidecarFileForReference(asset, state.metadataLocale);
+  const path = releaseFilePath(file);
+  elements.metadataRow.hidden = !path;
+  elements.metadata.textContent = path;
+}
+
+function formatLocaleLabel(locale) {
+  const normalized = normalizeMetadataLocale(locale);
+  if (!normalized) {
+    return "Source";
+  }
+  const bcp47 = normalized.replaceAll("_", "-");
+  try {
+    const displayNames = new Intl.DisplayNames([navigator.language || "en"], { type: "language" });
+    const label = displayNames.of(bcp47);
+    if (label && label !== bcp47) {
+      return `${label} (${bcp47})`;
+    }
+  } catch (_error) {
+    // Older browsers can still show the stable locale code.
+  }
+  return bcp47;
 }
 
 function prepareLayerControl(asset) {
@@ -1593,6 +1754,7 @@ function mapReferenceKey(asset) {
 function clearFeatureInspector() {
   elements.featureInspector.hidden = true;
   elements.featureInspector.replaceChildren();
+  state.inspectedFeatures = [];
   state.mapModule?.clearFeatureInspectionIndicator?.();
 }
 

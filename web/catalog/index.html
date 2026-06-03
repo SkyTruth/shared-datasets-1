@@ -94,6 +94,12 @@
                 </label>
               </div>
               <div class="map-actions map-actions-right">
+                <label id="metadata-language-control" class="metadata-language-control" for="metadata-language-select" hidden>
+                  <span>Language</span>
+                  <select id="metadata-language-select">
+                    <option value="">Source</option>
+                  </select>
+                </label>
                 <label class="basemap-control" for="basemap-select">
                   <span>Basemap</span>
                   <select id="basemap-select">
@@ -204,6 +210,13 @@
                 <code id="detail-pmtiles"></code>
               </div>
               <button id="copy-pmtiles" class="icon-button" type="button" title="Copy PMTiles URL">Copy</button>
+            </div>
+            <div id="metadata-path-row" class="path-row" hidden>
+              <div>
+                <span>Metadata sidecar</span>
+                <code id="detail-metadata"></code>
+              </div>
+              <button id="copy-metadata" class="icon-button" type="button" title="Copy metadata sidecar path">Copy</button>
             </div>
           </section>
 

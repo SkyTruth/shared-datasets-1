@@ -41,6 +41,7 @@ RESERVED_TOP_LEVEL = {"_catalog", "_templates", "_scratch", "_deprecated", "000-
 ROOT_ALLOWED_DOCS = {"README.md"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
 APPROVED_RELEASE_METADATA_SUFFIXES = (".metadata.ndjson.gz", ".schema.json", ".manifest.json")
+LOCALIZED_RELEASE_METADATA_RE = re.compile(r"\.metadata\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*\.ndjson\.gz$")
 PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
 ALLOW_CANONICAL_MUTATION_ENV = "SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"
@@ -130,6 +131,10 @@ def load_categories(path: Path) -> dict[str, set[str]]:
     return {name: set((data.get("subcategories") or {}).keys()) for name, data in categories.items()}
 
 
+def is_approved_release_metadata_file(filename: str) -> bool:
+    return filename.endswith(APPROVED_RELEASE_METADATA_SUFFIXES) or bool(LOCALIZED_RELEASE_METADATA_RE.search(filename))
+
+
 def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> list[str]:
     parts = [part for part in name.split("/") if part]
     if not parts:
@@ -169,7 +174,7 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
                 "latest/ should contain direct files only, except latest/manifest.json for Zarr"
             )
         filename = rel[-1]
-        if filename.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
+        if is_approved_release_metadata_file(filename):
             return errors
         ext = Path(filename).suffix.lower()
         if ext not in APPROVED_DATA_EXTENSIONS:
@@ -184,7 +189,7 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
         if any(part.endswith(".zarr") for part in rel):
             return errors
         filename = rel[-1]
-        if filename.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
+        if is_approved_release_metadata_file(filename):
             return errors
         ext = Path(filename).suffix.lower()
         if ext not in APPROVED_DATA_EXTENSIONS:

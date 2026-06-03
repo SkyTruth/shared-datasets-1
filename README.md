@@ -233,22 +233,21 @@ breaking existing paths.
 5. For vector/table assets, use the publishing concierge output and canonical
    artifact profile to identify provider ID candidates and high-value
    `search_fields`. Prefer real source IDs. If the asset publishes localized
-   PMTiles display names, normalize the canonical FGB to a unique nonblank
-   `ext_id`, keep display-name values in
-   `latest/{asset-slug}-localizations.csv`, declare `localized_names` with
-   `storage: localization_csv_v1`, and record per-locale aggregate
-   `review_state` as `source_provided`, `machine_translated`,
-   `human_reviewed`, or `mixed`. If no useful provider row ID exists and the
+   feature display metadata, keep PMTiles lightweight with geometry plus
+   lookup IDs, maintain editable rows in
+   `{asset-slug}.metadata-translations.csv`, and materialize generated
+   `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar views from the canonical
+   `{asset-slug}.metadata.ndjson.gz`. If no useful provider row ID exists and the
    asset needs group-level addressing, choose the curator-approved grouping field before generating
    `shared_datasets_group_id`. For vector assets, if neither a provider ID nor
    grouping field is suitable and row-level addresses are still required,
    explicitly choose the last-resort `shared_datasets_row_id` fallback.
 6. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
 7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. When a generated group ID is approved, pass `--group-id-field FIELD` so the helper writes and validates `shared_datasets_group_id`. When the row-ID fallback is approved, pass `--generate-row-id` so the helper writes and validates `shared_datasets_row_id`.
-   For localized PMTiles, seed or update the sidecar with
-   `scripts/localized_vector_asset.py seed-localizations`, validate it with
-   `validate-localizations`, then rebuild PMTiles from the canonical FGB plus
-   localization CSV with `build-pmtiles`.
+   For localized feature metadata, generate locale views with
+   `scripts/feature_metadata_localization.py` after the canonical metadata
+   sidecar and schema are ready. Do not put translated full metadata back into
+   PMTiles.
 8. Run `uv run python scripts/catalog_docs.py generate` to refresh managed asset-doc blocks, `catalog/shared-datasets-catalog.csv`, and `docs/assets/index.md`.
 9. Review the generated diff, then run `uv run python scripts/catalog_docs.py check`.
 10. Stage any manual publish bytes under
@@ -726,28 +725,35 @@ to the vector build, repeating the flag for composite grouping fields. The
 helper writes `shared_datasets_group_id` before FGB creation and validates that
 the property survives into decoded PMTiles features.
 
-For localized PMTiles, keep the canonical FGB faithful to the source geometry
-and stable identifier fields, with a normalized `ext_id` column. Store fallback
-and translated display names in a same-asset CSV sidecar:
+For localized feature metadata, keep the canonical FGB faithful to the source
+geometry and stable identifier fields, with `feature_id` and `feature_hash`
+preserved in the release metadata sidecar. Store editable translations in
+`{asset-slug}.metadata-translations.csv` keyed by `feature_id`, field, locale,
+and source-value hash, then materialize one sidecar per locale:
 
 ```bash
-uv run python scripts/localized_vector_asset.py seed-localizations \
-  --fgb "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.fgb" \
-  --ext-id-field ext_id \
-  --fallback-name-field source_name \
-  --localizations "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset-localizations.csv"
-
-uv run python scripts/localized_vector_asset.py build-pmtiles \
-  --fgb "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.fgb" \
-  --localizations "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset-localizations.csv" \
+uv run python scripts/feature_metadata_localization.py \
+  --canonical-sidecar "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
+  --translation-source "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
+  --schema "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.schema.json" \
+  --translatable-field name \
+  --all-locales \
   --asset-slug example-asset \
-  --output "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.pmtiles"
+  --release 2026-05-01 \
+  --output-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
+  --report-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/reports"
 ```
 
-Translation-only updates should leave `latest/{asset-slug}.fgb` unchanged,
-stage a byte-identical FGB copy for the new release directory, stage the
-updated localization CSV under release and `latest/`, and stage a rebuilt
-PMTiles archive under release and `latest/`.
+Translation-only updates should leave `latest/{asset-slug}.fgb` and PMTiles
+unchanged, stage byte-identical copies for the new release directory when a new
+release is needed, stage the updated translation source under release and
+`latest/`, and stage rebuilt localized metadata sidecars under release and
+`latest/`. Stale translation rows are reported and skipped; untranslated values
+fall back to the canonical metadata sidecar values. After a reviewed publish
+plan promotes a new `{asset-slug}.metadata-translations.csv`, the
+`Feature metadata localization materialization` workflow regenerates sibling
+localized sidecars from the canonical metadata and schema using generation
+preconditions in the approved publisher environment.
 
 ## Catalog web preview
 
