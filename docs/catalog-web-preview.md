@@ -87,6 +87,13 @@ fields that are not provider IDs. `localized_names` records the official
 localization CSV sidecar and metadata lookup contract, including `storage`,
 `join_key`, `localization_file`, available locales, declared fields, aggregate
 per-locale review state, and fallback field when present.
+Release-oriented vector assets may also publish canonical and localized feature
+metadata sidecars in the release index. The browser asks `/api/download-url` for
+`format=metadata` and the active `locale`; the catalog viewer resolves that to
+one materialized `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar when present
+or the canonical `{asset-slug}.metadata.ndjson.gz` fallback when absent. The
+browser never fetches a separate translation overlay and does not merge
+translation rows over canonical metadata.
 `generated_group_id` records the policy and counts for a native
 `shared_datasets_group_id` feature property when an asset needs generated group
 IDs. `generated_row_id` records the policy and warning for a native

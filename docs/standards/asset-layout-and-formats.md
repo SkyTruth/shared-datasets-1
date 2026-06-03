@@ -89,15 +89,19 @@ chunked array products where COG would be a poor access pattern.
   latest/
     {asset-slug}.{ext}
     {asset-slug}.metadata.ndjson.gz # release-oriented vector metadata sidecar
+    {asset-slug}.metadata.es.ndjson.gz # generated localized metadata view
     {asset-slug}.schema.json        # release-oriented vector schema
     {asset-slug}.manifest.json      # release-oriented vector manifest
+    {asset-slug}.metadata-translations.csv # optional editable translation source
     manifest.json        # only for multi-object assets such as Zarr
   releases/
     YYYY-MM-DD/
       {asset-slug}.{ext}
       {asset-slug}.metadata.ndjson.gz # release-oriented vector metadata sidecar
+      {asset-slug}.metadata.es.ndjson.gz # generated localized metadata view
       {asset-slug}.schema.json        # release-oriented vector schema
       {asset-slug}.manifest.json      # release-oriented vector manifest
+      {asset-slug}.metadata-translations.csv # optional editable translation source
       {asset-slug}.zarr/ # only for Zarr and other approved prefix formats
   previews/
     {asset-slug}-preview.png
@@ -162,12 +166,45 @@ Required release artifacts for vector releases:
 | `{asset-slug}.fgb` | Truth-preserving canonical vector artifact with full attributes, `feature_id`, and `feature_hash`. |
 | `{asset-slug}.pmtiles` | Lightweight display artifact with geometry, `feature_id`, and `ext_id` only. |
 | `{asset-slug}.metadata.ndjson.gz` | Canonical durable metadata sidecar, one JSON object per `feature_id`. |
+| `{asset-slug}.metadata.{locale}.ndjson.gz` | Optional generated locale-specific metadata view. Same row shape as the canonical sidecar, with translated display values already materialized into `properties`. |
+| `{asset-slug}.metadata-translations.csv` | Optional editable translation source keyed by `feature_id`, field name, locale, and source-value hash. |
 | `{asset-slug}.schema.json` | Field names, types, nullable fields, reserved fields, and projection allowlist. |
 | `{asset-slug}.manifest.json` | Source inputs, artifact paths, checksums, destination generations for non-manifest artifacts, schema version, ID strategy, validation, and note that index status is tracked under `index-loads/`. The manifest does not embed its own object generation. |
 
 The metadata sidecar is canonical and durable in GCS. Firestore is the initial
 serving index for lookup APIs, but it is a rebuildable copy/cache loaded from
 the sidecar.
+
+Locale-specific metadata sidecars are derived artifacts, not translation
+sources of truth. Maintain translations in a compact CSV source named
+`{asset-slug}.metadata-translations.csv` with these columns:
+
+```csv
+feature_id,field,locale,source_value_hash,value,review_state,notes
+```
+
+`feature_id`, `field`, `locale`, `source_value_hash`, and `value` are required.
+`review_state` and `notes` are optional. `source_value_hash` is the SHA-256 hash
+of the canonical source property value serialized with the release feature
+model's stable JSON rules. During publish/build preparation, generate
+`{asset-slug}.metadata.{locale}.ndjson.gz` with
+`scripts/feature_metadata_localization.py`; translations apply only when the
+current canonical property hash matches the translation row. Stale rows are
+reported and skipped, untranslated values remain canonical, duplicate
+translation keys fail validation, and the localized sidecar must preserve the
+canonical sidecar's row count, `feature_id`, and `feature_hash` values.
+Use `--all-locales` during publish/build preparation to materialize every
+locale present in the translation source. After a reviewed publish plan promotes
+a new `{asset-slug}.metadata-translations.csv`, the
+`Feature metadata localization materialization` workflow regenerates sibling
+localized metadata sidecars from the promoted CSV, canonical sidecar, and
+schema, then uploads the derived sidecars with current-generation
+preconditions from the approved publisher environment.
+
+Catalog and app consumers must not fetch or merge a translation overlay. A
+browser or resolver requests one metadata sidecar for the active locale; if the
+localized sidecar is absent, the resolver returns the canonical
+`{asset-slug}.metadata.ndjson.gz` fallback.
 
 Multi-object assets, including Zarr, must write immutable data under
 `releases/YYYY-MM-DD/{asset-slug}.zarr/` and update only
@@ -306,11 +343,15 @@ feature_metadata:
 
 ### Localized Name Sidecars
 
-Localized display names use a same-asset CSV sidecar keyed by a stable
-canonical FGB `ext_id` column. Datasets without localized display names omit
-this metadata. Release-oriented PMTiles do not carry `name` or `name_*`
-properties; they carry `feature_id` and `ext_id`, and feature inspectors or
-apps resolve display labels through the metadata API or localization sidecar.
+Older/simple localized display-name workflows use a same-asset CSV sidecar
+keyed by a stable canonical FGB `ext_id` column. Release-oriented metadata
+sidecar assets should instead use the
+`{asset-slug}.metadata-translations.csv` source and generated
+`{asset-slug}.metadata.{locale}.ndjson.gz` views described above. Datasets
+without localized display names omit this metadata. Release-oriented PMTiles do
+not carry `name` or `name_*` properties; they carry `feature_id` and `ext_id`,
+and feature inspectors or apps resolve display labels through the metadata API
+or one materialized locale-specific metadata sidecar.
 Any dataset that publishes localized display names must declare
 `localized_names` in the asset-doc frontmatter and must stage a localization CSV
 at `latest/{asset-slug}-localizations.csv`:
@@ -352,11 +393,18 @@ fallback `name` value is required for every row. Blank localized values must
 have blank review states, and nonblank localized values must have a review
 state. Per-value review-state fields stay in the CSV and catalog metadata.
 
-Translation-only updates publish the updated localization CSV and reload or
-refresh the metadata index. For versioned assets, a translation-only release
-should copy the byte-identical current FGB and PMTiles into the new release
-directory, publish the updated localization CSV under release and `latest/`,
-and rebuild the release index after promotion.
+Translation-only updates publish the updated translation source and regenerated
+localized metadata sidecars, then reload or refresh any serving metadata index
+that uses those localized views. For versioned assets, a translation-only
+release should copy byte-identical current FGB and PMTiles objects into the new
+release directory when a new release is needed, publish the updated translation
+source under release and `latest/`, publish regenerated localized metadata
+sidecars under release and `latest/`, and rebuild the release index after
+promotion. For first uploads of release-oriented vector assets, maintainers
+must choose which locales and which metadata fields, if any, the agent should
+autogenerate before publish artifacts are considered complete; requested rows
+belong in `{asset-slug}.metadata-translations.csv`, not in the canonical
+metadata sidecar.
 
 Use `generated_group_id` only when an asset needs generated group-level
 addressing and lacks a useful provider row ID. The generated native column is

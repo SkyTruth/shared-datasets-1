@@ -747,7 +747,8 @@ h3 {
 
 .basemap-control,
 .colorize-control,
-.layer-control {
+.layer-control,
+.metadata-language-control {
   display: grid;
   gap: 5px;
   min-width: 150px;
@@ -760,7 +761,8 @@ h3 {
 
 .basemap-control span,
 .colorize-control span,
-.layer-control span {
+.layer-control span,
+.metadata-language-control span {
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 720;
@@ -768,7 +770,8 @@ h3 {
 
 .basemap-control select,
 .colorize-control select,
-.layer-control select {
+.layer-control select,
+.metadata-language-control select {
   min-height: 36px;
   background: var(--panel);
 }
@@ -1186,6 +1189,7 @@ h3 {
   .basemap-control,
   .colorize-control,
   .layer-control,
+  .metadata-language-control,
   .docs-actions .quiet-link,
   .docs-actions .icon-button {
     width: 100%;

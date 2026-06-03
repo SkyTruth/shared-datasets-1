@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       sidecar_uri:
-        description: "Preview-bucket release .features.ndjson.gz URI."
+        description: "Preview-bucket release .metadata.ndjson.gz URI."
         required: true
         type: string
       sidecar_generation:
@@ -167,7 +167,7 @@ jobs:
           asset_root = f"{row['category']}/{row['subcategory']}/{asset_slug}"
           release_prefix = f"gs://{bucket}/{asset_root}/releases/{release}/"
           expected = {
-              "SIDECAR_URI": ".features.ndjson.gz",
+              "SIDECAR_URI": ".metadata.ndjson.gz",
               "SCHEMA_URI": ".schema.json",
               "MANIFEST_URI": ".manifest.json",
           }
@@ -183,7 +183,7 @@ jobs:
           env_updates = {
               "LOAD_ID": load_id,
               "ASSET_ROOT": asset_root,
-              "SIDECAR_PATH": str(work_dir / f"{asset_slug}.features.ndjson.gz"),
+              "SIDECAR_PATH": str(work_dir / f"{asset_slug}.metadata.ndjson.gz"),
               "SCHEMA_PATH": str(work_dir / f"{asset_slug}.schema.json"),
               "MANIFEST_PATH": str(work_dir / f"{asset_slug}.manifest.json"),
               "INDEX_LOAD_RECORD": str(work_dir / f"{load_id}.json"),

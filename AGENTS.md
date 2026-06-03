@@ -70,6 +70,7 @@ Current repo-local skills:
 - `.claude/skills/shared-datasets-compliance-audit/SKILL.md`
 - `.claude/skills/static-catalog-web-preview/SKILL.md`
 - `.claude/skills/sync-docs-with-code/SKILL.md`
+- `.claude/skills/update-feature-metadata-translations/SKILL.md`
 
 High-priority triggers:
 
@@ -101,6 +102,9 @@ High-priority triggers:
 - Use `sync-docs-with-code` before keeping repository docs aligned with code,
   generated outputs, workflows, Terraform, ingestion jobs, APIs, or repo-local
   skills.
+- Use `update-feature-metadata-translations` before adding, editing, reviewing,
+  regenerating, or publishing release-oriented feature metadata translation
+  sources or generated locale-specific metadata sidecars.
 
 Keep skill examples repo-relative and maintainer-neutral. Avoid usernames,
 home-directory paths, shell-profile assumptions, and machine-local environment
@@ -173,6 +177,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
 | Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |
+| Release feature metadata translations | `.claude/skills/update-feature-metadata-translations/SKILL.md` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
 | TypeScript SDK npm release workflow | `.github/workflows/publish-typescript-sdk.yml` |

@@ -75,9 +75,13 @@ where relevant:
 | `feature_metadata` | Metadata sidecar, schema, manifest, and Firestore-backed lookup support for assets that publish feature-level metadata. |
 
 Localized display-name consumers should resolve labels through the metadata API
-or the same-asset `{asset-slug}-localizations.csv` sidecar keyed by `ext_id`.
-Canonical FGB consumers should rely on `ext_id` for joins and should not expect
-localized name columns in the FGB.
+or a materialized locale-specific metadata sidecar such as
+`{asset-slug}.metadata.es.ndjson.gz`. The browser-facing catalog resolver
+accepts one active locale and returns either that localized sidecar or the
+canonical `{asset-slug}.metadata.ndjson.gz` fallback. Browser apps should not
+fetch a separate translation overlay or merge translations over canonical
+metadata client-side. Canonical FGB consumers should rely on `ext_id` for joins
+and should not expect localized name columns in the FGB.
 
 Release-oriented vector PMTiles carry geometry plus `feature_id` and `ext_id`
 only. Use the metadata API for full attributes, display labels, and provenance

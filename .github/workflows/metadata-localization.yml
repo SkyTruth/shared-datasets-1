@@ -1,0 +1,204 @@
+name: Feature metadata localization materialization
+
+on:
+  workflow_run:
+    workflows:
+      - Approved dataset mutation
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      translation_source_uri:
+        description: "Canonical .metadata-translations.csv URI to materialize."
+        required: false
+        type: string
+      asset_slug:
+        description: "Expected asset slug for manual dispatch validation."
+        required: false
+        type: string
+      release:
+        description: "Expected release date, YYYY-MM-DD. Optional for latest/ translation refreshes."
+        required: false
+        type: string
+      fail_on_stale:
+        description: "Fail if stale translations are detected instead of reporting and skipping them."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  materialize:
+    name: Materialize localized metadata sidecars
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event.workflow_run.conclusion == 'success'
+      }}
+    concurrency:
+      group: feature-metadata-localization-${{ github.event.workflow_run.id || github.run_id }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate manual dispatch ref
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Feature metadata localization materialization must run from main for canonical writes." >&2
+            exit 1
+          fi
+
+      - name: Check out trusted repository code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Validate publisher auth configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
+      - name: Authenticate as shared datasets publisher
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Prepare reviewed publish plan
+        id: reviewed_plan
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER="$(python - <<'PY'
+          import json
+          import os
+
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
+          pull_requests = event.get("workflow_run", {}).get("pull_requests") or []
+          if pull_requests:
+              print(pull_requests[0]["number"])
+          PY
+          )"
+
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "publish_plan=" >> "${GITHUB_OUTPUT}"
+            echo "No pull request attached to the completed Approved dataset mutation run."
+            exit 0
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
+          python scripts/reviewed_dataset_plan.py event-from-pr \
+            --pr-json pr.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --default-branch "${DEFAULT_BRANCH}" \
+            --allow-merged \
+            --output reviewed-pr-event.json
+
+          python scripts/reviewed_dataset_plan.py detect \
+            --event-path reviewed-pr-event.json > detect.json
+
+          HAS_PUBLISH_PLAN="$(python - <<'PY'
+          import json
+          payload = json.load(open("detect.json"))
+          print("true" if payload.get("has_publish_plan") else "false")
+          PY
+          )"
+          if [[ "${HAS_PUBLISH_PLAN}" != "true" ]]; then
+            echo "publish_plan=" >> "${GITHUB_OUTPUT}"
+            echo "Merged PR did not contain a publish plan."
+            exit 0
+          fi
+
+          python scripts/reviewed_dataset_plan.py extract publish \
+            --event-path reviewed-pr-event.json \
+            --output publish-plan.json
+          echo "publish_plan=publish-plan.json" >> "${GITHUB_OUTPUT}"
+
+      - name: Materialize reviewed translation-source promotions
+        if: ${{ github.event_name == 'workflow_run' && steps.reviewed_plan.outputs.publish_plan != '' }}
+        env:
+          SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+        run: |
+          set -euo pipefail
+
+          uv run python scripts/feature_metadata_translation_pipeline.py \
+            --publish-plan "${{ steps.reviewed_plan.outputs.publish_plan }}" \
+            --work-dir "${RUNNER_TEMP}/feature-metadata-localization" \
+            --upload \
+            --report "${RUNNER_TEMP}/feature-metadata-localization/summary.json"
+
+      - name: Materialize manual translation source
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.translation_source_uri != '' }}
+        env:
+          SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+        run: |
+          set -euo pipefail
+
+          stale_args=()
+          if [[ "${{ inputs.fail_on_stale }}" == "true" ]]; then
+            stale_args+=(--fail-on-stale)
+          fi
+
+          optional_args=()
+          if [[ -n "${{ inputs.asset_slug }}" ]]; then
+            optional_args+=(--asset-slug "${{ inputs.asset_slug }}")
+          fi
+          if [[ -n "${{ inputs.release }}" ]]; then
+            optional_args+=(--release "${{ inputs.release }}")
+          fi
+
+          uv run python scripts/feature_metadata_translation_pipeline.py \
+            --translation-source-uri "${{ inputs.translation_source_uri }}" \
+            --work-dir "${RUNNER_TEMP}/feature-metadata-localization" \
+            --upload \
+            --report "${RUNNER_TEMP}/feature-metadata-localization/summary.json" \
+            "${optional_args[@]}" \
+            "${stale_args[@]}"
+
+      - name: Upload materialization report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-metadata-localization-report
+          path: ${{ runner.temp }}/feature-metadata-localization
+          if-no-files-found: ignore
