@@ -14,6 +14,13 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
     def test_metadata_service_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = DEPLOY_WORKFLOW.read_text()
 
+        self.assertIn("deploy_metadata_service:", workflow)
+        self.assertIn("ENABLE_METADATA_SERVICE_DEPLOY", workflow)
+        self.assertIn("Check metadata-service deploy gate", workflow)
+        self.assertIn("deploy_enabled: ${{ steps.gate.outputs.deploy_enabled }}", workflow)
+        self.assertIn("Metadata-service deploy is deferred; skipping Docker build and Terraform.", workflow)
+        self.assertIn("needs: deploy_gate", workflow)
+        self.assertIn("needs.deploy_gate.outputs.deploy_enabled == 'true'", workflow)
         self.assertIn("environment: shared-datasets-production", workflow)
         self.assertIn("services/metadata_service/Dockerfile", workflow)
         self.assertIn("--platform linux/amd64", workflow)

@@ -13,6 +13,12 @@ on:
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
   workflow_dispatch:
+    inputs:
+      deploy_metadata_service:
+        description: "Build the metadata-service image and apply Terraform."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,11 +34,54 @@ env:
   TERRAFORM_VERSION: "1.8.5"
   TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  ENABLE_METADATA_SERVICE_DEPLOY: ${{ vars.ENABLE_METADATA_SERVICE_DEPLOY }}
 
 jobs:
+  deploy_gate:
+    name: Check metadata-service deploy gate
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_enabled: ${{ steps.gate.outputs.deploy_enabled }}
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Metadata service deploy may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
+      - name: Decide whether to deploy
+        id: gate
+        env:
+          DEPLOY_METADATA_SERVICE_INPUT: ${{ github.event.inputs.deploy_metadata_service || 'false' }}
+        run: |
+          set -euo pipefail
+
+          deploy_enabled="false"
+          if [[ "${ENABLE_METADATA_SERVICE_DEPLOY}" == "true" ]]; then
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DEPLOY_METADATA_SERVICE_INPUT}" != "true" ]]; then
+              echo "Metadata-service deploy is enabled by repository variable, but this manual dispatch left deploy_metadata_service=false."
+            else
+              deploy_enabled="true"
+            fi
+          fi
+
+          echo "deploy_enabled=${deploy_enabled}" >> "${GITHUB_OUTPUT}"
+          if [[ "${deploy_enabled}" == "true" ]]; then
+            echo "Metadata-service deploy is enabled; Docker build and Terraform job will run."
+          else
+            echo "Metadata-service deploy is deferred; skipping Docker build and Terraform."
+            echo "Set repository variable ENABLE_METADATA_SERVICE_DEPLOY=true when Firestore serving is ready."
+          fi
+
   deploy:
     name: Build image and apply metadata-service Terraform
-    if: ${{ github.event_name != 'pull_request' }}
+    needs: deploy_gate
+    if: ${{ needs.deploy_gate.outputs.deploy_enabled == 'true' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
