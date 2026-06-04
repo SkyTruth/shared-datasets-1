@@ -61,6 +61,24 @@ slug, category, subcategory, release date, source version, and required
 companion artifacts, then build and validate the preview bundle before any
 success report.
 
+## Preview Concierge Gate
+
+For any preview request phrased as "upload this," "add this," "load this,"
+"put this in preview," "put this in sidecar preview," or equivalent, run the
+repo publishing concierge intake or a preview-specific concierge wrapper before
+inspecting, transforming, or uploading dataset objects.
+
+Use the concierge to classify the source, confirm the catalog asset slug,
+category/subcategory, release date, required artifact roles, content types,
+identity strategy, feature metadata sidecar requirements, PMTiles requirements,
+release-index requirements, run-record requirements, and validation evidence.
+
+Do not skip this gate because the asset slug already exists in
+`catalog/shared-datasets-catalog.csv`, because the supplied file is already an
+approved format such as FGB, or because the preview destination seems obvious.
+Existing catalog metadata may prefill decisions, but it does not replace the
+structured preview-bundle checklist.
+
 For vector preview releases, the expected bundle normally includes:
 
 - Canonical FGB or approved vector source transformed for preview use.
@@ -195,7 +213,12 @@ viewer.
 gs://skytruth-shared-datasets-1-preview/
 ```
 
-2. Build or collect the complete preview release bundle outside the repo tree.
+2. Run the preview request through the Preview Concierge Gate. If the source is
+   an existing catalog asset, use the catalog row only to prefill destination
+   root and known metadata. Continue through the required preview-bundle
+   artifacts and validation decisions before upload.
+
+3. Build or collect the complete preview release bundle outside the repo tree.
    Do not upload the supplied source file by itself unless the user explicitly
    asked for a scratch-only diagnostic upload. The preview service expects
    release artifacts under:
@@ -213,7 +236,7 @@ gs://skytruth-shared-datasets-1-preview/_catalog/releases/{asset-slug}.json
    Any schema, manifest, sidecar, or release-index paths inside those files must
    point to the preview bucket, not the production bucket.
 
-3. Validate each planned preview URI before upload:
+4. Validate each planned preview URI before upload:
 
 ```bash
 SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1-preview \
@@ -221,7 +244,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path \
   gs://skytruth-shared-datasets-1-preview/path/to/object
 ```
 
-4. Upload each preview object no-clobber with the repo GCS helper. Only set
+5. Upload each preview object no-clobber with the repo GCS helper. Only set
    `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1` after confirming every
    destination is in `gs://skytruth-shared-datasets-1-preview/`:
 
@@ -236,7 +259,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload \
   --cache-control "no-cache, max-age=0, must-revalidate"
 ```
 
-5. Stat every uploaded object and record exact generations:
+6. Stat every uploaded object and record exact generations:
 
 ```bash
 SHARED_DATASETS_BUCKET=skytruth-shared-datasets-1-preview \
@@ -244,7 +267,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
   gs://skytruth-shared-datasets-1-preview/path/to/local-artifact.json
 ```
 
-6. Run `Feature preview index load` from `main` with:
+7. Run `Feature preview index load` from `main` with:
    - `ref`
    - `asset_slug`
    - `release`
@@ -257,7 +280,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    differ, update the disposable preview bundle or choose the correct ref before
    running the workflow.
 
-7. Confirm that the index-load workflow refreshed the preview catalog viewer.
+8. Confirm that the index-load workflow refreshed the preview catalog viewer.
    The viewer includes only preview-bucket release-index assets, materializes
    top-level "latest" from those release indexes, and treats every preview asset
    as private so the authenticated viewer signs short-lived preview-bucket URLs.
@@ -265,7 +288,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    `versions[].files`, including metadata sidecars, schemas, manifests, and any
    other new sidecar datafiles in the preview release bundle.
 
-8. Report the preview bucket paths, generations, workflow run, preview catalog
+9. Report the preview bucket paths, generations, workflow run, preview catalog
    viewer refresh status, and any retained local temp work directory.
 
 ## Safety Rules
