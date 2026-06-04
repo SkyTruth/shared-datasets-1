@@ -1,17 +1,6 @@
 name: Feature metadata service deploy
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/metadata-service-deploy.yml"
-      - "services/metadata_service/**"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/metadata_service.tf"
-      - "terraform/envs/prod/monitoring.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
   push:
     branches:
       - main
@@ -41,24 +30,6 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
-  readiness:
-    name: Check metadata-service deploy readiness
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate Terraform auth configuration
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
-
   deploy:
     name: Build image and apply metadata-service Terraform
     if: ${{ github.event_name != 'pull_request' }}
