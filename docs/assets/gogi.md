@@ -28,7 +28,7 @@ notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip s
   after omitting 394 well points that could not be reprojected; Well.dbf is truncated in the source shapefile resource, so
   wells are published as geometry only; pmtiles sha256 9fe9a4705b06ae08327e59b769b06ffe16d1d7f6932b0b318bbe92055be8ab31; PMTiles
   rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties and low-zoom point retention;
-  future rebuilds must use the repo-standard GDAL MBTiles to PMTiles conversion path
+  future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles to PMTiles conversion path
 geometry_type: mixed
 row_count: 411521
 data_profile:
@@ -375,8 +375,7 @@ intermediates derived from the 17 WGS84 FGB layers, replacing the earlier
 The tile build keeps compact feature properties for the catalog inspector, while
 `well_geometry` carries only `source_layer` and a `property_note` because source
 well attributes are unavailable. `tippecanoe-decode` confirmed all point layers
-retain full zoom 0 published counts. Future rebuilds must use GDAL MBTiles
-output converted with `pmtiles convert`.
+retain full zoom 0 published counts. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`.
 
 The source EDX page lists Creative Commons Attribution and Open Data Commons Attribution License terms. The source page was last updated by EDX on 2025-01-24 and the local source zip was downloaded on 2026-05-02.
 

@@ -239,7 +239,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
         self.assertEqual(result["missing_ext_id_count"], 0)
         self.assertEqual(result["orphan_ext_id_count"], 0)
 
-    def test_build_pmtiles_plan_uses_gdal_mbtiles_conversion(self):
+    def test_build_pmtiles_plan_uses_tippecanoe_mbtiles_conversion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fgb = root / "example-asset.fgb"
@@ -264,7 +264,14 @@ class LocalizedVectorAssetTests(unittest.TestCase):
             )
 
         self.assertEqual(plan.localized_property_fields, ("name",))
-        self.assertEqual([command["kind"] for command in plan.commands], ["metadata_lookup_geojsonseq", "gdal_mbtiles", "pmtiles_convert"])
+        self.assertEqual([command["kind"] for command in plan.commands], ["metadata_lookup_geojsonseq", "tippecanoe_mbtiles", "pmtiles_convert"])
+        tippecanoe_argv = plan.commands[1]["argv"]
+        self.assertEqual(tippecanoe_argv[0], "tippecanoe")
+        self.assertEqual(
+            [tippecanoe_argv[index + 1] for index, value in enumerate(tippecanoe_argv) if value == "-y"],
+            ["feature_id", "ext_id"],
+        )
+        self.assertEqual(tippecanoe_argv[-1], plan.lookup_geojsonseq_path)
 
     def test_pmtiles_validation_requires_decode_for_required_properties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,6 +331,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 pmtiles_detail_hint=None,
                 localized_property_fields=("name",),
                 ogr2ogr_bin="ogr2ogr",
+                tippecanoe_bin="tippecanoe",
                 pmtiles_bin="pmtiles",
                 tool_paths={},
                 tool_versions={},
@@ -449,9 +457,10 @@ class LocalizedVectorAssetTests(unittest.TestCase):
     @unittest.skipUnless(
         os.environ.get("RUN_GDAL_INTEGRATION_TESTS") == "1"
         and shutil.which("ogr2ogr")
+        and shutil.which("tippecanoe")
         and shutil.which("tippecanoe-decode")
         and shutil.which("pmtiles"),
-        "requires RUN_GDAL_INTEGRATION_TESTS=1, GDAL, tippecanoe-decode, and PMTiles binaries",
+        "requires RUN_GDAL_INTEGRATION_TESTS=1, GDAL, Tippecanoe, tippecanoe-decode, and PMTiles binaries",
     )
     def test_build_pmtiles_integration_with_tiny_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:

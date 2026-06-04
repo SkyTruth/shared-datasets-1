@@ -87,16 +87,18 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
      measured geometry detail. It biases toward detailed presentation and caps
      at zoom 12 by default. Lower than zoom 8 requires source/profile evidence
      or a documented override.
-   - The standard `scripts/vector_asset.py build` path writes temporary MBTiles
-     with GDAL and converts them with `pmtiles convert`. Direct Tippecanoe
-     PMTiles generation is disabled until a future Tippecanoe version is proven
-     to generate valid PMTiles directly.
+   - The standard `scripts/vector_asset.py build` path exports a WGS84
+     GeoJSONSeq tile source with GDAL, builds temporary MBTiles with
+     Tippecanoe, and converts them with `pmtiles convert`. Do not use the old
+     GDAL-based projection path; metadata-lookup SQL that selected `feature_id`
+     and `ext_id` failed to carry geometry through and produced empty or bad
+     MBTiles output.
    - PMTiles display artifacts must preserve the feature properties needed by
      the catalog inspector. For release-oriented metadata lookup assets, the
      required properties are stable `feature_id` and `ext_id`; full
      attributes and display labels are served from the metadata sidecar/API.
-   - For dense point layers, confirm the effective command follows the GDAL
-     MBTiles to PMTiles conversion path:
+   - For dense point layers, confirm the effective command follows the
+     GeoJSONSeq to Tippecanoe MBTiles to `pmtiles convert` path:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb \
