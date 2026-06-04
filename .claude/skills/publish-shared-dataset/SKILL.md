@@ -85,25 +85,51 @@ artifact instead.
 ## Publishing Concierge
 
 For a new manual asset, an under-specified upload, or any intake where the
-slug/taxonomy/format/doc path is not already settled, run the local concierge
-before building artifacts or writing asset docs:
+slug/taxonomy/format/doc path is not already settled, start the local
+stateful concierge before building artifacts or writing asset docs:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py ./source.shp \
+UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py start ./source.shp \
   --asset-slug example-asset \
   --title "Example Asset" \
   --category 100-geographic-reference \
   --subcategory 110-boundaries \
   --source-name "Example source v1" \
   --license "Example terms" \
+  --request-classification canonical-publish \
+  --proposal-id pr-123 \
   --release-date YYYY-MM-DD
 ```
 
-Use `--write-draft-doc` only when you want the concierge to create a local
-`docs/assets/{asset-slug}.md` draft. Review the JSON plan and resolve every
-`blocking_questions` item before any remote write. The concierge is a planner:
-it never writes to Cloud Storage, and it does not replace `gcs_asset.py`,
-`publish-release`, catalog checks, or the GCS safety rules.
+Then repeat this loop:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py next \
+  --state-file "$STATE_FILE"
+# Do the requested research, local build, validation, or scratch staging outside
+# the concierge.
+UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py confirm \
+  --state-file "$STATE_FILE" --step STEP_ID --evidence-json evidence.json
+```
+
+The concierge intentionally waits at each step until the agent submits
+structured evidence. It does not advance merely because a step was printed, and
+`--yes` is rejected for steps that require evidence. Use `status`, `validate`,
+and `render-pr` to inspect the workflow, check PR readiness, and generate the PR
+body with the fenced `shared-datasets-publish-plan`, and render a final
+completion-report scaffold.
+
+The concierge is guide-and-verify tooling: it never stages Git changes, commits,
+pushes, opens PRs, writes canonical Cloud Storage objects, runs Terraform apply,
+or promotes data. Scratch upload commands are suggestions; the agent must run
+the appropriate `gcs_asset.py` commands separately and feed the resulting URIs
+and generations back as evidence. Artifact validation evidence must include the
+commands run and resolved tool paths/versions or explicit not-applicable notes.
+The final publish-plan is validated through `scripts/reviewed_dataset_plan.py`,
+so it matches the protected workflow's schema.
+
+The legacy no-subcommand invocation still prints a one-shot JSON planner output
+for diagnostics, but first-upload work should use the stateful workflow.
 For FGB vector assets, the concierge plans both canonical FGB and PMTiles
 display artifacts by default.
 
