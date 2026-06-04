@@ -26,7 +26,15 @@ class PublishingConciergeTests(unittest.TestCase):
         path.write_text(json.dumps(payload))
         return path
 
-    def _start_workflow(self, root: Path, *, canonical_format: str | None = "csv", release_date: str | None = None) -> Path:
+    def _start_workflow(
+        self,
+        root: Path,
+        *,
+        canonical_format: str | None = "csv",
+        release_date: str | None = None,
+        request_classification: str = "canonical-publish",
+        preview_ref: str = "feat/test-preview",
+    ) -> Path:
         categories = root / "categories.yaml"
         categories.write_text(CATEGORIES_YAML)
         source = root / "example.csv"
@@ -51,7 +59,7 @@ class PublishingConciergeTests(unittest.TestCase):
             "--access-tier",
             "private",
             "--request-classification",
-            "canonical-publish",
+            request_classification,
             "--proposal-id",
             "pr-123",
             "--categories",
@@ -63,6 +71,8 @@ class PublishingConciergeTests(unittest.TestCase):
             args.extend(["--canonical-format", canonical_format])
         if release_date:
             args.extend(["--release-date", release_date])
+        if request_classification == "preview-only":
+            args.extend(["--preview-ref", preview_ref])
         with mock.patch.dict(publishing_concierge.os.environ, {"SHARED_DATASETS_WORKDIR": str(root / "work")}):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
@@ -70,6 +80,414 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         return Path(payload["state_file"])
+
+    def _complete_preview_csv_workflow_through_validate(self, root: Path, state_file: Path) -> None:
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "resolve-metadata",
+                {
+                    "source_name": "Example source",
+                    "license": "Example license",
+                    "citation": "Example citation",
+                    "steward": "Data Steward",
+                    "source_version_date": "2026-05-01",
+                    "update_cadence": "manual",
+                    "intended_consumers": ["test"],
+                    "shared_datasets_rationale": "Disposable preview load for catalog QA.",
+                    "alternatives_considered": "Production publish path.",
+                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_footprint": "1 MB",
+                },
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "settle-contract",
+                {
+                    "confirmed_asset_slug": "example",
+                    "confirmed_category": "300-infrastructure-industrial",
+                    "confirmed_subcategory": "330-offshore-platforms",
+                    "confirmed_canonical_format": "csv",
+                    "release_layout": "versioned",
+                    "access_tier": "private",
+                    "exception_flags": {
+                        "public_access_approved": False,
+                        "new_top_level_category_approved": False,
+                        "new_canonical_format_approved": False,
+                        "large_data_exception_approved": False,
+                        "incompatible_schema_change_approved": False,
+                        "move_or_delete_releases_approved": False,
+                        "unsafe_overwrite_approved": False,
+                        "infrastructure_mutation_approved": False,
+                    },
+                },
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "profile-fields",
+                {
+                    "decision_table_present": True,
+                    "profile_scope": "full",
+                    "provider_id_decision": "use-provider-id",
+                    "provider_id_fields": ["source_id"],
+                    "generated_group_id_decision": "not-needed",
+                    "group_id_fields": [],
+                    "generated_row_id_decision": "not-needed",
+                    "ext_id_decision": "provider-id",
+                    "ext_id_fields": ["source_id"],
+                    "search_fields": ["NAME"],
+                },
+            ),
+            0,
+        )
+        artifact = root / "work/vector-assets/example/publish/example.csv"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("source_id,NAME\nA1,North Reef\n")
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "build-artifacts",
+                {"artifacts": [{"path": str(artifact), "format": "csv", "role": "canonical"}]},
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "validate-artifacts",
+                {
+                    "commands_run": ["csv validation"],
+                    "validation_summary": "CSV is geometry-free and row count matches.",
+                    "all_passed": True,
+                    "tool_versions": {"csv-validator": "not applicable; inspected with Python csv"},
+                },
+            ),
+            0,
+        )
+
+    def _complete_preview_fgb_workflow_through_build(self, root: Path, state_file: Path) -> None:
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "resolve-metadata",
+                {
+                    "source_name": "Example source",
+                    "license": "Example license",
+                    "citation": "Example citation",
+                    "steward": "Data Steward",
+                    "source_version_date": "2026-05-01",
+                    "update_cadence": "manual",
+                    "intended_consumers": ["test"],
+                    "shared_datasets_rationale": "Disposable vector preview load for catalog QA.",
+                    "alternatives_considered": "Production publish path.",
+                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_footprint": "1 MB",
+                },
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "settle-contract",
+                {
+                    "confirmed_asset_slug": "example",
+                    "confirmed_category": "300-infrastructure-industrial",
+                    "confirmed_subcategory": "330-offshore-platforms",
+                    "confirmed_canonical_format": "fgb",
+                    "release_layout": "versioned",
+                    "access_tier": "private",
+                    "exception_flags": {
+                        "public_access_approved": False,
+                        "new_top_level_category_approved": False,
+                        "new_canonical_format_approved": False,
+                        "large_data_exception_approved": False,
+                        "incompatible_schema_change_approved": False,
+                        "move_or_delete_releases_approved": False,
+                        "unsafe_overwrite_approved": False,
+                        "infrastructure_mutation_approved": False,
+                    },
+                },
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "profile-fields",
+                {
+                    "decision_table_present": True,
+                    "profile_scope": "full",
+                    "provider_id_decision": "none-suitable",
+                    "provider_id_fields": [],
+                    "generated_group_id_decision": "not-needed",
+                    "group_id_fields": [],
+                    "generated_row_id_decision": "approved",
+                    "ext_id_decision": "feature-id",
+                    "ext_id_fields": [],
+                    "search_fields": ["NAME"],
+                },
+            ),
+            0,
+        )
+        self.assertEqual(
+            self._confirm(
+                root,
+                state_file,
+                "translation-decision",
+                {"decision": "deferred", "locales": [], "fields": []},
+            ),
+            0,
+        )
+        publish_dir = root / "work/vector-assets/example/publish"
+        publish_dir.mkdir(parents=True)
+        artifacts = [
+            ("example.fgb", "fgb", "canonical"),
+            ("example.pmtiles", "pmtiles", "pmtiles"),
+            ("example.metadata.ndjson.gz", "metadata_sidecar_v1", "feature-metadata-sidecar"),
+            ("example.schema.json", "release_schema_v1", "schema"),
+            ("example.manifest.json", "release_manifest_v1", "manifest"),
+        ]
+        evidence_artifacts = []
+        for filename, fmt, role in artifacts:
+            artifact = publish_dir / filename
+            artifact.write_text("{}")
+            evidence_artifacts.append({"path": str(artifact), "format": fmt, "role": role})
+        self.assertEqual(
+            self._confirm(root, state_file, "build-artifacts", {"artifacts": evidence_artifacts}),
+            0,
+        )
+
+    def _fgb_validation_payload(self, *, include_gdal: bool = True) -> dict:
+        payload = {
+            "commands_run": [
+                "ogrinfo -ro -al -so example.fgb",
+                "pmtiles verify example.pmtiles",
+                "pmtiles show example.pmtiles",
+            ],
+            "validation_summary": "FGB schema and PMTiles display artifact validated.",
+            "all_passed": True,
+            "tool_versions": {
+                "ogr2ogr": "/usr/bin/ogr2ogr GDAL 3.8.0",
+                "ogrinfo": "/usr/bin/ogrinfo GDAL 3.8.0",
+                "pmtiles": "/usr/local/bin/pmtiles 1.26.1",
+            },
+            "pmtiles": {
+                "magic_bytes_confirmed": True,
+                "verify_passed": True,
+                "show_inspected": True,
+                "decoded_tile_checked": True,
+            },
+        }
+        if include_gdal:
+            payload["gdal"] = {
+                "ogr2ogr": "/usr/bin/ogr2ogr GDAL 3.8.0",
+                "ogrinfo": "/usr/bin/ogrinfo GDAL 3.8.0",
+                "ogrinfo_summary_passed": True,
+                "feature_count_checked": True,
+                "geometry_type_checked": True,
+                "crs_checked": True,
+                "field_schema_checked": True,
+            }
+        return payload
+
+    def _preview_fgb_uploaded_objects(self) -> list[dict]:
+        no_cache = publishing_concierge.no_cache_control()
+        release_prefix = (
+            "gs://skytruth-shared-datasets-1-preview/"
+            "300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/"
+        )
+        return [
+            {
+                "uri": f"{release_prefix}example.fgb",
+                "generation": "111",
+                "role": "canonical",
+                "content_type": "application/octet-stream",
+            },
+            {
+                "uri": f"{release_prefix}example.pmtiles",
+                "generation": "112",
+                "role": "pmtiles",
+                "content_type": "application/vnd.pmtiles",
+                "cache_control": no_cache,
+            },
+            {
+                "uri": f"{release_prefix}example.metadata.ndjson.gz",
+                "generation": "113",
+                "role": "feature-metadata-sidecar",
+                "content_type": "application/gzip",
+            },
+            {
+                "uri": f"{release_prefix}example.schema.json",
+                "generation": "114",
+                "role": "schema",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+            {
+                "uri": f"{release_prefix}example.manifest.json",
+                "generation": "115",
+                "role": "manifest",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+            {
+                "uri": "gs://skytruth-shared-datasets-1-preview/_catalog/releases/example.json",
+                "generation": "116",
+                "role": "release-index",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+            {
+                "uri": (
+                    "gs://skytruth-shared-datasets-1-preview/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/runs/2026-05-01.json"
+                ),
+                "generation": "117",
+                "role": "run-record",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+        ]
+
+    def _complete_preview_fgb_workflow_through_validate(self, root: Path, state_file: Path) -> None:
+        self._complete_preview_fgb_workflow_through_build(root, state_file)
+        self.assertEqual(
+            self._confirm(root, state_file, "validate-artifacts", self._fgb_validation_payload()),
+            0,
+        )
+
+    def _complete_preview_fgb_workflow_through_upload(self, root: Path, state_file: Path) -> None:
+        self._complete_preview_fgb_workflow_through_validate(root, state_file)
+        self.assertEqual(
+            self._confirm(root, state_file, "preview-upload", {"uploaded_objects": self._preview_fgb_uploaded_objects()}),
+            0,
+        )
+
+    def _preview_load_payload(self) -> dict:
+        return {
+            "workflow_name": "feature-preview-index-load.yml",
+            "workflow_run_url": "https://github.com/skytruth/shared-datasets/actions/runs/123",
+            "status": "success",
+            "dispatched_ref": "feat/test-preview",
+            "workflow_inputs_checked_against_preview_ref": True,
+            "asset_slug": "example",
+            "release": "2026-05-01",
+            "inputs": {
+                "sidecar_uri": (
+                    "gs://skytruth-shared-datasets-1-preview/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/"
+                    "example.metadata.ndjson.gz"
+                ),
+                "sidecar_generation": "113",
+                "schema_uri": (
+                    "gs://skytruth-shared-datasets-1-preview/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/"
+                    "example.schema.json"
+                ),
+                "schema_generation": "114",
+                "manifest_uri": (
+                    "gs://skytruth-shared-datasets-1-preview/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/"
+                    "example.manifest.json"
+                ),
+                "manifest_generation": "115",
+            },
+            "viewer_refresh_verified": True,
+        }
+
+    def _preview_csv_uploaded_objects(self) -> list[dict]:
+        no_cache = publishing_concierge.no_cache_control()
+        release_prefix = (
+            "gs://skytruth-shared-datasets-1-preview/"
+            "300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/"
+        )
+        return [
+            {
+                "uri": f"{release_prefix}example.csv",
+                "generation": "111",
+                "role": "canonical",
+                "content_type": "text/csv",
+            },
+            {
+                "uri": "gs://skytruth-shared-datasets-1-preview/_catalog/releases/example.json",
+                "generation": "112",
+                "role": "release-index",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+            {
+                "uri": (
+                    "gs://skytruth-shared-datasets-1-preview/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/runs/2026-05-01.json"
+                ),
+                "generation": "113",
+                "role": "run-record",
+                "content_type": "application/json",
+                "cache_control": no_cache,
+            },
+        ]
+
+    def _preview_catalog_refresh_payload(self) -> dict:
+        return {
+            "workflow_name": "feature-preview-deploy.yml",
+            "workflow_run_url": "https://github.com/skytruth/shared-datasets/actions/runs/456",
+            "workflow_run_id": "456",
+            "dispatched_ref": "feat/test-preview",
+            "preview_data_mode": "preserve",
+            "conclusion": "success",
+            "catalog_json_uri": "gs://skytruth-shared-datasets-1-preview/_catalog/web/catalog.json",
+            "catalog_json_generation": "211",
+            "catalog_json_updated_at": "2026-06-04T13:36:47Z",
+            "catalog_generated_at": "2026-06-04T13:36:42Z",
+        }
+
+    def _preview_catalog_asset_payload(self, uploaded_objects: list[dict]) -> dict:
+        release_files = [
+            {
+                "path": obj["uri"],
+                "generation": int(obj["generation"]),
+                "role": obj["role"],
+                "format": obj["role"],
+            }
+            for obj in uploaded_objects
+            if obj["role"] not in {"release-index", "run-record"}
+        ]
+        has_pmtiles = any(obj["role"] == "pmtiles" for obj in uploaded_objects)
+        asset = {
+            "slug": "example",
+            "title": "Example",
+            "has_pmtiles": has_pmtiles,
+            "versions": [
+                {
+                    "date": "2026-05-01",
+                    "files": release_files,
+                }
+            ],
+        }
+        if has_pmtiles:
+            asset["pmtiles_path"] = next(obj["uri"] for obj in uploaded_objects if obj["role"] == "pmtiles")
+        return {
+            "catalog_json_uri": "gs://skytruth-shared-datasets-1-preview/_catalog/web/catalog.json",
+            "catalog_json_generation": "211",
+            "asset_slug_present": True,
+            "asset_count": 1,
+            "catalog_asset": asset,
+        }
 
     def _confirm(self, root: Path, state_file: Path, step: str, payload: dict) -> int:
         evidence = self._write_json(root / f"{step}.json", payload)
@@ -781,7 +1199,59 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertEqual(state["plan"]["asset_slug"], "example")
             self.assertEqual(state["steps"]["resolve-metadata"]["status"], "pending")
 
-    def test_start_requires_canonical_publish_classification(self):
+    def test_start_accepts_preview_only_and_uses_preview_bucket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "example.csv"
+            source.write_text("id,name\n1,A\n")
+
+            stdout = io.StringIO()
+            with mock.patch.dict(publishing_concierge.os.environ, {"SHARED_DATASETS_WORKDIR": str(root / "work")}):
+                with contextlib.redirect_stdout(stdout):
+                    code = publishing_concierge.main(
+                        [
+                            "start",
+                            str(source),
+                            "--asset-slug",
+                            "example",
+                            "--category",
+                            "300-infrastructure-industrial",
+                            "--subcategory",
+                            "330-offshore-platforms",
+                            "--request-classification",
+                            "preview-only",
+                            "--proposal-id",
+                            "preview-123",
+                            "--release-date",
+                            "2026-05-01",
+                            "--preview-ref",
+                            "feat/test-preview",
+                            "--categories",
+                            str(categories),
+                            "--docs-dir",
+                            str(root / "docs/assets"),
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            state = json.loads(Path(json.loads(stdout.getvalue())["state_file"]).read_text())
+            self.assertEqual(state["request_classification"], "preview-only")
+            self.assertEqual(state["preview_ref"], "feat/test-preview")
+            self.assertEqual(state["bucket"], publishing_concierge.PREVIEW_BUCKET)
+            self.assertTrue(state["plan"]["canonical_path"].startswith(f"gs://{publishing_concierge.PREVIEW_BUCKET}/"))
+            self.assertTrue(any("Do not use production publish-release" in command for command in state["generated_commands"]["remote_write"]))
+            status = publishing_concierge.render_status(state)
+            by_step = {step["step_id"]: step for step in status["steps"]}
+            self.assertTrue(by_step["preview-upload"]["required"])
+            self.assertTrue(by_step["preview-catalog-refresh"]["required"])
+            self.assertTrue(by_step["preview-viewer-verify"]["required"])
+            self.assertFalse(by_step["document-asset"]["required"])
+            self.assertFalse(by_step["stage-scratch"]["required"])
+            self.assertFalse(by_step["pr-ready"]["required"])
+
+    def test_preview_start_requires_release_date(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             categories = root / "categories.yaml"
@@ -812,6 +1282,25 @@ class PublishingConciergeTests(unittest.TestCase):
                 )
 
             self.assertEqual(code, 2)
+
+    def test_preview_release_vector_requires_preview_load_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            state = json.loads(state_file.read_text())
+            status = publishing_concierge.render_status(state)
+            by_step = {step["step_id"]: step for step in status["steps"]}
+
+            self.assertTrue(by_step["preview-upload"]["required"])
+            self.assertTrue(by_step["preview-load"]["required"])
+            self.assertTrue(by_step["preview-catalog-refresh"]["required"])
+            self.assertTrue(by_step["preview-viewer-verify"]["required"])
+            self.assertFalse(by_step["catalog-web"]["required"])
 
     def test_start_blocks_duplicate_first_upload_asset_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1105,6 +1594,258 @@ class PublishingConciergeTests(unittest.TestCase):
                 next_code = publishing_concierge.main(["next", "--state-file", str(state_file), "--json"])
             self.assertEqual(next_code, 0)
             self.assertEqual(json.loads(stdout.getvalue())["step_id"], "build-artifacts")
+
+    def test_preview_upload_rejects_production_bucket_uri(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_csv_workflow_through_validate(root, state_file)
+
+            code = self._confirm(
+                root,
+                state_file,
+                "preview-upload",
+                {
+                    "uploaded_objects": [
+                        {
+                            "uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/example.csv",
+                            "generation": "111",
+                            "role": "canonical",
+                        }
+                    ]
+                },
+            )
+
+            self.assertEqual(code, 2)
+
+    def test_preview_upload_rejects_role_path_mismatches(self):
+        cases = [
+            ("release-index", 5, "gs://skytruth-shared-datasets-1-preview/300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/example-release.json"),
+            ("run-record", 6, "gs://skytruth-shared-datasets-1-preview/_catalog/releases/example-run.json"),
+            ("pmtiles", 1, "gs://skytruth-shared-datasets-1-preview/300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/example-not-pmtiles.json"),
+            ("schema", 3, "gs://skytruth-shared-datasets-1-preview/300-infrastructure-industrial/330-offshore-platforms/example/releases/2026-05-01/example.schema.txt"),
+        ]
+        for _role, object_index, bad_uri in cases:
+            with self.subTest(bad_uri=bad_uri), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state_file = self._start_workflow(
+                    root,
+                    canonical_format="fgb",
+                    release_date="2026-05-01",
+                    request_classification="preview-only",
+                )
+                self._complete_preview_fgb_workflow_through_validate(root, state_file)
+                objects = self._preview_fgb_uploaded_objects()
+                objects[object_index] = dict(objects[object_index])
+                objects[object_index]["uri"] = bad_uri
+
+                code = self._confirm(root, state_file, "preview-upload", {"uploaded_objects": objects})
+
+                self.assertEqual(code, 2)
+
+    def test_preview_upload_rejects_schema_missing_json_cache_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_fgb_workflow_through_validate(root, state_file)
+            objects = self._preview_fgb_uploaded_objects()
+            objects[3] = dict(objects[3])
+            objects[3].pop("content_type")
+            objects[3].pop("cache_control")
+
+            code = self._confirm(root, state_file, "preview-upload", {"uploaded_objects": objects})
+
+            self.assertEqual(code, 2)
+
+    def test_fgb_preview_validation_rejects_missing_gdal_even_with_pmtiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_fgb_workflow_through_build(root, state_file)
+
+            code = self._confirm(root, state_file, "validate-artifacts", self._fgb_validation_payload(include_gdal=False))
+
+            self.assertEqual(code, 2)
+
+    def test_fgb_preview_validation_accepts_gdal_and_pmtiles_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_fgb_workflow_through_build(root, state_file)
+
+            code = self._confirm(root, state_file, "validate-artifacts", self._fgb_validation_payload())
+
+            self.assertEqual(code, 0)
+            state = json.loads(state_file.read_text())
+            self.assertEqual(state["steps"]["validate-artifacts"]["evidence"]["gdal"]["ogrinfo"], "/usr/bin/ogrinfo GDAL 3.8.0")
+
+    def test_preview_load_rejects_inputs_that_do_not_match_upload_evidence(self):
+        cases = [
+            ("sidecar_uri", "gs://skytruth-shared-datasets-1-preview/other/example.metadata.ndjson.gz"),
+            ("sidecar_generation", "999"),
+        ]
+        for key, bad_value in cases:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state_file = self._start_workflow(
+                    root,
+                    canonical_format="fgb",
+                    release_date="2026-05-01",
+                    request_classification="preview-only",
+                )
+                self._complete_preview_fgb_workflow_through_upload(root, state_file)
+                payload = self._preview_load_payload()
+                payload["inputs"][key] = bad_value
+
+                code = self._confirm(root, state_file, "preview-load", payload)
+
+                self.assertEqual(code, 2)
+
+    def test_preview_load_rejects_weak_dispatch_evidence(self):
+        cases = [
+            ("dispatched_ref", "main", "set"),
+            ("workflow_inputs_checked_against_preview_ref", False, "set"),
+            ("workflow_inputs_checked_against_preview_ref", None, "pop"),
+            ("status", "failed", "set"),
+            ("status", "", "set"),
+        ]
+        for key, bad_value, action in cases:
+            with self.subTest(key=key, bad_value=bad_value), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state_file = self._start_workflow(
+                    root,
+                    canonical_format="fgb",
+                    release_date="2026-05-01",
+                    request_classification="preview-only",
+                )
+                self._complete_preview_fgb_workflow_through_upload(root, state_file)
+                payload = self._preview_load_payload()
+                if action == "pop":
+                    payload.pop(key)
+                else:
+                    payload[key] = bad_value
+
+                code = self._confirm(root, state_file, "preview-load", payload)
+
+                self.assertEqual(code, 2)
+
+    def test_preview_fgb_workflow_completes_with_cross_checked_load_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_fgb_workflow_through_upload(root, state_file)
+
+            self.assertEqual(self._confirm(root, state_file, "preview-load", self._preview_load_payload()), 0)
+            refresh = self._preview_catalog_refresh_payload()
+            self.assertEqual(self._confirm(root, state_file, "preview-catalog-refresh", refresh), 0)
+            self.assertEqual(
+                self._confirm(
+                    root,
+                    state_file,
+                    "preview-viewer-verify",
+                    self._preview_catalog_asset_payload(self._preview_fgb_uploaded_objects()),
+                ),
+                0,
+            )
+
+            report_stdout = io.StringIO()
+            with contextlib.redirect_stdout(report_stdout):
+                report_code = publishing_concierge.main(["render-report", "--state-file", str(state_file)])
+            self.assertEqual(report_code, 0)
+            report = report_stdout.getvalue()
+            self.assertIn("GDAL/OGR: ogr2ogr=/usr/bin/ogr2ogr GDAL 3.8.0", report)
+            self.assertIn("Workflow inputs checked against preview ref: True", report)
+            self.assertIn("generation 113, role feature-metadata-sidecar", report)
+            self.assertIn("Preview data mode: preserve", report)
+            self.assertIn("Verified uploaded release artifact URIs: 5", report)
+
+    def test_preview_viewer_verify_rejects_catalog_missing_uploaded_uri(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_csv_workflow_through_validate(root, state_file)
+            uploaded_objects = self._preview_csv_uploaded_objects()
+            self.assertEqual(self._confirm(root, state_file, "preview-upload", {"uploaded_objects": uploaded_objects}), 0)
+            self.assertEqual(self._confirm(root, state_file, "preview-catalog-refresh", self._preview_catalog_refresh_payload()), 0)
+            payload = self._preview_catalog_asset_payload(uploaded_objects)
+            payload["catalog_asset"]["versions"][0]["files"] = []
+
+            code = self._confirm(root, state_file, "preview-viewer-verify", payload)
+
+            self.assertEqual(code, 2)
+
+    def test_preview_csv_workflow_completes_without_pr_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_csv_workflow_through_validate(root, state_file)
+            uploaded_objects = self._preview_csv_uploaded_objects()
+
+            self.assertEqual(
+                self._confirm(
+                    root,
+                    state_file,
+                    "preview-upload",
+                    {"uploaded_objects": uploaded_objects},
+                ),
+                0,
+            )
+            self.assertEqual(self._confirm(root, state_file, "preview-catalog-refresh", self._preview_catalog_refresh_payload()), 0)
+            self.assertEqual(
+                self._confirm(root, state_file, "preview-viewer-verify", self._preview_catalog_asset_payload(uploaded_objects)),
+                0,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = publishing_concierge.main(["validate", "--state-file", str(state_file)])
+            self.assertEqual(code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertTrue(result["ready_for_preview"])
+            self.assertFalse(result["ready_for_pr"])
+
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                render_pr_code = publishing_concierge.main(["render-pr", "--state-file", str(state_file)])
+            self.assertEqual(render_pr_code, 2)
+
+            report_stdout = io.StringIO()
+            with contextlib.redirect_stdout(report_stdout):
+                report_code = publishing_concierge.main(["render-report", "--state-file", str(state_file)])
+            self.assertEqual(report_code, 0)
+            self.assertIn("Request classification: `preview-only`", report_stdout.getvalue())
+            self.assertIn("generation 111, role canonical", report_stdout.getvalue())
 
     def test_render_pr_uses_reviewed_publish_plan_validator(self):
         with tempfile.TemporaryDirectory() as tmp:
