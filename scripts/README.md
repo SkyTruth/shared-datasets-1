@@ -300,35 +300,74 @@ objects with their source-generation preconditions. Remaining pending-publish
 prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
 `Scratch cleanup audit` workflow.
 
-Publishing concierge planning lives in:
+Publishing concierge planning and first-upload workflow guidance live in:
 
 ```text
 scripts/publishing_concierge.py
 ```
 
-Use it at the start of a manual dataset publish when you want one local plan
-that ties together slug, taxonomy, canonical path, draft asset docs, build
-commands, catalog checks, and the eventual safe upload path. The concierge never
-writes to Cloud Storage.
+Use it at the start of a manual dataset publish when you want the agent to stop
+playing checklist memory games. The stateful workflow prints exactly one next
+required step, waits while the agent performs the requested research/build/check
+outside the script, and advances only after structured evidence validates.
 
-Example:
+Start a workflow:
 
 ```bash
-uv run python scripts/publishing_concierge.py ./source.shp \
+uv run python scripts/publishing_concierge.py start ./source.shp \
   --asset-slug example-asset \
   --title "Example Asset" \
   --category 100-geographic-reference \
   --subcategory 110-boundaries \
   --source-name "Example source v1" \
   --license "Example terms" \
-  --with-pmtiles \
-  --release-date 2026-05-01 \
-  --write-draft-doc
+  --request-classification canonical-publish \
+  --proposal-id pr-123 \
+  --release-date 2026-05-01
 ```
 
-Review the generated JSON plan and draft `docs/assets/{asset-slug}.md`, then run
-the suggested existing helpers. Remote writes still go through
-`scripts/gcs_asset.py`.
+The start command writes state under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/publishing-concierge/{asset-slug}/{proposal-id}.state.json`
+unless `--state-file` is provided.
+
+Then loop:
+
+```bash
+uv run python scripts/publishing_concierge.py next --state-file "$STATE_FILE"
+uv run python scripts/publishing_concierge.py confirm \
+  --state-file "$STATE_FILE" \
+  --step resolve-metadata \
+  --evidence-json evidence.json
+```
+
+Useful inspection commands:
+
+```bash
+uv run python scripts/publishing_concierge.py status --state-file "$STATE_FILE"
+uv run python scripts/publishing_concierge.py validate --state-file "$STATE_FILE"
+uv run python scripts/publishing_concierge.py render-pr --state-file "$STATE_FILE"
+uv run python scripts/publishing_concierge.py render-report --state-file "$STATE_FILE"
+```
+
+The concierge is guide-and-verify only. It never stages Git changes, commits,
+pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
+objects, runs Terraform apply, or promotes data. When `next` asks for scratch
+staging, run `scripts/gcs_asset.py upload` separately and provide the staged URI
+and generation as evidence. `render-pr` validates the final fenced
+`shared-datasets-publish-plan` with `scripts/reviewed_dataset_plan.py`, the same
+schema used by the protected promotion workflow.
+
+`start` requires an explicit request classification and only proceeds for
+`canonical-publish`. It also blocks duplicate first-upload asset slugs unless
+`--allow-existing-asset` is passed after review. Later evidence gates require
+metadata/admission fields, generated-ID decisions, artifact paths, validation
+commands, resolved tool paths/versions or not-applicable notes, scratch source
+generations, and canonical destination generation expectations before the
+workflow can render a PR.
+
+The older no-subcommand invocation still prints a one-shot JSON planner for
+diagnostics, but first-upload workflows should use `start`, `next`, and
+`confirm`.
 
 Slack notification helpers live in:
 
