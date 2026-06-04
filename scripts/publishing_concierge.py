@@ -28,12 +28,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
+PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
 WORKFLOW_SCHEMA_VERSION = 1
 WORKFLOW_COMMANDS = {"start", "next", "confirm", "status", "render-pr", "render-report", "validate"}
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+PREVIEW_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 FOOTPRINT_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kb|mb|gb|tb|kib|mib|gib|tib)\b", re.IGNORECASE)
 VECTOR_SOURCE_EXTENSIONS = {".shp", ".gpkg", ".geojson", ".json", ".fgb"}
 FORMAT_EXTENSIONS = {
@@ -1346,6 +1348,21 @@ def default_state_file(asset_slug: str, proposal_id: str) -> Path:
     return standard_work_root() / "publishing-concierge" / asset_slug / f"{proposal_id}.state.json"
 
 
+def current_git_branch() -> str | None:
+    completed = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=REPO_ROOT,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        return None
+    branch = completed.stdout.strip()
+    return branch or None
+
+
 def read_json_file(path: Path, *, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text())
@@ -1430,6 +1447,35 @@ def plan_from_state(state: dict[str, Any]) -> dict[str, Any]:
     return plan
 
 
+def is_canonical_publish_workflow(state: dict[str, Any]) -> bool:
+    return state.get("request_classification", "canonical-publish") == "canonical-publish"
+
+
+def is_preview_workflow(state: dict[str, Any]) -> bool:
+    return state.get("request_classification") == "preview-only"
+
+
+def canonical_publish_required(state: dict[str, Any]) -> bool:
+    return is_canonical_publish_workflow(state)
+
+
+def preview_upload_required(state: dict[str, Any]) -> bool:
+    return is_preview_workflow(state)
+
+
+def preview_load_required(state: dict[str, Any]) -> bool:
+    plan = plan_from_state(state)
+    return is_preview_workflow(state) and plan.get("canonical_format") == "fgb" and bool(plan.get("release_date"))
+
+
+def preview_catalog_refresh_required(state: dict[str, Any]) -> bool:
+    return is_preview_workflow(state)
+
+
+def preview_viewer_verify_required(state: dict[str, Any]) -> bool:
+    return is_preview_workflow(state)
+
+
 def step_record(state: dict[str, Any], step_id: str) -> dict[str, Any]:
     steps = state.setdefault("steps", {})
     record = steps.setdefault(step_id, {"status": "pending"})
@@ -1500,8 +1546,31 @@ def workflow_state_payload(
     citation: str | None,
     update_cadence: str,
     access_tier: str,
+    preview_ref: str | None = None,
 ) -> dict[str, Any]:
     now = utc_now()
+    if request_classification == "preview-only":
+        release_prefix = f"gs://{PREVIEW_BUCKET}/{plan.asset_root}/releases/{plan.release_date or 'YYYY-MM-DD'}/"
+        ref_text = preview_ref or "PREVIEW_REF"
+        notes = [
+            "The workflow is guide-and-verify only.",
+            f"Preview uploads must stay under gs://{PREVIEW_BUCKET}/ and use generation-safe no-clobber writes.",
+            "Preview data loading does not use production _scratch/pending-publishes or a shared-datasets-publish-plan PR.",
+            f"Preview catalog refresh and viewer verification must be performed against preview ref {ref_text!r}.",
+        ]
+        remote_write_commands = [
+            "Do not use production publish-release, _scratch/pending-publishes, or shared-datasets-publish-plan for preview-only loads.",
+            f"Use the preview-upload workflow step to upload the release bundle under {release_prefix}.",
+            f"Use the preview-upload workflow step to upload gs://{PREVIEW_BUCKET}/_catalog/releases/{plan.asset_slug}.json and the run record.",
+            f"After upload, run `gh workflow run feature-preview-deploy.yml --ref {ref_text} -f preview_data_mode=preserve` and verify the refreshed viewer catalog.",
+        ]
+    else:
+        notes = [
+            "The workflow is guide-and-verify only.",
+            "Run `next`, do the requested work/research externally, then submit structured evidence with `confirm`.",
+            "The workflow never performs Git operations, scratch uploads, or canonical GCS promotion.",
+        ]
+        remote_write_commands = plan.remote_write_commands
     return {
         "schema_version": WORKFLOW_SCHEMA_VERSION,
         "workflow_type": "first-upload",
@@ -1510,6 +1579,7 @@ def workflow_state_payload(
         "source": str(source),
         "proposal_id": proposal_id,
         "request_classification": request_classification,
+        "preview_ref": preview_ref,
         "bucket": plan.canonical_path.split("/", 3)[2],
         "plan": asdict(plan),
         "contract": {
@@ -1528,19 +1598,16 @@ def workflow_state_payload(
             "license": license_text,
             "citation": citation,
             "update_cadence": update_cadence,
+            "preview_ref": preview_ref,
         },
         "steps": {step.step_id: {"status": "pending"} for step in STEP_DEFINITIONS},
         "generated_commands": {
             "suggested": plan.suggested_commands,
-            "remote_write": plan.remote_write_commands,
+            "remote_write": remote_write_commands,
         },
         "publish_plan": None,
         "pr_body": None,
-        "notes": [
-            "The workflow is guide-and-verify only.",
-            "Run `next`, do the requested work/research externally, then submit structured evidence with `confirm`.",
-            "The workflow never performs Git operations, scratch uploads, or canonical GCS promotion.",
-        ],
+        "notes": notes,
     }
 
 
@@ -1616,6 +1683,82 @@ def commands_for_validate_artifacts(_state: dict[str, Any]) -> list[str]:
     return [
         "Run the relevant local validators for every artifact.",
         "For PMTiles, confirm magic bytes, run `pmtiles verify`, inspect `pmtiles show`, and decode a representative tile.",
+    ]
+
+
+def preview_release_prefix(state: dict[str, Any]) -> str:
+    plan = plan_from_state(state)
+    release_date = plan.get("release_date") or "YYYY-MM-DD"
+    return f"gs://{PREVIEW_BUCKET}/{plan['asset_root']}/releases/{release_date}/"
+
+
+def commands_for_preview_upload(state: dict[str, Any]) -> list[str]:
+    plan = plan_from_state(state)
+    release_prefix = preview_release_prefix(state)
+    return [
+        f"Inspect the feature-preview-index-load workflow for preview ref {state.get('preview_ref') or 'PREVIEW_REF'} before upload and align sidecar/schema/manifest suffixes with that workflow.",
+        f"Confirm every planned destination starts with gs://{PREVIEW_BUCKET}/.",
+        f"Upload release artifacts under {release_prefix} with no-clobber generation preconditions.",
+        (
+            "GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BUCKET="
+            f"{PREVIEW_BUCKET} SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1 UV_CACHE_DIR=.uv-cache "
+            "uv run python scripts/gcs_asset.py upload LOCAL_PATH "
+            f"{release_prefix}{plan['asset_slug']}.EXT --content-type TYPE --cache-control CACHE_CONTROL"
+        ),
+        f"Upload the release index to gs://{PREVIEW_BUCKET}/_catalog/releases/{plan['asset_slug']}.json.",
+        f"Upload the run record under gs://{PREVIEW_BUCKET}/{plan['asset_root']}/runs/{plan.get('release_date') or 'YYYY-MM-DD'}.json.",
+        "Stat every uploaded preview object and record exact generations in evidence JSON.",
+    ]
+
+
+def uploaded_preview_objects_by_role(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    uploaded = step_record(state, "preview-upload").get("evidence", {}).get("uploaded_objects", [])
+    by_role = {}
+    for obj in uploaded:
+        if isinstance(obj, dict) and obj.get("role"):
+            by_role[str(obj["role"])] = obj
+    return by_role
+
+
+def commands_for_preview_load(state: dict[str, Any]) -> list[str]:
+    plan = plan_from_state(state)
+    preview_ref = state.get("preview_ref") or "PREVIEW_REF"
+    by_role = uploaded_preview_objects_by_role(state)
+    sidecar = by_role.get("feature-metadata-sidecar", {})
+    schema = by_role.get("schema", {})
+    manifest = by_role.get("manifest", {})
+    if sidecar and schema and manifest:
+        return [
+            f"Re-check `.github/workflows/feature-preview-index-load.yml` for preview ref {preview_ref} before dispatching.",
+            f"gh workflow run feature-preview-index-load.yml --ref {preview_ref} "
+            f"-f ref={preview_ref} -f asset_slug={plan['asset_slug']} -f release={plan['release_date']} "
+            f"-f sidecar_uri={sidecar['uri']} -f sidecar_generation={sidecar['generation']} "
+            f"-f schema_uri={schema['uri']} -f schema_generation={schema['generation']} "
+            f"-f manifest_uri={manifest['uri']} -f manifest_generation={manifest['generation']}",
+            "Record the workflow run URL/status and verify the preview catalog viewer refreshed against the preview bucket.",
+        ]
+    return [
+        "After preview-upload evidence is recorded, dispatch Feature preview index load with sidecar/schema/manifest URIs and generations.",
+        "Use only preview-bucket URIs as workflow inputs, then record the workflow run URL/status.",
+    ]
+
+
+def commands_for_preview_catalog_refresh(state: dict[str, Any]) -> list[str]:
+    preview_ref = state.get("preview_ref") or "PREVIEW_REF"
+    return [
+        f"Run `gh workflow run feature-preview-deploy.yml --ref {preview_ref} -f preview_data_mode=preserve` after preview-upload succeeds.",
+        "Wait for the run to finish successfully, especially the Collect preview release indexes, Build preview catalog web bundle, and Publish preview catalog web bundle steps.",
+        f"Stat gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json and record its generation, updated time, and generated_at value.",
+    ]
+
+
+def commands_for_preview_viewer_verify(state: dict[str, Any]) -> list[str]:
+    plan = plan_from_state(state)
+    return [
+        f"Download gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json.",
+        f"Verify catalog.json contains assets[].slug == {plan['asset_slug']!r}.",
+        f"Verify the {plan.get('release_date') or 'selected'} version contains every uploaded release artifact URI, including PMTiles when present.",
+        "Record the extracted catalog asset object as evidence.",
     ]
 
 
@@ -1857,7 +2000,29 @@ def validate_validate_artifacts(state: dict[str, Any], evidence: dict[str, Any])
         "all_passed": all_passed,
         "tool_versions": tool_versions,
     }
-    if "pmtiles" in required_artifact_formats(state):
+    required_formats = required_artifact_formats(state)
+    if "fgb" in required_formats:
+        if not any("ogrinfo" in command.lower() or "gdal" in command.lower() for command in commands):
+            raise WorkflowError("evidence.commands_run must include canonical vector validation with GDAL/OGR")
+        gdal = evidence.get("gdal")
+        if not isinstance(gdal, dict):
+            raise WorkflowError("evidence.gdal must be an object for FGB/vector assets")
+        normalized_gdal = {
+            "ogr2ogr": require_non_empty_string(gdal, "ogr2ogr"),
+            "ogrinfo": require_non_empty_string(gdal, "ogrinfo"),
+        }
+        for key in (
+            "ogrinfo_summary_passed",
+            "feature_count_checked",
+            "geometry_type_checked",
+            "crs_checked",
+            "field_schema_checked",
+        ):
+            normalized_gdal[key] = require_bool(gdal, key, expected=True)
+        normalized["gdal"] = normalized_gdal
+    if "pmtiles" in required_formats:
+        if not any("pmtiles" in command.lower() for command in commands):
+            raise WorkflowError("evidence.commands_run must include PMTiles validation")
         pmtiles = evidence.get("pmtiles")
         if not isinstance(pmtiles, dict):
             raise WorkflowError("evidence.pmtiles must be an object for PMTiles assets")
@@ -1873,6 +2038,281 @@ def validate_validate_artifacts(state: dict[str, Any], evidence: dict[str, Any])
             "notes": str(pmtiles.get("notes", "")).strip(),
         }
     return normalized
+
+
+def normalize_preview_role(role: str) -> str:
+    aliases = {
+        "companion": "pmtiles",
+        "metadata_sidecar_v1": "feature-metadata-sidecar",
+        "release_schema_v1": "schema",
+        "release_manifest_v1": "manifest",
+        "release_index_v1": "release-index",
+        "run_record_v1": "run-record",
+    }
+    return aliases.get(role, role)
+
+
+def required_preview_upload_roles(state: dict[str, Any]) -> set[str]:
+    plan = plan_from_state(state)
+    roles = {"canonical", "release-index", "run-record"}
+    if "pmtiles" in plan.get("available_formats", []):
+        roles.add("pmtiles")
+    if plan.get("canonical_format") == "fgb" and plan.get("release_date"):
+        roles.update({"feature-metadata-sidecar", "schema", "manifest"})
+    return roles
+
+
+def expected_preview_upload_uri(state: dict[str, Any], role: str) -> str:
+    plan = plan_from_state(state)
+    release_prefix = preview_release_prefix(state)
+    asset_slug = plan["asset_slug"]
+    release_date = plan.get("release_date") or "YYYY-MM-DD"
+    if role == "canonical":
+        extension = FORMAT_FILE_EXTENSIONS.get(str(plan["canonical_format"]), str(plan["canonical_format"]))
+        return f"{release_prefix}{asset_slug}.{extension}"
+    if role == "pmtiles":
+        return f"{release_prefix}{asset_slug}.pmtiles"
+    if role == "feature-metadata-sidecar":
+        return f"{release_prefix}{asset_slug}.metadata.ndjson.gz"
+    if role == "schema":
+        return f"{release_prefix}{asset_slug}.schema.json"
+    if role == "manifest":
+        return f"{release_prefix}{asset_slug}.manifest.json"
+    if role == "release-index":
+        return f"gs://{PREVIEW_BUCKET}/_catalog/releases/{asset_slug}.json"
+    if role == "run-record":
+        return f"gs://{PREVIEW_BUCKET}/{plan['asset_root']}/runs/{release_date}.json"
+    raise WorkflowError(f"unsupported preview upload role: {role}")
+
+
+def validate_preview_upload_metadata(index: int, role: str, content_type: str, cache_control: str) -> None:
+    if role == "pmtiles":
+        if content_type != "application/vnd.pmtiles":
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be application/vnd.pmtiles")
+        if cache_control != no_cache_control():
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+    if role in {"schema", "manifest", "release-index", "run-record"}:
+        if content_type != "application/json":
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be application/json")
+        if cache_control != no_cache_control():
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+
+
+def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    objects = evidence.get("uploaded_objects")
+    if not isinstance(objects, list) or not objects:
+        raise WorkflowError("evidence.uploaded_objects must be a non-empty list")
+    prefix = f"gs://{PREVIEW_BUCKET}/"
+    allowed_roles = required_preview_upload_roles(state)
+    normalized = []
+    seen_uris = set()
+    seen_roles = set()
+    for index, obj in enumerate(objects, start=1):
+        if not isinstance(obj, dict):
+            raise WorkflowError(f"evidence.uploaded_objects[{index}] must be an object")
+        uri = require_non_empty_string(obj, "uri")
+        if not uri.startswith(prefix):
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].uri must start with {prefix}")
+        if "/_scratch/pending-publishes/" in uri:
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].uri must not use the production scratch publish path")
+        if uri in seen_uris:
+            raise WorkflowError(f"duplicate preview upload uri: {uri}")
+        seen_uris.add(uri)
+        role = normalize_preview_role(require_non_empty_string(obj, "role"))
+        if role not in allowed_roles:
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].role is not required for this preview workflow: {role}")
+        if role in seen_roles:
+            raise WorkflowError(f"duplicate preview upload role: {role}")
+        expected_uri = expected_preview_upload_uri(state, role)
+        if uri != expected_uri:
+            raise WorkflowError(f"evidence.uploaded_objects[{index}].uri must be {expected_uri}")
+        seen_roles.add(role)
+        generation = normalize_generation(
+            obj.get("generation"),
+            label=f"evidence.uploaded_objects[{index}].generation",
+            required=True,
+        )
+        content_type = str(obj.get("content_type", "") or "")
+        cache_control = str(obj.get("cache_control", "") or "")
+        validate_preview_upload_metadata(index, role, content_type, cache_control)
+        normalized.append(
+            {
+                "uri": uri,
+                "generation": generation,
+                "role": role,
+                "content_type": content_type,
+                "cache_control": cache_control,
+            }
+        )
+    missing = sorted(required_preview_upload_roles(state) - seen_roles)
+    if missing:
+        raise WorkflowError(f"missing required preview upload role(s): {', '.join(missing)}")
+    return {
+        "uploaded_objects": normalized,
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+
+
+def validate_preview_load(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    plan = plan_from_state(state)
+    asset_slug = require_non_empty_string(evidence, "asset_slug")
+    if asset_slug != plan["asset_slug"]:
+        raise WorkflowError(f"evidence.asset_slug must match concierge plan value {plan['asset_slug']!r}")
+    release = require_non_empty_string(evidence, "release")
+    if release != plan.get("release_date"):
+        raise WorkflowError(f"evidence.release must match concierge plan release_date {plan.get('release_date')!r}")
+    workflow_name = require_non_empty_string(evidence, "workflow_name")
+    if workflow_name not in {"feature-preview-index-load.yml", "Feature preview index load"}:
+        raise WorkflowError("evidence.workflow_name must be feature-preview-index-load.yml or Feature preview index load")
+    require_bool(evidence, "workflow_inputs_checked_against_preview_ref", expected=True)
+    inputs = evidence.get("inputs")
+    if not isinstance(inputs, dict):
+        raise WorkflowError("evidence.inputs must be an object")
+    prefix = f"gs://{PREVIEW_BUCKET}/"
+    normalized_inputs = {}
+    for key in ("sidecar_uri", "schema_uri", "manifest_uri"):
+        uri = require_non_empty_string(inputs, key)
+        if not uri.startswith(prefix):
+            raise WorkflowError(f"evidence.inputs.{key} must start with {prefix}")
+        normalized_inputs[key] = uri
+    for key in ("sidecar_generation", "schema_generation", "manifest_generation"):
+        normalized_inputs[key] = normalize_generation(
+            inputs.get(key),
+            label=f"evidence.inputs.{key}",
+            required=True,
+        )
+    uploaded = uploaded_preview_objects_by_role(state)
+    for role, input_prefix in (
+        ("feature-metadata-sidecar", "sidecar"),
+        ("schema", "schema"),
+        ("manifest", "manifest"),
+    ):
+        uploaded_object = uploaded.get(role)
+        if not uploaded_object:
+            raise WorkflowError(f"preview-load requires uploaded preview object role {role}")
+        uri_key = f"{input_prefix}_uri"
+        generation_key = f"{input_prefix}_generation"
+        if normalized_inputs[uri_key] != uploaded_object.get("uri"):
+            raise WorkflowError(f"evidence.inputs.{uri_key} must match preview-upload {role} uri")
+        if normalized_inputs[generation_key] != uploaded_object.get("generation"):
+            raise WorkflowError(f"evidence.inputs.{generation_key} must match preview-upload {role} generation")
+    dispatched_ref = require_non_empty_string(evidence, "dispatched_ref")
+    preview_ref = str(state.get("preview_ref") or "").strip()
+    if preview_ref and dispatched_ref != preview_ref:
+        raise WorkflowError(f"evidence.dispatched_ref must match preview_ref {preview_ref!r}")
+    status = require_non_empty_string(evidence, "status").lower()
+    if status not in {"success", "completed", "succeeded"}:
+        raise WorkflowError("evidence.status must be success, completed, or succeeded")
+    return {
+        "workflow_name": workflow_name,
+        "workflow_run_url": require_non_empty_string(evidence, "workflow_run_url"),
+        "status": status,
+        "dispatched_ref": dispatched_ref,
+        "asset_slug": asset_slug,
+        "release": release,
+        "workflow_inputs_checked_against_preview_ref": True,
+        "inputs": normalized_inputs,
+        "viewer_refresh_verified": require_bool(evidence, "viewer_refresh_verified", expected=True),
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+
+
+def validate_preview_catalog_refresh(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    preview_ref = str(state.get("preview_ref") or "").strip()
+    workflow_name = require_non_empty_string(evidence, "workflow_name")
+    if workflow_name not in {"feature-preview-deploy.yml", "Deploy Feature Branch to Preview"}:
+        raise WorkflowError("evidence.workflow_name must be feature-preview-deploy.yml or Deploy Feature Branch to Preview")
+    dispatched_ref = require_non_empty_string(evidence, "dispatched_ref")
+    if preview_ref and dispatched_ref != preview_ref:
+        raise WorkflowError(f"evidence.dispatched_ref must match preview_ref {preview_ref!r}")
+    preview_data_mode = require_non_empty_string(evidence, "preview_data_mode")
+    if preview_data_mode != "preserve":
+        raise WorkflowError("evidence.preview_data_mode must be preserve")
+    conclusion = require_non_empty_string(evidence, "conclusion")
+    if conclusion != "success":
+        raise WorkflowError("evidence.conclusion must be success")
+    catalog_uri = require_non_empty_string(evidence, "catalog_json_uri")
+    expected_catalog_uri = f"gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json"
+    if catalog_uri != expected_catalog_uri:
+        raise WorkflowError(f"evidence.catalog_json_uri must be {expected_catalog_uri}")
+    return {
+        "workflow_name": workflow_name,
+        "workflow_run_url": require_non_empty_string(evidence, "workflow_run_url"),
+        "workflow_run_id": require_non_empty_string(evidence, "workflow_run_id"),
+        "dispatched_ref": dispatched_ref,
+        "preview_data_mode": preview_data_mode,
+        "conclusion": conclusion,
+        "catalog_json_uri": catalog_uri,
+        "catalog_json_generation": normalize_generation(
+            evidence.get("catalog_json_generation"),
+            label="evidence.catalog_json_generation",
+            required=True,
+        ),
+        "catalog_json_updated_at": require_non_empty_string(evidence, "catalog_json_updated_at"),
+        "catalog_generated_at": require_non_empty_string(evidence, "catalog_generated_at"),
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+
+
+def validate_preview_viewer_verify(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    plan = plan_from_state(state)
+    require_bool(evidence, "asset_slug_present", expected=True)
+    catalog_uri = require_non_empty_string(evidence, "catalog_json_uri")
+    expected_catalog_uri = f"gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json"
+    if catalog_uri != expected_catalog_uri:
+        raise WorkflowError(f"evidence.catalog_json_uri must be {expected_catalog_uri}")
+    catalog_generation = normalize_generation(
+        evidence.get("catalog_json_generation"),
+        label="evidence.catalog_json_generation",
+        required=True,
+    )
+    refreshed_generation = step_record(state, "preview-catalog-refresh").get("evidence", {}).get("catalog_json_generation")
+    if refreshed_generation and catalog_generation != refreshed_generation:
+        raise WorkflowError("evidence.catalog_json_generation must match preview-catalog-refresh evidence")
+    asset = evidence.get("catalog_asset")
+    if not isinstance(asset, dict):
+        raise WorkflowError("evidence.catalog_asset must be the extracted catalog asset object")
+    if asset.get("slug") != plan["asset_slug"]:
+        raise WorkflowError(f"evidence.catalog_asset.slug must be {plan['asset_slug']!r}")
+    versions = asset.get("versions")
+    if not isinstance(versions, list) or not versions:
+        raise WorkflowError("evidence.catalog_asset.versions must be a non-empty list")
+    release_date = plan.get("release_date")
+    selected_version = None
+    for version in versions:
+        if isinstance(version, dict) and (not release_date or version.get("date") == release_date):
+            selected_version = version
+            break
+    if selected_version is None:
+        raise WorkflowError(f"evidence.catalog_asset.versions must include release {release_date!r}")
+    files = selected_version.get("files")
+    if not isinstance(files, list) or not files:
+        raise WorkflowError("evidence.catalog_asset selected version must include files")
+    catalog_file_uris = {str(file_obj.get("path")) for file_obj in files if isinstance(file_obj, dict)}
+    uploaded = step_record(state, "preview-upload").get("evidence", {}).get("uploaded_objects", [])
+    required_uploaded_uris = {
+        obj["uri"]
+        for obj in uploaded
+        if isinstance(obj, dict) and obj.get("role") not in {"release-index", "run-record"}
+    }
+    missing = sorted(required_uploaded_uris - catalog_file_uris)
+    if missing:
+        raise WorkflowError("catalog asset is missing uploaded release artifact URI(s): " + ", ".join(missing))
+    if any(isinstance(obj, dict) and obj.get("role") == "pmtiles" for obj in uploaded):
+        if asset.get("has_pmtiles") is not True:
+            raise WorkflowError("evidence.catalog_asset.has_pmtiles must be true when PMTiles were uploaded")
+        pmtiles_path = str(asset.get("pmtiles_path") or selected_version.get("pmtiles_path") or "")
+        if not pmtiles_path.startswith(f"gs://{PREVIEW_BUCKET}/"):
+            raise WorkflowError("evidence.catalog_asset.pmtiles_path must point at the preview bucket")
+    return {
+        "catalog_json_uri": catalog_uri,
+        "catalog_json_generation": catalog_generation,
+        "asset_slug_present": True,
+        "asset_count": int(evidence.get("asset_count", 0)),
+        "catalog_asset": asset,
+        "verified_uploaded_uris": sorted(required_uploaded_uris),
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
 
 
 def validate_document_asset(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
@@ -2179,6 +2619,15 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "commands_run": ["string"],
             "validation_summary": "string",
             "all_passed": True,
+            "gdal": {
+                "ogr2ogr": "resolved path and version",
+                "ogrinfo": "resolved path and version",
+                "ogrinfo_summary_passed": True,
+                "feature_count_checked": True,
+                "geometry_type_checked": True,
+                "crs_checked": True,
+                "field_schema_checked": True,
+            },
             "pmtiles": {
                 "magic_bytes_confirmed": True,
                 "verify_passed": True,
@@ -2188,6 +2637,86 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_validate_artifacts,
         validate_validate_artifacts,
+    ),
+    StepDefinition(
+        "preview-upload",
+        "Upload disposable preview release bundle",
+        "Upload the validated release bundle directly to the preview bucket and record exact object generations.",
+        {
+            "uploaded_objects": [
+                {
+                    "uri": f"gs://{PREVIEW_BUCKET}/...",
+                    "generation": "numeric string",
+                    "role": "canonical|pmtiles|feature-metadata-sidecar|schema|manifest|release-index|run-record",
+                    "content_type": "optional string",
+                    "cache_control": "optional string",
+                }
+            ]
+        },
+        commands_for_preview_upload,
+        validate_preview_upload,
+        is_required=preview_upload_required,
+    ),
+    StepDefinition(
+        "preview-load",
+        "Dispatch preview index load",
+        "Dispatch Feature preview index load with preview-bucket sidecar/schema/manifest URIs and generations.",
+        {
+            "workflow_name": "feature-preview-index-load.yml",
+            "workflow_run_url": "string",
+            "status": "success|completed|succeeded",
+            "dispatched_ref": "string matching preview_ref",
+            "workflow_inputs_checked_against_preview_ref": True,
+            "asset_slug": "string matching plan.asset_slug",
+            "release": "string matching plan.release_date",
+            "inputs": {
+                "sidecar_uri": f"gs://{PREVIEW_BUCKET}/...",
+                "sidecar_generation": "numeric string",
+                "schema_uri": f"gs://{PREVIEW_BUCKET}/...",
+                "schema_generation": "numeric string",
+                "manifest_uri": f"gs://{PREVIEW_BUCKET}/...",
+                "manifest_generation": "numeric string",
+            },
+            "viewer_refresh_verified": True,
+        },
+        commands_for_preview_load,
+        validate_preview_load,
+        is_required=preview_load_required,
+    ),
+    StepDefinition(
+        "preview-catalog-refresh",
+        "Refresh preview catalog viewer bundle",
+        "Redeploy the preview branch in preserve mode so _catalog/web/catalog.json is rebuilt from preview release indexes.",
+        {
+            "workflow_name": "feature-preview-deploy.yml",
+            "workflow_run_url": "string",
+            "workflow_run_id": "string",
+            "dispatched_ref": "string matching preview_ref",
+            "preview_data_mode": "preserve",
+            "conclusion": "success",
+            "catalog_json_uri": f"gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json",
+            "catalog_json_generation": "numeric string",
+            "catalog_json_updated_at": "string",
+            "catalog_generated_at": "string",
+        },
+        commands_for_preview_catalog_refresh,
+        validate_preview_catalog_refresh,
+        is_required=preview_catalog_refresh_required,
+    ),
+    StepDefinition(
+        "preview-viewer-verify",
+        "Verify refreshed preview viewer catalog",
+        "Verify the refreshed viewer catalog contains the asset release and every uploaded release artifact URI.",
+        {
+            "catalog_json_uri": f"gs://{PREVIEW_BUCKET}/_catalog/web/catalog.json",
+            "catalog_json_generation": "numeric string matching preview-catalog-refresh",
+            "asset_slug_present": True,
+            "asset_count": "integer",
+            "catalog_asset": "assets[] object for plan.asset_slug",
+        },
+        commands_for_preview_viewer_verify,
+        validate_preview_viewer_verify,
+        is_required=preview_viewer_verify_required,
     ),
     StepDefinition(
         "document-asset",
@@ -2202,6 +2731,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_document_asset,
         validate_document_asset,
+        is_required=canonical_publish_required,
     ),
     StepDefinition(
         "catalog-outputs",
@@ -2215,6 +2745,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_catalog_outputs,
         validate_catalog_outputs,
+        is_required=canonical_publish_required,
     ),
     StepDefinition(
         "catalog-web",
@@ -2228,7 +2759,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_catalog_web,
         validate_catalog_web,
-        is_required=catalog_web_required,
+        is_required=canonical_publish_required,
     ),
     StepDefinition(
         "stage-scratch",
@@ -2247,6 +2778,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         },
         commands_for_stage_scratch,
         validate_stage_scratch,
+        is_required=canonical_publish_required,
     ),
     StepDefinition(
         "stat-destinations",
@@ -2255,6 +2787,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         {"destinations": [{"destination_uri": "string", "destination_generation": "numeric string or empty"}]},
         commands_for_stat_destinations,
         validate_stat_destinations,
+        is_required=canonical_publish_required,
     ),
     StepDefinition(
         "pr-ready",
@@ -2263,6 +2796,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         {"reviewed_pr_body": True},
         commands_for_pr_ready,
         validate_pr_ready,
+        is_required=canonical_publish_required,
         allow_yes=False,
     ),
     StepDefinition(
@@ -2335,9 +2869,11 @@ def render_status(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "asset_slug": plan_from_state(state)["asset_slug"],
         "proposal_id": state["proposal_id"],
+        "request_classification": state.get("request_classification", "canonical-publish"),
         "state_file": state.get("state_file"),
         "current_step": current.step_id if current else None,
         "ready_for_pr": step_completed(state, "pr-ready"),
+        "ready_for_preview": is_preview_workflow(state) and current is None,
         "steps": steps,
     }
 
@@ -2347,7 +2883,7 @@ def print_status(state: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
-    print(f"Workflow: {payload['asset_slug']} / {payload['proposal_id']}")
+    print(f"Workflow: {payload['asset_slug']} / {payload['proposal_id']} ({payload['request_classification']})")
     print(f"Current step: {payload['current_step'] or 'complete'}")
     for step in payload["steps"]:
         marker = "required" if step["required"] and not step["optional"] else "optional"
@@ -2394,16 +2930,63 @@ Publish new shared dataset `{plan['asset_slug']}`: {plan['title']}.
 
 def render_completion_report_from_state(state: dict[str, Any]) -> str:
     plan = plan_from_state(state)
-    publish_plan = state.get("publish_plan") or build_publish_plan_from_state(state)
     validation = step_record(state, "validate-artifacts").get("evidence", {})
-    post_merge = step_record(state, "post-merge-verify").get("evidence", {})
-    remote_paths = []
-    for promotion in publish_plan.get("promotions", []):
-        remote_paths.append(
-            f"- {promotion['destination_uri']} (source generation {promotion['source_generation']}, "
-            f"destination generation expectation {promotion.get('destination_generation') or 'absent'})"
+    gdal = validation.get("gdal") if isinstance(validation.get("gdal"), dict) else {}
+    gdal_lines = ""
+    if gdal:
+        gdal_lines = (
+            "\n"
+            f"- GDAL/OGR: ogr2ogr={gdal.get('ogr2ogr', 'not recorded')}; "
+            f"ogrinfo={gdal.get('ogrinfo', 'not recorded')}\n"
+            f"- GDAL checks: ogrinfo_summary={gdal.get('ogrinfo_summary_passed', False)}, "
+            f"feature_count={gdal.get('feature_count_checked', False)}, "
+            f"geometry_type={gdal.get('geometry_type_checked', False)}, "
+            f"crs={gdal.get('crs_checked', False)}, "
+            f"field_schema={gdal.get('field_schema_checked', False)}"
         )
-    retained = post_merge.get("retained_temp_dirs") or []
+    if is_preview_workflow(state):
+        uploaded = step_record(state, "preview-upload").get("evidence", {}).get("uploaded_objects", [])
+        preview_load = step_record(state, "preview-load").get("evidence", {})
+        catalog_refresh = step_record(state, "preview-catalog-refresh").get("evidence", {})
+        viewer_verify = step_record(state, "preview-viewer-verify").get("evidence", {})
+        remote_paths = [f"- {obj['uri']} (generation {obj['generation']}, role {obj['role']})" for obj in uploaded]
+        retained = []
+        followup_state = f"""## Preview Load State
+
+- Workflow: {preview_load.get('workflow_name', 'not recorded')}
+- Workflow run: {preview_load.get('workflow_run_url', 'not recorded')}
+- Dispatch ref: {preview_load.get('dispatched_ref', 'not recorded')}
+- Status: {preview_load.get('status', 'not recorded')}
+- Workflow inputs checked against preview ref: {preview_load.get('workflow_inputs_checked_against_preview_ref', False)}
+- Viewer refresh verified: {preview_load.get('viewer_refresh_verified', False)}
+
+## Preview Catalog Refresh
+
+- Workflow: {catalog_refresh.get('workflow_name', 'not recorded')}
+- Workflow run: {catalog_refresh.get('workflow_run_url', 'not recorded')}
+- Dispatch ref: {catalog_refresh.get('dispatched_ref', 'not recorded')}
+- Preview data mode: {catalog_refresh.get('preview_data_mode', 'not recorded')}
+- Catalog JSON generation: {catalog_refresh.get('catalog_json_generation', 'not recorded')}
+- Catalog generated at: {catalog_refresh.get('catalog_generated_at', 'not recorded')}
+- Viewer catalog asset present: {viewer_verify.get('asset_slug_present', False)}
+- Verified uploaded release artifact URIs: {len(viewer_verify.get('verified_uploaded_uris', []))}
+"""
+    else:
+        publish_plan = state.get("publish_plan") or build_publish_plan_from_state(state)
+        post_merge = step_record(state, "post-merge-verify").get("evidence", {})
+        remote_paths = []
+        for promotion in publish_plan.get("promotions", []):
+            remote_paths.append(
+                f"- {promotion['destination_uri']} (source generation {promotion['source_generation']}, "
+                f"destination generation expectation {promotion.get('destination_generation') or 'absent'})"
+            )
+        retained = post_merge.get("retained_temp_dirs") or []
+        followup_state = f"""## Post-Merge State
+
+- Promoted objects verified: {post_merge.get('promoted_objects_verified', False)}
+- Catalog freshness verified: {post_merge.get('catalog_freshness_verified', False)}
+- Upload alert state: {post_merge.get('alert_state', 'not recorded')}
+"""
     retained_text = "\n".join(f"- {path}" for path in retained) if retained else "- None recorded."
     body = f"""## Completion Report
 
@@ -2416,16 +2999,13 @@ Request classification: `{state.get('request_classification', 'canonical-publish
 - Artifact validation: {validation.get('validation_summary', 'Not recorded.')}
 - Commands run: {', '.join(validation.get('commands_run', [])) or 'Not recorded.'}
 - Toolchain versions: {json.dumps(validation.get('tool_versions', {}), sort_keys=True)}
+{gdal_lines}
 
 ## Remote Paths
 
 {chr(10).join(remote_paths) if remote_paths else '- No publish-plan promotions recorded.'}
 
-## Post-Merge State
-
-- Promoted objects verified: {post_merge.get('promoted_objects_verified', False)}
-- Catalog freshness verified: {post_merge.get('catalog_freshness_verified', False)}
-- Upload alert state: {post_merge.get('alert_state', 'not recorded')}
+{followup_state}
 
 ## Retained Local Work Directories
 
@@ -2444,12 +3024,17 @@ def validate_state_for_pr(state: dict[str, Any]) -> dict[str, Any]:
         if not step_completed(state, step.step_id):
             errors.append(f"{step.step_id} is incomplete")
     publish_plan = None
-    if not errors:
+    if not errors and is_canonical_publish_workflow(state):
         try:
             publish_plan = build_publish_plan_from_state(state)
         except Exception as exc:  # noqa: BLE001 - surface validator details without hiding other status.
             errors.append(str(exc))
-    return {"ready_for_pr": not errors, "errors": errors, "publish_plan": publish_plan}
+    return {
+        "ready_for_pr": is_canonical_publish_workflow(state) and not errors,
+        "ready_for_preview": is_preview_workflow(state) and not errors,
+        "errors": errors,
+        "publish_plan": publish_plan,
+    }
 
 
 def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
@@ -2507,20 +3092,34 @@ def plan_from_args(args: argparse.Namespace) -> ConciergePlan:
 
 
 def command_start(args: argparse.Namespace) -> int:
-    if args.request_classification != "canonical-publish":
+    if args.request_classification not in {"canonical-publish", "preview-only"}:
         raise WorkflowError(
-            "the stateful first-upload workflow only handles canonical-publish requests; "
-            "use the preview, scratch-only, or diagnostic workflow for this request classification"
+            "the stateful first-upload workflow only handles canonical-publish and preview-only requests; "
+            "use a scratch-only or diagnostic workflow for this request classification"
         )
+    if args.request_classification == "preview-only":
+        if args.bucket not in {DEFAULT_BUCKET, PREVIEW_BUCKET}:
+            raise WorkflowError(f"preview-only workflow requires --bucket {PREVIEW_BUCKET} or omitted --bucket")
+        args.bucket = PREVIEW_BUCKET
+        if not args.release_date:
+            raise WorkflowError("preview-only workflow requires --release-date for the disposable preview release bundle")
+        args.preview_ref = args.preview_ref or current_git_branch()
+        if not args.preview_ref:
+            raise WorkflowError("preview-only workflow requires --preview-ref when the current git branch cannot be detected")
+        if not PREVIEW_REF_RE.fullmatch(args.preview_ref):
+            raise WorkflowError("preview-only --preview-ref may contain only letters, digits, dots, underscores, hyphens, and slashes")
+    elif args.bucket == PREVIEW_BUCKET:
+        raise WorkflowError(f"canonical-publish workflow must not use preview bucket {PREVIEW_BUCKET}")
     if not args.proposal_id or not PROPOSAL_RE.fullmatch(args.proposal_id):
         raise WorkflowError("start requires --proposal-id with only letters, digits, dots, underscores, and hyphens")
     plan = plan_from_args(args)
-    duplicates = detect_existing_asset(plan)
-    if duplicates and not args.allow_existing_asset:
-        raise WorkflowError(
-            "first-upload workflow found existing asset slug evidence; use an existing-dataset workflow or pass "
-            f"--allow-existing-asset after review: {', '.join(duplicates)}"
-        )
+    if args.request_classification == "canonical-publish":
+        duplicates = detect_existing_asset(plan)
+        if duplicates and not args.allow_existing_asset:
+            raise WorkflowError(
+                "first-upload workflow found existing asset slug evidence; use an existing-dataset workflow or pass "
+                f"--allow-existing-asset after review: {', '.join(duplicates)}"
+            )
     state = workflow_state_payload(
         plan=plan,
         source=args.source,
@@ -2532,6 +3131,7 @@ def command_start(args: argparse.Namespace) -> int:
         citation=args.citation,
         update_cadence=args.update_cadence,
         access_tier=args.access_tier,
+        preview_ref=args.preview_ref if args.request_classification == "preview-only" else None,
     )
     state_file = args.state_file or default_state_file(plan.asset_slug, args.proposal_id)
     state["state_file"] = str(state_file)
@@ -2544,7 +3144,8 @@ def command_next(args: argparse.Namespace) -> int:
     state = load_state(args.state_file)
     step = current_required_step(state)
     if step is None:
-        print(json.dumps({"complete": True, "message": "All required pre-PR steps are complete."}, indent=2, sort_keys=True) if args.json else "All required pre-PR steps are complete.")
+        message = "All required preview steps are complete." if is_preview_workflow(state) else "All required pre-PR steps are complete."
+        print(json.dumps({"complete": True, "message": message}, indent=2, sort_keys=True) if args.json else message)
         return 0
     print_instruction(render_instruction(state, step), as_json=args.json)
     return 0
@@ -2595,6 +3196,7 @@ def command_confirm(args: argparse.Namespace) -> int:
                 "completed_step": step.step_id,
                 "next_step": next_step.step_id if next_step else None,
                 "ready_for_pr": step_completed(state, "pr-ready"),
+                "ready_for_preview": is_preview_workflow(state) and next_step is None,
             },
             indent=2,
             sort_keys=True,
@@ -2605,6 +3207,8 @@ def command_confirm(args: argparse.Namespace) -> int:
 
 def command_render_pr(args: argparse.Namespace) -> int:
     state = load_state(args.state_file)
+    if is_preview_workflow(state):
+        raise WorkflowError("preview-only workflows do not render production publish PRs; use render-report")
     result = validate_state_for_pr(state)
     if not result["ready_for_pr"]:
         raise WorkflowError("workflow is not ready for PR: " + "; ".join(result["errors"]))
@@ -2616,7 +3220,8 @@ def command_render_pr(args: argparse.Namespace) -> int:
 def command_render_report(args: argparse.Namespace) -> int:
     state = load_state(args.state_file)
     result = validate_state_for_pr(state)
-    if not result["ready_for_pr"]:
+    ready = result["ready_for_pr"] or result.get("ready_for_preview", False)
+    if not ready:
         raise WorkflowError("workflow is not ready for completion report: " + "; ".join(result["errors"]))
     if not state.get("publish_plan"):
         state["publish_plan"] = result["publish_plan"]
@@ -2628,7 +3233,7 @@ def command_validate(args: argparse.Namespace) -> int:
     state = load_state(args.state_file)
     result = validate_state_for_pr(state)
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0 if result["ready_for_pr"] else 1
+    return 0 if result["ready_for_pr"] or result.get("ready_for_preview", False) else 1
 
 
 def build_workflow_parser() -> argparse.ArgumentParser:
@@ -2644,6 +3249,10 @@ def build_workflow_parser() -> argparse.ArgumentParser:
         help="Explicitly classify the maintainer request before starting.",
     )
     start.add_argument("--proposal-id", required=True, help="Stable proposal id, usually pr-123, issue-123, or a branch slug.")
+    start.add_argument(
+        "--preview-ref",
+        help="Feature branch, tag, or SHA used for preview-only catalog refresh and viewer verification. Defaults to the current git branch.",
+    )
     start.add_argument("--state-file", type=Path, help="Optional state file path. Defaults under the standard temp workspace.")
     start.add_argument("--allow-existing-asset", action="store_true", help="Allow continuing after duplicate asset evidence is found.")
     start.add_argument("--overwrite-state", action="store_true", help="Allow replacing an existing state file.")
