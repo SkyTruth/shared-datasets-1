@@ -698,11 +698,11 @@ remote operation. For manual dataset add/update work, read
 ## Vector artifact builds
 
 Use `scripts/vector_asset.py` to create upload-ready FGB and PMTiles artifacts
-without writing generated data into git. The helper uses GDAL for canonical FGB
-and PMTiles display artifacts: it writes temporary MBTiles with GDAL, then
-converts them with `pmtiles convert`. Direct Tippecanoe PMTiles generation is
-disabled until a future Tippecanoe version is proven to generate valid PMTiles
-directly:
+without writing generated data into git. The helper uses GDAL for the canonical
+FGB and WGS84 GeoJSONSeq tile source, builds the MBTiles intermediate with
+Tippecanoe, then converts it with `pmtiles convert`. The failed projection path is
+not used because metadata-lookup SQL projections can drop geometry and produce
+empty or bad MBTiles output:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.shp \

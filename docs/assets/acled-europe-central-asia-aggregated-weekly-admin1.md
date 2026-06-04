@@ -26,8 +26,8 @@ license_flags:
 - source-authorization-confirmed-2026-05-08
 notes: Manual private snapshot from ACLED weekly aggregated Europe and Central Asia XLSX export; release 2026-04-25; 120245
   point features; fgb sha256 44eb1a9f3fc0e20d41dd3c1918b32907c1c3b066dd178a8d5ec59f2c45b66f47; pmtiles sha256 b4ddd762e69578c87dcd9e97c5916b2383755fa85e6dc38f7726fd968c88f7d2;
-  PMTiles maxzoom 12 with all-point retention verified at zoom 0; future rebuilds must use the repo-standard GDAL MBTiles
-  to PMTiles conversion path.
+  PMTiles maxzoom 12 with all-point retention verified at zoom 0; future rebuilds must use the repo-standard GeoJSONSeq to
+  Tippecanoe MBTiles to PMTiles conversion path.
 admission:
   intended_consumers:
   - SkyTruth internal regional conflict, risk, and exposure analyses
@@ -114,7 +114,7 @@ The source workbook had one visible sheet with 120,245 data rows and 13 source c
 
 `population_exposure` is ACLED's best estimate of population exposed to events based on proximity. ACLED's aggregated data guidance says this value should not be summed for analysis.
 
-The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`. The canonical FGB remains the analytical source.
+The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -155,7 +155,7 @@ Output summary:
 - FGB SHA-256: `44eb1a9f3fc0e20d41dd3c1918b32907c1c3b066dd178a8d5ec59f2c45b66f47`
 - PMTiles SHA-256: `b4ddd762e69578c87dcd9e97c5916b2383755fa85e6dc38f7726fd968c88f7d2`
 - PMTiles zoom 0 decoded point features: 120,245
-- PMTiles validation used zoom 0 decode feature-count and property checks. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`.
+- PMTiles validation used zoom 0 decode feature-count and property checks. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`.
 
 ## Known caveats
 

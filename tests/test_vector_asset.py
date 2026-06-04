@@ -41,27 +41,30 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertEqual(plan.output_dir, str(work_dir / "publish"))
         self.assertEqual(plan.fgb_path, str(work_dir / "publish/natural-earth-10m-land.fgb"))
-        self.assertEqual(plan.mbtiles_path, str(work_dir / "build/natural-earth-10m-land.mbtiles"))
+        self.assertEqual(plan.tile_source_path, str(work_dir / "build/natural-earth-10m-land.tippecanoe.ndgeojson"))
+        self.assertEqual(plan.mbtiles_path, str(work_dir / "build/natural-earth-10m-land.tippecanoe.mbtiles"))
         self.assertEqual(plan.pmtiles_path, str(work_dir / "publish/natural-earth-10m-land.pmtiles"))
         self.assertEqual(plan.pmtiles_profile_path, str(work_dir / "publish/pmtiles-profile.json"))
         self.assertIn("ogr2ogr", plan.tool_paths)
-        self.assertNotIn("tippecanoe", plan.tool_paths)
+        self.assertIn("tippecanoe", plan.tool_paths)
         self.assertIn("pmtiles", plan.tool_paths)
         self.assertIn("ogr2ogr", plan.tool_versions)
-        self.assertNotIn("tippecanoe", plan.tool_versions)
+        self.assertIn("tippecanoe", plan.tool_versions)
         self.assertIn("pmtiles", plan.tool_versions)
         self.assertEqual(plan.commands[0].argv[:3], ["ogr2ogr", "-f", "FlatGeobuf"])
         self.assertIn("-makevalid", plan.commands[0].argv)
         self.assertIn("SPATIAL_INDEX=YES", plan.commands[0].argv)
         self.assertEqual(plan.commands[1].kind, "command")
-        self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "MBTiles"])
-        self.assertIn("-simplify", plan.commands[1].argv)
-        self.assertIn("0.01", plan.commands[1].argv)
-        self.assertEqual(plan.commands[1].argv[-2:], [plan.mbtiles_path, plan.fgb_path])
-        self.assertEqual(plan.commands[2].argv, ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
+        self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
+        self.assertEqual(plan.commands[1].argv[-2:], [plan.tile_source_path, plan.fgb_path])
+        self.assertEqual(plan.commands[2].argv[0], "tippecanoe")
+        self.assertIn("--simplification", plan.commands[2].argv)
+        self.assertIn("0.01", plan.commands[2].argv)
+        self.assertEqual(plan.commands[2].argv[-1], plan.tile_source_path)
+        self.assertEqual(plan.commands[3].argv, ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
         self.assertEqual(plan.maxzoom, 8)
 
-    def test_gdal_mbtiles_plan_converts_to_pmtiles(self):
+    def test_tippecanoe_mbtiles_plan_converts_to_pmtiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -71,13 +74,15 @@ class VectorAssetTests(unittest.TestCase):
                 asset_slug="example-asset",
                 work_dir=Path(tmp) / "work",
                 maxzoom=8,
-                maxzoom_reason="GDAL MBTiles fixture.",
+                maxzoom_reason="Tippecanoe MBTiles fixture.",
             )
 
-        self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "MBTiles"])
-        self.assertEqual(plan.commands[2].argv[1], "convert")
+        self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
+        self.assertEqual(plan.commands[2].argv[0], "tippecanoe")
+        self.assertEqual(plan.commands[2].argv[plan.commands[2].argv.index("-o") + 1], plan.mbtiles_path)
+        self.assertEqual(plan.commands[3].argv[1], "convert")
 
-    def test_auto_dry_run_payload_previews_gdal_mbtiles_conversion(self):
+    def test_auto_dry_run_payload_previews_tippecanoe_mbtiles_conversion(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -92,8 +97,9 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertEqual(payload["commands"][0]["kind"], "command")
         self.assertEqual(payload["pmtiles_commands_after_profile"][0]["kind"], "command")
-        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["argv"][:3], ["ogr2ogr", "-f", "MBTiles"])
-        self.assertEqual(payload["pmtiles_commands_after_profile"][1]["argv"][1], "convert")
+        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["argv"][:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
+        self.assertEqual(payload["pmtiles_commands_after_profile"][1]["argv"][0], "tippecanoe")
+        self.assertEqual(payload["pmtiles_commands_after_profile"][2]["argv"][1], "convert")
 
     def test_group_id_field_adds_native_column_generation_before_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,7 +244,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(commands[0].kind, "command")
         self.assertNotIn("-sql", commands[0].argv)
 
-    def test_pmtiles_feature_id_property_projects_tiles_to_metadata_lookup_ids(self):
+    def test_pmtiles_feature_id_property_filters_tiles_to_metadata_lookup_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -276,8 +282,14 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(plan.exact_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN))
         self.assertEqual(plan.pmtiles_feature_id_property, vector_asset.FEATURE_ID_COLUMN)
         self.assertEqual(commands[0].kind, "command")
-        sql = commands[0].argv[commands[0].argv.index("-sql") + 1]
-        self.assertEqual(sql, 'SELECT "feature_id", "ext_id" FROM "example_asset"')
+        self.assertEqual(commands[0].argv[:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
+        self.assertNotIn("-sql", commands[0].argv)
+        tippecanoe_argv = commands[1].argv
+        self.assertEqual(tippecanoe_argv[0], "tippecanoe")
+        self.assertEqual(
+            [tippecanoe_argv[index + 1] for index, value in enumerate(tippecanoe_argv) if value == "-y"],
+            [vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN],
+        )
 
     def test_pmtiles_feature_id_property_must_use_standard_feature_id_name(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -330,7 +342,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"pmtiles", "tippecanoe-decode"}:
@@ -372,7 +384,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"pmtiles", "tippecanoe-decode"}:
@@ -414,7 +426,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
@@ -484,7 +496,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
@@ -566,7 +578,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
@@ -623,7 +635,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
             profile = pmtiles_zoom.FgbProfile(
                 path=str(fgb),
                 feature_count=1,
@@ -717,7 +729,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name in {"ogrinfo", "pmtiles", "tippecanoe-decode"}:
@@ -767,7 +779,7 @@ class VectorAssetTests(unittest.TestCase):
             fgb = Path(tmp) / "example.fgb"
             pmtiles = Path(tmp) / "example.pmtiles"
             fgb.write_bytes(b"fgb")
-            pmtiles.write_bytes(b"pmtiles")
+            pmtiles.write_bytes(b"PMTiles\x03")
 
             def which(name):
                 if name == "ogrinfo":
@@ -916,11 +928,16 @@ class VectorAssetTests(unittest.TestCase):
                 if command[:3] == ["ogr2ogr", "-f", "FlatGeobuf"]:
                     Path(plan.fgb_path).parent.mkdir(parents=True, exist_ok=True)
                     Path(plan.fgb_path).write_bytes(b"fgb")
-                if command[:3] == ["ogr2ogr", "-f", "MBTiles"]:
+                if command[:3] == ["ogr2ogr", "-f", "GeoJSONSeq"]:
+                    Path(plan.tile_source_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(plan.tile_source_path).write_text(
+                        '{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]},"properties":{}}\n'
+                    )
+                if command[0] == "tippecanoe":
                     Path(plan.mbtiles_path).parent.mkdir(parents=True, exist_ok=True)
                     Path(plan.mbtiles_path).write_bytes(b"mbtiles")
                 if command[:2] == ["pmtiles", "convert"]:
-                    Path(plan.pmtiles_path).write_bytes(b"pmtiles")
+                    Path(plan.pmtiles_path).write_bytes(b"PMTiles\x03")
 
             profile = pmtiles_zoom.FgbProfile(
                 path=plan.fgb_path,
@@ -951,10 +968,12 @@ class VectorAssetTests(unittest.TestCase):
 
             self.assertTrue(result.valid)
             self.assertEqual(executed[0][:3], ["ogr2ogr", "-f", "FlatGeobuf"])
-            self.assertEqual(executed[1][:3], ["ogr2ogr", "-f", "MBTiles"])
-            self.assertIn("MAXZOOM=12", executed[1])
-            self.assertEqual(executed[2], ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
+            self.assertEqual(executed[1][:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
+            self.assertEqual(executed[2][0], "tippecanoe")
+            self.assertEqual(executed[2][executed[2].index("-z") + 1], "12")
+            self.assertEqual(executed[3], ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
             self.assertEqual(payload["recommendation"]["maxzoom"], 12)
+            self.assertEqual(payload["pmtiles_build_path"]["builder"], "tippecanoe")
 
     def test_recommend_maxzoom_command_profiles_existing_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:

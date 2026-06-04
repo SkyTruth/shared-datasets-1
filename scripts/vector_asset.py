@@ -45,6 +45,9 @@ FEATURE_ID_COLUMN = "feature_id"
 EXT_ID_COLUMN = "ext_id"
 FEATURE_HASH_COLUMN = "feature_hash"
 PMTILES_METADATA_COLUMNS = (FEATURE_ID_COLUMN, EXT_ID_COLUMN)
+PMTILES_MAGIC = b"PMTiles"
+PMTILES_V3_VERSION = 3
+SQLITE_HEADER = b"SQLite format 3"
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GROUP_ID_VRT_SOURCE_LAYER = "source"
@@ -73,8 +76,10 @@ class VectorBuildPlan:
     group_id_source_path: str | None
     group_id_input_path: str | None
     fgb_path: str
+    tile_source_path: str
     mbtiles_path: str
     pmtiles_path: str
+    tippecanoe_bin: str
     pmtiles_bin: str
     ogr2ogr_bin: str
     tool_paths: dict[str, str]
@@ -113,7 +118,9 @@ class VectorValidationResult:
     pmtiles_path: str
     valid: bool
     errors: tuple[str, ...]
+    pmtiles_magic: str | None = None
     pmtiles_verify: str | None = None
+    pmtiles_show: str | None = None
     decoded_feature_count: int | None = None
     decoded_property_keys: tuple[str, ...] = ()
     decoded_tile: str | None = None
@@ -246,16 +253,18 @@ def executable_version(command: Sequence[str]) -> str:
     return (completed.stdout or "").strip().splitlines()[0] if completed.stdout else "unknown"
 
 
-def tool_versions(*, ogr2ogr_bin: str, pmtiles_bin: str) -> dict[str, str]:
+def tool_versions(*, ogr2ogr_bin: str, tippecanoe_bin: str, pmtiles_bin: str) -> dict[str, str]:
     return {
         "ogr2ogr": executable_version([ogr2ogr_bin, "--version"]),
+        "tippecanoe": executable_version([tippecanoe_bin, "--version"]),
         "pmtiles": executable_version([pmtiles_bin, "version"]),
     }
 
 
-def tool_paths(*, ogr2ogr_bin: str, pmtiles_bin: str) -> dict[str, str]:
+def tool_paths(*, ogr2ogr_bin: str, tippecanoe_bin: str, pmtiles_bin: str) -> dict[str, str]:
     return {
         "ogr2ogr": executable_path(ogr2ogr_bin),
+        "tippecanoe": executable_path(tippecanoe_bin),
         "pmtiles": executable_path(pmtiles_bin),
     }
 
@@ -284,6 +293,7 @@ def build_plan(
     title: str | None = None,
     description: str | None = None,
     ogr2ogr_bin: str = "ogr2ogr",
+    tippecanoe_bin: str = "tippecanoe",
     pmtiles_bin: str = "pmtiles",
     required_properties: Sequence[str] = (),
     group_id_fields: Sequence[str] = (),
@@ -374,7 +384,8 @@ def build_plan(
     elif generate_row_id:
         group_id_source_path = build / f"{asset_slug}-row-id-map.csv"
         group_id_input_path = build / f"{asset_slug}-row-id-source.vrt"
-    mbtiles_path = build / f"{asset_slug}.mbtiles"
+    tile_source_path = build / f"{asset_slug}.tippecanoe.ndgeojson"
+    mbtiles_path = build / f"{asset_slug}.tippecanoe.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
     pmtiles_profile_path = output / "pmtiles-profile.json"
     dataset_title = title or asset_slug.replace("-", " ").title()
@@ -449,16 +460,20 @@ def build_plan(
         group_id_source_path=str(group_id_source_path) if group_id_source_path else None,
         group_id_input_path=str(group_id_input_path) if group_id_input_path else None,
         fgb_path=str(fgb_path),
+        tile_source_path=str(tile_source_path),
         mbtiles_path=str(mbtiles_path),
         pmtiles_path=str(pmtiles_path),
+        tippecanoe_bin=tippecanoe_bin,
         pmtiles_bin=pmtiles_bin,
         ogr2ogr_bin=ogr2ogr_bin,
         tool_paths=tool_paths(
             ogr2ogr_bin=ogr2ogr_bin,
+            tippecanoe_bin=tippecanoe_bin,
             pmtiles_bin=pmtiles_bin,
         ),
         tool_versions=tool_versions(
             ogr2ogr_bin=ogr2ogr_bin,
+            tippecanoe_bin=tippecanoe_bin,
             pmtiles_bin=pmtiles_bin,
         ),
         minzoom=minzoom,
@@ -495,37 +510,43 @@ def build_plan(
 
 def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbProfile | None = None) -> list[SimpleCommand]:
     synthetic_sql = pmtiles_sql(plan, profile)
-    mbtiles_command = [
+    tile_source_command = [
         plan.ogr2ogr_bin,
         "-f",
-        "MBTiles",
-        "-nln",
+        "GeoJSONSeq",
+        "-t_srs",
+        "EPSG:4326",
+        "-lco",
+        "RS=NO",
+    ]
+    if synthetic_sql is not None:
+        tile_source_command.extend(["-dialect", "SQLite", "-sql", synthetic_sql])
+    tile_source_command.extend([plan.tile_source_path, plan.fgb_path])
+
+    mbtiles_command = [
+        plan.tippecanoe_bin,
+        "-o",
+        plan.mbtiles_path,
+        "-l",
         plan.layer_name,
-        "-nlt",
-        "PROMOTE_TO_MULTI",
-        "-dsco",
-        f"NAME={plan.title}",
-        "-dsco",
-        f"DESCRIPTION={plan.description}",
-        "-dsco",
-        f"MINZOOM={plan.minzoom}",
-        "-dsco",
-        f"MAXZOOM={maxzoom}",
-        "-lco",
-        f"NAME={plan.layer_name}",
-        "-lco",
-        f"MINZOOM={plan.minzoom}",
-        "-lco",
-        f"MAXZOOM={maxzoom}",
+        "-Z",
+        str(plan.minzoom),
+        "-z",
+        str(maxzoom),
+        "--force",
+        "--drop-densest-as-needed",
+        "--extend-zooms-if-still-dropping",
+        f"--name={plan.title}",
+        f"--description={plan.description}",
     ]
     if plan.tile_simplify is not None:
-        mbtiles_command.extend(["-simplify", str(plan.tile_simplify)])
-    if synthetic_sql is not None:
-        mbtiles_command.extend(["-dialect", "SQLite", "-sql", synthetic_sql])
-    mbtiles_command.extend([plan.mbtiles_path, plan.fgb_path])
+        mbtiles_command.extend(["--simplification", str(plan.tile_simplify)])
+    for property_name in pmtiles_include_properties(plan):
+        mbtiles_command.extend(["-y", property_name])
+    mbtiles_command.append(plan.tile_source_path)
 
     convert_command = [plan.pmtiles_bin, "convert", plan.mbtiles_path, plan.pmtiles_path]
-    return [command(mbtiles_command), command(convert_command)]
+    return [command(tile_source_command), command(mbtiles_command), command(convert_command)]
 
 
 def sql_identifier(value: str) -> str:
@@ -560,18 +581,14 @@ def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | 
     )
 
 
-def pmtiles_feature_id_sql(plan: VectorBuildPlan) -> str | None:
-    if not plan.pmtiles_feature_id_property:
-        return None
-    columns = ", ".join(sql_identifier(column) for column in PMTILES_METADATA_COLUMNS)
-    return (
-        f"SELECT {columns} "
-        f"FROM {sql_identifier(plan.layer_name)}"
-    )
+def pmtiles_include_properties(plan: VectorBuildPlan) -> tuple[str, ...]:
+    if plan.pmtiles_feature_id_property:
+        return PMTILES_METADATA_COLUMNS
+    return ()
 
 
 def pmtiles_sql(plan: VectorBuildPlan, profile: FgbProfile | None = None) -> str | None:
-    return pmtiles_feature_id_sql(plan) or pmtiles_synthetic_property_sql(plan, profile)
+    return pmtiles_synthetic_property_sql(plan, profile)
 
 
 def dry_run_payload(plan: VectorBuildPlan) -> dict[str, Any]:
@@ -594,6 +611,7 @@ def run_build_command(build_command: SimpleCommand) -> None:
 def remove_existing_outputs(plan: VectorBuildPlan, *, keep_mbtiles: bool) -> None:
     paths = [
         Path(plan.fgb_path),
+        Path(plan.tile_source_path),
         Path(plan.pmtiles_path),
         Path(plan.pmtiles_profile_path),
     ]
@@ -638,7 +656,7 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
         run_build_command(command)
 
     if not keep_mbtiles:
-        intermediates = [Path(plan.mbtiles_path)]
+        intermediates = [Path(plan.tile_source_path), Path(plan.mbtiles_path)]
         if plan.group_id_source_path:
             intermediates.append(Path(plan.group_id_source_path))
         if plan.group_id_input_path:
@@ -664,7 +682,23 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
 
 
 def required_executables(plan: VectorBuildPlan) -> set[str]:
-    return {plan.ogr2ogr_bin, plan.pmtiles_bin}
+    return {plan.ogr2ogr_bin, plan.tippecanoe_bin, plan.pmtiles_bin}
+
+
+def pmtiles_magic_status(pmtiles_path: Path) -> tuple[str | None, str | None]:
+    if not pmtiles_path.exists():
+        return None, f"PMTiles output does not exist: {pmtiles_path}"
+    header = pmtiles_path.read_bytes()[:16]
+    if header.startswith(SQLITE_HEADER):
+        return "sqlite", "PMTiles output is MBTiles/SQLite; convert the MBTiles archive with `pmtiles convert`."
+    if not header.startswith(PMTILES_MAGIC):
+        return "invalid", "PMTiles output does not start with PMTiles magic bytes."
+    if len(header) <= len(PMTILES_MAGIC):
+        return "invalid", "PMTiles output is missing the version byte after PMTiles magic bytes."
+    version = header[len(PMTILES_MAGIC)]
+    if version != PMTILES_V3_VERSION:
+        return f"v{version}", f"PMTiles output is version {version}; expected PMTiles v3."
+    return "v3", None
 
 
 def resolve_maxzoom(plan: VectorBuildPlan, profile: FgbProfile) -> ZoomRecommendation:
@@ -712,19 +746,29 @@ def write_pmtiles_profile(
     if plan.exact_pmtiles_properties:
         payload["exact_pmtiles_properties"] = list(plan.exact_pmtiles_properties)
     synthetic_sql = pmtiles_synthetic_property_sql(plan, profile)
-    feature_id_sql = pmtiles_feature_id_sql(plan)
-    if feature_id_sql is not None:
+    include_properties = pmtiles_include_properties(plan)
+    if include_properties:
         payload["pmtiles_property_projection"] = {
             "mode": "metadata_lookup",
-            "properties": list(PMTILES_METADATA_COLUMNS),
+            "properties": list(include_properties),
+            "method": "tippecanoe_include_filter",
         }
     if synthetic_sql is not None:
         payload["pmtiles_synthetic_properties"] = {SYNTHETIC_PMTILES_PROPERTY: plan.layer_name}
+    payload["pmtiles_build_path"] = {
+        "tile_source": plan.tile_source_path,
+        "mbtiles": plan.mbtiles_path,
+        "pmtiles": plan.pmtiles_path,
+        "builder": "tippecanoe",
+        "conversion": "pmtiles convert",
+    }
     if validation is not None:
         payload["validation"] = {
             "valid": validation.valid,
             "errors": list(validation.errors),
+            "pmtiles_magic": validation.pmtiles_magic,
             "pmtiles_verify": validation.pmtiles_verify,
+            "pmtiles_show": validation.pmtiles_show,
             "decoded_feature_count": validation.decoded_feature_count,
             "decoded_property_keys": list(validation.decoded_property_keys),
             "decoded_tile": validation.decoded_tile,
@@ -768,7 +812,9 @@ def validate_outputs(
         )
     )
     exact_pmtiles_property_tuple = tuple(dict.fromkeys(property_name for property_name in exact_pmtiles_properties if property_name))
+    pmtiles_magic: str | None = None
     pmtiles_verify: str | None = None
+    pmtiles_show: str | None = None
     decoded_feature_count: int | None = None
     decoded_property_keys: tuple[str, ...] = ()
     decoded_tile: str | None = None
@@ -784,6 +830,10 @@ def validate_outputs(
             errors.append(f"{label} file does not exist: {path}")
         elif path.stat().st_size <= 0:
             errors.append(f"{label} file is empty: {path}")
+
+    pmtiles_magic, pmtiles_magic_error = pmtiles_magic_status(pmtiles_path)
+    if pmtiles_magic_error is not None:
+        errors.append(pmtiles_magic_error)
 
     if fgb_path.exists() and shutil.which("ogrinfo"):
         completed = subprocess.run(
@@ -848,6 +898,18 @@ def validate_outputs(
             pmtiles_verify = "failed"
         else:
             pmtiles_verify = "passed"
+        completed = subprocess.run(
+            [pmtiles_bin, "show", str(pmtiles_path)],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode != 0:
+            errors.append(f"pmtiles show failed: {completed.stderr.strip() or completed.stdout.strip()}")
+            pmtiles_show = "failed"
+        else:
+            pmtiles_show = "passed"
 
     decode_summary = (
         None
@@ -904,7 +966,9 @@ def validate_outputs(
         pmtiles_path=str(pmtiles_path),
         valid=not errors,
         errors=tuple(errors),
+        pmtiles_magic=pmtiles_magic,
         pmtiles_verify=pmtiles_verify,
+        pmtiles_show=pmtiles_show,
         decoded_feature_count=decoded_feature_count,
         decoded_property_keys=decoded_property_keys,
         decoded_tile=decoded_tile,
@@ -1057,6 +1121,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         title=args.title,
         description=args.description,
         ogr2ogr_bin=args.ogr2ogr_bin,
+        tippecanoe_bin=args.tippecanoe_bin,
         pmtiles_bin=args.pmtiles_bin,
         required_properties=args.required_property,
         group_id_fields=args.group_id_field,
@@ -1146,6 +1211,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--title", help="Tileset title metadata.")
     build_parser.add_argument("--description", help="Tileset description metadata.")
     build_parser.add_argument("--ogr2ogr-bin", default="ogr2ogr")
+    build_parser.add_argument("--tippecanoe-bin", default="tippecanoe")
     build_parser.add_argument("--pmtiles-bin", default="pmtiles")
     build_parser.add_argument(
         "--required-property",
@@ -1197,7 +1263,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--pmtiles-feature-id-property",
         default=None,
         help=(
-            f"Project PMTiles feature properties down to {FEATURE_ID_COLUMN} and {EXT_ID_COLUMN}. "
+            f"Filter PMTiles feature properties down to {FEATURE_ID_COLUMN} and {EXT_ID_COLUMN}. "
             f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
         ),
     )
@@ -1217,7 +1283,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help=f"Allow PMTiles maxzoom above the default cap of {DEFAULT_MAXZOOM_CAP} for a documented exception.",
     )
-    build_parser.add_argument("--dry-run", action="store_true", help="Print the plan without running GDAL or PMTiles.")
+    build_parser.add_argument("--dry-run", action="store_true", help="Print the plan without running GDAL, Tippecanoe, or PMTiles.")
     build_parser.set_defaults(func=_cmd_build)
 
     validate_parser = subparsers.add_parser("validate", help="Validate existing local FGB and PMTiles artifacts.")

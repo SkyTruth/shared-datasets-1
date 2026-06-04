@@ -26,9 +26,9 @@ license_flags:
 notes: Initial private upload from local MAMMALS.zip; release 2026-05-02; source zip sha256 4f58134883e2cbb2d242170438eb3a2158a53e95782d25881212b87c1d9daaa2;
   source shapefile parts MAMMALS_PART1 and MAMMALS_PART2 each contained 6619 features; combined output rows 13238; fgb sha256
   f8330ab5daf019a5862dee65af4c43827a9832ef0f17c01afc8928eb8027f20b; pmtiles sha256 c159527b50d5205612663ce48922617abbd2a1ffb3dd87e2bed6358ac3be2c52;
-  PMTiles display artifact uses maxzoom 6 and tile-simplify 0.01; future rebuilds must use the repo-standard GDAL MBTiles
-  to PMTiles conversion path; canonical FGB preserves source fields and adds source_part; raw zip not uploaded because zip
-  is not an approved source/archive format and IUCN terms restrict reposting/redistribution
+  PMTiles display artifact uses maxzoom 6 and tile-simplify 0.01; future rebuilds must use the repo-standard GeoJSONSeq to
+  Tippecanoe MBTiles to PMTiles conversion path; canonical FGB preserves source fields and adds source_part; raw zip not uploaded
+  because zip is not an approved source/archive format and IUCN terms restrict reposting/redistribution
 bounds:
 - -179.999
 - -85.582764
@@ -167,7 +167,7 @@ Conversion details:
 - Temporary combined source was generated with GDAL `ogr2ogr`, `-makevalid`, and a constant `source_part` field.
 - Canonical FlatGeobuf was built with GDAL 3.6.2.
 - PMTiles display output uses maximum zoom 6 and tile simplification 0.01.
-- Future PMTiles rebuilds must use GDAL MBTiles output converted with `pmtiles convert`; validation uses the repo vector helper plus `tippecanoe-decode` when available.
+- Future PMTiles rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`; validation uses the repo vector helper plus `tippecanoe-decode` when available.
 
 ## Known caveats
 

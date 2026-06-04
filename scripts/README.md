@@ -101,10 +101,14 @@ The build sequence is standardized as:
 1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
 2. Profile the generated FGB to choose PMTiles maxzoom from source hints and
    measured geometry detail.
-3. Build temporary MBTiles with GDAL using explicit min/max zoom metadata.
-4. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
-5. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
-   property sample when those tools exist.
+3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
+4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe using explicit
+   min/max zoom metadata and any compact property filters such as `feature_id`
+   and `ext_id`.
+5. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
+6. Local validation with `ogrinfo`, PMTiles v3 magic-byte checks,
+   `pmtiles verify`, `pmtiles show`, and a decoded PMTiles property sample when
+   those tools exist.
 
 `--maxzoom auto` is the default. Auto maxzoom generates the canonical FGB first,
 profiles the FGB, and writes `pmtiles-profile.json` next to the generated
@@ -171,9 +175,11 @@ This column is a last-resort row address, not a provider/entity/group ID, and is
 stable only while geometry and duplicate-geometry source order remain unchanged.
 Do not combine `--generate-row-id` with `--group-id-field`.
 
-PMTiles generation always writes temporary MBTiles with GDAL and converts them
-with `pmtiles convert`. Direct Tippecanoe PMTiles output is disabled until a
-future Tippecanoe version is proven to generate valid PMTiles directly.
+PMTiles generation exports a WGS84 GeoJSONSeq tile source with GDAL, writes the
+temporary MBTiles with Tippecanoe, and converts that archive with
+`pmtiles convert`. Do not use the old GDAL-based projection path; for
+metadata-lookup tiles it can omit geometry and produce empty or bad MBTiles
+output before PMTiles conversion.
 
 Release feature metadata helpers live in:
 

@@ -22,8 +22,8 @@ citation: 'Global Fishing Watch (2026). Fixed infrastructure detections from Sen
   https://doi.org/10.1038/s41586-023-06825-8.'
 notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows 57681; fgb sha256 159af982d72f464091c06e68de6abe054a5c07ae05ff4731c8cb041979fb3447;
   pmtiles sha256 c2a3c96f98ef38a8ac1db217b8d42008d0c4c874581947e84a6c59521839ff1e; PMTiles rebuilt 2026-05-04 at maxzoom 12
-  with all-point retention verified at zoom 0 for all 57681 points; future rebuilds must use the repo-standard GDAL MBTiles
-  to PMTiles conversion path; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
+  with all-point retention verified at zoom 0 for all 57681 points; future rebuilds must use the repo-standard GeoJSONSeq
+  to Tippecanoe MBTiles to PMTiles conversion path; source csv sha256 07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9
 row_count: 57681
 data_profile:
   field_count: 7
@@ -103,7 +103,7 @@ Geometry is generated from the source `lon` and `lat` fields as WGS84 point geom
 
 `structure_start_date` and `structure_end_date` are source-provided epoch timestamps in milliseconds. Empty source `structure_end_date` values are preserved as null values in the geospatial outputs.
 
-The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`. The canonical FGB remains the analytical source.
+The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -137,7 +137,7 @@ Output summary:
 - PMTiles zoom 0 decoded point features: 57,681
 - PMTiles SHA-256: `c2a3c96f98ef38a8ac1db217b8d42008d0c4c874581947e84a6c59521839ff1e`
 - Source CSV SHA-256: `07d8d7464c7c2d7410926d2a29c24eb2d2aa2993c2b576a138ce0c57111cf1a9`
-- PMTiles validation used zoom 0 decode feature-count checks. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`.
+- PMTiles validation used zoom 0 decode feature-count checks. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`.
 
 ## Known caveats
 
