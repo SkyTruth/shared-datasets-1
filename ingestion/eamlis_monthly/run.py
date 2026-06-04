@@ -392,13 +392,14 @@ def run_command(
 
 def convert_geojson_to_fgb(source: Path, output: Path) -> None:
     remove_if_exists(output)
+    source_arg = f"GeoJSONSeq:{source}" if source.suffix == ".geojsonseq" else str(source)
     run_command(
         [
             "ogr2ogr",
             "-f",
             "FlatGeobuf",
             str(output),
-            str(source),
+            source_arg,
             "-nln",
             LAYER_NAME,
             "-t_srs",
