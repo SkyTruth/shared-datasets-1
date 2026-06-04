@@ -208,6 +208,6 @@ Operational checks:
 
 The production `Feature metadata service deploy` workflow is deferred by
 default while Firestore serving remains disabled. It exits green after a
-no-op gate and skips the Docker build and Terraform apply unless repository
-variable `ENABLE_METADATA_SERVICE_DEPLOY` is set to `true`. Manual dispatches
-also require `deploy_metadata_service=true`.
+no-op gate and skips the Docker build and protected Terraform deploy job unless
+repository variable `ENABLE_METADATA_SERVICE_DEPLOY` is set to `true`. Manual
+dispatches also require `deploy_metadata_service=true`.
