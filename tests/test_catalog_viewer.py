@@ -457,7 +457,7 @@ class CatalogViewerTests(unittest.TestCase):
                 "format": "feature_index",
                 "path": (
                     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
-                    "wdpa-marine/releases/2026-05-01/wdpa-marine.features.ndjson.gz"
+                    "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz"
                 ),
             }
         )

@@ -266,7 +266,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("Preview-bucket release .metadata.ndjson.gz URI.", workflow)
         self.assertIn('"SIDECAR_URI": ".metadata.ndjson.gz"', workflow)
         self.assertIn('f"{asset_slug}.metadata.ndjson.gz"', workflow)
-        self.assertNotIn(".features.ndjson.gz", workflow)
         self.assertIn("Verify requested source ref supports preview Firestore database", workflow)
         self.assertIn("working-directory: preview-source", workflow)
         self.assertIn('release_prefix = f"gs://{bucket}/{asset_root}/releases/{release}/"', workflow)

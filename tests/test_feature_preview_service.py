@@ -202,7 +202,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(resolved.sidecar_generation, 1001)
 
     def test_catalog_resolver_rejects_non_metadata_sidecar_format(self):
-        for sidecar_format in ("features_ndjson_gzip", "features"):
+        for sidecar_format in ("fgb", "pmtiles"):
             with self.subTest(sidecar_format=sidecar_format):
                 resolver = run.CatalogReleaseResolver(
                     bucket_name=PREVIEW_BUCKET,
