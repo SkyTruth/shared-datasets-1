@@ -205,3 +205,9 @@ Operational checks:
 - The latest release index resolves to the same release used during index load.
 - Cloud Run metadata service error logs and Firestore lookup failures are
   monitored.
+
+The production `Feature metadata service deploy` workflow is deferred by
+default while Firestore serving remains disabled. It exits green after a
+no-op gate and skips the Docker build and Terraform apply unless repository
+variable `ENABLE_METADATA_SERVICE_DEPLOY` is set to `true`. Manual dispatches
+also require `deploy_metadata_service=true`.
