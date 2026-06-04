@@ -1,0 +1,40 @@
+name: PMTiles CDN sync readiness
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/pmtiles-cdn-sync-readiness.yml"
+      - "catalog/shared-datasets-catalog.csv"
+      - "docs/assets/**"
+      - "terraform/envs/prod/catalog_viewer.tf"
+      - "terraform/envs/prod/pmtiles_cdn.tf"
+      - "terraform/envs/prod/shared_bucket_public.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  readiness:
+    name: Check PMTiles CDN sync readiness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi

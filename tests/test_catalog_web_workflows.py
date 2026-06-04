@@ -7,7 +7,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
+PMTILES_CDN_SYNC_READINESS = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync-readiness.yml"
 SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
+SCRATCH_CLEANUP_IAM_SYNC_READINESS = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync-readiness.yml"
 
 
 class CatalogWebWorkflowTests(unittest.TestCase):
@@ -36,11 +38,11 @@ class CatalogWebWorkflowTests(unittest.TestCase):
 
     def test_pmtiles_cdn_sync_has_explicit_resource_change_allowlist(self):
         workflow = PMTILES_CDN_SYNC.read_text()
+        readiness = PMTILES_CDN_SYNC_READINESS.read_text()
 
         self.assertIn("PMTiles CDN sync", workflow)
-        self.assertIn("pull_request:", workflow)
-        self.assertIn("Check PMTiles CDN sync readiness", workflow)
-        self.assertNotIn('- ".github/workflows/pmtiles-cdn-sync.yml"', workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertIn("push:", workflow)
         self.assertIn("github.event_name != 'pull_request'", workflow)
         self.assertIn("Validate main ref", workflow)
         self.assertIn("ref: main", workflow)
@@ -89,13 +91,20 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("Read current ingestion images", workflow)
         self.assertNotIn("gcloud run jobs describe", workflow)
         self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_TERRAFORM_SERVICE_ACCOUNT != ''", workflow)
+        self.assertIn("pull_request:", readiness)
+        self.assertIn("Check PMTiles CDN sync readiness", readiness)
+        self.assertNotIn('- ".github/workflows/pmtiles-cdn-sync.yml"', readiness)
+        self.assertNotIn("environment: shared-datasets-production", readiness)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", readiness)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", readiness)
 
     def test_scratch_cleanup_iam_sync_has_explicit_resource_change_allowlist(self):
         workflow = SCRATCH_CLEANUP_IAM_SYNC.read_text()
+        readiness = SCRATCH_CLEANUP_IAM_SYNC_READINESS.read_text()
 
         self.assertIn("Scratch cleanup IAM sync", workflow)
-        self.assertIn("pull_request:", workflow)
-        self.assertIn("Check scratch cleanup IAM sync readiness", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertIn("push:", workflow)
         self.assertIn("github.event_name != 'pull_request'", workflow)
         self.assertIn("shared-datasets-production", workflow)
         self.assertIn("Validate main ref", workflow)
@@ -128,6 +137,11 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("pull_request:", readiness)
+        self.assertIn("Check scratch cleanup IAM sync readiness", readiness)
+        self.assertNotIn("environment: shared-datasets-production", readiness)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", readiness)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", readiness)
 
 
 if __name__ == "__main__":
