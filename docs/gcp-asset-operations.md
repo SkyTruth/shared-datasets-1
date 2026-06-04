@@ -106,14 +106,15 @@ The standard vector build is:
    scale/resolution hints plus measured geometry detail. Auto maxzoom is the
    default, biases toward detailed presentation, and caps at zoom 12 unless a
    documented high-zoom override is passed.
-3. Build PMTiles through the validated GDAL-to-MBTiles-to-`pmtiles convert`
-   path. Direct Tippecanoe PMTiles generation is disabled until a future
-   Tippecanoe release is validated against the shared-datasets PMTiles checks.
-4. Generate `.pmtiles` output with explicit tileset name, description, and
-   min/max zoom. Lower than zoom 8 requires source/profile evidence or a
-   documented override.
-5. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
-   when available, and a decoded PMTiles sample to confirm feature properties
+3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
+4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe, using explicit
+   tileset name, description, min/max zoom metadata, and compact property
+   filters such as `feature_id` and `ext_id` when metadata lookup is enabled.
+5. Convert the MBTiles archive to `.pmtiles` with `pmtiles convert`. Lower than
+   zoom 8 requires source/profile evidence or a documented override.
+6. Validate the FGB with `ogrinfo`, confirm PMTiles v3 magic bytes, run
+   `pmtiles verify`, inspect `pmtiles show`, and decode a representative tile
+   to confirm feature properties.
    are present for the catalog inspector.
 
 Release-oriented vector assets add a feature metadata layer before publication.
@@ -144,8 +145,8 @@ Every release-oriented row has a `feature_id`. If the maintainer chooses
 neither a provider ID nor a group ID for `ext_id`, publish `ext_id` as the same
 value as `feature_id`.
 
-To build PMTiles for metadata lookup, project tile properties down to only the
-stable feature ID:
+To build PMTiles for metadata lookup, filter tile properties down to only the
+stable feature ID and lookup key:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.fgb \
@@ -231,10 +232,11 @@ uv run python scripts/vector_asset.py build ./source.fgb \
   --asset-slug example-points
 ```
 
-Direct Tippecanoe PMTiles generation is disabled because it has produced invalid
-archives. The helper always builds temporary MBTiles with GDAL and converts them
-with `pmtiles convert`; keep that path until a future Tippecanoe version is
-proven to generate valid PMTiles directly.
+The helper exports a WGS84 GeoJSONSeq tile source with GDAL, builds temporary
+MBTiles with Tippecanoe, and converts that archive with `pmtiles convert`. Do
+not use the old GDAL-based projection path; metadata-lookup SQL that selected
+`feature_id` and `ext_id` failed to carry geometry through and produced empty
+or bad MBTiles output.
 
 Use this for point catalogs because shared point PMTiles should keep all point
 features at all generated zoom levels. Expect larger low-zoom tiles and validate

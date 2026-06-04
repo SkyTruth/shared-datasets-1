@@ -249,7 +249,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 root,
                 state_file,
                 "translation-decision",
-                {"decision": "deferred", "locales": [], "fields": []},
+                {"decision": "none", "locales": [], "fields": []},
             ),
             0,
         )
@@ -271,6 +271,16 @@ class PublishingConciergeTests(unittest.TestCase):
             self._confirm(root, state_file, "build-artifacts", {"artifacts": evidence_artifacts}),
             0,
         )
+
+    def test_translation_decision_rejects_deferred(self):
+        with self.assertRaisesRegex(publishing_concierge.WorkflowError, "autogenerate or none"):
+            publishing_concierge.validate_translation_decision(
+                {},
+                {"decision": "deferred", "locales": [], "fields": []},
+            )
+
+        step = next(step for step in publishing_concierge.STEP_DEFINITIONS if step.step_id == "translation-decision")
+        self.assertEqual(step.evidence_schema["decision"], "autogenerate|none")
 
     def _fgb_validation_payload(self, *, include_gdal: bool = True) -> dict:
         payload = {
@@ -915,6 +925,37 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(normalized["ext_id_decision"], "feature-id")
         self.assertEqual(normalized["ext_id_fields"], [])
 
+    def test_profile_field_evidence_rejects_deferred_decisions(self):
+        base_evidence = {
+            "decision_table_present": True,
+            "profile_scope": "full",
+            "provider_id_decision": "none-suitable",
+            "provider_id_fields": [],
+            "generated_group_id_decision": "not-needed",
+            "group_id_fields": [],
+            "generated_row_id_decision": "rejected",
+            "ext_id_decision": "feature-id",
+            "ext_id_fields": [],
+            "search_fields": [],
+        }
+
+        for field_name, message in (
+            ("provider_id_decision", "use-provider-id or none-suitable"),
+            ("generated_group_id_decision", "not-needed or approved"),
+            ("generated_row_id_decision", "not-needed, approved, or rejected"),
+        ):
+            evidence = {**base_evidence, field_name: "deferred"}
+            with self.subTest(field_name=field_name), self.assertRaisesRegex(
+                publishing_concierge.WorkflowError,
+                message,
+            ):
+                publishing_concierge.validate_profile_fields({}, evidence)
+
+        step = next(step for step in publishing_concierge.STEP_DEFINITIONS if step.step_id == "profile-fields")
+        self.assertEqual(step.evidence_schema["provider_id_decision"], "use-provider-id|none-suitable")
+        self.assertEqual(step.evidence_schema["generated_group_id_decision"], "not-needed|approved")
+        self.assertEqual(step.evidence_schema["generated_row_id_decision"], "not-needed|approved|rejected")
+
     def test_petrodata_like_recommendations_keep_table_compact(self):
         rows = []
         for index in range(102):
@@ -1242,6 +1283,13 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertEqual(state["bucket"], publishing_concierge.PREVIEW_BUCKET)
             self.assertTrue(state["plan"]["canonical_path"].startswith(f"gs://{publishing_concierge.PREVIEW_BUCKET}/"))
             self.assertTrue(any("Do not use production publish-release" in command for command in state["generated_commands"]["remote_write"]))
+            self.assertTrue(
+                any(
+                    "production catalog-web-deploy.yml automation runs after reviewed main pushes" in command
+                    and "preview-only bucket uploads do not trigger it" in command
+                    for command in state["generated_commands"]["remote_write"]
+                )
+            )
             status = publishing_concierge.render_status(state)
             by_step = {step["step_id"]: step for step in status["steps"]}
             self.assertTrue(by_step["preview-upload"]["required"])
@@ -1250,6 +1298,9 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertFalse(by_step["document-asset"]["required"])
             self.assertFalse(by_step["stage-scratch"]["required"])
             self.assertFalse(by_step["pr-ready"]["required"])
+            refresh_commands = publishing_concierge.commands_for_preview_catalog_refresh(state)
+            self.assertTrue(any("catalog-web-deploy.yml" in command for command in refresh_commands))
+            self.assertTrue(any("preview-only GCS uploads do not trigger" in command for command in refresh_commands))
 
     def test_preview_start_requires_release_date(self):
         with tempfile.TemporaryDirectory() as tmp:
