@@ -19,9 +19,10 @@ from scripts import release_feature_model
 from scripts.raster_asset import validate_cog
 
 
-DATA_OBJECT_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog"}
+SINGLE_OBJECT_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog"}
+DATA_OBJECT_FORMATS = SINGLE_OBJECT_FORMATS
 SUPPORTING_RELEASE_FORMATS = {"metadata", "schema", "manifest"}
-SINGLE_OBJECT_FORMATS = DATA_OBJECT_FORMATS | SUPPORTING_RELEASE_FORMATS
+PUBLISH_ARTIFACT_FORMATS = SINGLE_OBJECT_FORMATS | SUPPORTING_RELEASE_FORMATS
 SUPPORTING_RELEASE_FORMAT_ORDER = ("metadata", "schema", "manifest")
 VECTOR_CANONICAL_FORMATS = {"fgb", "geojson", "ndgeojson"}
 REQUIRED_VECTOR_BUNDLE_FORMATS = ("fgb", "pmtiles", "metadata", "schema", "manifest")
@@ -119,8 +120,8 @@ def parse_artifact_overrides(values: Iterable[str]) -> dict[str, Path]:
         if not separator or not raw_format or not raw_path:
             raise PublishReleaseError(f"artifact override must be format=/path/file, got: {value!r}")
         format_name = normalize_format(raw_format)
-        if format_name not in SINGLE_OBJECT_FORMATS:
-            supported = ", ".join(sorted(SINGLE_OBJECT_FORMATS))
+        if format_name not in PUBLISH_ARTIFACT_FORMATS:
+            supported = ", ".join(sorted(PUBLISH_ARTIFACT_FORMATS))
             raise PublishReleaseError(
                 f"unsupported artifact format {format_name!r}; use one of: {supported}"
             )
@@ -587,7 +588,7 @@ def discover_artifacts(
 
 
 def validate_artifact_path(asset_slug: str, format_name: str, path: Path) -> None:
-    if format_name not in SINGLE_OBJECT_FORMATS:
+    if format_name not in PUBLISH_ARTIFACT_FORMATS:
         raise PublishReleaseError(f"unsupported artifact format for publish-release v1: {format_name}")
     if not path.is_file():
         raise PublishReleaseError(f"artifact does not exist or is not a file: {path}")

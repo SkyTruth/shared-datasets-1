@@ -262,6 +262,14 @@ class PublishReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(publish_release.PublishReleaseError, "unsupported artifact format"):
             publish_release.parse_artifact_overrides(["sidecar=/tmp/example-asset.metadata.ndjson.gz"])
 
+    def test_supporting_release_formats_are_not_canonical_data_formats(self):
+        self.assertEqual(
+            publish_release.SINGLE_OBJECT_FORMATS,
+            {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog"},
+        )
+        self.assertTrue(publish_release.SUPPORTING_RELEASE_FORMATS.isdisjoint(publish_release.SINGLE_OBJECT_FORMATS))
+        self.assertLessEqual(publish_release.SUPPORTING_RELEASE_FORMATS, publish_release.PUBLISH_ARTIFACT_FORMATS)
+
     def test_catalog_available_formats_must_include_canonical_format(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
