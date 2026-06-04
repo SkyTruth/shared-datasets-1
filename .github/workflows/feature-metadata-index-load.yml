@@ -73,8 +73,19 @@ jobs:
       REQUESTED_LOAD_ID: ${{ inputs.load_id }}
 
     steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Feature metadata index load must be run from main after reviewed loader code has landed." >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5

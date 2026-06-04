@@ -351,7 +351,8 @@ uv run python scripts/publishing_concierge.py render-report --state-file "$STATE
 
 The concierge is guide-and-verify only. It never stages Git changes, commits,
 pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
-objects, runs Terraform apply, or promotes data. When `next` asks for scratch
+objects, or promotes data. Do not use it to run Terraform apply; production
+Terraform still routes through protected PR workflows. When `next` asks for scratch
 staging, run `scripts/gcs_asset.py upload` separately and provide the staged URI
 and generation as evidence. `render-pr` validates the final fenced
 `shared-datasets-publish-plan` with `scripts/reviewed_dataset_plan.py`, the same

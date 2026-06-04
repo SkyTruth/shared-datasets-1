@@ -120,8 +120,9 @@ body with the fenced `shared-datasets-publish-plan`, and render a final
 completion-report scaffold.
 
 The concierge is guide-and-verify tooling: it never stages Git changes, commits,
-pushes, opens PRs, writes canonical Cloud Storage objects, runs Terraform apply,
-or promotes data. Scratch upload commands are suggestions; the agent must run
+pushes, opens PRs, writes canonical Cloud Storage objects, or promotes data. Do not
+use it to run Terraform apply; production Terraform still routes through
+protected PR workflows. Scratch upload commands are suggestions; the agent must run
 the appropriate `gcs_asset.py` commands separately and feed the resulting URIs
 and generations back as evidence. Artifact validation evidence must include the
 commands run and resolved tool paths/versions or explicit not-applicable notes.
