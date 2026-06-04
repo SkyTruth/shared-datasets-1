@@ -595,7 +595,7 @@ def convert_geojsonseq_to_fgb(geojsonseq: Path, asset: AssetSpec, output: Path) 
             "-f",
             "FlatGeobuf",
             str(output),
-            str(geojsonseq),
+            f"GeoJSONSeq:{geojsonseq}",
             "-nln",
             asset.tile_layer,
             "-nlt",
