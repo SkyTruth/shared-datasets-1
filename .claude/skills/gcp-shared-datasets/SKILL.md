@@ -90,6 +90,26 @@ use the approved publisher identity or a scheduled ingestion service account
 scoped to its owned asset root. `_scratch/` is noncanonical staging space and
 must not be cited as a stable shared dataset contract.
 
+## Preview Bucket Writes
+
+For `gs://skytruth-shared-datasets-1-preview/`, follow the same generation-safe
+object model in this skill, but route dataset-intake decisions through
+`.claude/skills/feature-preview/SKILL.md`.
+
+If a preview upload request involves dataset bytes, do not proceed directly from
+path validation to `scripts/gcs_asset.py upload`. First confirm the
+feature-preview Preview Concierge Gate has produced the planned object list,
+artifact roles, content types, validations, and destination URIs. Raw
+single-object preview uploads are allowed only when the human explicitly asks
+for scratch-only or diagnostic staging and no preview release/load is being
+claimed.
+
+Do not skip the preview concierge gate because the asset slug already exists in
+`catalog/shared-datasets-catalog.csv`, because the supplied file is already an
+approved format such as FGB, or because the preview destination seems obvious.
+Existing catalog metadata may prefill decisions, but it does not replace the
+structured preview-bundle checklist.
+
 ## Core Commands
 
 List remote prefix:
