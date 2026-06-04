@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
 import unittest
 
 from services.feature_preview_service import run as feature_preview_run
@@ -58,7 +57,23 @@ class FakeStore:
             "releases/wdpa-marine.json": StaticObject(
                 json.dumps(
                     {
+                        "schema_version": 1,
                         "asset_slug": "wdpa-marine",
+                        "latest_release": {
+                            "date": "2026-05-01",
+                            "files": [
+                                {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
+                                {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
+                                {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
+                                {
+                                    "format": "metadata",
+                                    "role": "metadata",
+                                    "locale": "es",
+                                    "path": PUBLIC_METADATA_ES_RELEASE_PATH,
+                                    "generation": 1004,
+                                },
+                            ],
+                        },
                         "releases": [
                             {
                                 "date": "2026-05-01",
@@ -172,12 +187,6 @@ def catalog_payload():
                 "has_pmtiles": True,
                 "pmtiles_path": PUBLIC_PATH,
                 "pmtiles_url": "https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles",
-                "versions": [
-                    {
-                        "date": "2026-04-01",
-                        "canonical_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-04-01/wdpa-marine.fgb",
-                    }
-                ],
             },
             {
                 "slug": "acled-europe-central-asia-aggregated-weekly-admin1",
@@ -292,6 +301,14 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 401)
 
+    def test_private_pmtiles_requires_iap_header_not_forwarded_email(self):
+        response, _signer = signed_url_request(
+            "acled-europe-central-asia-aggregated-weekly-admin1",
+            {"X-Forwarded-Email": "jona@skytruth.org"},
+        )
+
+        self.assertEqual(response.status, 401)
+
     def test_private_pmtiles_rejects_non_skytruth_identity(self):
         response, _signer = signed_url_request(
             "acled-europe-central-asia-aggregated-weekly-admin1",
@@ -394,7 +411,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH)
         self.assertEqual(metadata_cdn_signer.calls, [])
 
-    def test_historical_fgb_download_uses_release_index_before_catalog_fallback(self):
+    def test_historical_fgb_download_uses_release_index(self):
         response, _signer = download_url_request("wdpa-marine", version="2026-05-01")
 
         self.assertEqual(response.status, 200)
@@ -405,15 +422,10 @@ class CatalogViewerTests(unittest.TestCase):
             "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.fgb",
         )
 
-    def test_historical_fgb_download_falls_back_to_catalog_versions(self):
+    def test_historical_fgb_download_rejects_release_missing_from_index(self):
         response, _signer = download_url_request("wdpa-marine", version="2026-04-01")
 
-        self.assertEqual(response.status, 200)
-        payload = json.loads(response.body)
-        self.assertEqual(
-            payload["gs_uri"],
-            "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-04-01/wdpa-marine.fgb",
-        )
+        self.assertEqual(response.status, 404)
 
     def test_fgb_download_rejects_invalid_version_and_unknown_slug(self):
         bad_version, _signer = download_url_request("wdpa-marine", version="yesterday")
@@ -674,31 +686,31 @@ class CatalogViewerTests(unittest.TestCase):
                 dt.datetime(2026, 5, 9, 12, 0, tzinfo=dt.UTC),
             )
 
-    def test_cloud_cdn_signing_key_helpers_parse_secret_config_without_secret_material(self):
+    def test_cloud_cdn_signing_key_helpers_require_full_secret_version(self):
         self.assertEqual(decode_cdn_signing_key("MDEyMzQ1Njc4OWFiY2RlZg=="), b"0123456789abcdef")
         self.assertEqual(
-            secret_manager_version_name("projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key", "7"),
+            secret_manager_version_name("projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/7"),
             "projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/7",
         )
 
-        previous_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        os.environ["GOOGLE_CLOUD_PROJECT"] = "shared-datasets-1"
-        try:
-            self.assertEqual(
-                secret_manager_version_name("pmtiles-cdn-signed-request-key", "latest"),
-                "projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key/versions/latest",
-            )
-        finally:
-            if previous_project is None:
-                os.environ.pop("GOOGLE_CLOUD_PROJECT", None)
-            else:
-                os.environ["GOOGLE_CLOUD_PROJECT"] = previous_project
+        with self.assertRaisesRegex(ValueError, "full Secret Manager version resource"):
+            secret_manager_version_name("pmtiles-cdn-signed-request-key")
 
         with self.assertRaisesRegex(ValueError, "16 raw bytes"):
             decode_cdn_signing_key("c2hvcnQ=")
 
     def test_feature_metadata_lookup_requires_authenticated_iap_identity(self):
         response, resolver, index = feature_lookup_request({"ids": ["src:MRGID:48943"]})
+
+        self.assertEqual(response.status, 401)
+        self.assertEqual(resolver.calls, [])
+        self.assertEqual(index.calls, [])
+
+    def test_feature_metadata_lookup_rejects_forwarded_email_without_iap_header(self):
+        response, resolver, index = feature_lookup_request(
+            {"ids": ["src:MRGID:48943"]},
+            {"X-Forwarded-Email": "jona@skytruth.org"},
+        )
 
         self.assertEqual(response.status, 401)
         self.assertEqual(resolver.calls, [])

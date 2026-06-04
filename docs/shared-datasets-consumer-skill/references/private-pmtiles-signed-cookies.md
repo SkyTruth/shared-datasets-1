@@ -72,8 +72,7 @@ Required behavior:
   URLs.
 - Use HMAC-SHA1 and key name `shared-datasets-pmtiles-v1`.
 - Set every `Set-Cookie` header returned by `getPrivatePmtilesSessionCookies`;
-  the helper returns an array that clears the legacy path and sets the private
-  signed cookie.
+  the helper returns an array with the private signed cookie.
 - `DELETE` clears every cookie returned by `getExpiredPmtilesCookies` and
   returns `204`.
 - For both helper calls, send the returned string array as separate

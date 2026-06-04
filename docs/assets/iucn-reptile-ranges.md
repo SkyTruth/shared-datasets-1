@@ -26,8 +26,9 @@ license_flags:
 notes: Initial private upload from local REPTILES.zip; release 2026-05-03; source zip sha256 68bf0ca138044a91dcfa301eda1ed9eb9c2b19f5b668c8e7ed1f281877ba4bbd;
   source shapefile parts REPTILES_PART1 and REPTILES_PART2 each contained 7026 features; combined output rows 14052; fgb sha256
   4c9020a8b138cdc5247c67ed71b29ef478df2c274aa6f05c1d76d1f49ce66bc2; pmtiles sha256 aabaf0360d767b892c020ccac85eb9ba0df1998280f9b2c40066e28b535db7eb;
-  PMTiles generated with Tippecanoe maxzoom 6 and tile-simplify 0.01 for display; canonical FGB preserves source fields and
-  adds source_part; raw zip not uploaded because zip is not an approved source/archive format and IUCN terms restrict reposting/redistribution
+  PMTiles display artifact uses maxzoom 6 and tile-simplify 0.01; future rebuilds must use the repo-standard GDAL MBTiles
+  to PMTiles conversion path; canonical FGB preserves source fields and adds source_part; raw zip not uploaded because zip
+  is not an approved source/archive format and IUCN terms restrict reposting/redistribution
 bounds:
 - -179.999
 - -54.059447
@@ -165,8 +166,8 @@ Conversion details:
 - Combined canonical output: 14,052 multipolygon features
 - Temporary combined source was generated with GDAL `ogr2ogr`, `-makevalid`, and a constant `source_part` field.
 - Canonical FlatGeobuf was built with GDAL 3.6.2.
-- PMTiles were generated with Tippecanoe 2.79.0, `--maximum-zoom 6`, and `--tile-simplify 0.01`.
-- PMTiles CLI was not available locally; validation used the repo vector helper plus `tippecanoe-decode`.
+- PMTiles display output uses maximum zoom 6 and tile simplification 0.01.
+- Future PMTiles rebuilds must use GDAL MBTiles output converted with `pmtiles convert`; validation uses the repo vector helper plus `tippecanoe-decode` when available.
 
 ## Known caveats
 

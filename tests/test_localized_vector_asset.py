@@ -239,7 +239,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
         self.assertEqual(result["missing_ext_id_count"], 0)
         self.assertEqual(result["orphan_ext_id_count"], 0)
 
-    def test_build_pmtiles_plan_rejects_property_stripping_tippecanoe_args(self):
+    def test_build_pmtiles_plan_uses_gdal_mbtiles_conversion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             fgb = root / "example-asset.fgb"
@@ -256,15 +256,6 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 ],
             )
 
-            with self.assertRaisesRegex(ValueError, "strips all feature properties"):
-                localized_vector_asset.build_pmtiles_plan(
-                    fgb=fgb,
-                    localizations=localizations,
-                    asset_slug="example-asset",
-                    output=root / "example-asset.pmtiles",
-                    tippecanoe_extra_args=["--exclude-all"],
-                )
-
             plan = localized_vector_asset.build_pmtiles_plan(
                 fgb=fgb,
                 localizations=localizations,
@@ -273,7 +264,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
             )
 
         self.assertEqual(plan.localized_property_fields, ("name",))
-        self.assertIn("--no-feature-limit", plan.tippecanoe_extra_args)
+        self.assertEqual([command["kind"] for command in plan.commands], ["metadata_lookup_geojsonseq", "gdal_mbtiles", "pmtiles_convert"])
 
     def test_pmtiles_validation_requires_decode_for_required_properties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -319,6 +310,8 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 fgb_path=str(root / "example-asset.fgb"),
                 localization_path=str(localizations),
                 output_path=str(root / "example-asset.pmtiles"),
+                lookup_geojsonseq_path=str(root / "example-asset-metadata-lookup.ndgeojson"),
+                mbtiles_path=str(root / "example-asset.mbtiles"),
                 work_dir=str(root),
                 profile_path=str(root / "localized-pmtiles-profile.json"),
                 minzoom=0,
@@ -330,9 +323,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 pmtiles_maxzoom_reason=None,
                 pmtiles_detail_hint=None,
                 localized_property_fields=("name",),
-                tippecanoe_extra_args=(),
                 ogr2ogr_bin="ogr2ogr",
-                tippecanoe_bin="tippecanoe",
                 pmtiles_bin="pmtiles",
                 tool_paths={},
                 tool_versions={},
@@ -353,7 +344,7 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                 mock.patch.object(localized_vector_asset, "load_fgb_key_profile", return_value=fgb_profile),
                 mock.patch.object(localized_vector_asset, "profile_fgb", return_value=mock.Mock(bounds=None)),
                 mock.patch.object(localized_vector_asset, "profile_payload", return_value={"recommendation": {"maxzoom": 8}}),
-                mock.patch.object(localized_vector_asset, "run_metadata_lookup_pipeline"),
+                mock.patch.object(localized_vector_asset, "run_metadata_lookup_conversion"),
                 mock.patch.object(
                     localized_vector_asset,
                     "validate_pmtiles_properties",
@@ -458,9 +449,9 @@ class LocalizedVectorAssetTests(unittest.TestCase):
     @unittest.skipUnless(
         os.environ.get("RUN_GDAL_INTEGRATION_TESTS") == "1"
         and shutil.which("ogr2ogr")
-        and shutil.which("tippecanoe")
+        and shutil.which("tippecanoe-decode")
         and shutil.which("pmtiles"),
-        "requires RUN_GDAL_INTEGRATION_TESTS=1, GDAL, Tippecanoe, and PMTiles binaries",
+        "requires RUN_GDAL_INTEGRATION_TESTS=1, GDAL, tippecanoe-decode, and PMTiles binaries",
     )
     def test_build_pmtiles_integration_with_tiny_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:

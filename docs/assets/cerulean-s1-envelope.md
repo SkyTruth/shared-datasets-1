@@ -23,8 +23,9 @@ citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 env
 notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
   is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
-  PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-6, no simplification, and synthetic source_layer property for catalog
-  inspection; canonical FGB preserves the source WKT geometry as an envelope only
+  PMTiles rebuilt 2026-05-04 with zooms 0-6, no simplification, and synthetic source_layer property for catalog inspection;
+  future rebuilds must use the repo-standard GDAL MBTiles to PMTiles conversion path; canonical FGB preserves the source WKT
+  geometry as an envelope only
 row_count: 1
 data_profile:
   field_count: 0
@@ -111,9 +112,9 @@ Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
 `cerulean_s1_envelope`.
 
 The source CSV is not published as a canonical format because shared-datasets
-CSV assets must not contain geometry columns. The PMTiles artifact is generated
-with Tippecanoe 2.79.0 from a temporary GeoJSON tiling input, with zooms 0
-through 6 and no display simplification.
+CSV assets must not contain geometry columns. The PMTiles artifact is a display
+derivative with zooms 0 through 6 and no display simplification. Future rebuilds
+must use GDAL MBTiles output converted with `pmtiles convert`.
 
 The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
 was an initial name for this dataset before the framing was corrected. It is
@@ -142,7 +143,7 @@ Output summary:
 - Source rows: 1
 - Published features: 1
 - CRS: EPSG:4326
-- Toolchain: GDAL 3.6.2; Tippecanoe 2.79.0; PMTiles CLI unavailable locally
+- PMTiles validation used the repo vector checks; future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`
 - FGB SHA-256: `4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11`
 - PMTiles maxzoom: 6
 - PMTiles zoom 0 decoded feature properties: `source_layer`

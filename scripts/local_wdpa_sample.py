@@ -183,7 +183,7 @@ def build_outputs_from_gpkg(
 
 def main() -> None:
     wdpa.configure_logging()
-    for binary in ("ogrinfo", "ogr2ogr", "tippecanoe", "pmtiles"):
+    for binary in ("ogrinfo", "ogr2ogr", "pmtiles"):
         wdpa.require_binary(binary)
 
     os.environ.setdefault("WDPA_SAMPLE_FRACTION", "0.001")

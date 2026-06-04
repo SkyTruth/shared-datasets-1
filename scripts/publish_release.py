@@ -36,15 +36,6 @@ FORMAT_EXTENSIONS = {
     "schema": ".schema.json",
     "manifest": ".manifest.json",
 }
-EXTENSION_FORMATS = {
-    ".fgb": "fgb",
-    ".pmtiles": "pmtiles",
-    ".geojson": "geojson",
-    ".ndgeojson": "ndgeojson",
-    ".csv": "csv",
-    ".tif": "cog",
-    ".tiff": "cog",
-}
 SCHEMA_FORMATS = {"fgb", "geojson", "ndgeojson", "csv"}
 RUN_RECORD_VERSION = 1
 
@@ -128,6 +119,11 @@ def parse_artifact_overrides(values: Iterable[str]) -> dict[str, Path]:
         if not separator or not raw_format or not raw_path:
             raise PublishReleaseError(f"artifact override must be format=/path/file, got: {value!r}")
         format_name = normalize_format(raw_format)
+        if format_name not in SINGLE_OBJECT_FORMATS:
+            supported = ", ".join(sorted(SINGLE_OBJECT_FORMATS))
+            raise PublishReleaseError(
+                f"unsupported artifact format {format_name!r}; use one of: {supported}"
+            )
         if format_name in overrides:
             raise PublishReleaseError(f"duplicate artifact override for format {format_name!r}")
         overrides[format_name] = Path(raw_path)
@@ -157,7 +153,7 @@ def build_publish_plan(
     if row is None:
         raise PublishReleaseError(f"asset slug is not in the catalog: {asset_slug}")
 
-    canonical_format = normalize_format(row.get("canonical_format", ""))
+    canonical_format = normalize_format(required(row, "canonical_format"))
     if canonical_format == "zarr":
         raise PublishReleaseError("publish-release v1 does not support zarr prefix assets")
     if canonical_format not in DATA_OBJECT_FORMATS:
@@ -193,6 +189,13 @@ def build_publish_plan(
             )
 
     allow_stale = {normalize_format(format_name) for format_name in allow_stale_formats}
+    unsupported_allow_stale = sorted(
+        format_name for format_name in allow_stale if format_name not in DATA_OBJECT_FORMATS
+    )
+    if unsupported_allow_stale:
+        raise PublishReleaseError(
+            "unsupported stale format id(s): " + ", ".join(unsupported_allow_stale)
+        )
     expected_formats = set(available_formats) | ({"pmtiles"} if vector_release else set())
     unexpected = sorted(set(local_artifacts) - expected_formats - SUPPORTING_RELEASE_FORMATS)
     if unexpected:
@@ -497,9 +500,11 @@ def build_run_record_payload(
     notes: str,
 ) -> dict[str, Any]:
     return {
+        "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
         "asset_slug": plan.asset_slug,
         "run_date": plan.release_date,
+        "release_date": plan.release_date,
         "published_at": dt.datetime.now(dt.UTC).isoformat(),
         "status": "success",
         "source_version": source_version,
@@ -534,33 +539,13 @@ def result_to_dict(result: PublishResult) -> dict[str, Any]:
 
 
 def normalize_format(value: str) -> str:
-    normalized = value.strip().lower()
-    aliases = {
-        "flatgeobuf": "fgb",
-        ".fgb": "fgb",
-        ".pmtiles": "pmtiles",
-        ".geojson": "geojson",
-        ".ndgeojson": "ndgeojson",
-        ".csv": "csv",
-        ".metadata.ndjson.gz": "metadata",
-        "metadata-sidecar": "metadata",
-        "metadata_sidecar": "metadata",
-        "sidecar": "metadata",
-        ".schema.json": "schema",
-        ".manifest.json": "manifest",
-        "geotiff": "cog",
-        "tif": "cog",
-        "tiff": "cog",
-        ".tif": "cog",
-        ".tiff": "cog",
-    }
-    return aliases.get(normalized, normalized)
+    return value.strip().lower()
 
 
 def normalize_available_formats(row: dict[str, str], canonical_format: str) -> tuple[str, ...]:
     formats = [normalize_format(value) for value in (row.get("available_formats") or "").split(";") if value.strip()]
     if canonical_format not in formats:
-        formats.insert(0, canonical_format)
+        raise PublishReleaseError("catalog available_formats must include canonical_format")
     deduped: list[str] = []
     for format_name in formats:
         if format_name not in deduped:
@@ -726,7 +711,7 @@ def artifact_format_for_path(asset_slug: str, path: Path) -> str | None:
     for format_name, suffix in FORMAT_EXTENSIONS.items():
         if name == f"{asset_slug}{suffix}":
             return format_name
-    return EXTENSION_FORMATS.get(path.suffix.lower())
+    return None
 
 
 def build_metadata_uploads(

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -20,6 +21,23 @@ VALID_FGB_SHA = "a" * 64
 VALID_PMTILES_SHA = "b" * 64
 VALID_METADATA_SHA = "c" * 64
 VALID_SCHEMA_SHA = "d" * 64
+
+
+def runnable_command(command: list[str]) -> bool:
+    executable = shutil.which(command[0])
+    if not executable:
+        return False
+    try:
+        completed = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 class FakeBlob:
@@ -448,11 +466,16 @@ class WdpaMonthlyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    shutil.which("ogrinfo")
-    and shutil.which("ogr2ogr")
-    and shutil.which("tippecanoe")
-    and shutil.which("pmtiles"),
-    "requires GDAL and Tippecanoe binaries",
+    all(
+        runnable_command(command)
+        for command in (
+            ["ogrinfo", "--version"],
+            ["ogr2ogr", "--version"],
+            ["tippecanoe-decode", "--help"],
+            ["pmtiles", "version"],
+        )
+    ),
+    "requires runnable GDAL, tippecanoe-decode, and PMTiles binaries",
 )
 class WdpaMonthlyIntegrationTests(unittest.TestCase):
     def test_fixture_zip_builds_mixed_geometry_outputs(self):

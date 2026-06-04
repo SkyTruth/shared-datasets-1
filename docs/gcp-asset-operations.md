@@ -106,11 +106,12 @@ The standard vector build is:
    scale/resolution hints plus measured geometry detail. Auto maxzoom is the
    default, biases toward detailed presentation, and caps at zoom 12 unless a
    documented high-zoom override is passed.
-3. Stream EPSG:4326 GeoJSONSeq from `ogr2ogr` directly into Tippecanoe for the
-   default PMTiles path. The helper does not materialize a full tiling GeoJSON.
-4. Generate direct `.pmtiles` output with Tippecanoe, explicit tileset name,
-   description, and min/max zoom. Lower than zoom 8 requires source/profile
-   evidence or a documented override.
+3. Build PMTiles through the validated GDAL-to-MBTiles-to-`pmtiles convert`
+   path. Direct Tippecanoe PMTiles generation is disabled until a future
+   Tippecanoe release is validated against the shared-datasets PMTiles checks.
+4. Generate `.pmtiles` output with explicit tileset name, description, and
+   min/max zoom. Lower than zoom 8 requires source/profile evidence or a
+   documented override.
 5. Validate the FGB with `ogrinfo`, the PMTiles archive with `pmtiles verify`
    when available, and a decoded PMTiles sample to confirm feature properties
    are present for the catalog inspector.
@@ -139,6 +140,9 @@ provider/composite/generated `feature_id` construction, `feature_hash`
 calculation, sidecar serialization, sidecar validation, manifest creation, and
 index-load record naming. Sidecars and manifests are canonical GCS artifacts;
 the Firestore index is a rebuildable serving copy loaded from the sidecar.
+Every release-oriented row has a `feature_id`. If the maintainer chooses
+neither a provider ID nor a group ID for `ext_id`, publish `ext_id` as the same
+value as `feature_id`.
 
 To build PMTiles for metadata lookup, project tile properties down to only the
 stable feature ID:
@@ -155,16 +159,16 @@ preserving click-to-metadata joins through the Cloud Run metadata service.
 Generated group IDs are opt-in. Present provider ID candidates and
 grouping/search field candidates before adding `--group-id-field`. Use the
 standard concierge decision table: row/column counts plus likely provider
-`ext_id` options and likely grouping/search/filter options, each with datatype,
-distinction, emptiness, domination, skew ratio, top examples, and concerns. Run
+`ext_id` options, the `feature_id` fallback, and likely grouping/search/filter
+options, each with datatype, distinction, emptiness, domination, skew ratio,
+top examples, and concerns. Run
 exact stats on all local rows when practical; if that is too expensive, use a
 deterministic random sample of about 10,000 rows, not a first-N-row sample. When
 a curator chooses group-level addressing for an asset that lacks a useful
 provider row ID, pass `--group-id-field FIELD` to `scripts/vector_asset.py
 build`, repeating the flag for composite grouping fields. The helper writes
 `shared_datasets_group_id` before FGB creation and validates that the property
-survives into decoded PMTiles features. If Tippecanoe `--include` filters are
-used, include `shared_datasets_group_id`.
+survives into decoded PMTiles features.
 
 If no provider ID or grouping field is suitable and the curator explicitly
 requires row-level addresses, pass `--generate-row-id` instead. This writes
@@ -219,33 +223,25 @@ copy:
 uv run python scripts/vector_asset.py recommend-maxzoom --fgb ./asset.fgb
 ```
 
-For dense point layers where low-zoom completeness matters, pass explicit
-Tippecanoe retention flags instead of allowing feature dropping:
+For dense point layers where low-zoom completeness matters, use the standard
+vector helper path:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.fgb \
   --asset-slug example-points
 ```
 
-The standard Tippecanoe path adds `--no-feature-limit`, `--no-tile-size-limit`,
-and `--drop-rate=1` by default so low-zoom PMTiles previews retain published
-point features.
-
-Do not use Tippecanoe `--exclude-all` for shared-datasets PMTiles. The vector
-helper rejects that flag because it strips feature properties and leaves clicked
-catalog objects with an empty inspector. If a display tile needs fewer
-attributes, use narrower property filters or add compact synthetic properties
-such as `source_layer`.
+Direct Tippecanoe PMTiles generation is disabled because it has produced invalid
+archives. The helper always builds temporary MBTiles with GDAL and converts them
+with `pmtiles convert`; keep that path until a future Tippecanoe version is
+proven to generate valid PMTiles directly.
 
 Use this for point catalogs because shared point PMTiles should keep all point
 features at all generated zoom levels. Expect larger low-zoom tiles and validate
 browser performance before publishing.
 Run the helper through `uv run python` so repo Python dependencies come from the
-project environment. GDAL, Tippecanoe, and PMTiles are external command-line
-tools resolved from `PATH`; the helper records their versions in the build plan.
-Use `--pmtiles-engine gdal-mbtiles` only as an explicit fallback when
-Tippecanoe is unavailable; that path writes temporary MBTiles with GDAL and
-converts them with `pmtiles convert`.
+project environment. GDAL and PMTiles are external command-line tools resolved
+from `PATH`; the helper records their versions in the build plan.
 
 Upload the resulting files with `scripts/gcs_asset.py`; the vector helper never
 mutates Cloud Storage.

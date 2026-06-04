@@ -227,6 +227,18 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
         self.assertEqual(response.status, 401)
 
+    def test_lookup_rejects_forwarded_email_without_iap_identity(self):
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Forwarded-Email": "jona@skytruth.org"},
+            b'{"ids":["src:id:1"]}',
+            release_resolver=FakeResolver(),
+            feature_index=FakeIndex(),
+        )
+
+        self.assertEqual(response.status, 401)
+
     def test_lookup_resolves_latest_filters_fields_and_marks_missing_ids(self):
         response, index = lookup({"ids": ["src:id:1", "src:id:2"], "fields": ["name"], "include_provenance": True})
 

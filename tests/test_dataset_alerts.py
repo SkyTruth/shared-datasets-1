@@ -140,43 +140,22 @@ class DatasetAlertsTests(unittest.TestCase):
             ],
         )
 
-    def test_ogr_schema_falls_back_to_text_output_for_older_gdal(self):
+    def test_ogr_schema_requires_json_output_support(self):
         calls = []
 
         def runner(command, **kwargs):
             calls.append(command)
-            if "-json" in command:
-                return subprocess.CompletedProcess(
-                    command,
-                    1,
-                    stdout="",
-                    stderr="FAILURE: Unknown option name '-json'",
-                )
             return subprocess.CompletedProcess(
                 command,
-                0,
-                stdout=(
-                    "Layer name: land\n"
-                    "Geometry: Multi Polygon\n"
-                    "Feature Count: 11\n"
-                    "featurecla: String (11.0)\n"
-                    "scalerank: Integer (3.0)\n"
-                    "min_zoom: Real (5.1)\n"
-                ),
-                stderr="",
+                1,
+                stdout="",
+                stderr="FAILURE: Unknown option name '-json'",
             )
 
-        schema = dataset_alerts.schema_from_ogr(Path("asset.fgb"), runner=runner)
+        with self.assertRaises(subprocess.CalledProcessError):
+            dataset_alerts.schema_from_ogr(Path("asset.fgb"), runner=runner)
 
-        self.assertEqual(
-            schema,
-            [
-                {"name": "featurecla", "type": "String"},
-                {"name": "scalerank", "type": "Integer"},
-                {"name": "min_zoom", "type": "Real"},
-            ],
-        )
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls, [["ogrinfo", "-ro", "-al", "-so", "-json", "asset.fgb"]])
 
     def test_upload_summary_uses_catalog_values(self):
         title, body, fields = dataset_alerts.build_upload_summary(

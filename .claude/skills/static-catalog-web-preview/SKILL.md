@@ -87,20 +87,16 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
      measured geometry detail. It biases toward detailed presentation and caps
      at zoom 12 by default. Lower than zoom 8 requires source/profile evidence
      or a documented override.
-   - The standard `scripts/vector_asset.py build` Tippecanoe path adds
-     `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` by
-     default so low-zoom tiles retain published point features. Do not override
-     those defaults for point assets unless the human explicitly accepts sparse
-     low-zoom display tiles.
+   - The standard `scripts/vector_asset.py build` path writes temporary MBTiles
+     with GDAL and converts them with `pmtiles convert`. Direct Tippecanoe
+     PMTiles generation is disabled until a future Tippecanoe version is proven
+     to generate valid PMTiles directly.
    - PMTiles display artifacts must preserve the feature properties needed by
      the catalog inspector. For release-oriented metadata lookup assets, the
      required properties are stable `feature_id` and `ext_id`; full
-     attributes and display labels are served from the metadata sidecar/API. Do
-     not use Tippecanoe
-     `--exclude-all`; `scripts/vector_asset.py` rejects it, and manual
-     multi-layer Tippecanoe builds must use the same standard.
-   - For dense point layers, confirm the effective command includes the
-     retention flags:
+     attributes and display labels are served from the metadata sidecar/API.
+   - For dense point layers, confirm the effective command follows the GDAL
+     MBTiles to PMTiles conversion path:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb \

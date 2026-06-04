@@ -24,21 +24,29 @@ VALID_METADATA_SHA = "c" * 64
 VALID_SCHEMA_SHA = "d" * 64
 
 
-def gdal_binaries_work() -> bool:
-    if not (shutil.which("ogrinfo") and shutil.which("ogr2ogr") and shutil.which("tippecanoe")):
+def runnable_command(command: list[str]) -> bool:
+    executable = shutil.which(command[0])
+    if not executable:
         return False
-    for binary in ("ogrinfo", "ogr2ogr", "tippecanoe"):
+    try:
+        completed = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def gdal_binaries_work() -> bool:
+    for command in (["ogrinfo", "--version"], ["ogr2ogr", "--version"], ["pmtiles", "version"]):
         try:
-            completed = subprocess.run(
-                [binary, "--version"],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if completed.returncode != 0:
+            if not runnable_command(command):
+                return False
+        except OSError:
             return False
     return True
 
@@ -303,6 +311,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         release_index.exists = True
         release_index.text = json.dumps(
             {
+                "schema_version": 1,
                 "asset_slug": eamlis.ASSET.slug,
                 "latest_release": {
                     "date": "2026-04-02",
@@ -422,6 +431,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         release_index.exists = True
         release_index.text = json.dumps(
             {
+                "schema_version": 1,
                 "asset_slug": eamlis.ASSET.slug,
                 "latest_release": {
                     "date": "2026-04-02",

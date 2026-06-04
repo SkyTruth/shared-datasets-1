@@ -65,10 +65,9 @@ When changed, the job writes:
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/runs/YYYY-MM-DD.json
 ```
 
-The PMTiles artifact uses Tippecanoe zooms 0 through 8 with
-`--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom
-tiles retain dense point content for visual inspection. The canonical FGB
-remains the analytical source.
+The PMTiles artifact is built by writing GDAL MBTiles at zooms 0 through 8 and
+then converting that archive with `pmtiles convert`. The canonical FGB remains
+the analytical source.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the observed generation. If release objects exist without a run

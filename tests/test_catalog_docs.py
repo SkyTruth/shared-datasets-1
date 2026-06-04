@@ -210,13 +210,10 @@ class CatalogDocsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp))
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             docs = catalog_docs.read_asset_docs(
                 docs_dir=docs_dir,
                 categories=categories,
-                catalog_rows=rows,
-                allow_legacy=False,
             )
 
         row = catalog_docs.catalog_row(docs[0].metadata, "example-bucket")
@@ -374,35 +371,23 @@ files:\n""",
             )
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "mutually exclusive"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
-    def test_legacy_generate_backfills_frontmatter_from_catalog_and_files_table(self):
+    def test_incomplete_legacy_doc_is_rejected_instead_of_backfilled(self):
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), LEGACY_DOC)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
-            docs = catalog_docs.read_asset_docs(
-                docs_dir=docs_dir,
-                categories=categories,
-                catalog_rows=rows,
-                allow_legacy=True,
-            )
-
-        metadata = docs[0].metadata
-        self.assertEqual(metadata["schema_version"], 1)
-        self.assertEqual(metadata["access_tier"], "public")
-        self.assertEqual(metadata["canonical_file"], "latest/example-asset.fgb")
-        self.assertEqual(metadata["available_formats"], ["fgb", "pmtiles"])
-        self.assertEqual(metadata["files"][1]["role"], "companion")
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "files must be a list|schema_version"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories=categories,
+                )
 
     def test_accepts_deprecated_asset_with_lifecycle_guidance(self):
         doc_text = STRICT_DOC.replace("status: active\n", "status: deprecated\n").replace(
@@ -417,13 +402,10 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             docs = catalog_docs.read_asset_docs(
                 docs_dir=docs_dir,
                 categories=categories,
-                catalog_rows=rows,
-                allow_legacy=False,
             )
 
         row = catalog_docs.catalog_row(docs[0].metadata, "example-bucket")
@@ -451,13 +433,10 @@ files:\n""",
                     doc_text = doc_text.replace("notes: Example notes\n", "notes: Example notes\n" + extra_fields)
                 docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
                 categories = catalog_docs.load_categories(categories_path)
-                rows = catalog_docs.load_catalog_rows(catalog_path)
 
                 docs = catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
             self.assertEqual(docs[0].metadata["status"], status)
@@ -502,8 +481,6 @@ files:\n""",
             docs = catalog_docs.read_asset_docs(
                 docs_dir=docs_dir,
                 categories=catalog_docs.load_categories(categories_path),
-                catalog_rows=catalog_docs.load_catalog_rows(catalog_path),
-                allow_legacy=False,
             )
 
         rendered = catalog_docs.render_asset_doc(docs[0])
@@ -518,14 +495,11 @@ files:\n""",
                 STRICT_DOC.replace("status: active\n", "status: scratch\n"),
             )
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "status must be one of"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_non_active_assets_require_lifecycle_fields(self):
@@ -535,14 +509,11 @@ files:\n""",
                 STRICT_DOC.replace("status: active\n", "status: retired\n"),
             )
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "non-active assets require"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_superseded_assets_require_successor_slug(self):
@@ -558,26 +529,20 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), doc_text)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "successor_asset_slug"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_check_detects_stale_generated_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, index_path = write_fixture_tree(Path(tmp))
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
             docs = catalog_docs.read_asset_docs(
                 docs_dir=docs_dir,
                 categories=categories,
-                catalog_rows=rows,
-                allow_legacy=False,
             )
             catalog_docs.generate_outputs(docs=docs, catalog_path=catalog_path, index_path=index_path, bucket="skytruth-shared-datasets-1")
             catalog_path.write_text(catalog_path.read_text().replace("Example Asset", "Stale Asset", 1))
@@ -597,14 +562,11 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaises(catalog_docs.CatalogDocsError):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_invalid_access_tier_fails(self):
@@ -612,14 +574,11 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "access_tier"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_invalid_discovery_bounds_fail(self):
@@ -627,14 +586,11 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "bounds"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_data_profile_requires_field_count(self):
@@ -658,14 +614,11 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "data_profile.field_count is required"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_update_cadence_rejects_unchanged_skip_detail(self):
@@ -673,14 +626,11 @@ files:\n""",
         with tempfile.TemporaryDirectory() as tmp:
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(Path(tmp), bad_doc)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
 
             with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "schedule only"):
                 catalog_docs.read_asset_docs(
                     docs_dir=docs_dir,
                     categories=categories,
-                    catalog_rows=rows,
-                    allow_legacy=False,
                 )
 
     def test_export_readmes_mirrors_asset_root(self):
@@ -688,12 +638,9 @@ files:\n""",
             root = Path(tmp)
             docs_dir, catalog_path, categories_path, _ = write_fixture_tree(root)
             categories = catalog_docs.load_categories(categories_path)
-            rows = catalog_docs.load_catalog_rows(catalog_path)
             docs = catalog_docs.read_asset_docs(
                 docs_dir=docs_dir,
                 categories=categories,
-                catalog_rows=rows,
-                allow_legacy=False,
             )
 
             changed = catalog_docs.export_readmes(docs, root / "export")

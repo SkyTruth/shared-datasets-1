@@ -15,14 +15,12 @@ serving index loaded from that sidecar.
 ## Endpoints
 
 ```http
-POST /v1/assets/{asset_slug}:lookup
-POST /v1/assets/{asset_slug}/releases/{release}:lookup
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
-Omitting the release segment is equivalent to requesting `latest`. Explicit
-`release` is either `latest` or `YYYY-MM-DD`. `latest` resolves to a concrete
-release from `_catalog/releases/{asset_slug}.json`; every successful response
-includes `resolved_release`.
+`release` is either `latest` or `YYYY-MM-DD`. The service resolves the release
+from `_catalog/releases/{slug}.json`; every successful response includes
+`resolved_release`.
 
 The service is IAP-protected for all assets at launch. Consuming browser apps
 should call their own backend, and that backend should call the metadata
@@ -131,7 +129,7 @@ or fetch a translation overlay. It calls the catalog viewer download resolver
 for one metadata sidecar URL:
 
 ```http
-GET /api/download-url?slug={asset_slug}&format=metadata&version={release_or_latest}&locale=es
+GET /api/download-url?slug={slug}&format=metadata&version={release_or_latest}&locale=es
 ```
 
 The resolver first looks for `{asset-slug}.metadata.es.ndjson.gz` in the

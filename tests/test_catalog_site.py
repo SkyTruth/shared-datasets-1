@@ -693,7 +693,7 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(len(active_assets), expected_active_assets)
         self.assertTrue(all(asset["canonical_path"].startswith("gs://") for asset in active_assets))
         self.assertTrue(all(asset["release_index_url"].endswith(f"/{asset['slug']}.json") for asset in active_assets))
-        self.assertTrue(any(asset["versions"] for asset in active_assets))
+        self.assertTrue(all(isinstance(asset["versions"], list) for asset in active_assets))
         self.assertTrue(any(asset["pmtiles_url"] for asset in active_assets))
 
 

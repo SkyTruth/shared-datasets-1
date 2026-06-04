@@ -12,7 +12,7 @@ env:
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
-  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
@@ -44,7 +44,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER or GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
             exit 1
           fi
           if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
@@ -102,16 +102,6 @@ jobs:
           import sys
 
           plan = json.load(open(sys.argv[1]))
-          legacy_preview_project_iam_exact = {
-              "google_project_iam_member.feature_preview_service_firestore_viewer": {
-                  "role": "roles/datastore.viewer",
-                  "member": "serviceAccount:feature-preview-service@shared-datasets-1.iam.gserviceaccount.com",
-              },
-              "google_project_iam_member.feature_preview_loader_firestore_user": {
-                  "role": "roles/datastore.user",
-                  "member": "serviceAccount:feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com",
-              },
-          }
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
               "google_firestore_database.feature_preview",
@@ -122,7 +112,7 @@ jobs:
               "google_cloud_run_v2_service.feature_preview_catalog_viewer",
               "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
               "google_cloud_run_v2_service_iam_member.feature_preview_catalog_viewer_iap_invoker",
-          } | set(legacy_preview_project_iam_exact)
+          }
           allowed_patterns = [
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_service_accessors\["),
               re.compile(r"^google_iap_web_cloud_run_service_iam_member\.feature_preview_catalog_viewer_accessors\["),
@@ -132,10 +122,7 @@ jobs:
               "service": "feature-preview-service",
               "catalog_viewer": "feature-preview-catalog-viewer",
               "database": "feature-preview",
-              "service_account": "feature-preview-service",
-              "index_loader_service_account": "feature-preview-loader",
           }
-          expected_database = "projects/shared-datasets-1/databases/feature-preview"
 
           def planned_values(resource):
               change = resource.get("change", {})
@@ -149,19 +136,6 @@ jobs:
               actual = values.get(key)
               if actual is not None and actual != expected_value:
                   violations.append(f"{address} {key} is {actual!r}, expected {expected_value!r}")
-
-          def validate_legacy_project_iam(violations, address, values):
-              expected_iam = legacy_preview_project_iam_exact[address]
-              require_value(violations, address, values, "project", "shared-datasets-1")
-              require_value(violations, address, values, "role", expected_iam["role"])
-              require_value(violations, address, values, "member", expected_iam["member"])
-              condition = values.get("condition") or []
-              if not condition or not isinstance(condition, list):
-                  violations.append(f"{address} must have a preview Firestore IAM condition")
-                  return
-              expression = condition[0].get("expression", "")
-              if expected_database not in expression:
-                  violations.append(f"{address} condition must be scoped to {expected_database!r}")
 
           blocked = []
           value_violations = []
@@ -193,8 +167,6 @@ jobs:
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["catalog_viewer"])
                   elif address.startswith("google_storage_bucket_iam_member."):
                       require_value(value_violations, address, values, "bucket", expected["bucket"])
-                  elif address in legacy_preview_project_iam_exact:
-                      validate_legacy_project_iam(value_violations, address, values)
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 

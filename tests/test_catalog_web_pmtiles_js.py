@@ -103,6 +103,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         self.assertIn("renderMetadataSidecarPath", app)
         self.assertIn("parseFeatureMetadataSidecar", app)
         self.assertIn("DecompressionStream", app)
+        self.assertNotIn("TextDecoder", app)
         self.assertIn('credentials: "include"', app)
         self.assertNotIn(":lookup", app)
         self.assertNotIn("translation overlay", app.lower())

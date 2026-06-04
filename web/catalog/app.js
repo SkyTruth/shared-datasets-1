@@ -185,22 +185,24 @@ function releaseIndexUrl(asset) {
 }
 
 function applyReleaseIndex(asset, releaseIndex) {
-  if (!releaseIndex || releaseIndex.asset_slug !== asset.slug) return false;
+  if (!releaseIndex || releaseIndex.schema_version !== 1 || releaseIndex.asset_slug !== asset.slug) return false;
   const versions = versionsFromReleaseIndex(asset, releaseIndex);
 
-  if (versions.length) {
-    asset.versions = versions;
-  }
-  asset.latest_release = releaseIndex.latest_release || versions[0];
+  asset.versions = versions;
+  asset.latest_release = releaseIndex.latest_release || null;
   asset.latest_run = releaseIndex.latest_run || null;
   asset.release_index_updated_at = releaseIndex.updated_at || "";
-  const latestVersion = versions.find((version) => version.date === asset.latest_release?.date) || versions[0];
+  const latestDate = String(asset.latest_release?.date || "").trim();
+  if (versions.length && !RELEASE_DATE_RE.test(latestDate)) {
+    throw new Error(`release index for ${asset.slug} is missing latest_release.date`);
+  }
+  const latestVersion = versions.find((version) => version.date === latestDate);
   if (latestVersion) {
     asset.canonical_sha256 = latestVersion.canonical_sha256 || "";
     asset.pmtiles_sha256 = latestVersion.pmtiles_sha256 || "";
   }
-  if (asset.latest_release?.date) {
-    asset.last_updated = asset.latest_release.date;
+  if (latestDate) {
+    asset.last_updated = latestDate;
   }
   return Boolean(versions.length || asset.latest_run);
 }
@@ -211,12 +213,25 @@ function versionsFromReleaseIndex(asset, releaseIndex) {
   const seenDates = new Set();
 
   for (const release of releases) {
+    if (!release || typeof release !== "object") {
+      throw new Error(`release index for ${asset.slug} contains a non-object release`);
+    }
     const date = String(release?.date || "").trim();
-    if (!RELEASE_DATE_RE.test(date) || seenDates.has(date)) continue;
-    const files = Array.isArray(release.files) ? release.files : [];
-    const canonicalFile = releaseFileForFormat(files, asset.canonical_format, asset.canonical_path) || files[0];
+    if (!RELEASE_DATE_RE.test(date)) {
+      throw new Error(`release index for ${asset.slug} contains an invalid release date`);
+    }
+    if (seenDates.has(date)) {
+      throw new Error(`release index for ${asset.slug} contains duplicate release date ${date}`);
+    }
+    if (!Array.isArray(release.files)) {
+      throw new Error(`release index for ${asset.slug} release ${date} is missing files`);
+    }
+    const files = release.files;
+    const canonicalFile = releaseFileForFormat(files, asset.canonical_format, asset.canonical_path);
     const canonicalPath = releaseFilePath(canonicalFile);
-    if (!canonicalPath) continue;
+    if (!canonicalPath) {
+      throw new Error(`release index for ${asset.slug} release ${date} is missing canonical file`);
+    }
 
     const pmtilesFile = releaseFileForFormat(files, "pmtiles", asset.pmtiles_path);
     const pmtilesPath = releaseFilePath(pmtilesFile);
@@ -1351,15 +1366,11 @@ async function downloadFeatureMetadataIndex(assetSlug, release, locale = state.m
 
 async function gzipNdjsonText(response) {
   const payload = await response.arrayBuffer();
-  if ("DecompressionStream" in window) {
-    try {
-      const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream("gzip"));
-      return await new Response(stream).text();
-    } catch (_error) {
-      // Some servers may already decode gzip through Content-Encoding.
-    }
+  if (!("DecompressionStream" in window)) {
+    throw new Error("feature metadata sidecars require gzip decompression support");
   }
-  return new TextDecoder("utf-8").decode(payload);
+  const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
 }
 
 function parseFeatureMetadataSidecar(text) {

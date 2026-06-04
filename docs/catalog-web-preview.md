@@ -61,12 +61,14 @@ docs/assets/*.md
 `catalog.json` is the runtime contract. The browser app does not parse CSV or
 Markdown at runtime.
 
-For assets with `releases/YYYY-MM-DD/...` file entries in `docs/assets/*.md`,
-the generator emits a fallback `versions` array. At runtime, the browser also
-fetches `_catalog/releases/{asset-slug}.json` and replaces that fallback with
-the complete release history from the bucket-side release index. This keeps the
-release selector current after cron jobs run without requiring a Git commit or a
-tracked `last_updated` edit.
+Release history is release-index-backed. When
+`_catalog/releases/{asset-slug}.json` is supplied to the generator,
+`catalog.json` emits the resulting `versions` array as a first-class runtime
+object. If no local release index is supplied, `versions` stays empty instead of
+being derived from asset-doc file tables. At runtime, the browser also fetches
+the adjacent release index and replaces `versions` with that complete release
+history when available. This keeps the release selector current after cron jobs
+run without requiring a Git commit or a tracked `last_updated` edit.
 Release-index-backed `versions[]` entries preserve the complete release
 `files` list, including sidecar datafiles such as feature indexes, metadata
 sidecars, schemas, and manifests.
@@ -97,8 +99,9 @@ metadata sidecars in the release index. The browser asks `/api/download-url` for
 one materialized `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar when present
 or the canonical `{asset-slug}.metadata.ndjson.gz` fallback when absent. The
 browser never fetches a separate translation overlay and does not merge
-translation rows over canonical metadata. In production, private shared-bucket
-metadata responses may use one signed
+translation rows over canonical metadata. Metadata sidecars must be
+`.ndjson.gz`; the browser expects gzip-compressed NDJSON. In production, private
+shared-bucket metadata responses may use one signed
 `https://tiles.skytruth.org/private/{bucket-object-path}` URL; public metadata
 and preview-bucket metadata may continue to use one GCS URL.
 `generated_group_id` records the policy and counts for a native
@@ -126,9 +129,9 @@ downloads are resolved through:
 GET /api/download-url?slug={asset-slug}&format=fgb&version={latest-or-YYYY-MM-DD}
 ```
 
-The endpoint resolves the requested object only from generated catalog metadata
-or the bucket release index, requires an IAP-authenticated SkyTruth identity for
-private assets, and returns a short-lived signed GCS URL:
+The endpoint resolves dated releases from the bucket release index, requires an
+IAP-authenticated SkyTruth identity for private assets, and returns a
+short-lived signed GCS URL:
 
 ```json
 {

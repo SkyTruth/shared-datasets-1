@@ -65,8 +65,7 @@ jobs:
         run: |
           uv run python scripts/admission_check.py \
             --base "${{ github.event.pull_request.base.sha }}" \
-            --head HEAD \
-            --event-path "$GITHUB_EVENT_PATH"
+            --head HEAD
 
       - name: Check repo guardrails for this diff
         if: github.event_name == 'pull_request'

@@ -338,6 +338,12 @@ def handle_feature_lookup(
     feature_max_fields: int,
     feature_max_response_bytes: int,
 ) -> Response:
+    if method != "OPTIONS":
+        email = authenticated_user_email(headers)
+        if not email:
+            return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
+        if not email_domain_allowed(email, allowed_email_domains):
+            return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
     resolver = feature_release_resolver or feature_preview_run.CatalogReleaseResolver(bucket_name=bucket_name)
     index = feature_index or feature_preview_run.GcsSidecarFeatureIndex(bucket_name=bucket_name)
     return feature_preview_run.handle_request(
@@ -539,59 +545,35 @@ def resolve_metadata_sidecar_gs_uri(
     normalized_locale = normalize_metadata_locale(locale)
 
     release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index:
-        releases = release_index.get("releases") or []
-        if version == "latest":
-            latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
-            latest_date = str(latest.get("date") or "") if latest else ""
-            release = (release_index_release(release_index, latest_date) if latest_date else None) or latest
-            if release is None and isinstance(releases, list) and releases and isinstance(releases[0], Mapping):
-                release = releases[0]
-        else:
-            release = release_index_release(release_index, version)
-        if release:
-            gs_uri = release_file_for_metadata_locale(release.get("files"), normalized_locale)
-            if gs_uri:
-                return gs_uri
-
-    versions = asset.get("versions") or []
-    if isinstance(versions, list):
-        target_date = version
-        if version == "latest":
-            latest = asset.get("latest_release") if isinstance(asset.get("latest_release"), Mapping) else None
-            target_date = str(latest.get("date") or "") if latest else ""
-            if not target_date and versions and isinstance(versions[0], Mapping):
-                target_date = str(versions[0].get("date") or "")
-        for candidate in versions:
-            if not isinstance(candidate, Mapping):
-                continue
-            if str(candidate.get("date") or "") != target_date:
-                continue
-            gs_uri = release_file_for_metadata_locale(candidate.get("files"), normalized_locale)
-            if gs_uri:
-                return gs_uri
+    if release_index is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    if version == "latest":
+        latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
+        latest_date = str(latest.get("date") or "") if latest else ""
+        if not DATE_RE.fullmatch(latest_date):
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest_release.date is invalid")
+        release = release_index_release(release_index, latest_date) or latest
+    else:
+        release = release_index_release(release_index, version)
+    if release:
+        gs_uri = release_file_for_metadata_locale(release.get("files"), normalized_locale)
+        if gs_uri:
+            return gs_uri
 
     raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a metadata sidecar")
 
 
 def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
     release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index:
-        release = release_index_release(release_index, version)
-        if release:
-            gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
-            if not gs_uri:
-                raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
-            return gs_uri
-
-    versions = asset.get("versions") or []
-    if isinstance(versions, list):
-        for candidate in versions:
-            if not isinstance(candidate, Mapping):
-                continue
-            if str(candidate.get("date") or "") == version:
-                return str(candidate.get("canonical_path") or "").strip()
-    return ""
+    if release_index is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    release = release_index_release(release_index, version)
+    if not release:
+        return ""
+    gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
+    if not gs_uri:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
+    return gs_uri
 
 
 def release_file_for_role(files: Any, role: str, suffix: str) -> str:
@@ -682,8 +664,10 @@ def read_release_index(object_store: ObjectStore, slug: str) -> Mapping[str, Any
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid") from exc
     if not isinstance(payload, Mapping):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid")
+    if payload.get("schema_version") != 1:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index schema_version is invalid")
     release_slug = str(payload.get("asset_slug") or "")
-    if release_slug and release_slug != slug:
+    if release_slug != slug:
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index asset slug does not match")
     return payload
 
@@ -770,7 +754,7 @@ def first_query_value(path: str, key: str) -> str:
 
 
 def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or header_value(headers, "X-Forwarded-Email") or ""
+    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
     raw = raw.strip()
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
@@ -897,8 +881,7 @@ def metadata_cdn_signer_from_env(bucket_name: str) -> UrlSigner | None:
             "CATALOG_VIEWER_METADATA_CDN_BASE_URL, CATALOG_VIEWER_CDN_SIGNING_KEY_NAME, "
             "and CATALOG_VIEWER_CDN_SIGNING_SECRET_ID must be set together"
         )
-    secret_version = os.environ.get("CATALOG_VIEWER_CDN_SIGNING_SECRET_VERSION", "latest").strip() or "latest"
-    secret_name = secret_manager_version_name(secret_id, secret_version)
+    secret_name = secret_manager_version_name(secret_id)
     encoded_key = read_secret_manager_text(secret_name)
     return CloudCdnSignedUrlSigner(
         bucket_name=bucket_name,
@@ -908,17 +891,14 @@ def metadata_cdn_signer_from_env(bucket_name: str) -> UrlSigner | None:
     )
 
 
-def secret_manager_version_name(secret_id: str, version: str) -> str:
+def secret_manager_version_name(secret_id: str) -> str:
     secret_id = secret_id.strip().strip("/")
-    version = (version or "latest").strip() or "latest"
-    if secret_id.startswith("projects/") and "/versions/" in secret_id:
-        return secret_id
-    if secret_id.startswith("projects/"):
-        return f"{secret_id}/versions/{version}"
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
-    if not project:
-        raise ValueError("GOOGLE_CLOUD_PROJECT is required when the CDN signing secret id is not fully qualified")
-    return f"projects/{project}/secrets/{secret_id}/versions/{version}"
+    if not re.fullmatch(r"projects/[^/]+/secrets/[^/]+/versions/[^/]+", secret_id):
+        raise ValueError(
+            "CATALOG_VIEWER_CDN_SIGNING_SECRET_ID must be a full Secret Manager version resource "
+            "like projects/{project}/secrets/{secret}/versions/{version}"
+        )
+    return secret_id
 
 
 def read_secret_manager_text(version_name: str) -> str:

@@ -545,7 +545,7 @@ def as_int(value: Any) -> int | None:
 
 
 def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or header_value(headers, "X-Forwarded-Email") or ""
+    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
     raw = raw.strip()
     if ":" in raw:
         raw = raw.rsplit(":", 1)[-1]
