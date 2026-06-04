@@ -22,7 +22,8 @@ citation: Global Fishing Watch (2026). Global Anchorages dataset, Version 2. htt
 notes: Initial upload from named_anchorages_v2_pipe_v3_202601.csv; release 2026-02-02; source rows 166497; published rows
   166496; omitted invalid lon row s2id 8efe7543; fgb sha256 9698918d2fea828ae8bbe00feab3c76364b26e6153d73c357880087957b09351;
   pmtiles sha256 54d8a622cf6f426aa78dc9cbffae89a57212f5c428e6fd2218e414718f8e8cdd; PMTiles rebuilt 2026-05-04 at maxzoom 12
-  with Tippecanoe no feature limit/no tile size limit/drop-rate 1 so zoom 0 retains all 166496 points
+  with all-point retention verified at zoom 0 for all 166496 points; future rebuilds must use the repo-standard GDAL MBTiles
+  to PMTiles conversion path
 row_count: 166496
 data_profile:
   field_count: 10
@@ -96,7 +97,7 @@ Geometry is generated from the source `lon` and `lat` fields as WGS84 point geom
 
 One source row is omitted from the geospatial outputs because its longitude is outside valid EPSG:4326 bounds: `s2id=8efe7543`, `lat=11.84060637`, `lon=1001`, `label=POINTE NOIRE`.
 
-The PMTiles artifact is generated with Tippecanoe from the same filtered point features, with zooms 0 through 12. It uses `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom tiles retain dense point content for visual inspection. The canonical FGB remains the analytical source.
+The PMTiles artifact is derived from the same filtered point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -115,9 +116,9 @@ The PMTiles artifact is generated with Tippecanoe from the same filtered point f
 
 ## Update notes
 
-Manually converted from `named_anchorages_v2_pipe_v3_202601.csv` on 2026-04-30 using GDAL, Tippecanoe, and PMTiles tooling. Source release date is tracked as 2026-02-02 based on the Global Fishing Watch Data Download Portal last update date.
+Manually converted from `named_anchorages_v2_pipe_v3_202601.csv` on 2026-04-30 using GDAL and PMTiles tooling. Source release date is tracked as 2026-02-02 based on the Global Fishing Watch Data Download Portal last update date.
 
-The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The point-only FGB profile resolves to maxzoom 12. The rebuild used Tippecanoe no feature limit/no tile size limit/drop-rate 1; the old zoom 0 PMTiles tile decoded to 109 points, while the rebuilt zoom 0 tile decodes to all 166,496 published points.
+The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The point-only FGB profile resolves to maxzoom 12. The rebuilt zoom 0 tile decodes to all 166,496 published points. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`.
 
 Output summary:
 

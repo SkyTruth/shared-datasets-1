@@ -27,8 +27,6 @@ Optional environment:
 RUN_DATE=YYYY-MM-DD
 SEA_ICE_SOURCE_URL_TEMPLATE=https://noaadata.apps.nsidc.org/NOAA/G02156/GIS/4km/{yyyy}/{file_name}
 SEA_ICE_MAX_LOOKBACK_DAYS=14
-TIPPECANOE_ZOOM_ARGS="-Z0 -z8"
-TIPPECANOE_EXTRA_ARGS="--drop-densest-as-needed --extend-zooms-if-still-dropping"
 ```
 
 `RUN_DATE` is the source lookup anchor. The job probes backward from that date

@@ -85,7 +85,7 @@ treated as the source of full feature attributes. Use the PMTiles `feature_id`
 property to request metadata through an app-owned backend route that calls:
 
 ```http
-POST /v1/assets/{asset_slug}/releases/{release}:lookup
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 ## Catalog Helpers
@@ -333,7 +333,6 @@ The default cookie settings target SkyTruth's PMTiles CDN:
 
 - cookie name: `Cloud-CDN-Cookie`
 - cookie domain: `.skytruth.org`
-- legacy clear path: `/pmtiles`
 - private cookie path: `/pmtiles/private`
 - private URL prefix: `https://tiles.skytruth.org/pmtiles/private/`
 - signing key name: `shared-datasets-pmtiles-v1`

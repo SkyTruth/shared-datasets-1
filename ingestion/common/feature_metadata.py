@@ -14,6 +14,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from scripts import release_feature_model
 
 FEATURE_ID_COLUMN = "feature_id"
+EXT_ID_COLUMN = "ext_id"
 FEATURE_HASH_COLUMN = "feature_hash"
 FEATURE_ID_ALGORITHM = "shared-datasets-feature-id:v1"
 FEATURE_HASH_ALGORITHM = "sha256:canonical-feature-content:v1"
@@ -77,6 +78,20 @@ def content_feature_hash(*, geometry: Mapping[str, Any] | None, properties: Mapp
     return "sha256:" + sha256_hex(canonical_json({"geometry": geometry, "properties": dict(sorted(properties.items()))}))
 
 
+def resolve_ext_id(
+    properties: Mapping[str, Any],
+    *,
+    feature_id: str,
+    ext_id_field: str | None = None,
+) -> str:
+    if ext_id_field:
+        value = str(properties.get(ext_id_field) or "").strip()
+        if not value:
+            raise RuntimeError(f"selected ext_id field {ext_id_field!r} is blank")
+        return value
+    return feature_id
+
+
 def iter_geojsonseq(path: Path):
     with path.open(encoding="utf-8") as file_obj:
         for line_number, line in enumerate(file_obj, start=1):
@@ -118,6 +133,7 @@ def enrich_features_with_provider_ids(
     release: str,
     id_field: str,
     provenance: Mapping[str, Any],
+    ext_id_field: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     enriched: list[dict[str, Any]] = []
     sidecar_records: list[dict[str, Any]] = []
@@ -129,9 +145,11 @@ def enrich_features_with_provider_ids(
         if feature_id in seen:
             raise RuntimeError(f"duplicate {id_field} feature ID in {asset_slug}: {raw_id}")
         seen.add(feature_id)
-        feature_hash = content_feature_hash(geometry=feature.get("geometry"), properties=source_properties)
+        ext_id = resolve_ext_id(source_properties, feature_id=feature_id, ext_id_field=ext_id_field)
+        metadata_properties = {**source_properties, EXT_ID_COLUMN: ext_id}
+        feature_hash = content_feature_hash(geometry=feature.get("geometry"), properties=metadata_properties)
         published_properties = {
-            **source_properties,
+            **metadata_properties,
             FEATURE_ID_COLUMN: feature_id,
             FEATURE_HASH_COLUMN: feature_hash,
         }
@@ -148,8 +166,13 @@ def enrich_features_with_provider_ids(
                 release=release,
                 feature_id=feature_id,
                 feature_hash=feature_hash,
-                properties=source_properties,
-                provenance={**dict(provenance), "source_row_number": index, "id_field": id_field},
+                properties=metadata_properties,
+                provenance={
+                    **dict(provenance),
+                    "source_row_number": index,
+                    "id_field": id_field,
+                    "ext_id_field": ext_id_field or FEATURE_ID_COLUMN,
+                },
             )
         )
     if not sidecar_records:
@@ -163,6 +186,7 @@ def enrich_features_with_generated_ids(
     asset_slug: str,
     release: str,
     provenance: Mapping[str, Any],
+    ext_id_field: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     enriched: list[dict[str, Any]] = []
     sidecar_records: list[dict[str, Any]] = []
@@ -178,9 +202,11 @@ def enrich_features_with_generated_ids(
         if feature_id in seen:
             raise RuntimeError(f"duplicate generated feature_id in {asset_slug}: geometry_digest {geometry_digest}")
         seen.add(feature_id)
-        feature_hash = content_feature_hash(geometry=geometry, properties=source_properties)
+        ext_id = resolve_ext_id(source_properties, feature_id=feature_id, ext_id_field=ext_id_field)
+        metadata_properties = {**source_properties, EXT_ID_COLUMN: ext_id}
+        feature_hash = content_feature_hash(geometry=geometry, properties=metadata_properties)
         published_properties = {
-            **source_properties,
+            **metadata_properties,
             FEATURE_ID_COLUMN: feature_id,
             FEATURE_HASH_COLUMN: feature_hash,
         }
@@ -198,11 +224,12 @@ def enrich_features_with_generated_ids(
                 release=release,
                 feature_id=feature_id,
                 feature_hash=feature_hash,
-                properties=source_properties,
+                properties=metadata_properties,
                 provenance={
                     **dict(provenance),
                     "geometry_digest": geometry_digest,
                     "source_row_number": ordinal,
+                    "ext_id_field": ext_id_field or FEATURE_ID_COLUMN,
                 },
             )
         )

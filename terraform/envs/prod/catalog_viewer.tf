@@ -116,12 +116,7 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
 
       env {
         name  = "CATALOG_VIEWER_CDN_SIGNING_SECRET_ID"
-        value = google_secret_manager_secret.pmtiles_cdn_signed_request_key.id
-      }
-
-      env {
-        name  = "CATALOG_VIEWER_CDN_SIGNING_SECRET_VERSION"
-        value = "latest"
+        value = "${google_secret_manager_secret.pmtiles_cdn_signed_request_key.id}/versions/latest"
       }
 
       env {

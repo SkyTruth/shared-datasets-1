@@ -3,7 +3,6 @@ import crypto from 'node:crypto';
 export type PmtilesCdnSessionConfig = {
   cookieName: string;
   cookieDomain: string;
-  legacyPath: string;
   privatePath: string;
   ttlSeconds: number;
   privateUrlPrefix: string;
@@ -20,7 +19,6 @@ export const DEFAULT_PMTILES_CDN_SIGNING_KEY_BYTES = 16;
 export const DEFAULT_PMTILES_CDN_SESSION_CONFIG: PmtilesCdnSessionConfig = {
   cookieName: 'Cloud-CDN-Cookie',
   cookieDomain: '.skytruth.org',
-  legacyPath: '/pmtiles',
   privatePath: '/pmtiles/private',
   ttlSeconds: 24 * 60 * 60,
   privateUrlPrefix: 'https://tiles.skytruth.org/pmtiles/private/',
@@ -85,10 +83,7 @@ export const getExpiredPmtilesCookies = (
   config?: Partial<PmtilesCdnSessionConfig>
 ) => {
   const resolvedConfig = getConfig(config);
-  return [
-    getExpiredPmtilesCookie(resolvedConfig.legacyPath, resolvedConfig),
-    getExpiredPmtilesCookie(resolvedConfig.privatePath, resolvedConfig)
-  ];
+  return [getExpiredPmtilesCookie(resolvedConfig.privatePath, resolvedConfig)];
 };
 
 const signedCookieValue = ({
@@ -123,7 +118,6 @@ export const getPrivatePmtilesSessionCookies = (
   const expiresDate = new Date(expires * 1000).toUTCString();
 
   return [
-    getExpiredPmtilesCookie(resolvedConfig.legacyPath, resolvedConfig),
     `${resolvedConfig.cookieName}=${value}; ${getPmtilesCookieAttributes(resolvedConfig.privatePath, resolvedConfig)}; Max-Age=${resolvedConfig.ttlSeconds}; Expires=${expiresDate}`
   ];
 };

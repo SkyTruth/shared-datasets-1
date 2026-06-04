@@ -195,13 +195,16 @@ class GcsPublisherTests(unittest.TestCase):
         blob.exists = True
         blob.text = json.dumps(
             {
+                "schema_version": 1,
                 "asset_slug": asset.slug,
                 "run_date": run_date.isoformat(),
+                "release_date": run_date.isoformat(),
                 "status": "success",
                 "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
                 "release_paths": [
                     {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
                 ],
+                "row_count": 10,
             }
         )
 
@@ -226,8 +229,10 @@ class GcsPublisherTests(unittest.TestCase):
         run_record.generation = 12
         run_record.text = json.dumps(
             {
+                "schema_version": 1,
                 "asset_slug": asset.slug,
                 "run_date": run_date.isoformat(),
+                "release_date": run_date.isoformat(),
                 "status": "success",
                 "source_version": "source-v1",
                 "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
@@ -237,7 +242,7 @@ class GcsPublisherTests(unittest.TestCase):
                         "generation": 3,
                     },
                 ],
-                "rows": 10,
+                "row_count": 10,
             }
         )
         stale_index = bucket.blob("_catalog/releases/test-asset.json")
@@ -277,8 +282,10 @@ class GcsPublisherTests(unittest.TestCase):
         run_record.exists = True
         run_record.text = json.dumps(
             {
+                "schema_version": 1,
                 "asset_slug": asset.slug,
                 "run_date": run_date.isoformat(),
+                "release_date": run_date.isoformat(),
                 "status": "success",
                 "latest_paths": [
                     {
@@ -320,8 +327,10 @@ class GcsPublisherTests(unittest.TestCase):
         asset = FakeAsset()
         run_date = dt.date(2026, 5, 1)
         payload = {
+            "schema_version": 1,
             "asset_slug": asset.slug,
             "run_date": run_date.isoformat(),
+            "release_date": run_date.isoformat(),
             "status": "success",
             "source_version": "source-v1",
             "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
@@ -329,7 +338,7 @@ class GcsPublisherTests(unittest.TestCase):
                 {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb", "generation": 2},
                 {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.pmtiles", "generation": 3},
             ],
-            "rows": 10,
+            "row_count": 10,
             "sha256": {"fgb": "abc", "pmtiles": "def"},
         }
 
@@ -350,8 +359,10 @@ class GcsPublisherTests(unittest.TestCase):
             asset=asset,
             run_date=run_date,
             payload={
+                "schema_version": 1,
                 "asset_slug": asset.slug,
                 "run_date": run_date.isoformat(),
+                "release_date": run_date.isoformat(),
                 "status": "skipped",
                 "reason": "source unchanged",
             },
@@ -376,6 +387,84 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(len(index["releases"]), 1)
         self.assertEqual(index["latest_release"]["date"], "2026-05-01")
 
+    def test_successful_run_record_requires_modern_schema_fields(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "schema_version"):
+            release_index.record_successful_release(
+                bucket,
+                asset.slug,
+                {
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "status": "success",
+                    "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                    "release_paths": [
+                        {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
+                    ],
+                    "rows": 10,
+                },
+            )
+
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "release_date"):
+            release_index.record_successful_release(
+                bucket,
+                asset.slug,
+                {
+                    "schema_version": 1,
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "status": "success",
+                    "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                    "release_paths": [
+                        {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
+                    ],
+                    "row_count": 10,
+                },
+            )
+
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "row_count"):
+            release_index.record_successful_release(
+                bucket,
+                asset.slug,
+                {
+                    "schema_version": 1,
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "release_date": run_date.isoformat(),
+                    "status": "success",
+                    "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                    "release_paths": [
+                        {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
+                    ],
+                },
+            )
+
+    def test_release_paths_must_use_path_entries_not_legacy_aliases(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "missing path"):
+            release_index.record_successful_release(
+                bucket,
+                asset.slug,
+                {
+                    "schema_version": 1,
+                    "asset_slug": asset.slug,
+                    "run_date": run_date.isoformat(),
+                    "release_date": run_date.isoformat(),
+                    "status": "success",
+                    "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                    "release_paths": [
+                        {"uri": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb"},
+                    ],
+                    "row_count": 10,
+                },
+            )
+
     def test_release_index_update_retries_generation_mismatch(self):
         bucket = FakeBucket()
         attempts = []
@@ -391,7 +480,13 @@ class GcsPublisherTests(unittest.TestCase):
             info = release_index.record_latest_run(
                 bucket,
                 "test-asset",
-                {"asset_slug": "test-asset", "run_date": "2026-05-01", "status": "skipped"},
+                {
+                    "schema_version": 1,
+                    "asset_slug": "test-asset",
+                    "run_date": "2026-05-01",
+                    "release_date": "2026-05-01",
+                    "status": "skipped",
+                },
             )
 
         self.assertEqual(len(attempts), 2)
@@ -494,6 +589,8 @@ class GcsPublisherTests(unittest.TestCase):
             {
                 "asset_slug": "test-asset",
                 "run_date": "2026-05-01",
+                "schema_version": 1,
+                "release_date": "2026-05-01",
                 "status": "success",
                 "release_path": "gs://test-bucket/asset/releases/2026-05-01/",
                 "release_paths": [
@@ -508,6 +605,7 @@ class GcsPublisherTests(unittest.TestCase):
                         "size": 2,
                     },
                 ],
+                "row_count": 10,
                 "sha256": {"fgb": "fgbsha", "pmtiles": "oldpmtiles"},
             }
         )

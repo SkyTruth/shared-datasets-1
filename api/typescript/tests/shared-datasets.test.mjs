@@ -49,6 +49,9 @@ const catalogFixture = {
       consumer_guidance: ' Keep this layer visible by default. ',
       description: ' Example description ',
       docs_url: ' docs/assets/example-public-layer.md ',
+      available_formats: [' fgb ', ' PMTiles '],
+      has_csv: false,
+      has_geojson: false,
       has_pmtiles: true,
       last_updated: ' 2026-01-15 ',
       latest_release: { date: '2026-01-15' },
@@ -88,24 +91,33 @@ const catalogFixture = {
     },
     {
       access_tier: 'private',
-      asset_slug: 'example-private-layer',
-      available_formats: 'fgb; pmtiles',
+      available_formats: ['fgb', 'pmtiles'],
+      has_csv: false,
+      has_geojson: false,
+      has_pmtiles: true,
       pmtiles_url:
         'https://tiles.skytruth.org/pmtiles/private/example-private-layer.pmtiles',
+      slug: 'example-private-layer',
       title: ''
     },
     {
       access_tier: 'public',
-      asset_slug: 'example-table',
-      available_formats: 'csv',
-      pmtiles_url: null
+      available_formats: ['csv'],
+      has_csv: true,
+      has_geojson: false,
+      has_pmtiles: false,
+      pmtiles_url: null,
+      slug: 'example-table'
     },
     {
       access_tier: 'internal',
-      asset_slug: 'invalid-tier-layer',
-      has_pmtiles: 'true',
+      available_formats: ['pmtiles'],
+      has_csv: false,
+      has_geojson: false,
+      has_pmtiles: true,
       pmtiles_url:
-        'https://tiles.skytruth.org/pmtiles/private/invalid-tier-layer.pmtiles'
+        'https://tiles.skytruth.org/pmtiles/private/invalid-tier-layer.pmtiles',
+      slug: 'invalid-tier-layer'
     }
   ]
 };
@@ -136,7 +148,6 @@ test('keeps SkyTruth PMTiles CDN and catalog defaults', () => {
   assert.deepEqual(DEFAULT_PMTILES_CDN_SESSION_CONFIG, {
     cookieDomain: '.skytruth.org',
     cookieName: 'Cloud-CDN-Cookie',
-    legacyPath: '/pmtiles',
     now: DEFAULT_PMTILES_CDN_SESSION_CONFIG.now,
     privatePath: '/pmtiles/private',
     privateUrlPrefix: 'https://tiles.skytruth.org/pmtiles/private/',
@@ -144,25 +155,23 @@ test('keeps SkyTruth PMTiles CDN and catalog defaults', () => {
     ttlSeconds: 24 * 60 * 60
   });
   assert.deepEqual(getExpiredPmtilesCookies(), [
-    'Cloud-CDN-Cookie=; Domain=.skytruth.org; Path=/pmtiles; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
     'Cloud-CDN-Cookie=; Domain=.skytruth.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
   ]);
 
   const privateCookie = getPrivatePmtilesSessionCookies(Buffer.alloc(16, 1), {
     now: () => 1_700_000_000_000
-  })[1];
+  })[0];
   assert.match(privateCookie, /^Cloud-CDN-Cookie=/);
   assert.match(privateCookie, /Path=\/pmtiles\/private/);
   assert.match(privateCookie, /Max-Age=86400/);
   assert.match(privateCookie, /KeyName=shared-datasets-pmtiles-v1/);
 });
 
-test('creates signed private PMTiles CDN cookies and clears legacy cookies', () => {
+test('creates signed private PMTiles CDN cookies and clears private cookies', () => {
   const signingKey = Buffer.alloc(16, 7);
   const config = {
     cookieName: 'Test-CDN-Cookie',
     cookieDomain: '.example.org',
-    legacyPath: '/pmtiles',
     privatePath: '/pmtiles/private',
     ttlSeconds: 60,
     privateUrlPrefix: 'https://tiles.example.org/pmtiles/private/',
@@ -171,18 +180,13 @@ test('creates signed private PMTiles CDN cookies and clears legacy cookies', () 
   };
 
   assert.deepEqual(getExpiredPmtilesCookies(config), [
-    'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
     'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
   ]);
 
   const cookies = getPrivatePmtilesSessionCookies(signingKey, config);
-  assert.equal(cookies.length, 2);
-  assert.equal(
-    cookies[0],
-    'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
-  );
+  assert.equal(cookies.length, 1);
 
-  const privateCookie = cookies[1];
+  const privateCookie = cookies[0];
   const cookieValue = privateCookie.match(/^Test-CDN-Cookie=([^;]+);/)?.[1];
   assert.ok(cookieValue);
 
@@ -404,6 +408,57 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
     () => parseSharedDatasetsCatalogJson({ rows: [] }),
     SharedDatasetCatalogResolutionError
   );
+  assert.throws(
+    () =>
+      parseSharedDatasetsCatalogJson({
+        assets: [
+          {
+            access_tier: 'public',
+            asset_slug: 'legacy-layer',
+            available_formats: ['fgb', 'pmtiles'],
+            has_csv: false,
+            has_geojson: false,
+            has_pmtiles: true,
+            pmtiles_url: 'https://tiles.skytruth.org/pmtiles/public/legacy-layer.pmtiles'
+          }
+        ]
+      }),
+    /slug/
+  );
+  assert.throws(
+    () =>
+      parseSharedDatasetsCatalogJson({
+        assets: [
+          {
+            access_tier: 'public',
+            available_formats: 'fgb;pmtiles',
+            has_csv: false,
+            has_geojson: false,
+            has_pmtiles: true,
+            pmtiles_url: 'https://tiles.skytruth.org/pmtiles/public/legacy-layer.pmtiles',
+            slug: 'legacy-layer'
+          }
+        ]
+      }),
+    /available_formats/
+  );
+  assert.throws(
+    () =>
+      parseSharedDatasetsCatalogJson({
+        assets: [
+          {
+            access_tier: 'public',
+            available_formats: ['fgb', 'pmtiles'],
+            has_csv: false,
+            has_geojson: false,
+            has_pmtiles: 'true',
+            pmtiles_url: 'https://tiles.skytruth.org/pmtiles/public/legacy-layer.pmtiles',
+            slug: 'legacy-layer'
+          }
+        ]
+      }),
+    /has_pmtiles/
+  );
   assert.equal(
     normalizeSharedDatasetAssetSlug(' Example-Public-Layer '),
     'example-public-layer'
@@ -517,7 +572,7 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
   );
   await assert.rejects(
     () => resolveSharedDatasetPmtilesRef('', { fetchJson: async () => catalogFixture }),
-    /missing asset_slug/
+    /missing slug/
   );
 });
 

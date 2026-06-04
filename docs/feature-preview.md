@@ -90,9 +90,6 @@ preview-resource allowlist, and applies only that saved destroy plan. This
 removes the preview Cloud Run services, preview bucket contents, preview
 Firestore database, preview IAM bindings owned by the preview root. It does not
 delete the stable preview service accounts or loader Workload Identity binding.
-It may delete the same legacy preview-scoped Firestore project IAM bindings
-described above so the preview state can converge onto the protected IAM sync
-workflow.
 
 ## Preview Catalog Viewer
 

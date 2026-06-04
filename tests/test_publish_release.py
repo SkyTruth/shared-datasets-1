@@ -256,6 +256,30 @@ class PublishReleaseTests(unittest.TestCase):
                     schema_compatibility_checker=skip_schema_compatibility,
                 )
 
+    def test_artifact_override_format_must_be_canonical_id(self):
+        with self.assertRaisesRegex(publish_release.PublishReleaseError, "unsupported artifact format"):
+            publish_release.parse_artifact_overrides([".fgb=/tmp/example-asset.fgb"])
+        with self.assertRaisesRegex(publish_release.PublishReleaseError, "unsupported artifact format"):
+            publish_release.parse_artifact_overrides(["sidecar=/tmp/example-asset.metadata.ndjson.gz"])
+
+    def test_catalog_available_formats_must_include_canonical_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="pmtiles")
+            artifacts = write_vector_bundle(tmp_path)
+
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "available_formats"):
+                publish_release.build_publish_plan(
+                    asset_slug="example-asset",
+                    release_date="2026-05-01",
+                    publish_dir=None,
+                    artifact_overrides=artifacts,
+                    catalog_path=catalog,
+                    client=FakeClient(FakeBucket()),
+                    schema_reader=lambda _path: [],
+                    schema_compatibility_checker=skip_schema_compatibility,
+                )
+
     def test_partial_release_blocks_publish_before_latest_uploads(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

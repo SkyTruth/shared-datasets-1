@@ -264,8 +264,6 @@ def infer_slug(source: Path) -> str:
 def infer_format(source: Path, explicit: str | None) -> str:
     if explicit:
         normalized = explicit.strip().lower()
-        aliases = {"flatgeobuf": "fgb", "geotiff": "cog", "tif": "cog", "tiff": "cog"}
-        normalized = aliases.get(normalized, normalized)
         if normalized not in SUPPORTED_CANONICAL_FORMATS:
             raise ConciergeError(f"unsupported canonical format: {explicit!r}")
         return normalized
@@ -1046,7 +1044,6 @@ def build_plan(
     access_tier: str,
     bucket: str,
     release_date: str | None,
-    with_pmtiles: bool,
     source_resolution_meters: float | None = None,
     source_scale_denominator: float | None = None,
     pmtiles_maxzoom: int | None = None,
@@ -1172,8 +1169,6 @@ def build_plan(
             "PMTiles maxzoom is resolved after the canonical FGB is generated and profiled; "
             "the concierge does not assume a fallback zoom."
         )
-        if with_pmtiles:
-            notes.append("--with-pmtiles is retained for compatibility; PMTiles is automatic for FGB assets.")
         if any(
             value is not None
             for value in (
@@ -1184,8 +1179,6 @@ def build_plan(
             )
         ):
             notes.append("PMTiles source/detail hints were included in the vector build command.")
-    elif with_pmtiles:
-        notes.append("--with-pmtiles has no effect outside vector FGB assets.")
 
     return ConciergePlan(
         asset_slug=slug,
@@ -1604,6 +1597,7 @@ def commands_for_settle_contract(state: dict[str, Any]) -> list[str]:
 def commands_for_profile_fields(state: dict[str, Any]) -> list[str]:
     return [
         "Review `plan.curator_field_options` in `status --json` output.",
+        "Choose whether ext_id comes from a selected provider ID, selected group ID, or the always-present feature_id fallback.",
         "If planning-time profile was unavailable, profile the canonical artifact after conversion before confirming.",
     ]
 
@@ -1759,6 +1753,9 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
     row = require_non_empty_string(evidence, "generated_row_id_decision")
     if row not in {"not-needed", "approved", "rejected", "deferred"}:
         raise WorkflowError("evidence.generated_row_id_decision must be not-needed, approved, rejected, or deferred")
+    ext_id_decision = require_non_empty_string(evidence, "ext_id_decision")
+    if ext_id_decision not in {"provider-id", "group-id", "feature-id"}:
+        raise WorkflowError("evidence.ext_id_decision must be provider-id, group-id, or feature-id")
     normalized = {
         "decision_table_present": True,
         "profile_scope": profile_scope,
@@ -1767,6 +1764,8 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
         "generated_group_id_decision": group,
         "group_id_fields": require_string_list(evidence, "group_id_fields", allow_empty=group != "approved"),
         "generated_row_id_decision": row,
+        "ext_id_decision": ext_id_decision,
+        "ext_id_fields": require_string_list(evidence, "ext_id_fields", allow_empty=ext_id_decision == "feature-id"),
         "search_fields": require_string_list(evidence, "search_fields", allow_empty=True),
         "notes": str(evidence.get("notes", "")).strip(),
     }
@@ -1774,6 +1773,12 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
         raise WorkflowError("generated group ID and generated row ID cannot both be approved")
     if provider == "use-provider-id" and (group == "approved" or row == "approved"):
         raise WorkflowError("do not approve generated IDs when a provider ID is selected")
+    if ext_id_decision == "provider-id" and provider != "use-provider-id":
+        raise WorkflowError("evidence.ext_id_decision=provider-id requires provider_id_decision=use-provider-id")
+    if ext_id_decision == "group-id" and group != "approved":
+        raise WorkflowError("evidence.ext_id_decision=group-id requires generated_group_id_decision=approved")
+    if ext_id_decision == "feature-id" and normalized["ext_id_fields"]:
+        raise WorkflowError("evidence.ext_id_fields must be empty when ext_id_decision=feature-id")
     return normalized
 
 
@@ -2138,6 +2143,8 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "generated_group_id_decision": "not-needed|approved|deferred",
             "group_id_fields": ["string"],
             "generated_row_id_decision": "not-needed|approved|rejected|deferred",
+            "ext_id_decision": "provider-id|group-id|feature-id",
+            "ext_id_fields": ["string"],
             "search_fields": ["string"],
         },
         commands_for_profile_fields,
@@ -2460,11 +2467,6 @@ def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--access-tier", default="public", choices=["public", "private"])
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--release-date", help="Optional intended release date in YYYY-MM-DD form.")
-    parser.add_argument(
-        "--with-pmtiles",
-        action="store_true",
-        help="Compatibility flag; PMTiles companions are planned automatically for vector FGB assets.",
-    )
     parser.add_argument("--source-resolution-meters", type=float, help="Optional source resolution hint for PMTiles auto maxzoom.")
     parser.add_argument("--source-scale-denominator", type=float, help="Optional source scale denominator hint for PMTiles auto maxzoom.")
     parser.add_argument("--pmtiles-maxzoom", type=int, help="Optional explicit PMTiles maxzoom hint.")
@@ -2494,7 +2496,6 @@ def plan_from_args(args: argparse.Namespace) -> ConciergePlan:
         access_tier=args.access_tier,
         bucket=args.bucket,
         release_date=args.release_date,
-        with_pmtiles=args.with_pmtiles,
         source_resolution_meters=args.source_resolution_meters,
         source_scale_denominator=args.source_scale_denominator,
         pmtiles_maxzoom=args.pmtiles_maxzoom,
@@ -2680,62 +2681,13 @@ def build_workflow_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_legacy_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "The JSON plan includes curator_field_options with a compact decision table for likely provider ext_id "
-            "and grouping/search/filter candidates, plus the last-resort shared_datasets_row_id fallback option. "
-            "Exact stats are computed for local sources at or below "
-            f"{PROFILE_RANDOM_SAMPLE_SIZE:,} rows; larger sources use a deterministic random sample. Override the "
-            "sample size with SHARED_DATASETS_PROFILE_SAMPLE_SIZE."
-        ),
-    )
-    add_plan_arguments(parser)
-    parser.add_argument("--write-draft-doc", action="store_true", help="Write docs/assets/{asset_slug}.md locally.")
-    parser.add_argument("--overwrite-doc", action="store_true", help="Allow replacing an existing draft asset doc.")
-    parser.add_argument("--run-catalog-check", action="store_true", help="Run catalog_docs.py check after planning.")
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
-    if not argv_list or argv_list[0] in WORKFLOW_COMMANDS or argv_list[0] in {"-h", "--help"}:
-        parser = build_workflow_parser()
-        args = parser.parse_args(argv_list)
-        try:
-            return args.func(args)
-        except (ConciergeError, WorkflowError) as exc:
-            print(f"publishing-concierge: {exc}", file=sys.stderr)
-            return 2
-
-    parser = build_legacy_parser()
+    parser = build_workflow_parser()
     args = parser.parse_args(argv_list)
     try:
-        plan = plan_from_args(args)
-        if args.write_draft_doc:
-            write_draft_doc(
-                Path(plan.asset_doc_path),
-                draft_asset_doc(
-                    plan,
-                    owner=args.owner,
-                    source_name=args.source_name,
-                    license_text=args.license_text,
-                    citation=args.citation,
-                    update_cadence=args.update_cadence,
-                    access_tier=args.access_tier,
-                ),
-                overwrite=args.overwrite_doc,
-            )
-        payload = asdict(plan)
-        if args.write_draft_doc:
-            payload["draft_doc_written"] = plan.asset_doc_path
-        print(json.dumps(payload, indent=2))
-        if args.run_catalog_check:
-            return run_catalog_check()
-        return 0
-    except ConciergeError as exc:
+        return args.func(args)
+    except (ConciergeError, WorkflowError) as exc:
         print(f"publishing-concierge: {exc}", file=sys.stderr)
         return 2
 

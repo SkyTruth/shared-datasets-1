@@ -66,15 +66,15 @@ def empty_release_index(asset_slug: str) -> dict[str, Any]:
 
 
 def coerce_release_index(payload: dict[str, Any] | None, asset_slug: str) -> dict[str, Any]:
-    index = copy.deepcopy(payload) if payload else empty_release_index(asset_slug)
+    if payload is None:
+        return empty_release_index(asset_slug)
+    index = copy.deepcopy(payload)
     if not isinstance(index, dict):
         raise ReleaseIndexError("release index payload must be a JSON object")
-    if index.get("schema_version") not in (None, SCHEMA_VERSION):
+    if index.get("schema_version") != SCHEMA_VERSION:
         raise ReleaseIndexError(f"unsupported release index schema_version: {index.get('schema_version')!r}")
-    if index.get("asset_slug") not in (None, "", asset_slug):
+    if index.get("asset_slug") != asset_slug:
         raise ReleaseIndexError(f"release index asset_slug does not match {asset_slug!r}")
-    index["schema_version"] = SCHEMA_VERSION
-    index["asset_slug"] = asset_slug
     index.setdefault("updated_at", "")
     index.setdefault("latest_release", None)
     index.setdefault("latest_run", None)
@@ -151,18 +151,18 @@ def metadata_locale_from_path(path: str) -> str:
 
 
 def path_from_info(value: Any) -> str:
-    if isinstance(value, str):
-        return value
     if isinstance(value, dict):
-        return str(value.get("path") or value.get("uri") or value.get("release_uri") or "")
+        return str(value.get("path") or "")
     return ""
 
 
 def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = None) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        raise ReleaseIndexError("release path entries must be JSON objects")
     path = path_from_info(value)
     if not path:
-        return None
-    format_name = str((value or {}).get("format") or infer_format(path)) if isinstance(value, dict) else infer_format(path)
+        raise ReleaseIndexError("release path entry is missing path")
+    format_name = str(value.get("format") or infer_format(path))
     entry: dict[str, Any] = {
         "path": path,
         "format": format_name,
@@ -171,10 +171,9 @@ def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = Non
     if locale:
         entry["role"] = "metadata"
         entry["locale"] = locale
-    if isinstance(value, dict):
-        for key in ("generation", "size", "content_type", "sha256"):
-            if value.get(key) is not None:
-                entry[key] = value[key]
+    for key in ("generation", "size", "content_type", "sha256"):
+        if value.get(key) is not None:
+            entry[key] = value[key]
     sha = (sha256_by_format or {}).get(format_name)
     if sha and "sha256" not in entry:
         entry["sha256"] = sha
@@ -199,32 +198,15 @@ def sha256_by_format(record: dict[str, Any]) -> dict[str, str]:
 def files_from_run_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     by_format = sha256_by_format(record)
     files: list[dict[str, Any]] = []
-    artifact_by_path = {
-        str(item.get("release_uri")): item
-        for item in record.get("artifacts") or []
-        if isinstance(item, dict) and item.get("release_uri")
-    }
-    for value in record.get("release_paths") or []:
-        if isinstance(value, dict) and value.get("path") in artifact_by_path:
-            value = {**artifact_by_path[value["path"]], **value}
+    release_paths = record.get("release_paths")
+    if not isinstance(release_paths, list):
+        raise ReleaseIndexError("successful run record is missing release_paths")
+    for value in release_paths:
         entry = blob_file_entry(value, sha256_by_format=by_format)
         if entry:
             files.append(entry)
     if not files:
-        for artifact in record.get("artifacts") or []:
-            if not isinstance(artifact, dict):
-                continue
-            entry = blob_file_entry(
-                {
-                    "path": artifact.get("release_uri"),
-                    "format": artifact.get("format"),
-                    "size": artifact.get("size"),
-                    "content_type": artifact.get("content_type"),
-                },
-                sha256_by_format=by_format,
-            )
-            if entry:
-                files.append(entry)
+        raise ReleaseIndexError("successful run record release_paths must not be empty")
     return sorted(files, key=lambda item: (item.get("format", ""), item.get("path", "")))
 
 
@@ -242,15 +224,19 @@ def run_entry_from_record(
     *,
     run_record_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    run_date = str(record.get("run_date") or record.get("release_date") or "")
+    if record.get("schema_version") != SCHEMA_VERSION:
+        raise ReleaseIndexError(f"unsupported run record schema_version: {record.get('schema_version')!r}")
+    release_date = str(record.get("release_date") or "")
+    if not release_date:
+        raise ReleaseIndexError("run record is missing release_date")
     entry: dict[str, Any] = {
-        "date": run_date,
+        "date": release_date,
         "status": str(record.get("status") or ""),
         "source_version": str(record.get("source_version") or ""),
         "reason": str(record.get("reason") or ""),
         "release_path": str(record.get("release_path") or ""),
         "run_record_path": run_record_path(record, run_record_info),
-        "rows": record.get("rows", record.get("row_count")),
+        "rows": record.get("row_count"),
     }
     return {key: value for key, value in entry.items() if value not in ("", None)}
 
@@ -260,18 +246,22 @@ def release_entry_from_record(
     *,
     run_record_info: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if record.get("schema_version") != SCHEMA_VERSION:
+        raise ReleaseIndexError(f"unsupported run record schema_version: {record.get('schema_version')!r}")
     if record.get("status") != "success":
         raise ReleaseIndexError("only successful run records can produce release entries")
-    run_date = str(record.get("run_date") or record.get("release_date") or "")
-    if not run_date:
-        raise ReleaseIndexError("successful run record is missing run_date")
+    if "row_count" not in record:
+        raise ReleaseIndexError("successful run record is missing row_count")
+    release_date = str(record.get("release_date") or "")
+    if not release_date:
+        raise ReleaseIndexError("successful run record is missing release_date")
     files = files_from_run_record(record)
     return {
-        "date": run_date,
+        "date": release_date,
         "release_path": str(record.get("release_path") or ""),
         "files": files,
         "run_record_path": run_record_path(record, run_record_info),
-        "rows": record.get("rows", record.get("row_count")),
+        "rows": record.get("row_count"),
         "source_version": str(record.get("source_version") or ""),
     }
 
@@ -404,7 +394,7 @@ def build_index_from_records(
 ) -> dict[str, Any]:
     index = empty_release_index(asset_slug)
     latest_run: dict[str, Any] | None = None
-    for record, run_record_info in sorted(records, key=lambda item: str(item[0].get("run_date") or "")):
+    for record, run_record_info in sorted(records, key=lambda item: str(item[0].get("release_date") or "")):
         run_entry = run_entry_from_record(record, run_record_info=run_record_info)
         if run_entry and (not latest_run or str(run_entry.get("date", "")) >= str(latest_run.get("date", ""))):
             latest_run = run_entry
@@ -457,7 +447,11 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             record = json.loads(blob.download_as_text())
         except (json.JSONDecodeError, NotFound):
             continue
-        run_date = str(record.get("run_date") or Path(blob.name).stem)
+        if record.get("schema_version") != SCHEMA_VERSION:
+            continue
+        run_date = str(record.get("release_date") or "")
+        if not run_date:
+            continue
         if record.get("status") == "success":
             successful_run_dates.add(run_date)
             release_entries = release_file_entries_from_blobs(
@@ -492,10 +486,12 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
         records.append(
             (
                 {
-                    "run_date": release_date,
+                    "schema_version": SCHEMA_VERSION,
+                    "release_date": release_date,
                     "status": "success",
                     "release_path": f"gs://{bucket.name}/{asset_root}/releases/{release_date}/",
                     "release_paths": release_entries,
+                    "row_count": None,
                 },
                 None,
             )

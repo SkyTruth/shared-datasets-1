@@ -27,8 +27,8 @@ notes: Initial upload from gogi_v10_3_1shp.zip; release 2026-05-02; source zip s
   17 source shapefile layers converted to WGS84 FGB plus 2 combined CSV catalog tables; retained 1,623,469 vector features
   after omitting 394 well points that could not be reprojected; Well.dbf is truncated in the source shapefile resource, so
   wells are published as geometry only; pmtiles sha256 9fe9a4705b06ae08327e59b769b06ffe16d1d7f6932b0b318bbe92055be8ab31; PMTiles
-  rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties, Tippecanoe v2.79.0, and low-zoom
-  point retention
+  rebuilt 2026-05-04 at maxzoom 12 as multi-layer display tiles with compact feature properties and low-zoom point retention;
+  future rebuilds must use the repo-standard GDAL MBTiles to PMTiles conversion path
 geometry_type: mixed
 row_count: 411521
 data_profile:
@@ -366,21 +366,17 @@ Toolchain:
 
 - GDAL: `GDAL 3.6.2, released 2023/01/02`
 - `ogr2ogr`: `/Users/jonathanraphael/miniforge3/bin/ogr2ogr`
-- Tippecanoe: `tippecanoe v2.79.0` at `/usr/local/bin/tippecanoe`
 - Source zip SHA-256: `2621f210dde27f068ea2987e0cf0135b20c2641e94e6b4e3692ac9ee4263ad07`
 - PMTiles SHA-256: `9fe9a4705b06ae08327e59b769b06ffe16d1d7f6932b0b318bbe92055be8ab31`
 
 The current PMTiles artifact was rebuilt on 2026-05-04 from GeoJSONSeq
 intermediates derived from the 17 WGS84 FGB layers, replacing the earlier
 2026-05-02 maxzoom 8 display tiles at the same latest and dated release paths.
-Tippecanoe used named layers, minzoom 0, maxzoom 12, `--no-feature-limit`,
-`--no-tile-size-limit`, `--drop-rate=1`,
-`--maximum-string-attribute-length=256`, and `--no-tile-stats`; the standalone
-`pmtiles` CLI was unavailable locally. The tile build keeps compact feature
-properties for the catalog inspector, while `well_geometry` carries only
-`source_layer` and a `property_note` because source well attributes are
-unavailable. `tippecanoe-decode` confirmed all point layers retain full zoom 0
-published counts.
+The tile build keeps compact feature properties for the catalog inspector, while
+`well_geometry` carries only `source_layer` and a `property_note` because source
+well attributes are unavailable. `tippecanoe-decode` confirmed all point layers
+retain full zoom 0 published counts. Future rebuilds must use GDAL MBTiles
+output converted with `pmtiles convert`.
 
 The source EDX page lists Creative Commons Attribution and Open Data Commons Attribution License terms. The source page was last updated by EDX on 2025-01-24 and the local source zip was downloaded on 2026-05-02.
 

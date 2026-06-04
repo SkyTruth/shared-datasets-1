@@ -71,7 +71,7 @@ PMTiles carry geometry plus `feature_id` only; callers that need full attributes
 should call the IAP-protected metadata API:
 
 ```http
-POST /v1/assets/{asset_slug}/releases/{release}:lookup
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 Use `release=latest` only for convenience and persist the response
@@ -190,7 +190,7 @@ Common errors:
 | Error | Meaning |
 |---|---|
 | `CatalogLoadError` | Catalog could not be loaded or parsed. Check source URL, ADC, IAM, and network access. |
-| `DatasetNotFoundError` | Unknown `asset_slug`. Refresh the catalog or fix the slug. |
+| `DatasetNotFoundError` | Unknown slug. Refresh the catalog or fix the slug. |
 | `UnsupportedFormatError` | The asset does not publish the requested format. Check `available_formats`. |
 | `UnsupportedVersionError` | Requested version is not `latest` and not an indexed `YYYY-MM-DD` release. |
 | `FetchError` | Object download failed. Check IAM, object existence, network, and cache filesystem permissions. |

@@ -76,11 +76,11 @@ class FakeGcsClient:
 
 
 class SharedDatasetSdkTests(unittest.TestCase):
-    def test_packaged_catalog_source_is_not_supported(self):
+    def test_packaged_catalog_source_is_treated_as_a_regular_path(self):
         with self.assertRaises(CatalogLoadError) as raised:
             Catalog.load(source="packaged")
 
-        self.assertIn("Packaged catalog snapshots are no longer shipped", str(raised.exception))
+        self.assertIn("Could not load catalog from packaged", str(raised.exception))
 
     def test_loads_catalog_from_local_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,6 +152,23 @@ class SharedDatasetSdkTests(unittest.TestCase):
             with self.assertRaises(CatalogLoadError):
                 Catalog.load()
 
+    def test_catalog_rows_require_explicit_access_tier_and_available_formats(self):
+        missing_access_tier = FIXTURE_CSV.replace(
+            "active,,,,,public,SkyTruth",
+            "active,,,,,,SkyTruth",
+            1,
+        )
+        with self.assertRaisesRegex(CatalogLoadError, "access_tier"):
+            Catalog.from_csv_text(missing_access_tier)
+
+        missing_canonical_format = FIXTURE_CSV.replace(
+            "fgb,fgb;pmtiles;geojson",
+            "fgb,pmtiles;geojson",
+            1,
+        )
+        with self.assertRaisesRegex(CatalogLoadError, "available_formats"):
+            Catalog.from_csv_text(missing_canonical_format)
+
     def test_default_load_raises_on_catalog_permission_failures(self):
         for status_code in (403, 404):
             with self.subTest(status_code=status_code):
@@ -173,6 +190,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         self.assertEqual(catalog.get("example-vector").slug, "example-vector")
         self.assertEqual([asset.slug for asset in catalog.search(category="100-geographic-reference")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(format="pmtiles")], ["example-vector"])
+        self.assertEqual(catalog.search(format=".fgb"), [])
         self.assertEqual([asset.slug for asset in catalog.search(access_tier="public")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(status=None)], ["example-vector", "example-table"])
         with self.assertRaises(DatasetNotFoundError):
@@ -188,35 +206,46 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(url, "https://tiles.skytruth.org/_catalog/releases/example%20asset.json")
 
-    def test_resolve_supports_canonical_and_companion_formats(self):
+    def test_resolve_supports_canonical_latest_only_from_csv_catalog(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
 
         fgb = catalog.resolve("example-vector", format="fgb")
-        pmtiles = catalog.resolve("example-vector", format="pmtiles")
-        geojson = catalog.resolve("example-vector", format="geojson")
 
         self.assertEqual(fgb.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb")
         self.assertIsNone(fgb.cache_path)
         self.assertEqual(fgb.resolved_id, "example-vector@latest")
-        self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
-        self.assertEqual(pmtiles.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
-        self.assertEqual(pmtiles.access_tier, "public")
-        self.assertEqual(geojson.url, "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.geojson")
+        with self.assertRaisesRegex(UnsupportedFormatError, "release-index file entry"):
+            catalog.resolve("example-vector", format="pmtiles")
+        with self.assertRaises(UnsupportedFormatError):
+            catalog.resolve("example-vector", format=".fgb")
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format="csv")
         with self.assertRaises(UnsupportedVersionError):
             catalog.resolve("example-vector", version="2026-4-30")
 
     def test_resolve_cdn_url_keeps_canonical_gs_uri(self):
-        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        pmtiles_csv = FIXTURE_CSV.replace(
+            "example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson",
+            "example-vector/latest/example-vector.pmtiles,pmtiles,pmtiles",
+            1,
+        )
+        catalog = Catalog.from_csv_text(pmtiles_csv)
 
         pmtiles = catalog.resolve("example-vector", format="pmtiles", web_base_url="/pmtiles")
 
-        self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
+        self.assertEqual(
+            pmtiles.gs_uri,
+            "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles",
+        )
         self.assertEqual(pmtiles.url, "/pmtiles/public/example-vector.pmtiles")
 
     def test_resolve_pmtiles_can_force_public_gcs_url(self):
-        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        pmtiles_csv = FIXTURE_CSV.replace(
+            "example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson",
+            "example-vector/latest/example-vector.pmtiles,pmtiles,pmtiles",
+            1,
+        )
+        catalog = Catalog.from_csv_text(pmtiles_csv)
 
         pmtiles = catalog.resolve("example-vector", format="pmtiles", url_strategy="public_gcs")
 
@@ -283,6 +312,34 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 access="gcs",
                 client=client,
                 web_base_url="/pmtiles",
+            )
+
+    def test_dated_resolve_requires_release_index_file_paths(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        release_index = {
+            "asset_slug": "example-vector",
+            "releases": [
+                {
+                    "date": "2026-04-30",
+                    "files": [{"format": "pmtiles"}],
+                }
+            ],
+        }
+        client = FakeGcsClient(
+            {
+                ("example-bucket", "_catalog/releases/example-vector.json"): FakeGcsBlob(
+                    text=json.dumps(release_index)
+                )
+            }
+        )
+
+        with self.assertRaisesRegex(CatalogLoadError, "missing an explicit path"):
+            catalog.resolve(
+                "example-vector",
+                format="pmtiles",
+                version="2026-04-30",
+                access="gcs",
+                client=client,
             )
 
     def test_public_versions_use_tiles_catalog_endpoint(self):
@@ -408,7 +465,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ref = resolve_dataset(
                 "example-vector",
-                "pmtiles",
+                "fgb",
                 client=client,
                 catalog_source="gs://example-bucket/catalog.csv",
             )
@@ -425,7 +482,10 @@ class SharedDatasetSdkTests(unittest.TestCase):
             assert path is not None
             self.assertEqual(path.read_bytes(), b"magic gcs bytes")
 
-        self.assertEqual(ref.url, f"{DEFAULT_PMTILES_CDN_BASE_URL}/public/example-vector.pmtiles")
+        self.assertEqual(
+            ref.url,
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb",
+        )
         self.assertEqual(fetched_ref.last_updated, "")
         self.assertEqual(fetched_ref.resolved_id, "example-vector@latest")
         self.assertEqual(

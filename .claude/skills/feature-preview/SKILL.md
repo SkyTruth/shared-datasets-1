@@ -80,7 +80,7 @@ For vector preview releases, the expected bundle normally includes:
 
 Validate PMTiles with the same standard as canonical publish artifacts before
 uploading or marking the preview bundle successful. Do not trust a `.pmtiles`
-filename, a successful Tippecanoe exit code, or a still-running long tile build.
+filename, a successful tile-builder exit code, or a still-running long tile build.
 When a tool writes an output named `.pmtiles`, check the first bytes as soon as
 the file exists; stop immediately if the header is `SQLite format 3`. Prefer an
 explicit `.mbtiles` intermediate when the tool emits SQLite, then convert it

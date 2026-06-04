@@ -55,20 +55,21 @@ export type SharedDatasetCatalogRef = SharedDatasetPmtilesRef &
 
 export type SharedDatasetsCatalogAsset = {
   access_tier?: string | null;
-  asset_slug?: string | null;
-  available_formats?: string[] | string | null;
+  available_formats: string[];
   citation?: string | null;
   consumer_guidance?: string | null;
   description?: string | null;
   docs_url?: string | null;
-  has_pmtiles?: boolean | string | null;
+  has_csv: boolean;
+  has_geojson: boolean;
+  has_pmtiles: boolean;
   last_updated?: string | null;
   latest_release?: Record<string, unknown> | null;
   localized_names?: SharedDatasetLocalizedNames | null;
   license?: string | null;
   pmtiles_url?: string | null;
   release_index_url?: string | null;
-  slug?: string | null;
+  slug: string;
   source?: string | null;
   source_url?: string | null;
   status?: string | null;
@@ -76,7 +77,7 @@ export type SharedDatasetsCatalogAsset = {
 };
 
 export type SharedDatasetsCatalogJson = {
-  assets?: SharedDatasetsCatalogAsset[];
+  assets: SharedDatasetsCatalogAsset[];
 };
 
 export type FetchSharedDatasetCatalogJson = (url: string) => Promise<unknown>;
@@ -120,28 +121,67 @@ export const getSharedDatasetAccessTier = (
   return tier === 'public' || tier === 'private' ? tier : null;
 };
 
+const requireCatalogString = (
+  value: unknown,
+  fieldName: string,
+  index: number
+) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new SharedDatasetCatalogResolutionError(
+      `Unable to parse shared datasets catalog: assets[${index}].${fieldName} must be a non-empty string`
+    );
+  }
+};
+
+const requireCatalogBoolean = (
+  value: unknown,
+  fieldName: string,
+  index: number
+) => {
+  if (typeof value !== 'boolean') {
+    throw new SharedDatasetCatalogResolutionError(
+      `Unable to parse shared datasets catalog: assets[${index}].${fieldName} must be a boolean`
+    );
+  }
+};
+
+const requireCatalogFormats = (
+  value: unknown,
+  fieldName: string,
+  index: number
+) => {
+  if (!Array.isArray(value) || value.some(format => typeof format !== 'string')) {
+    throw new SharedDatasetCatalogResolutionError(
+      `Unable to parse shared datasets catalog: assets[${index}].${fieldName} must be an array of strings`
+    );
+  }
+};
+
+const validateCatalogAsset = (asset: unknown, index: number) => {
+  const record = cleanCatalogObject(asset);
+  if (!record) {
+    throw new SharedDatasetCatalogResolutionError(
+      `Unable to parse shared datasets catalog: assets[${index}] must be an object`
+    );
+  }
+  requireCatalogString(record.slug, 'slug', index);
+  requireCatalogFormats(record.available_formats, 'available_formats', index);
+  requireCatalogBoolean(record.has_pmtiles, 'has_pmtiles', index);
+  requireCatalogBoolean(record.has_geojson, 'has_geojson', index);
+  requireCatalogBoolean(record.has_csv, 'has_csv', index);
+};
+
 const getCatalogAssetSlug = (asset: SharedDatasetsCatalogAsset) =>
-  normalizeSharedDatasetAssetSlug(asset.slug ?? asset.asset_slug);
+  normalizeSharedDatasetAssetSlug(asset.slug);
 
 const getCatalogFormats = (asset: SharedDatasetsCatalogAsset) => {
-  const formats = asset.available_formats;
-  if (Array.isArray(formats)) {
-    return formats.map(format => format.trim().toLowerCase()).filter(Boolean);
-  }
-
-  return (formats ?? '')
-    .split(/[;,]/)
+  return asset.available_formats
     .map(format => format.trim().toLowerCase())
     .filter(Boolean);
 };
 
 const catalogAssetHasPmtiles = (asset: SharedDatasetsCatalogAsset) =>
-  asset.has_pmtiles === true ||
-  String(asset.has_pmtiles ?? '')
-    .trim()
-    .toLowerCase() === 'true' ||
-  getCatalogFormats(asset).includes('pmtiles') ||
-  !!asset.pmtiles_url;
+  asset.has_pmtiles && getCatalogFormats(asset).includes('pmtiles');
 
 const getCatalogSharedDatasetRef = (
   asset: SharedDatasetsCatalogAsset
@@ -188,7 +228,9 @@ export const parseSharedDatasetsCatalogJson = (
     );
   }
 
-  return catalogJson as SharedDatasetsCatalogJson;
+  const parsedCatalogJson = catalogJson as SharedDatasetsCatalogJson;
+  parsedCatalogJson.assets.forEach(validateCatalogAsset);
+  return parsedCatalogJson;
 };
 
 const getRequestedSlugs = (assetSlugs: Array<string | null | undefined>) =>
@@ -207,7 +249,7 @@ export const resolveSharedDatasetPmtilesRefsFromCatalogJson = (
   if (requestedSlugs && !requestedSlugs.size) return {};
 
   const refs: Record<string, SharedDatasetCatalogRef> = {};
-  parseSharedDatasetsCatalogJson(catalogJson).assets?.forEach(asset => {
+  parseSharedDatasetsCatalogJson(catalogJson).assets.forEach(asset => {
     const sharedDatasetRef = getCatalogSharedDatasetRef(asset);
     if (!sharedDatasetRef) return;
 
@@ -277,7 +319,7 @@ export const resolveSharedDatasetPmtilesRef = async (
   const normalizedSlug = normalizeSharedDatasetAssetSlug(assetSlug);
   if (!normalizedSlug) {
     throw new SharedDatasetCatalogResolutionError(
-      'Unable to resolve shared dataset PMTiles ref: missing asset_slug'
+      'Unable to resolve shared dataset PMTiles ref: missing slug'
     );
   }
 

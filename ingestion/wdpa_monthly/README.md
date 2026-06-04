@@ -38,8 +38,6 @@ Optional environment:
 ```bash
 RUN_DATE=YYYY-MM-DD
 WDPA_SOURCE_URL_TEMPLATE=https://d1gam3xoknrgr2.cloudfront.net/current/WDPA_WDOECM_{month_token}_Public_all_shp.zip
-TIPPECANOE_EXTRA_ARGS="--drop-densest-as-needed --extend-zooms-if-still-dropping"
-TIPPECANOE_ZOOM_ARGS="-Z0 -z8"
 ```
 
 `RUN_DATE` controls the release date and source month token. When `RUN_DATE` is

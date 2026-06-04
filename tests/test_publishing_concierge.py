@@ -147,6 +147,8 @@ class PublishingConciergeTests(unittest.TestCase):
                     "generated_group_id_decision": "not-needed",
                     "group_id_fields": [],
                     "generated_row_id_decision": "not-needed",
+                    "ext_id_decision": "provider-id",
+                    "ext_id_fields": ["source_id"],
                     "search_fields": ["NAME"],
                 },
             ),
@@ -319,7 +321,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date="2026-05-01",
-                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -363,7 +364,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date=None,
-                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -375,6 +375,34 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertIn("Confirm license or terms.", plan.blocking_questions)
         self.assertIn("Confirm citation for the original source publication.", plan.blocking_questions)
         self.assertTrue(any("geometry-free" in note for note in plan.notes))
+
+    def test_plan_rejects_noncanonical_format_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "source.fgb"
+            source.write_text("placeholder")
+
+            with self.assertRaisesRegex(publishing_concierge.ConciergeError, "unsupported canonical format"):
+                publishing_concierge.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    title="Example Asset",
+                    category="100-geographic-reference",
+                    subcategory="110-boundaries",
+                    owner="SkyTruth",
+                    source_name="Example source",
+                    license_text="Example license",
+                    citation="Example citation",
+                    update_cadence="manual",
+                    canonical_format="flatgeobuf",
+                    access_tier="public",
+                    bucket="example-bucket",
+                    release_date="2026-05-01",
+                    categories_path=categories,
+                    docs_dir=root / "docs/assets",
+                )
 
     def test_curator_field_options_profile_csv_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -404,7 +432,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date=None,
-                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -447,6 +474,28 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(disc_profile.datatype, "integer")
         self.assertEqual(disc_profile.empty_values, 1)
         self.assertEqual(disc_profile.sentinel_value_count, 1)
+
+    def test_profile_field_evidence_accepts_feature_id_ext_id_fallback(self):
+        state = {}
+
+        normalized = publishing_concierge.validate_profile_fields(
+            state,
+            {
+                "decision_table_present": True,
+                "profile_scope": "full",
+                "provider_id_decision": "none-suitable",
+                "provider_id_fields": [],
+                "generated_group_id_decision": "not-needed",
+                "group_id_fields": [],
+                "generated_row_id_decision": "approved",
+                "ext_id_decision": "feature-id",
+                "ext_id_fields": [],
+                "search_fields": ["NAME"],
+            },
+        )
+
+        self.assertEqual(normalized["ext_id_decision"], "feature-id")
+        self.assertEqual(normalized["ext_id_fields"], [])
 
     def test_petrodata_like_recommendations_keep_table_compact(self):
         rows = []
@@ -518,7 +567,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date=None,
-                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -574,7 +622,6 @@ class PublishingConciergeTests(unittest.TestCase):
                     access_tier="public",
                     bucket="example-bucket",
                     release_date=None,
-                    with_pmtiles=False,
                     categories_path=categories,
                     docs_dir=root / "docs/assets",
                 )
@@ -615,7 +662,6 @@ class PublishingConciergeTests(unittest.TestCase):
                     access_tier="public",
                     bucket="example-bucket",
                     release_date=None,
-                    with_pmtiles=False,
                     categories_path=categories,
                     docs_dir=root / "docs/assets",
                 )
@@ -652,7 +698,6 @@ class PublishingConciergeTests(unittest.TestCase):
                     access_tier="public",
                     bucket="example-bucket",
                     release_date=None,
-                    with_pmtiles=False,
                     categories_path=categories,
                     docs_dir=root / "docs/assets",
                 )
@@ -683,7 +728,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date=None,
-                with_pmtiles=False,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -702,7 +746,7 @@ class PublishingConciergeTests(unittest.TestCase):
             with self.assertRaisesRegex(publishing_concierge.ConciergeError, "refusing to overwrite"):
                 publishing_concierge.write_draft_doc(path, "draft", overwrite=False)
 
-    def test_main_outputs_json_plan(self):
+    def test_main_requires_workflow_subcommand(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             categories = root / "categories.yaml"
@@ -710,32 +754,19 @@ class PublishingConciergeTests(unittest.TestCase):
             source = root / "source.shp"
             source.write_text("placeholder")
 
-            exit_code = publishing_concierge.main(
-                [
-                    str(source),
-                    "--asset-slug",
-                    "example-asset",
-                    "--category",
-                    "100-geographic-reference",
-                    "--subcategory",
-                    "110-boundaries",
-                    "--source-name",
-                    "Example source",
-                    "--license",
-                    "Example license",
-                    "--citation",
-                    "Example citation",
-                    "--categories",
-                    str(categories),
-                    "--docs-dir",
-                    str(root / "docs/assets"),
-                    "--with-pmtiles",
-                    "--release-date",
-                    "2026-05-01",
-                ]
-            )
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as exc:
+                    publishing_concierge.main(
+                        [
+                            str(source),
+                            "--asset-slug",
+                            "example-asset",
+                            "--category",
+                            "100-geographic-reference",
+                        ]
+                    )
 
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exc.exception.code, 2)
 
     def test_start_creates_default_state_file_under_temp_workspace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -920,6 +951,8 @@ class PublishingConciergeTests(unittest.TestCase):
                     "generated_group_id_decision": "approved",
                     "group_id_fields": ["NAME"],
                     "generated_row_id_decision": "not-needed",
+                    "ext_id_decision": "provider-id",
+                    "ext_id_fields": ["source_id"],
                     "search_fields": ["NAME"],
                 },
             )
@@ -1051,6 +1084,8 @@ class PublishingConciergeTests(unittest.TestCase):
                         "generated_group_id_decision": "not-needed",
                         "group_id_fields": [],
                         "generated_row_id_decision": "not-needed",
+                        "ext_id_decision": "provider-id",
+                        "ext_id_fields": ["source_id"],
                         "search_fields": ["NAME"],
                     },
                 ),
@@ -1143,7 +1178,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date="2026-05-01",
-                with_pmtiles=True,
                 categories_path=categories,
                 docs_dir=root / "docs/assets",
             )
@@ -1183,7 +1217,6 @@ class PublishingConciergeTests(unittest.TestCase):
                 access_tier="public",
                 bucket="example-bucket",
                 release_date=None,
-                with_pmtiles=False,
                 source_scale_denominator=10_000_000,
                 pmtiles_detail_hint="medium",
                 categories_path=categories,

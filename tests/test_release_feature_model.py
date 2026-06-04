@@ -118,6 +118,46 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         self.assertEqual(first[0]["properties"]["feature_id"], second[0]["properties"]["feature_id"])
 
+    def test_common_generated_ids_default_ext_id_to_feature_id(self):
+        feature = {
+            "type": "Feature",
+            "properties": {"DN": 3},
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
+        }
+
+        enriched, sidecar = feature_metadata.enrich_features_with_generated_ids(
+            [feature],
+            asset_slug="ims-sea-ice-extent",
+            release="2026-05-01",
+            provenance={},
+        )
+
+        feature_id = enriched[0]["properties"]["feature_id"]
+        self.assertEqual(enriched[0]["properties"]["ext_id"], feature_id)
+        self.assertEqual(sidecar[0]["properties"]["ext_id"], feature_id)
+        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "feature_id")
+
+    def test_common_provider_ids_can_use_selected_ext_id_field(self):
+        feature = {
+            "type": "Feature",
+            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider-123"},
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+        }
+
+        enriched, sidecar = feature_metadata.enrich_features_with_provider_ids(
+            [feature],
+            asset_slug="wdpa-polygons",
+            release="2026-05-01",
+            id_field="SITE_PID",
+            ext_id_field="stable_key",
+            provenance={},
+        )
+
+        self.assertEqual(enriched[0]["properties"]["feature_id"], "src:SITE_PID:WDPA-123")
+        self.assertEqual(enriched[0]["properties"]["ext_id"], "provider-123")
+        self.assertEqual(sidecar[0]["properties"]["ext_id"], "provider-123")
+        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "stable_key")
+
     def test_common_generated_ids_reject_duplicate_geometry(self):
         feature = {
             "type": "Feature",

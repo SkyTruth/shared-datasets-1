@@ -226,18 +226,15 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(resolver.calls, [("example-asset", "latest")])
         self.assertEqual(index.calls, [("example-asset", "2026-05-01", "load-1", ["src:id:1", "src:id:missing"])])
 
-    def test_lookup_without_release_segment_defaults_to_latest(self):
+    def test_lookup_without_release_segment_is_rejected(self):
         response, resolver, index = post_lookup(
             {"ids": ["src:id:1"]},
             path="/v1/assets/example-asset:lookup",
         )
 
-        self.assertEqual(response.status, 200)
-        payload = json.loads(response.body)
-        self.assertEqual(payload["requested_release"], "latest")
-        self.assertEqual(payload["resolved_release"], "2026-05-01")
-        self.assertEqual(resolver.calls, [("example-asset", "latest")])
-        self.assertEqual(index.calls, [("example-asset", "2026-05-01", "load-1", ["src:id:1"])])
+        self.assertEqual(response.status, 404)
+        self.assertEqual(resolver.calls, [])
+        self.assertEqual(index.calls, [])
 
     def test_field_projection_can_return_no_properties(self):
         response, _resolver, _index = post_lookup(
