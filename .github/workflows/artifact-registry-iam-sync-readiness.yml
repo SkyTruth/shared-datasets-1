@@ -1,0 +1,38 @@
+name: Artifact Registry IAM sync readiness
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/artifact-registry-iam-sync-readiness.yml"
+      - ".github/workflows/artifact-registry-iam-sync.yml"
+      - "terraform/envs/prod/artifact_registry_iam.tf"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  readiness:
+    name: Check Artifact Registry IAM sync readiness
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
