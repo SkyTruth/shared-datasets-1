@@ -18,15 +18,23 @@ import sys
 from collections import Counter
 from dataclasses import asdict, dataclass, field as dataclass_field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import yaml
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
+WORKFLOW_SCHEMA_VERSION = 1
+WORKFLOW_COMMANDS = {"start", "next", "confirm", "status", "render-pr", "render-report", "validate"}
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+FOOTPRINT_RE = re.compile(r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kb|mb|gb|tb|kib|mib|gib|tib)\b", re.IGNORECASE)
 VECTOR_SOURCE_EXTENSIONS = {".shp", ".gpkg", ".geojson", ".json", ".fgb"}
 FORMAT_EXTENSIONS = {
     ".fgb": "fgb",
@@ -94,6 +102,10 @@ SENTINEL_VALUES = {
 
 class ConciergeError(ValueError):
     """Raised when a publish plan cannot be built."""
+
+
+class WorkflowError(ValueError):
+    """Raised when a stateful publish workflow cannot advance."""
 
 
 @dataclass(frozen=True)
@@ -199,6 +211,30 @@ class ConciergePlan:
     pmtiles_maxzoom: int | None = None
     pmtiles_maxzoom_reason: str | None = None
     pmtiles_detail_hint: str | None = None
+
+
+@dataclass(frozen=True)
+class StepInstruction:
+    step_id: str
+    title: str
+    summary: str
+    commands: list[str]
+    evidence_schema: dict[str, Any]
+    blockers: list[str] = dataclass_field(default_factory=list)
+    optional: bool = False
+
+
+@dataclass(frozen=True)
+class StepDefinition:
+    step_id: str
+    title: str
+    summary: str
+    evidence_schema: dict[str, Any]
+    render_commands: Callable[[dict[str, Any]], list[str]]
+    validate_evidence: Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+    is_required: Callable[[dict[str, Any]], bool] = lambda _state: True
+    allow_yes: bool = False
+    optional: bool = False
 
 
 def load_categories(path: Path) -> dict[str, set[str]]:
@@ -1302,18 +1338,1114 @@ def run_catalog_check() -> int:
     ).returncode
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "The JSON plan includes curator_field_options with a compact decision table for likely provider ext_id "
-            "and grouping/search/filter candidates, plus the last-resort shared_datasets_row_id fallback option. "
-            "Exact stats are computed for local sources at or below "
-            f"{PROFILE_RANDOM_SAMPLE_SIZE:,} rows; larger sources use a deterministic random sample. Override the "
-            "sample size with SHARED_DATASETS_PROFILE_SAMPLE_SIZE."
-        ),
+def utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def standard_work_root() -> Path:
+    configured = os.environ.get("SHARED_DATASETS_WORKDIR")
+    if configured:
+        return Path(configured)
+    return Path(os.environ.get("TMPDIR", "/tmp")) / "shared-datasets-1"
+
+
+def default_state_file(asset_slug: str, proposal_id: str) -> Path:
+    return standard_work_root() / "publishing-concierge" / asset_slug / f"{proposal_id}.state.json"
+
+
+def read_json_file(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise WorkflowError(f"{label} does not exist: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(f"{label} is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise WorkflowError(f"{label} must contain a JSON object: {path}")
+    return payload
+
+
+def write_json_file(path: Path, payload: dict[str, Any], *, overwrite: bool = True) -> None:
+    if path.exists() and not overwrite:
+        raise WorkflowError(f"refusing to overwrite existing workflow state: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def load_state(path: Path) -> dict[str, Any]:
+    state = read_json_file(path, label="workflow state")
+    if state.get("schema_version") != WORKFLOW_SCHEMA_VERSION:
+        raise WorkflowError(f"unsupported workflow schema_version: {state.get('schema_version')!r}")
+    if state.get("workflow_type") != "first-upload":
+        raise WorkflowError(f"unsupported workflow_type: {state.get('workflow_type')!r}")
+    return state
+
+
+def save_state(path: Path, state: dict[str, Any]) -> None:
+    state["updated_at"] = utc_now()
+    write_json_file(path, state)
+
+
+def require_non_empty_string(evidence: dict[str, Any], key: str) -> str:
+    value = evidence.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise WorkflowError(f"evidence.{key} must be a non-empty string")
+    return value.strip()
+
+
+def require_bool(evidence: dict[str, Any], key: str, *, expected: bool | None = None) -> bool:
+    value = evidence.get(key)
+    if not isinstance(value, bool):
+        raise WorkflowError(f"evidence.{key} must be a boolean")
+    if expected is not None and value is not expected:
+        raise WorkflowError(f"evidence.{key} must be {expected}")
+    return value
+
+
+def require_string_list(evidence: dict[str, Any], key: str, *, allow_empty: bool = False) -> list[str]:
+    value = evidence.get(key)
+    if isinstance(value, str):
+        values = [value.strip()] if value.strip() else []
+    elif isinstance(value, list):
+        values = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise WorkflowError(f"evidence.{key} must contain only non-empty strings")
+            values.append(item.strip())
+    else:
+        raise WorkflowError(f"evidence.{key} must be a string or list of strings")
+    if not allow_empty and not values:
+        raise WorkflowError(f"evidence.{key} must not be empty")
+    return values
+
+
+def normalize_generation(value: Any, *, label: str, required: bool) -> str:
+    if value in (None, ""):
+        if required:
+            raise WorkflowError(f"{label} is required")
+        return ""
+    generation = str(value)
+    if not generation.isdigit():
+        raise WorkflowError(f"{label} must be numeric")
+    return generation
+
+
+def plan_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    plan = state.get("plan")
+    if not isinstance(plan, dict):
+        raise WorkflowError("workflow state is missing plan")
+    return plan
+
+
+def step_record(state: dict[str, Any], step_id: str) -> dict[str, Any]:
+    steps = state.setdefault("steps", {})
+    record = steps.setdefault(step_id, {"status": "pending"})
+    if not isinstance(record, dict):
+        raise WorkflowError(f"workflow step record is malformed: {step_id}")
+    return record
+
+
+def step_completed(state: dict[str, Any], step_id: str) -> bool:
+    return step_record(state, step_id).get("status") == "completed"
+
+
+def completed_required_before(state: dict[str, Any], step_id: str) -> bool:
+    for step in STEP_DEFINITIONS:
+        if step.step_id == step_id:
+            return True
+        if step.optional or not step.is_required(state):
+            continue
+        if not step_completed(state, step.step_id):
+            return False
+    return True
+
+
+def workflow_steps_by_id() -> dict[str, StepDefinition]:
+    return {step.step_id: step for step in STEP_DEFINITIONS}
+
+
+def current_required_step(state: dict[str, Any]) -> StepDefinition | None:
+    for step in STEP_DEFINITIONS:
+        if step.optional or not step.is_required(state):
+            continue
+        if not step_completed(state, step.step_id):
+            return step
+    return None
+
+
+def read_asset_doc_frontmatter(path: Path) -> dict[str, Any]:
+    text = path.read_text()
+    match = re.match(r"^---\n(.*?)\n---\n", text, flags=re.DOTALL)
+    if not match:
+        raise WorkflowError(f"asset doc is missing YAML frontmatter: {path}")
+    payload = yaml.safe_load(match.group(1)) or {}
+    if not isinstance(payload, dict):
+        raise WorkflowError(f"asset doc frontmatter must be a mapping: {path}")
+    return payload
+
+
+def pending_publish_prefix(state: dict[str, Any]) -> str:
+    plan = plan_from_state(state)
+    return f"gs://{state['bucket']}/_scratch/pending-publishes/{plan['asset_slug']}/{state['proposal_id']}/"
+
+
+def no_cache_control() -> str:
+    from scripts import reviewed_dataset_plan
+
+    return reviewed_dataset_plan.NO_CACHE_CONTROL
+
+
+def workflow_state_payload(
+    *,
+    plan: ConciergePlan,
+    source: Path,
+    proposal_id: str,
+    request_classification: str,
+    owner: str,
+    source_name: str | None,
+    license_text: str | None,
+    citation: str | None,
+    update_cadence: str,
+    access_tier: str,
+) -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "schema_version": WORKFLOW_SCHEMA_VERSION,
+        "workflow_type": "first-upload",
+        "created_at": now,
+        "updated_at": now,
+        "source": str(source),
+        "proposal_id": proposal_id,
+        "request_classification": request_classification,
+        "bucket": plan.canonical_path.split("/", 3)[2],
+        "plan": asdict(plan),
+        "contract": {
+            "asset_slug": plan.asset_slug,
+            "title": plan.title,
+            "category": plan.category,
+            "subcategory": plan.subcategory,
+            "canonical_format": plan.canonical_format,
+            "available_formats": plan.available_formats,
+            "asset_root": plan.asset_root,
+            "canonical_path": plan.canonical_path,
+            "release_date": plan.release_date,
+            "access_tier": access_tier,
+            "owner": owner,
+            "source_name": source_name,
+            "license": license_text,
+            "citation": citation,
+            "update_cadence": update_cadence,
+        },
+        "steps": {step.step_id: {"status": "pending"} for step in STEP_DEFINITIONS},
+        "generated_commands": {
+            "suggested": plan.suggested_commands,
+            "remote_write": plan.remote_write_commands,
+        },
+        "publish_plan": None,
+        "pr_body": None,
+        "notes": [
+            "The workflow is guide-and-verify only.",
+            "Run `next`, do the requested work/research externally, then submit structured evidence with `confirm`.",
+            "The workflow never performs Git operations, scratch uploads, or canonical GCS promotion.",
+        ],
+    }
+
+
+def estimated_footprint_gb(text: str) -> float | None:
+    matches = list(FOOTPRINT_RE.finditer(text))
+    if not matches:
+        return None
+    total = 0.0
+    binary_units = {"kib": 1 / (1024 * 1024), "mib": 1 / 1024, "gib": 1.0, "tib": 1024.0}
+    decimal_units = {"kb": 1 / 1_000_000, "mb": 1 / 1000, "gb": 1.0, "tb": 1000.0}
+    for match in matches:
+        value = float(match.group("value"))
+        unit = match.group("unit").lower()
+        total += value * (binary_units.get(unit) or decimal_units[unit])
+    return total
+
+
+def detect_existing_asset(plan: ConciergePlan, *, catalog_path: Path = Path("catalog/shared-datasets-catalog.csv")) -> list[str]:
+    matches = []
+    doc_path = Path(plan.asset_doc_path)
+    if doc_path.exists():
+        matches.append(str(doc_path))
+    if catalog_path.exists():
+        try:
+            with catalog_path.open(newline="") as handle:
+                for row in csv.DictReader(handle):
+                    if row.get("asset_slug") == plan.asset_slug:
+                        matches.append(str(catalog_path))
+                        break
+        except csv.Error as exc:
+            raise WorkflowError(f"could not inspect catalog for duplicate asset slug: {exc}") from exc
+    return matches
+
+
+def render_catalog_web_command() -> str:
+    return (
+        'WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}" '
+        "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py --out \"$WORK_ROOT/catalog-web\""
     )
+
+
+def commands_for_resolve_metadata(_state: dict[str, Any]) -> list[str]:
+    return ["Research source documentation, license/terms, citation, steward, intended consumers, and update expectations."]
+
+
+def commands_for_settle_contract(state: dict[str, Any]) -> list[str]:
+    plan = plan_from_state(state)
+    return [
+        f"Review asset contract in workflow state for {plan['asset_slug']}.",
+        f"UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path {plan['canonical_path']}",
+    ]
+
+
+def commands_for_profile_fields(state: dict[str, Any]) -> list[str]:
+    return [
+        "Review `plan.curator_field_options` in `status --json` output.",
+        "If planning-time profile was unavailable, profile the canonical artifact after conversion before confirming.",
+    ]
+
+
+def commands_for_translation_decision(_state: dict[str, Any]) -> list[str]:
+    return [
+        "Ask the maintainer which locales and metadata fields should be autogenerated, or record explicit deferral.",
+    ]
+
+
+def commands_for_build_artifacts(state: dict[str, Any]) -> list[str]:
+    return list(plan_from_state(state).get("suggested_commands") or [])
+
+
+def commands_for_validate_artifacts(_state: dict[str, Any]) -> list[str]:
+    return [
+        "Run the relevant local validators for every artifact.",
+        "For PMTiles, confirm magic bytes, run `pmtiles verify`, inspect `pmtiles show`, and decode a representative tile.",
+    ]
+
+
+def commands_for_document_asset(state: dict[str, Any]) -> list[str]:
+    plan = plan_from_state(state)
+    return [
+        f"Create or update {plan['asset_doc_path']} with source/license/citation, admission evidence, files, schema, row count, and data profile.",
+        "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate",
+    ]
+
+
+def commands_for_catalog_outputs(_state: dict[str, Any]) -> list[str]:
+    return [
+        "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate",
+        "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check",
+        'UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py export-readmes --output-dir "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/readmes"',
+    ]
+
+
+def commands_for_catalog_web(_state: dict[str, Any]) -> list[str]:
+    return [render_catalog_web_command()]
+
+
+def commands_for_stage_scratch(state: dict[str, Any]) -> list[str]:
+    prefix = pending_publish_prefix(state)
+    return [
+        f"Stage every publish candidate under {prefix} with no-clobber uploads.",
+        "Use `UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload LOCAL_PATH SCRATCH_URI --content-type TYPE --cache-control CACHE_CONTROL` where metadata is required.",
+        "Record each staged source URI and generation in evidence JSON.",
+    ]
+
+
+def commands_for_stat_destinations(state: dict[str, Any]) -> list[str]:
+    staged = step_record(state, "stage-scratch").get("evidence", {}).get("staged_objects", [])
+    commands = []
+    for obj in staged:
+        if isinstance(obj, dict) and obj.get("destination_uri"):
+            commands.append(f"UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat {obj['destination_uri']}")
+    return commands or ["Stat each intended canonical destination and record the current generation or explicit absence."]
+
+
+def commands_for_pr_ready(_state: dict[str, Any]) -> list[str]:
+    return ["Run `python scripts/publishing_concierge.py render-pr --state-file STATE` and use the rendered body for the reviewed PR."]
+
+
+def commands_for_post_merge(_state: dict[str, Any]) -> list[str]:
+    return ["After merge/promotion, verify promoted objects, catalog freshness, PMTiles access, alert state, and retained temp directories."]
+
+
+def validate_resolve_metadata(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    normalized = {
+        "source_name": require_non_empty_string(evidence, "source_name"),
+        "license": require_non_empty_string(evidence, "license"),
+        "citation": require_non_empty_string(evidence, "citation"),
+        "steward": require_non_empty_string(evidence, "steward"),
+        "source_version_date": require_non_empty_string(evidence, "source_version_date"),
+        "update_cadence": require_non_empty_string(evidence, "update_cadence"),
+        "intended_consumers": require_string_list(evidence, "intended_consumers"),
+        "shared_datasets_rationale": require_non_empty_string(evidence, "shared_datasets_rationale"),
+        "alternatives_considered": require_non_empty_string(evidence, "alternatives_considered"),
+        "deprecation_exit_policy": require_non_empty_string(evidence, "deprecation_exit_policy"),
+        "estimated_published_footprint": require_non_empty_string(evidence, "estimated_published_footprint"),
+    }
+    return normalized
+
+
+def validate_settle_contract(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    plan = plan_from_state(state)
+    expected = {
+        "confirmed_asset_slug": plan["asset_slug"],
+        "confirmed_category": plan["category"],
+        "confirmed_subcategory": plan["subcategory"],
+        "confirmed_canonical_format": plan["canonical_format"],
+    }
+    normalized: dict[str, Any] = {}
+    for key, expected_value in expected.items():
+        value = require_non_empty_string(evidence, key)
+        if value != expected_value:
+            raise WorkflowError(f"evidence.{key} must match concierge plan value {expected_value!r}")
+        normalized[key] = value
+    release_layout = require_non_empty_string(evidence, "release_layout")
+    if release_layout not in {"latest-only", "versioned"}:
+        raise WorkflowError("evidence.release_layout must be 'latest-only' or 'versioned'")
+    if plan.get("release_date") and release_layout != "versioned":
+        raise WorkflowError("release_date is set, so evidence.release_layout must be 'versioned'")
+    access_tier = require_non_empty_string(evidence, "access_tier")
+    if access_tier not in {"public", "private"}:
+        raise WorkflowError("evidence.access_tier must be public or private")
+    flags = evidence.get("exception_flags")
+    if not isinstance(flags, dict):
+        raise WorkflowError("evidence.exception_flags must be an object of explicit boolean approvals")
+    required_flags = [
+        "public_access_approved",
+        "new_top_level_category_approved",
+        "new_canonical_format_approved",
+        "large_data_exception_approved",
+        "incompatible_schema_change_approved",
+        "move_or_delete_releases_approved",
+        "unsafe_overwrite_approved",
+        "infrastructure_mutation_approved",
+    ]
+    normalized_flags = {}
+    for flag in required_flags:
+        value = flags.get(flag)
+        if not isinstance(value, bool):
+            raise WorkflowError(f"evidence.exception_flags.{flag} must be a boolean")
+        normalized_flags[flag] = value
+    if access_tier == "public" and not normalized_flags["public_access_approved"]:
+        raise WorkflowError("public access requires evidence.exception_flags.public_access_approved=true")
+    metadata = step_record(state, "resolve-metadata").get("evidence", {})
+    footprint_gb = estimated_footprint_gb(str(metadata.get("estimated_published_footprint", "")))
+    if footprint_gb is not None and footprint_gb >= 10 and not normalized_flags["large_data_exception_approved"]:
+        raise WorkflowError("estimated published footprint is >= 10 GB; large_data_exception_approved must be true")
+    normalized.update(
+        {
+            "release_layout": release_layout,
+            "access_tier": access_tier,
+            "exception_flags": normalized_flags,
+            "estimated_footprint_gb": footprint_gb,
+            "notes": str(evidence.get("notes", "")).strip(),
+        }
+    )
+    return normalized
+
+
+def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    require_bool(evidence, "decision_table_present", expected=True)
+    profile_scope = require_non_empty_string(evidence, "profile_scope")
+    provider = require_non_empty_string(evidence, "provider_id_decision")
+    if provider not in {"use-provider-id", "none-suitable", "deferred"}:
+        raise WorkflowError("evidence.provider_id_decision must be use-provider-id, none-suitable, or deferred")
+    group = require_non_empty_string(evidence, "generated_group_id_decision")
+    if group not in {"not-needed", "approved", "deferred"}:
+        raise WorkflowError("evidence.generated_group_id_decision must be not-needed, approved, or deferred")
+    row = require_non_empty_string(evidence, "generated_row_id_decision")
+    if row not in {"not-needed", "approved", "rejected", "deferred"}:
+        raise WorkflowError("evidence.generated_row_id_decision must be not-needed, approved, rejected, or deferred")
+    normalized = {
+        "decision_table_present": True,
+        "profile_scope": profile_scope,
+        "provider_id_decision": provider,
+        "provider_id_fields": require_string_list(evidence, "provider_id_fields", allow_empty=provider != "use-provider-id"),
+        "generated_group_id_decision": group,
+        "group_id_fields": require_string_list(evidence, "group_id_fields", allow_empty=group != "approved"),
+        "generated_row_id_decision": row,
+        "search_fields": require_string_list(evidence, "search_fields", allow_empty=True),
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+    if group == "approved" and row == "approved":
+        raise WorkflowError("generated group ID and generated row ID cannot both be approved")
+    if provider == "use-provider-id" and (group == "approved" or row == "approved"):
+        raise WorkflowError("do not approve generated IDs when a provider ID is selected")
+    return normalized
+
+
+def translation_decision_required(state: dict[str, Any]) -> bool:
+    plan = plan_from_state(state)
+    return plan.get("canonical_format") == "fgb" and bool(plan.get("release_date"))
+
+
+def validate_translation_decision(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    decision = require_non_empty_string(evidence, "decision")
+    if decision not in {"autogenerate", "none", "deferred"}:
+        raise WorkflowError("evidence.decision must be autogenerate, none, or deferred")
+    locales = require_string_list(evidence, "locales", allow_empty=decision != "autogenerate")
+    fields = require_string_list(evidence, "fields", allow_empty=decision != "autogenerate")
+    return {
+        "decision": decision,
+        "locales": locales,
+        "fields": fields,
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+
+
+def required_artifact_formats(state: dict[str, Any]) -> set[str]:
+    plan = plan_from_state(state)
+    required = {str(plan["canonical_format"])}
+    if "pmtiles" in plan.get("available_formats", []):
+        required.add("pmtiles")
+    if plan.get("canonical_format") == "fgb" and plan.get("release_date"):
+        required.update({"metadata_sidecar_v1", "release_schema_v1", "release_manifest_v1"})
+    return required
+
+
+def validate_build_artifacts(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    artifacts = evidence.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise WorkflowError("evidence.artifacts must be a non-empty list")
+    seen_formats: set[str] = set()
+    normalized = []
+    for index, artifact in enumerate(artifacts, start=1):
+        if not isinstance(artifact, dict):
+            raise WorkflowError(f"evidence.artifacts[{index}] must be an object")
+        path = Path(require_non_empty_string(artifact, "path"))
+        fmt = require_non_empty_string(artifact, "format")
+        role = require_non_empty_string(artifact, "role")
+        if not path.exists():
+            raise WorkflowError(f"evidence.artifacts[{index}].path does not exist: {path}")
+        if fmt != "zarr" and path.is_dir():
+            raise WorkflowError(f"evidence.artifacts[{index}].path must be a file unless format is zarr: {path}")
+        if fmt == "zarr" and not path.is_dir():
+            raise WorkflowError(f"evidence.artifacts[{index}].path must be a directory for zarr: {path}")
+        seen_formats.add(fmt)
+        normalized.append(
+            {
+                "path": str(path),
+                "format": fmt,
+                "role": role,
+                "destination_uri": str(artifact.get("destination_uri", "")).strip(),
+            }
+        )
+    missing = sorted(required_artifact_formats(state) - seen_formats)
+    if missing:
+        raise WorkflowError(f"missing required artifact format(s): {', '.join(missing)}")
+    return {"artifacts": normalized, "notes": str(evidence.get("notes", "")).strip()}
+
+
+def validate_validate_artifacts(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    commands = require_string_list(evidence, "commands_run")
+    summary = require_non_empty_string(evidence, "validation_summary")
+    all_passed = require_bool(evidence, "all_passed", expected=True)
+    tool_versions = evidence.get("tool_versions")
+    if not isinstance(tool_versions, dict) or not tool_versions:
+        raise WorkflowError("evidence.tool_versions must be a non-empty object with resolved tool paths/versions or explicit not-applicable notes")
+    normalized: dict[str, Any] = {
+        "commands_run": commands,
+        "validation_summary": summary,
+        "all_passed": all_passed,
+        "tool_versions": tool_versions,
+    }
+    if "pmtiles" in required_artifact_formats(state):
+        pmtiles = evidence.get("pmtiles")
+        if not isinstance(pmtiles, dict):
+            raise WorkflowError("evidence.pmtiles must be an object for PMTiles assets")
+        for key in ("magic_bytes_confirmed", "verify_passed", "show_inspected", "decoded_tile_checked"):
+            if pmtiles.get(key) is not True:
+                raise WorkflowError(f"evidence.pmtiles.{key} must be true")
+        normalized["pmtiles"] = {
+            "magic_bytes_confirmed": True,
+            "verify_passed": True,
+            "show_inspected": True,
+            "decoded_tile_checked": True,
+            "decoded_properties": pmtiles.get("decoded_properties", []),
+            "notes": str(pmtiles.get("notes", "")).strip(),
+        }
+    return normalized
+
+
+def validate_document_asset(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    plan = plan_from_state(state)
+    path = Path(str(evidence.get("asset_doc_path") or plan["asset_doc_path"]))
+    if not path.exists():
+        raise WorkflowError(f"asset doc does not exist: {path}")
+    metadata = read_asset_doc_frontmatter(path)
+    required = {
+        "asset_slug": plan["asset_slug"],
+        "category": plan["category"],
+        "subcategory": plan["subcategory"],
+        "canonical_format": plan["canonical_format"],
+    }
+    for key, expected in required.items():
+        if metadata.get(key) != expected:
+            raise WorkflowError(f"{path}: frontmatter {key!r} must be {expected!r}")
+    for key in ("source", "license", "citation"):
+        value = str(metadata.get(key, "")).strip()
+        if not value or value.startswith("NEEDS "):
+            raise WorkflowError(f"{path}: frontmatter {key!r} must be populated")
+    require_bool(evidence, "admission_complete", expected=True)
+    require_bool(evidence, "source_license_citation_complete", expected=True)
+    require_bool(evidence, "schema_or_properties_complete", expected=True)
+    if plan.get("canonical_format") in {"fgb", "csv"}:
+        require_bool(evidence, "data_profile_complete", expected=True)
+    return {
+        "asset_doc_path": str(path),
+        "admission_complete": True,
+        "source_license_citation_complete": True,
+        "schema_or_properties_complete": True,
+        "data_profile_complete": bool(evidence.get("data_profile_complete", False)),
+    }
+
+
+def validate_catalog_outputs(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    require_bool(evidence, "generate_ran", expected=True)
+    require_bool(evidence, "check_passed", expected=True)
+    require_bool(evidence, "readmes_exported", expected=True)
+    readmes_dir = Path(require_non_empty_string(evidence, "readmes_dir"))
+    if not readmes_dir.exists() or not readmes_dir.is_dir():
+        raise WorkflowError(f"evidence.readmes_dir must be an existing directory: {readmes_dir}")
+    return {
+        "generate_ran": True,
+        "check_passed": True,
+        "readmes_exported": True,
+        "readmes_dir": str(readmes_dir),
+        "commands_run": evidence.get("commands_run", []),
+    }
+
+
+def catalog_web_required(_state: dict[str, Any]) -> bool:
+    return True
+
+
+def validate_catalog_web(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    require_bool(evidence, "built", expected=True)
+    catalog_json = Path(require_non_empty_string(evidence, "catalog_json_path"))
+    if not catalog_json.exists() or not catalog_json.is_file():
+        raise WorkflowError(f"evidence.catalog_json_path must be an existing file: {catalog_json}")
+    content_type = require_non_empty_string(evidence, "content_type")
+    if content_type != "application/json":
+        raise WorkflowError("evidence.content_type must be application/json")
+    cache_control = require_non_empty_string(evidence, "cache_control")
+    if cache_control != no_cache_control():
+        raise WorkflowError(f"evidence.cache_control must be {no_cache_control()!r}")
+    return {
+        "built": True,
+        "catalog_json_path": str(catalog_json),
+        "content_type": content_type,
+        "cache_control": cache_control,
+    }
+
+
+def validate_stage_scratch(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    prefix = pending_publish_prefix(state)
+    objects = evidence.get("staged_objects")
+    if not isinstance(objects, list) or not objects:
+        raise WorkflowError("evidence.staged_objects must be a non-empty list")
+    normalized = []
+    destinations = set()
+    for index, obj in enumerate(objects, start=1):
+        if not isinstance(obj, dict):
+            raise WorkflowError(f"evidence.staged_objects[{index}] must be an object")
+        source_uri = require_non_empty_string(obj, "source_uri")
+        if not source_uri.startswith(prefix):
+            raise WorkflowError(f"evidence.staged_objects[{index}].source_uri must start with {prefix}")
+        source_generation = normalize_generation(
+            obj.get("source_generation"),
+            label=f"evidence.staged_objects[{index}].source_generation",
+            required=True,
+        )
+        destination_uri = require_non_empty_string(obj, "destination_uri")
+        if destination_uri in destinations:
+            raise WorkflowError(f"duplicate destination_uri in staged objects: {destination_uri}")
+        destinations.add(destination_uri)
+        content_type = str(obj.get("content_type", "") or "")
+        cache_control = str(obj.get("cache_control", "") or "")
+        if destination_uri.endswith(".pmtiles"):
+            if content_type != "application/vnd.pmtiles":
+                raise WorkflowError(f"evidence.staged_objects[{index}].content_type must be application/vnd.pmtiles")
+            if cache_control != no_cache_control():
+                raise WorkflowError(f"evidence.staged_objects[{index}].cache_control must be {no_cache_control()!r}")
+        if destination_uri.endswith("_catalog/web/catalog.json") or destination_uri.endswith("/_catalog/web/catalog.json"):
+            if content_type != "application/json":
+                raise WorkflowError(f"evidence.staged_objects[{index}].content_type must be application/json")
+            if cache_control != no_cache_control():
+                raise WorkflowError(f"evidence.staged_objects[{index}].cache_control must be {no_cache_control()!r}")
+        normalized.append(
+            {
+                "source_uri": source_uri,
+                "source_generation": source_generation,
+                "destination_uri": destination_uri,
+                "content_type": content_type,
+                "cache_control": cache_control,
+            }
+        )
+    return {"staged_objects": normalized}
+
+
+def validate_stat_destinations(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    staged = step_record(state, "stage-scratch").get("evidence", {}).get("staged_objects", [])
+    staged_destinations = {obj["destination_uri"] for obj in staged if isinstance(obj, dict) and obj.get("destination_uri")}
+    destinations = evidence.get("destinations")
+    if not isinstance(destinations, list) or not destinations:
+        raise WorkflowError("evidence.destinations must be a non-empty list")
+    normalized = []
+    seen = set()
+    for index, destination in enumerate(destinations, start=1):
+        if not isinstance(destination, dict):
+            raise WorkflowError(f"evidence.destinations[{index}] must be an object")
+        uri = require_non_empty_string(destination, "destination_uri")
+        if uri not in staged_destinations:
+            raise WorkflowError(f"evidence.destinations[{index}].destination_uri was not staged: {uri}")
+        seen.add(uri)
+        normalized.append(
+            {
+                "destination_uri": uri,
+                "destination_generation": normalize_generation(
+                    destination.get("destination_generation", ""),
+                    label=f"evidence.destinations[{index}].destination_generation",
+                    required=False,
+                ),
+                "status": str(destination.get("status", "") or "").strip(),
+            }
+        )
+    missing = sorted(staged_destinations - seen)
+    if missing:
+        raise WorkflowError(f"missing destination stat evidence for: {', '.join(missing)}")
+    return {"destinations": normalized}
+
+
+def build_publish_plan_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    from scripts import reviewed_dataset_plan
+
+    plan = plan_from_state(state)
+    staged = step_record(state, "stage-scratch").get("evidence", {}).get("staged_objects", [])
+    destinations = {
+        item["destination_uri"]: item.get("destination_generation", "")
+        for item in step_record(state, "stat-destinations").get("evidence", {}).get("destinations", [])
+    }
+    promotions = []
+    for item in staged:
+        destination_uri = item["destination_uri"]
+        promotions.append(
+            {
+                "source_uri": item["source_uri"],
+                "source_generation": item["source_generation"],
+                "destination_uri": destination_uri,
+                "destination_generation": destinations.get(destination_uri, ""),
+                "content_type": item.get("content_type", ""),
+                "cache_control": item.get("cache_control", ""),
+            }
+        )
+    publish_plan = {
+        "asset_slug": plan["asset_slug"],
+        "proposal_id": state["proposal_id"],
+        "promotions": promotions,
+    }
+    return reviewed_dataset_plan.normalize_publish_plan(publish_plan, bucket=state["bucket"])
+
+
+def validate_pr_ready(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    for step in STEP_DEFINITIONS:
+        if step.step_id == "pr-ready":
+            break
+        if step.optional or not step.is_required(state):
+            continue
+        if not step_completed(state, step.step_id):
+            raise WorkflowError(f"cannot complete pr-ready before {step.step_id}")
+    require_bool(evidence, "reviewed_pr_body", expected=True)
+    publish_plan = build_publish_plan_from_state(state)
+    pr_body = render_pr_body_from_state(state, publish_plan=publish_plan)
+    return {"reviewed_pr_body": True, "publish_plan": publish_plan, "pr_body": pr_body}
+
+
+def validate_post_merge(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    require_bool(evidence, "promoted_objects_verified", expected=True)
+    require_bool(evidence, "catalog_freshness_verified", expected=True)
+    alert_state = require_non_empty_string(evidence, "alert_state")
+    retained_temp_dirs = evidence.get("retained_temp_dirs", [])
+    if not isinstance(retained_temp_dirs, list):
+        raise WorkflowError("evidence.retained_temp_dirs must be a list")
+    return {
+        "promoted_objects_verified": True,
+        "catalog_freshness_verified": True,
+        "alert_state": alert_state,
+        "retained_temp_dirs": retained_temp_dirs,
+        "notes": str(evidence.get("notes", "")).strip(),
+    }
+
+
+STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
+    StepDefinition(
+        "resolve-metadata",
+        "Resolve source metadata and admission context",
+        "Research and record source identity, terms, citation, stewardship, intended consumers, and admission rationale.",
+        {
+            "source_name": "string",
+            "license": "string",
+            "citation": "string",
+            "steward": "string",
+            "source_version_date": "string",
+            "update_cadence": "string",
+            "intended_consumers": ["string"],
+            "shared_datasets_rationale": "string",
+            "alternatives_considered": "string",
+            "deprecation_exit_policy": "string",
+            "estimated_published_footprint": "string",
+        },
+        commands_for_resolve_metadata,
+        validate_resolve_metadata,
+    ),
+    StepDefinition(
+        "settle-contract",
+        "Settle asset contract and exception decisions",
+        "Confirm the planned slug, taxonomy, format, release layout, access tier, and every exceptional approval flag.",
+        {
+            "confirmed_asset_slug": "string matching plan.asset_slug",
+            "confirmed_category": "string matching plan.category",
+            "confirmed_subcategory": "string matching plan.subcategory",
+            "confirmed_canonical_format": "string matching plan.canonical_format",
+            "release_layout": "latest-only|versioned",
+            "access_tier": "public|private",
+            "exception_flags": {
+                "public_access_approved": "boolean",
+                "new_top_level_category_approved": "boolean",
+                "new_canonical_format_approved": "boolean",
+                "large_data_exception_approved": "boolean",
+                "incompatible_schema_change_approved": "boolean",
+                "move_or_delete_releases_approved": "boolean",
+                "unsafe_overwrite_approved": "boolean",
+                "infrastructure_mutation_approved": "boolean",
+            },
+        },
+        commands_for_settle_contract,
+        validate_settle_contract,
+    ),
+    StepDefinition(
+        "profile-fields",
+        "Profile provider IDs and grouping/search fields",
+        "Record the decision table and explicit generated-ID decisions before any generated IDs are added.",
+        {
+            "decision_table_present": True,
+            "profile_scope": "full|random_sample|schema_only|canonical-artifact|other",
+            "provider_id_decision": "use-provider-id|none-suitable|deferred",
+            "provider_id_fields": ["string"],
+            "generated_group_id_decision": "not-needed|approved|deferred",
+            "group_id_fields": ["string"],
+            "generated_row_id_decision": "not-needed|approved|rejected|deferred",
+            "search_fields": ["string"],
+        },
+        commands_for_profile_fields,
+        validate_profile_fields,
+    ),
+    StepDefinition(
+        "translation-decision",
+        "Resolve first-upload translation choices",
+        "For release-oriented vector assets, record locales and fields to autogenerate or explicit deferral.",
+        {
+            "decision": "autogenerate|none|deferred",
+            "locales": ["string"],
+            "fields": ["string"],
+        },
+        commands_for_translation_decision,
+        validate_translation_decision,
+        is_required=translation_decision_required,
+    ),
+    StepDefinition(
+        "build-artifacts",
+        "Build publishable local artifacts",
+        "Build every required canonical and companion artifact outside the repo tree and record their local paths.",
+        {"artifacts": [{"path": "existing local path", "format": "format id", "role": "role"}]},
+        commands_for_build_artifacts,
+        validate_build_artifacts,
+    ),
+    StepDefinition(
+        "validate-artifacts",
+        "Validate local artifacts",
+        "Record validation commands and results; PMTiles evidence is mandatory when PMTiles are present.",
+        {
+            "commands_run": ["string"],
+            "validation_summary": "string",
+            "all_passed": True,
+            "pmtiles": {
+                "magic_bytes_confirmed": True,
+                "verify_passed": True,
+                "show_inspected": True,
+                "decoded_tile_checked": True,
+            },
+        },
+        commands_for_validate_artifacts,
+        validate_validate_artifacts,
+    ),
+    StepDefinition(
+        "document-asset",
+        "Write asset documentation",
+        "Create/update the asset doc with admission evidence, source metadata, file table, schema, and profile fields.",
+        {
+            "asset_doc_path": "optional path; defaults to plan.asset_doc_path",
+            "admission_complete": True,
+            "source_license_citation_complete": True,
+            "schema_or_properties_complete": True,
+            "data_profile_complete": True,
+        },
+        commands_for_document_asset,
+        validate_document_asset,
+    ),
+    StepDefinition(
+        "catalog-outputs",
+        "Regenerate catalog docs and bucket READMEs",
+        "Confirm generated docs/catalog outputs and exported bucket README content are current.",
+        {
+            "generate_ran": True,
+            "check_passed": True,
+            "readmes_exported": True,
+            "readmes_dir": "existing directory",
+        },
+        commands_for_catalog_outputs,
+        validate_catalog_outputs,
+    ),
+    StepDefinition(
+        "catalog-web",
+        "Rebuild catalog web output",
+        "Build catalog web output and record catalog.json path plus required cache metadata.",
+        {
+            "built": True,
+            "catalog_json_path": "existing file",
+            "content_type": "application/json",
+            "cache_control": no_cache_control(),
+        },
+        commands_for_catalog_web,
+        validate_catalog_web,
+        is_required=catalog_web_required,
+    ),
+    StepDefinition(
+        "stage-scratch",
+        "Stage reviewed publish candidates under _scratch",
+        "After the agent uploads scratch candidates externally, record source URIs, source generations, and destinations.",
+        {
+            "staged_objects": [
+                {
+                    "source_uri": "gs://bucket/_scratch/pending-publishes/{asset_slug}/{proposal_id}/object",
+                    "source_generation": "numeric string",
+                    "destination_uri": "gs://bucket/canonical/object",
+                    "content_type": "optional string",
+                    "cache_control": "optional string",
+                }
+            ]
+        },
+        commands_for_stage_scratch,
+        validate_stage_scratch,
+    ),
+    StepDefinition(
+        "stat-destinations",
+        "Record canonical destination generations",
+        "Stat every intended canonical destination and record its current generation or absence expectation.",
+        {"destinations": [{"destination_uri": "string", "destination_generation": "numeric string or empty"}]},
+        commands_for_stat_destinations,
+        validate_stat_destinations,
+    ),
+    StepDefinition(
+        "pr-ready",
+        "Render and validate reviewed PR publish plan",
+        "Validate the assembled publish plan and render the PR body. The agent must review the body before confirming.",
+        {"reviewed_pr_body": True},
+        commands_for_pr_ready,
+        validate_pr_ready,
+        allow_yes=False,
+    ),
+    StepDefinition(
+        "post-merge-verify",
+        "Verify promoted production objects after merge",
+        "Optional follow-up after protected promotion finishes.",
+        {
+            "promoted_objects_verified": True,
+            "catalog_freshness_verified": True,
+            "alert_state": "sent|skipped|uncertain",
+            "retained_temp_dirs": ["string"],
+        },
+        commands_for_post_merge,
+        validate_post_merge,
+        optional=True,
+    ),
+)
+
+
+def render_instruction(state: dict[str, Any], step: StepDefinition) -> StepInstruction:
+    blockers = []
+    if not completed_required_before(state, step.step_id):
+        blockers.append("Earlier required steps are still incomplete.")
+    return StepInstruction(
+        step_id=step.step_id,
+        title=step.title,
+        summary=step.summary,
+        commands=step.render_commands(state),
+        evidence_schema=step.evidence_schema,
+        blockers=blockers,
+        optional=step.optional,
+    )
+
+
+def print_instruction(instruction: StepInstruction, *, as_json: bool) -> None:
+    payload = asdict(instruction)
+    if as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(f"Current step: {instruction.step_id} - {instruction.title}")
+    print(instruction.summary)
+    if instruction.blockers:
+        print("\nBlockers:")
+        for blocker in instruction.blockers:
+            print(f"- {blocker}")
+    if instruction.commands:
+        print("\nSuggested commands or actions:")
+        for command in instruction.commands:
+            print(f"- {command}")
+    print("\nRequired evidence JSON:")
+    print(json.dumps(instruction.evidence_schema, indent=2, sort_keys=True))
+
+
+def render_status(state: dict[str, Any]) -> dict[str, Any]:
+    current = current_required_step(state)
+    steps = []
+    for step in STEP_DEFINITIONS:
+        required = step.is_required(state)
+        record = step_record(state, step.step_id)
+        steps.append(
+            {
+                "step_id": step.step_id,
+                "title": step.title,
+                "required": required,
+                "optional": step.optional,
+                "status": record.get("status", "pending"),
+                "completed_at": record.get("completed_at"),
+            }
+        )
+    return {
+        "asset_slug": plan_from_state(state)["asset_slug"],
+        "proposal_id": state["proposal_id"],
+        "state_file": state.get("state_file"),
+        "current_step": current.step_id if current else None,
+        "ready_for_pr": step_completed(state, "pr-ready"),
+        "steps": steps,
+    }
+
+
+def print_status(state: dict[str, Any], *, as_json: bool) -> None:
+    payload = render_status(state)
+    if as_json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    print(f"Workflow: {payload['asset_slug']} / {payload['proposal_id']}")
+    print(f"Current step: {payload['current_step'] or 'complete'}")
+    for step in payload["steps"]:
+        marker = "required" if step["required"] and not step["optional"] else "optional"
+        print(f"- {step['step_id']}: {step['status']} ({marker})")
+
+
+def render_pr_body_from_state(state: dict[str, Any], *, publish_plan: dict[str, Any] | None = None) -> str:
+    plan = plan_from_state(state)
+    metadata = step_record(state, "resolve-metadata").get("evidence", {})
+    validation = step_record(state, "validate-artifacts").get("evidence", {})
+    catalog = step_record(state, "catalog-outputs").get("evidence", {})
+    publish_plan = publish_plan or build_publish_plan_from_state(state)
+    body = f"""## Summary
+
+Publish new shared dataset `{plan['asset_slug']}`: {plan['title']}.
+
+## Validation
+
+- Artifact validation: {validation.get('validation_summary', 'Recorded in concierge workflow state.')}
+- Commands run: {', '.join(validation.get('commands_run', [])) or 'Recorded in concierge workflow state.'}
+- Catalog docs check passed: {catalog.get('check_passed', False)}
+- Remote object generations are encoded in the publish plan below.
+
+## Dataset Admission
+
+- Intended consumer(s): {', '.join(metadata.get('intended_consumers', []))}
+- Why this belongs in shared-datasets instead of project storage, scratch storage, or direct upstream access: {metadata.get('shared_datasets_rationale', '')}
+- Source, license, and citation status: Source: {metadata.get('source_name', '')}; license/terms: {metadata.get('license', '')}; citation: {metadata.get('citation', '')}
+- Named steward: {metadata.get('steward', '')}
+- Update expectations: {metadata.get('update_cadence', '')}
+- Estimated published footprint, including canonical files, companion artifacts, and expected release copies: {metadata.get('estimated_published_footprint', '')}
+- Large-data exception, required when the proposed published footprint is >= 10 GB: See contract exception flags in concierge workflow state.
+- Alternatives considered: {metadata.get('alternatives_considered', '')}
+- Deprecation or exit policy: {metadata.get('deprecation_exit_policy', '')}
+
+## Publish Plan
+
+```shared-datasets-publish-plan
+{json.dumps(publish_plan, indent=2, sort_keys=True)}
+```
+"""
+    return body
+
+
+def render_completion_report_from_state(state: dict[str, Any]) -> str:
+    plan = plan_from_state(state)
+    publish_plan = state.get("publish_plan") or build_publish_plan_from_state(state)
+    validation = step_record(state, "validate-artifacts").get("evidence", {})
+    post_merge = step_record(state, "post-merge-verify").get("evidence", {})
+    remote_paths = []
+    for promotion in publish_plan.get("promotions", []):
+        remote_paths.append(
+            f"- {promotion['destination_uri']} (source generation {promotion['source_generation']}, "
+            f"destination generation expectation {promotion.get('destination_generation') or 'absent'})"
+        )
+    retained = post_merge.get("retained_temp_dirs") or []
+    retained_text = "\n".join(f"- {path}" for path in retained) if retained else "- None recorded."
+    body = f"""## Completion Report
+
+Asset: `{plan['asset_slug']}`  
+Proposal: `{state['proposal_id']}`  
+Request classification: `{state.get('request_classification', 'canonical-publish')}`
+
+## Validation
+
+- Artifact validation: {validation.get('validation_summary', 'Not recorded.')}
+- Commands run: {', '.join(validation.get('commands_run', [])) or 'Not recorded.'}
+- Toolchain versions: {json.dumps(validation.get('tool_versions', {}), sort_keys=True)}
+
+## Remote Paths
+
+{chr(10).join(remote_paths) if remote_paths else '- No publish-plan promotions recorded.'}
+
+## Post-Merge State
+
+- Promoted objects verified: {post_merge.get('promoted_objects_verified', False)}
+- Catalog freshness verified: {post_merge.get('catalog_freshness_verified', False)}
+- Upload alert state: {post_merge.get('alert_state', 'not recorded')}
+
+## Retained Local Work Directories
+
+{retained_text}
+"""
+    return body
+
+
+def validate_state_for_pr(state: dict[str, Any]) -> dict[str, Any]:
+    errors = []
+    for step in STEP_DEFINITIONS:
+        if step.optional or not step.is_required(state):
+            continue
+        if step.step_id == "pr-ready":
+            continue
+        if not step_completed(state, step.step_id):
+            errors.append(f"{step.step_id} is incomplete")
+    publish_plan = None
+    if not errors:
+        try:
+            publish_plan = build_publish_plan_from_state(state)
+        except Exception as exc:  # noqa: BLE001 - surface validator details without hiding other status.
+            errors.append(str(exc))
+    return {"ready_for_pr": not errors, "errors": errors, "publish_plan": publish_plan}
+
+
+def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("source", type=Path, help="Local source file or directory to inspect.")
     parser.add_argument("--asset-slug", help="Lowercase kebab-case asset slug. Inferred from source name when omitted.")
     parser.add_argument("--title", help="Human-readable dataset title. Inferred from slug when omitted.")
@@ -1344,6 +2476,223 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--categories", type=Path, default=Path("catalog/categories.yaml"))
     parser.add_argument("--docs-dir", type=Path, default=Path("docs/assets"))
+
+
+def plan_from_args(args: argparse.Namespace) -> ConciergePlan:
+    return build_plan(
+        source=args.source,
+        asset_slug=args.asset_slug,
+        title=args.title,
+        category=args.category,
+        subcategory=args.subcategory,
+        owner=args.owner,
+        source_name=args.source_name,
+        license_text=args.license_text,
+        citation=args.citation,
+        update_cadence=args.update_cadence,
+        canonical_format=args.canonical_format,
+        access_tier=args.access_tier,
+        bucket=args.bucket,
+        release_date=args.release_date,
+        with_pmtiles=args.with_pmtiles,
+        source_resolution_meters=args.source_resolution_meters,
+        source_scale_denominator=args.source_scale_denominator,
+        pmtiles_maxzoom=args.pmtiles_maxzoom,
+        pmtiles_maxzoom_reason=args.pmtiles_maxzoom_reason,
+        pmtiles_detail_hint=args.pmtiles_detail_hint,
+        categories_path=args.categories,
+        docs_dir=args.docs_dir,
+    )
+
+
+def command_start(args: argparse.Namespace) -> int:
+    if args.request_classification != "canonical-publish":
+        raise WorkflowError(
+            "the stateful first-upload workflow only handles canonical-publish requests; "
+            "use the preview, scratch-only, or diagnostic workflow for this request classification"
+        )
+    if not args.proposal_id or not PROPOSAL_RE.fullmatch(args.proposal_id):
+        raise WorkflowError("start requires --proposal-id with only letters, digits, dots, underscores, and hyphens")
+    plan = plan_from_args(args)
+    duplicates = detect_existing_asset(plan)
+    if duplicates and not args.allow_existing_asset:
+        raise WorkflowError(
+            "first-upload workflow found existing asset slug evidence; use an existing-dataset workflow or pass "
+            f"--allow-existing-asset after review: {', '.join(duplicates)}"
+        )
+    state = workflow_state_payload(
+        plan=plan,
+        source=args.source,
+        proposal_id=args.proposal_id,
+        request_classification=args.request_classification,
+        owner=args.owner,
+        source_name=args.source_name,
+        license_text=args.license_text,
+        citation=args.citation,
+        update_cadence=args.update_cadence,
+        access_tier=args.access_tier,
+    )
+    state_file = args.state_file or default_state_file(plan.asset_slug, args.proposal_id)
+    state["state_file"] = str(state_file)
+    write_json_file(state_file, state, overwrite=args.overwrite_state)
+    print(json.dumps({"state_file": str(state_file), "current_step": current_required_step(state).step_id}, indent=2, sort_keys=True))
+    return 0
+
+
+def command_next(args: argparse.Namespace) -> int:
+    state = load_state(args.state_file)
+    step = current_required_step(state)
+    if step is None:
+        print(json.dumps({"complete": True, "message": "All required pre-PR steps are complete."}, indent=2, sort_keys=True) if args.json else "All required pre-PR steps are complete.")
+        return 0
+    print_instruction(render_instruction(state, step), as_json=args.json)
+    return 0
+
+
+def command_status(args: argparse.Namespace) -> int:
+    print_status(load_state(args.state_file), as_json=args.json)
+    return 0
+
+
+def command_confirm(args: argparse.Namespace) -> int:
+    state = load_state(args.state_file)
+    steps = workflow_steps_by_id()
+    if args.step not in steps:
+        raise WorkflowError(f"unknown step: {args.step}")
+    step = steps[args.step]
+    current = current_required_step(state)
+    can_confirm_optional = step.optional and current is None
+    if current is None and not can_confirm_optional and args.step != "post-merge-verify":
+        raise WorkflowError("all required pre-PR steps are already complete")
+    if current is not None and args.step != current.step_id:
+        raise WorkflowError(f"cannot confirm {args.step}; current required step is {current.step_id}")
+    if args.yes:
+        if not step.allow_yes:
+            raise WorkflowError(f"{step.step_id} requires structured evidence; --yes is not allowed")
+        evidence = {}
+    elif args.evidence_json:
+        evidence = read_json_file(args.evidence_json, label="evidence JSON")
+    else:
+        raise WorkflowError("confirm requires --evidence-json for this step")
+    normalized = step.validate_evidence(state, evidence)
+    record = step_record(state, step.step_id)
+    record.update(
+        {
+            "status": "completed",
+            "completed_at": utc_now(),
+            "evidence": normalized,
+        }
+    )
+    if step.step_id == "pr-ready":
+        state["publish_plan"] = normalized["publish_plan"]
+        state["pr_body"] = normalized["pr_body"]
+    save_state(args.state_file, state)
+    next_step = current_required_step(state)
+    print(
+        json.dumps(
+            {
+                "completed_step": step.step_id,
+                "next_step": next_step.step_id if next_step else None,
+                "ready_for_pr": step_completed(state, "pr-ready"),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def command_render_pr(args: argparse.Namespace) -> int:
+    state = load_state(args.state_file)
+    result = validate_state_for_pr(state)
+    if not result["ready_for_pr"]:
+        raise WorkflowError("workflow is not ready for PR: " + "; ".join(result["errors"]))
+    body = render_pr_body_from_state(state, publish_plan=result["publish_plan"])
+    print(body, end="" if body.endswith("\n") else "\n")
+    return 0
+
+
+def command_render_report(args: argparse.Namespace) -> int:
+    state = load_state(args.state_file)
+    result = validate_state_for_pr(state)
+    if not result["ready_for_pr"]:
+        raise WorkflowError("workflow is not ready for completion report: " + "; ".join(result["errors"]))
+    if not state.get("publish_plan"):
+        state["publish_plan"] = result["publish_plan"]
+    print(render_completion_report_from_state(state), end="")
+    return 0
+
+
+def command_validate(args: argparse.Namespace) -> int:
+    state = load_state(args.state_file)
+    result = validate_state_for_pr(state)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["ready_for_pr"] else 1
+
+
+def build_workflow_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Guide a first-upload shared-datasets publish as a state machine.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    start = subparsers.add_parser("start", help="Create a state file for a first-upload workflow.")
+    add_plan_arguments(start)
+    start.add_argument(
+        "--request-classification",
+        required=True,
+        choices=["canonical-publish", "preview-only", "scratch-only", "diagnostic-only"],
+        help="Explicitly classify the maintainer request before starting.",
+    )
+    start.add_argument("--proposal-id", required=True, help="Stable proposal id, usually pr-123, issue-123, or a branch slug.")
+    start.add_argument("--state-file", type=Path, help="Optional state file path. Defaults under the standard temp workspace.")
+    start.add_argument("--allow-existing-asset", action="store_true", help="Allow continuing after duplicate asset evidence is found.")
+    start.add_argument("--overwrite-state", action="store_true", help="Allow replacing an existing state file.")
+    start.set_defaults(func=command_start)
+
+    next_parser = subparsers.add_parser("next", help="Print the single next required step.")
+    next_parser.add_argument("--state-file", type=Path, required=True)
+    next_parser.add_argument("--json", action="store_true")
+    next_parser.set_defaults(func=command_next)
+
+    confirm = subparsers.add_parser("confirm", help="Validate evidence and mark the current step complete.")
+    confirm.add_argument("--state-file", type=Path, required=True)
+    confirm.add_argument("--step", required=True)
+    confirm.add_argument("--evidence-json", type=Path)
+    confirm.add_argument("--yes", action="store_true", help="Only allowed for steps that explicitly require no evidence.")
+    confirm.set_defaults(func=command_confirm)
+
+    status = subparsers.add_parser("status", help="Show workflow status.")
+    status.add_argument("--state-file", type=Path, required=True)
+    status.add_argument("--json", action="store_true")
+    status.set_defaults(func=command_status)
+
+    render_pr = subparsers.add_parser("render-pr", help="Render a PR body with fenced publish plan.")
+    render_pr.add_argument("--state-file", type=Path, required=True)
+    render_pr.set_defaults(func=command_render_pr)
+
+    render_report = subparsers.add_parser("render-report", help="Render a final completion report scaffold.")
+    render_report.add_argument("--state-file", type=Path, required=True)
+    render_report.set_defaults(func=command_render_report)
+
+    validate = subparsers.add_parser("validate", help="Validate state readiness for PR rendering.")
+    validate.add_argument("--state-file", type=Path, required=True)
+    validate.set_defaults(func=command_validate)
+
+    return parser
+
+
+def build_legacy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "The JSON plan includes curator_field_options with a compact decision table for likely provider ext_id "
+            "and grouping/search/filter candidates, plus the last-resort shared_datasets_row_id fallback option. "
+            "Exact stats are computed for local sources at or below "
+            f"{PROFILE_RANDOM_SAMPLE_SIZE:,} rows; larger sources use a deterministic random sample. Override the "
+            "sample size with SHARED_DATASETS_PROFILE_SAMPLE_SIZE."
+        ),
+    )
+    add_plan_arguments(parser)
     parser.add_argument("--write-draft-doc", action="store_true", help="Write docs/assets/{asset_slug}.md locally.")
     parser.add_argument("--overwrite-doc", action="store_true", help="Allow replacing an existing draft asset doc.")
     parser.add_argument("--run-catalog-check", action="store_true", help="Run catalog_docs.py check after planning.")
@@ -1351,33 +2700,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if not argv_list or argv_list[0] in WORKFLOW_COMMANDS or argv_list[0] in {"-h", "--help"}:
+        parser = build_workflow_parser()
+        args = parser.parse_args(argv_list)
+        try:
+            return args.func(args)
+        except (ConciergeError, WorkflowError) as exc:
+            print(f"publishing-concierge: {exc}", file=sys.stderr)
+            return 2
+
+    parser = build_legacy_parser()
+    args = parser.parse_args(argv_list)
     try:
-        plan = build_plan(
-            source=args.source,
-            asset_slug=args.asset_slug,
-            title=args.title,
-            category=args.category,
-            subcategory=args.subcategory,
-            owner=args.owner,
-            source_name=args.source_name,
-            license_text=args.license_text,
-            citation=args.citation,
-            update_cadence=args.update_cadence,
-            canonical_format=args.canonical_format,
-            access_tier=args.access_tier,
-            bucket=args.bucket,
-            release_date=args.release_date,
-            with_pmtiles=args.with_pmtiles,
-            source_resolution_meters=args.source_resolution_meters,
-            source_scale_denominator=args.source_scale_denominator,
-            pmtiles_maxzoom=args.pmtiles_maxzoom,
-            pmtiles_maxzoom_reason=args.pmtiles_maxzoom_reason,
-            pmtiles_detail_hint=args.pmtiles_detail_hint,
-            categories_path=args.categories,
-            docs_dir=args.docs_dir,
-        )
+        plan = plan_from_args(args)
         if args.write_draft_doc:
             write_draft_doc(
                 Path(plan.asset_doc_path),
