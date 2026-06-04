@@ -68,8 +68,8 @@ the complete release history from the bucket-side release index. This keeps the
 release selector current after cron jobs run without requiring a Git commit or a
 tracked `last_updated` edit.
 Release-index-backed `versions[]` entries preserve the complete release
-`files` list, including sidecar datafiles such as feature indexes, metadata
-sidecars, schemas, and manifests.
+`files` list, including sidecar datafiles such as metadata sidecars, schemas,
+and manifests.
 
 The browser-facing freshness labels are `Latest release` for the newest
 successful dataset release and `Last check-in` for the most recent success or
