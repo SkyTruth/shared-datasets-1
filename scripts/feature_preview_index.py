@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load preview feature-index sidecars into Firestore."""
+"""Load preview feature metadata sidecars into Firestore."""
 
 from __future__ import annotations
 
