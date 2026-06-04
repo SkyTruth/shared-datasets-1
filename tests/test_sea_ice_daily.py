@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,24 @@ VALID_FGB_SHA = "a" * 64
 VALID_PMTILES_SHA = "b" * 64
 VALID_METADATA_SHA = "c" * 64
 VALID_SCHEMA_SHA = "d" * 64
+
+
+def runnable_command(command: list[str]) -> bool:
+    executable = shutil.which(command[0])
+    if not executable:
+        return False
+    try:
+        completed = subprocess.run(
+            [executable, *command[1:]],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
 
 
 class FakeBlob:
@@ -430,7 +449,7 @@ ice_date: String (0.0)
         self.assertEqual(release_fgb.uploads[0][1], 0)
         self.assertEqual(latest_fgb.uploads[0][1], 7)
         self.assertEqual(latest_pmtiles.uploads[0][1], 11)
-        self.assertEqual(json.loads(run_record.text)["rows"], 2)
+        self.assertEqual(json.loads(run_record.text)["row_count"], 2)
         self.assertEqual(len(json.loads(run_record.text)["release_paths"]), 5)
         manifest_blob = bucket.blob(asset.release_object(run_date, ".manifest.json"))
         manifest = json.loads(manifest_blob.text)
@@ -477,18 +496,18 @@ ice_date: String (0.0)
 
 @unittest.skipUnless(
     all(
-        shutil.which(binary)
-        for binary in (
-            "gdal_create",
-            "gdal_calc.py",
-            "gdal_polygonize.py",
-            "ogr2ogr",
-            "ogrinfo",
-            "tippecanoe",
-            "pmtiles",
+        runnable_command(command)
+        for command in (
+            ["gdal_create", "--help"],
+            ["gdal_calc.py", "--help"],
+            ["gdal_polygonize.py", "--help"],
+            ["ogr2ogr", "--version"],
+            ["ogrinfo", "--version"],
+            ["tippecanoe-decode", "--help"],
+            ["pmtiles", "version"],
         )
     ),
-    "requires GDAL, Tippecanoe, and PMTiles binaries",
+    "requires runnable GDAL, tippecanoe-decode, and PMTiles binaries",
 )
 class SeaIceDailyIntegrationTests(unittest.TestCase):
     def test_synthetic_raster_builds_fgb_and_pmtiles(self):

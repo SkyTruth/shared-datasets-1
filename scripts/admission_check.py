@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import re
 import subprocess
@@ -179,72 +178,6 @@ def validate_admission_evidence(evidence: dict[str, Any], *, label: str) -> list
     return errors
 
 
-def extract_markdown_section(body: str, heading: str) -> str:
-    lines = body.splitlines()
-    target = heading.strip().lower()
-    collected: list[str] = []
-    in_section = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            current = stripped.lstrip("#").strip().lower()
-            if in_section and stripped.startswith("## "):
-                break
-            in_section = current == target
-            continue
-        if in_section:
-            collected.append(line)
-    return "\n".join(collected).strip()
-
-
-def field_for_pr_label(label: str) -> str | None:
-    normalized = re.sub(r"[^a-z0-9]+", " ", label.lower()).strip()
-    if "intended consumer" in normalized:
-        return "intended_consumers"
-    if "why this belongs" in normalized or "shared rationale" in normalized:
-        return "shared_rationale"
-    if "citation" in normalized:
-        return "citation"
-    if "steward" in normalized:
-        return "steward"
-    if "update expectation" in normalized:
-        return "update_expectations"
-    if "estimated" in normalized and "footprint" in normalized:
-        return "estimated_published_size_gb"
-    if "large data exception" in normalized:
-        return "large_data_exception"
-    if "alternatives considered" in normalized:
-        return "alternatives_considered"
-    if "deprecation" in normalized or "exit policy" in normalized:
-        return "deprecation_policy"
-    return None
-
-
-def evidence_from_pr_body(body: str) -> dict[str, Any]:
-    section = extract_markdown_section(body, "Dataset Admission")
-    evidence: dict[str, Any] = {}
-    current_field: str | None = None
-    bullet_re = re.compile(r"^\s*-\s+([^:]+):\s*(.*)$")
-    for line in section.splitlines():
-        match = bullet_re.match(line)
-        if match:
-            current_field = field_for_pr_label(match.group(1))
-            if current_field:
-                evidence[current_field] = match.group(2).strip()
-            continue
-        if current_field and line.strip():
-            existing = str(evidence.get(current_field, "")).strip()
-            evidence[current_field] = f"{existing}\n{line.strip()}".strip()
-    return evidence
-
-
-def pr_body_from_event(path: Path | None) -> str:
-    if path is None:
-        return ""
-    payload = json.loads(path.read_text())
-    return str(payload.get("pull_request", {}).get("body") or "")
-
-
 def is_asset_doc(path: str) -> bool:
     return ASSET_DOC_RE.fullmatch(path) is not None
 
@@ -298,7 +231,6 @@ def check_admission(
     repo_root: Path,
     changes: Sequence[ChangedFile],
     base_ref: str,
-    pr_body: str,
     path_exists_at_base: Callable[[str], bool] | None = None,
 ) -> AdmissionResult:
     errors: list[str] = []
@@ -319,14 +251,10 @@ def check_admission(
     if jobs:
         changed_docs = changed_asset_docs(changes)
         if not complete_changed_asset_docs(repo_root, changed_docs):
-            pr_evidence = evidence_from_pr_body(pr_body)
-            pr_errors = validate_admission_evidence(pr_evidence, label="PR Dataset Admission")
-            if pr_errors:
-                errors.append(
-                    "new ingestion pipeline(s) require complete Dataset Admission evidence: "
-                    + ", ".join(jobs)
-                )
-                errors.extend(pr_errors)
+            errors.append(
+                "new ingestion pipeline(s) require complete admission evidence in changed asset-doc frontmatter: "
+                + ", ".join(jobs)
+            )
 
     return AdmissionResult(
         errors=tuple(errors),
@@ -339,7 +267,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="Base git ref or SHA.")
     parser.add_argument("--head", required=True, help="Head git ref or SHA.")
-    parser.add_argument("--event-path", type=Path, help="GitHub event JSON path.")
     parser.add_argument("--repo-root", type=Path, default=Path("."), help="Repository root.")
     return parser
 
@@ -354,9 +281,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             repo_root=repo_root,
             changes=changes,
             base_ref=args.base,
-            pr_body=pr_body_from_event(args.event_path),
         )
-    except (AdmissionCheckError, OSError, json.JSONDecodeError) as exc:
+    except (AdmissionCheckError, OSError) as exc:
         print(f"admission-check: {exc}", file=sys.stderr)
         return 1
 

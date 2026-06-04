@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import shutil
 import sys
 import tempfile
@@ -51,6 +50,9 @@ ASSET_PARENT = "200-imagery-derived/250-weather-climate"
 RUN_RECORD_VERSION = 1
 REPROJECT_SEGMENTIZE_MAX_DISTANCE = 10_000
 USER_AGENT = "shared-datasets-1-sea-ice-daily/1.0"
+PMTILES_MINZOOM = 0
+PMTILES_MAXZOOM = 8
+PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN, feature_metadata.EXT_ID_COLUMN)
 FEATURE_COUNT_RE = re.compile(r"^\s*Feature Count:\s*(\d+)\s*$", re.MULTILINE)
 FIELD_LINE_RE = re.compile(
     r"^\s*([^:\s][^:]*):\s+"
@@ -254,8 +256,10 @@ def no_available_source_record(
     )
     return add_source_request_warnings(
         {
+            "schema_version": 1,
             "asset_slug": asset.slug,
             "run_date": anchor_day.isoformat(),
+            "release_date": anchor_day.isoformat(),
             "status": "skipped",
             "reason": reason,
         },
@@ -447,28 +451,33 @@ def build_pmtiles(geojsonseq: Path, output: Path) -> None:
     remove_if_exists(output)
     mbtiles = output.with_suffix(".mbtiles")
     remove_if_exists(mbtiles)
-    zoom_args = shlex.split(os.environ.get("TIPPECANOE_ZOOM_ARGS", "-Z0 -z8"))
-    extra_args = shlex.split(os.environ.get("TIPPECANOE_EXTRA_ARGS", ""))
-    default_args = [
-        "--drop-densest-as-needed",
-        "--extend-zooms-if-still-dropping",
-        "--detect-shared-borders",
-    ]
     run_command(
         [
-            "tippecanoe",
-            *zoom_args,
-            "--projection=EPSG:4326",
-            "--force",
-            "-o",
-            str(mbtiles),
-            "-l",
+            "ogr2ogr",
+            "-f",
+            "MBTiles",
+            "-nln",
             ASSET.tile_layer,
-            "--include",
-            feature_metadata.FEATURE_ID_COLUMN,
-            "-P",
-            *(extra_args or default_args),
-            str(geojsonseq),
+            "-nlt",
+            "PROMOTE_TO_MULTI",
+            "-dsco",
+            f"NAME={ASSET.title}",
+            "-dsco",
+            f"DESCRIPTION={ASSET.title} metadata lookup vector tiles",
+            "-dsco",
+            f"MINZOOM={PMTILES_MINZOOM}",
+            "-dsco",
+            f"MAXZOOM={PMTILES_MAXZOOM}",
+            "-lco",
+            f"NAME={ASSET.tile_layer}",
+            "-lco",
+            f"MINZOOM={PMTILES_MINZOOM}",
+            "-lco",
+            f"MAXZOOM={PMTILES_MAXZOOM}",
+            "-select",
+            ",".join(PMTILES_PROPERTIES),
+            str(mbtiles),
+            f"GeoJSONSeq:{geojsonseq}",
         ]
     )
     run_command(["pmtiles", "convert", str(mbtiles), str(output)])
@@ -734,9 +743,11 @@ def publish_outputs(
 
     record = add_source_request_warnings(
         {
+            "schema_version": 1,
             "record_version": RUN_RECORD_VERSION,
             "asset_slug": asset.slug,
             "run_date": run_date.isoformat(),
+            "release_date": run_date.isoformat(),
             "status": "success",
             "source": source.source_url,
             "source_url": source.source_url,
@@ -747,7 +758,7 @@ def publish_outputs(
             "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
             "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
             "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
-            "rows": outputs.row_count,
+            "row_count": outputs.row_count,
             "sha256": sha256_values,
             "notes": (
                 "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
@@ -789,7 +800,6 @@ def run() -> dict[str, Any]:
         "gdal_polygonize.py",
         "ogr2ogr",
         "ogrinfo",
-        "tippecanoe",
         "pmtiles",
     ):
         require_binary(binary)
@@ -841,8 +851,10 @@ def run() -> dict[str, Any]:
         )
         record = add_source_request_warnings(
             {
+                "schema_version": 1,
                 "asset_slug": ASSET.slug,
                 "run_date": anchor_day.isoformat(),
+                "release_date": available_source.filename_date.isoformat(),
                 "status": "skipped",
                 "reason": "latest available source already published",
                 "source": available_source.source_url,

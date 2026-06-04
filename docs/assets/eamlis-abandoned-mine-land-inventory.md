@@ -21,9 +21,10 @@ license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
   Inventory System (e-AMLIS). https://amlis.osmre.gov/.
 notes: Monthly job publishes FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 12 from the point-only FGB profile
-  with Tippecanoe no feature limit/no tile size limit/drop-rate 1 for all-point retention; pmtiles sha256 09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4.
-  Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records.
-  Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
+  with all-point retention verified at zoom 0; future rebuilds must use the repo-standard GDAL MBTiles to PMTiles conversion
+  path; pmtiles sha256 09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4. Release history, source fingerprints,
+  row counts, and file hashes are recorded in the bucket release index and per-run records. Stale initial GeoJSON remains
+  only under source/provenance paths and is not advertised as an active data-plane format.
 row_count: 63112
 data_profile:
   field_count: 57
@@ -146,7 +147,7 @@ Multiple records can share the same `AMLIS_KEY` and point geometry because rows 
 
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
 
-The PMTiles artifact is generated with Tippecanoe from the same point features, with zooms 0 through 12. It uses `--no-feature-limit`, `--no-tile-size-limit`, and `--drop-rate=1` so low-zoom tiles retain dense point content for visual inspection. The canonical FGB remains the analytical source.
+The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -224,7 +225,7 @@ Output summary:
 - Extent: -161.234444, 28.503843 to -71.249444, 70.500000
 - FGB SHA-256: `23c517e741d86b0e9e676f699ae7f1345118c21dbc728d88edcbf086f0c3af80`
 - PMTiles SHA-256: `09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4`
-- Toolchain: GDAL 3.6.2, Tippecanoe 2.79.0; PMTiles CLI unavailable locally, so archive validation used successful Tippecanoe generation plus `tippecanoe-decode` feature-count checks.
+- PMTiles validation used zoom 0 decode feature-count checks. Future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`.
 
 Monthly scheduled ingestion was added after the initial manual upload. The job checks the public ArcGIS layer metadata and source statistics first, skips unchanged source fingerprints without downloading features, and also skips publication when a changed source fingerprint generates the same FGB SHA-256 as the latest successful run.
 

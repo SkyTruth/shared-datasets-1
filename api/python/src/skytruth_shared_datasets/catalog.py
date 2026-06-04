@@ -35,15 +35,6 @@ UrlStrategy = Literal["public_gcs", "cdn"]
 AccessTier = Literal["public", "private"]
 ACCESS_TIERS = {"public", "private"}
 
-FORMAT_EXTENSIONS = {
-    "fgb": ".fgb",
-    "pmtiles": ".pmtiles",
-    "geojson": ".geojson",
-    "ndgeojson": ".ndgeojson",
-    "csv": ".csv",
-    "cog": ".tif",
-}
-
 
 class SharedDatasetsError(Exception):
     """Base exception for shared dataset resolver failures."""
@@ -101,14 +92,18 @@ class CatalogAsset:
     @classmethod
     def from_row(cls, row: Mapping[str, str | None]) -> "CatalogAsset":
         slug = _required(row, "asset_slug")
+        title = _required(row, "title")
         canonical_path = _required(row, "canonical_path")
         canonical_format = _normalize_format(_required(row, "canonical_format"))
-        available_formats = _split_semicolon(row.get("available_formats", ""))
+        available_formats = tuple(
+            _normalize_format(format_name)
+            for format_name in _split_semicolon(_required(row, "available_formats"))
+        )
         if canonical_format not in available_formats:
-            available_formats = (canonical_format, *available_formats)
+            raise ValueError("available_formats must include canonical_format")
         return cls(
             slug=slug,
-            title=row.get("title", "") or slug,
+            title=title,
             category=row.get("category", ""),
             subcategory=row.get("subcategory", ""),
             status=row.get("status", ""),
@@ -116,7 +111,7 @@ class CatalogAsset:
             lifecycle_date=row.get("lifecycle_date", ""),
             successor_asset_slug=row.get("successor_asset_slug", ""),
             consumer_guidance=row.get("consumer_guidance", ""),
-            access_tier=_normalize_access_tier(row.get("access_tier") or "public"),
+            access_tier=_normalize_access_tier(_required(row, "access_tier")),
             owner=row.get("owner", ""),
             update_cadence=row.get("update_cadence", ""),
             canonical_path=canonical_path,
@@ -145,18 +140,10 @@ class CatalogAsset:
             )
         if resolved_format == self.canonical_format:
             return self.canonical_path
-        if resolved_format == "zarr":
-            raise UnsupportedFormatError(f"{self.slug!r} cannot infer a non-canonical Zarr path from the CSV catalog")
-        extension = FORMAT_EXTENSIONS.get(resolved_format)
-        if extension is None:
-            raise UnsupportedFormatError(f"{self.slug!r} uses unsupported format {resolved_format!r}")
-        return f"{self.latest_root}/{self.slug}{extension}"
-
-    @property
-    def latest_root(self) -> str:
-        if "/latest/" not in self.canonical_path:
-            raise UnsupportedFormatError(f"{self.slug!r} canonical path is not a latest/ object: {self.canonical_path}")
-        return self.canonical_path.split("/latest/", 1)[0] + "/latest"
+        raise UnsupportedFormatError(
+            f"{self.slug!r} latest path for non-canonical format {resolved_format!r} "
+            "must come from an explicit release-index file entry"
+        )
 
 
 @dataclass(frozen=True)
@@ -203,11 +190,6 @@ class Catalog:
             return cls.from_csv_text(text, source=DEFAULT_CATALOG_URL)
 
         source_text = os.fspath(source)
-        if source_text == "packaged":
-            raise CatalogLoadError(
-                "Packaged catalog snapshots are no longer shipped. "
-                "Pass a local catalog path, HTTPS URL, or gs:// URI instead."
-            )
         if _is_url(source_text):
             try:
                 return cls.from_csv_text(_read_url(source_text, timeout=timeout), source=source_text)
@@ -579,7 +561,10 @@ def release_path_for_version(
                 continue
             path = str(file_entry.get("path") or "")
             if not path:
-                break
+                raise CatalogLoadError(
+                    f"Release index for {asset.slug!r} release {version} format "
+                    f"{resolved_format!r} is missing an explicit path"
+                )
             split_gs_uri(path)
             return path, resolved_format
         available = ", ".join(
@@ -678,21 +663,7 @@ def _required(row: Mapping[str, str | None], field: str) -> str:
 
 
 def _normalize_format(format_name: str) -> str:
-    normalized = format_name.strip().lower()
-    aliases = {
-        "flatgeobuf": "fgb",
-        "geotiff": "cog",
-        "tif": "cog",
-        "tiff": "cog",
-        ".fgb": "fgb",
-        ".pmtiles": "pmtiles",
-        ".geojson": "geojson",
-        ".ndgeojson": "ndgeojson",
-        ".csv": "csv",
-        ".tif": "cog",
-        ".tiff": "cog",
-    }
-    return aliases.get(normalized, normalized)
+    return format_name.strip().lower()
 
 
 def _parse_version(version: str) -> str:

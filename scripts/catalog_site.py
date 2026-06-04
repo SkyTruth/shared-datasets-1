@@ -48,7 +48,6 @@ MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 MARKDOWN_TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-RELEASE_PATH_RE = re.compile(r"^releases/(?P<date>\d{4}-\d{2}-\d{2}|YYYY-MM-DD)/(?P<object>.+)$")
 REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
 GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
@@ -211,12 +210,6 @@ def path_for_format(canonical_path: str, slug: str, format_name: str) -> str:
     if extension is None:
         raise CatalogSiteError(f"unsupported format {format_name!r}")
     return f"{latest_root(canonical_path)}/{slug}{extension}"
-
-
-def release_path_for_latest_path(latest_path: str, date: str) -> str:
-    if "/latest/" not in latest_path:
-        raise CatalogSiteError(f"latest path must include /latest/: {latest_path}")
-    return latest_path.replace("/latest/", f"/releases/{date}/", 1)
 
 
 def strip_markdown(text: str) -> str:
@@ -756,72 +749,6 @@ def merged_license_flags(license_text: str, metadata: dict[str, Any], *, doc_pat
     return flags
 
 
-def require_iso_date(value: str, *, context: str) -> str:
-    if not DATE_RE.fullmatch(value):
-        raise CatalogSiteError(f"{context}: expected YYYY-MM-DD date, got {value!r}")
-    try:
-        dt.date.fromisoformat(value)
-    except ValueError as error:
-        raise CatalogSiteError(f"{context}: invalid date {value!r}") from error
-    return value
-
-
-def release_versions(
-    *,
-    doc_path: Path,
-    canonical_path: str,
-    slug: str,
-    canonical_format: str,
-    available_formats: list[str],
-    last_updated: str = "",
-) -> list[CatalogVersion]:
-    metadata = read_doc_metadata(doc_path)
-    files = metadata.get("files") or []
-    if not isinstance(files, list):
-        raise CatalogSiteError(f"{doc_path}: files must be a list")
-
-    by_date: dict[str, set[str]] = {}
-    for index, item in enumerate(files, start=1):
-        if not isinstance(item, dict):
-            raise CatalogSiteError(f"{doc_path}: files entry {index} must be a mapping")
-        path = str(item.get("path") or "").strip()
-        if not path.startswith("releases/"):
-            continue
-        match = RELEASE_PATH_RE.fullmatch(path)
-        if not match:
-            raise CatalogSiteError(f"{doc_path}: release path must be releases/YYYY-MM-DD/object, got {path!r}")
-        raw_date = match.group("date")
-        if raw_date == "YYYY-MM-DD" and not last_updated:
-            continue
-        date = last_updated if raw_date == "YYYY-MM-DD" else raw_date
-        require_iso_date(date, context=f"{doc_path}: release date")
-        format_name = str(item.get("format") or "").strip()
-        if format_name not in APPROVED_FORMATS:
-            raise CatalogSiteError(f"{doc_path}: release path {path!r} has unsupported format {format_name!r}")
-        by_date.setdefault(date, set()).add(format_name)
-
-    versions: list[CatalogVersion] = []
-    for date in sorted(by_date, reverse=True):
-        release_formats = [format_name for format_name in available_formats if format_name in by_date[date]]
-        if canonical_format not in release_formats:
-            release_formats.insert(0, canonical_format)
-        release_canonical_path = release_path_for_latest_path(canonical_path, date)
-        release_pmtiles_path = None
-        if "pmtiles" in release_formats:
-            release_pmtiles_path = release_path_for_latest_path(path_for_format(canonical_path, slug, "pmtiles"), date)
-        versions.append(
-            CatalogVersion(
-                date=date,
-                canonical_path=release_canonical_path,
-                public_url=gs_to_https(release_canonical_path),
-                pmtiles_path=release_pmtiles_path,
-                pmtiles_url=gs_to_https(release_pmtiles_path) if release_pmtiles_path else None,
-                available_formats=release_formats,
-            )
-        )
-    return versions
-
-
 def load_release_index(release_index_dir: Path | None, slug: str) -> dict[str, Any] | None:
     if release_index_dir is None:
         return None
@@ -834,7 +761,9 @@ def load_release_index(release_index_dir: Path | None, slug: str) -> dict[str, A
         raise CatalogSiteError(f"{path}: invalid release index JSON") from error
     if not isinstance(payload, dict):
         raise CatalogSiteError(f"{path}: release index must be a JSON object")
-    if payload.get("asset_slug") not in (None, "", slug):
+    if payload.get("schema_version") != 1:
+        raise CatalogSiteError(f"{path}: release index schema_version must be 1")
+    if payload.get("asset_slug") != slug:
         raise CatalogSiteError(f"{path}: release index asset_slug does not match {slug!r}")
     return payload
 
@@ -887,16 +816,13 @@ def release_file_for_format(files: list[Any], format_name: str, preferred_path: 
     return None
 
 
-def release_formats_from_files(available_formats: list[str], files: list[Any], canonical_format: str) -> list[str]:
+def release_formats_from_files(available_formats: list[str], files: list[Any]) -> list[str]:
     file_formats = {
         str(file_entry.get("format") or "").strip()
         for file_entry in files
         if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip()
     }
-    formats = [format_name for format_name in available_formats if format_name in file_formats]
-    if not formats and canonical_format:
-        formats.append(canonical_format)
-    return formats
+    return [format_name for format_name in available_formats if format_name in file_formats]
 
 
 def release_versions_from_index(
@@ -917,17 +843,21 @@ def release_versions_from_index(
     seen_dates: set[str] = set()
     for release in releases:
         if not isinstance(release, dict):
-            continue
+            raise CatalogSiteError(f"release index for {release_index.get('asset_slug')!r}: release entries must be objects")
         date = str(release.get("date") or "").strip()
-        if not DATE_RE.fullmatch(date) or date in seen_dates:
-            continue
+        if not DATE_RE.fullmatch(date):
+            raise CatalogSiteError(f"release index for {release_index.get('asset_slug')!r}: release date must be YYYY-MM-DD")
+        if date in seen_dates:
+            raise CatalogSiteError(f"release index for {release_index.get('asset_slug')!r}: duplicate release date {date}")
         files = release.get("files") or []
         if not isinstance(files, list):
-            continue
-        canonical_file = release_file_for_format(files, canonical_format, canonical_path) or (files[0] if files else None)
+            raise CatalogSiteError(f"release index for {release_index.get('asset_slug')!r}: release files must be a list")
+        canonical_file = release_file_for_format(files, canonical_format, canonical_path)
         release_canonical_path = release_file_path(canonical_file)
         if not release_canonical_path:
-            continue
+            raise CatalogSiteError(
+                f"release index for {release_index.get('asset_slug')!r}: release {date} is missing canonical {canonical_format} file"
+            )
         release_pmtiles_file = release_file_for_format(files, "pmtiles", pmtiles_path or "")
         release_pmtiles_path = release_file_path(release_pmtiles_file)
         row_count = release.get("rows")
@@ -942,7 +872,7 @@ def release_versions_from_index(
                 public_url=gs_to_https(release_canonical_path),
                 pmtiles_path=release_pmtiles_path or None,
                 pmtiles_url=gs_to_https(release_pmtiles_path) if release_pmtiles_path else None,
-                available_formats=release_formats_from_files(available_formats, files, canonical_format),
+                available_formats=release_formats_from_files(available_formats, files),
                 files=normalized_files,
                 source_version=str(release.get("source_version") or ""),
                 rows=row_count,
@@ -1080,25 +1010,26 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         available_formats=formats,
         pmtiles_path=pmtiles_path,
     )
-    if not versions:
-        versions = release_versions(
-            doc_path=doc_path,
-            canonical_path=canonical_path,
-            slug=slug,
-            canonical_format=canonical_format,
-            available_formats=formats,
-            last_updated=last_updated,
-        )
+    if release_index is not None and not versions:
+        raise CatalogSiteError(f"{slug}: release index does not include any usable releases")
     latest_release = release_index.get("latest_release") if release_index else None
     latest_run = release_index.get("latest_run") if release_index else None
     release_index_updated_at = str(release_index.get("updated_at") or "") if release_index else ""
     latest_release_date = ""
     if isinstance(latest_release, dict):
         latest_release_date = str(latest_release.get("date") or "")
-    if not latest_release_date and versions:
-        latest_release_date = versions[0].date
+    elif release_index is not None:
+        raise CatalogSiteError(f"{slug}: release index latest_release must be an object")
+    if release_index is not None and not DATE_RE.fullmatch(latest_release_date):
+        raise CatalogSiteError(f"{slug}: release index latest_release.date must be YYYY-MM-DD")
     effective_last_updated = latest_release_date or last_updated
-    latest_version = next((version for version in versions if version.date == latest_release_date), versions[0] if versions else None)
+    latest_version = None
+    if latest_release_date:
+        latest_version = next((version for version in versions if version.date == latest_release_date), None)
+        if latest_version is None:
+            raise CatalogSiteError(
+                f"{slug}: release index latest_release.date {latest_release_date!r} does not match a release entry"
+            )
     row_count = optional_int(doc_metadata, "row_count", doc_path=doc_path)
     localized_names = optional_localized_names(doc_metadata, doc_path=doc_path)
     if localized_names:
@@ -1182,7 +1113,8 @@ def latest_version_for_asset(asset: CatalogAsset) -> CatalogVersion | None:
         for version in asset.versions:
             if version.date == latest_date:
                 return version
-    return asset.versions[0] if asset.versions else None
+        return None
+    return None
 
 
 def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | None:

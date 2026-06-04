@@ -81,6 +81,8 @@ class LocalizedPmtilesPlan:
     fgb_path: str
     localization_path: str
     output_path: str
+    lookup_geojsonseq_path: str
+    mbtiles_path: str
     work_dir: str
     profile_path: str
     minzoom: int
@@ -92,9 +94,7 @@ class LocalizedPmtilesPlan:
     pmtiles_maxzoom_reason: str | None
     pmtiles_detail_hint: str | None
     localized_property_fields: tuple[str, ...]
-    tippecanoe_extra_args: tuple[str, ...]
     ogr2ogr_bin: str
-    tippecanoe_bin: str
     pmtiles_bin: str
     tool_paths: dict[str, str]
     tool_versions: dict[str, str]
@@ -512,14 +512,11 @@ def build_pmtiles_plan(
     pmtiles_maxzoom: int | None = None,
     pmtiles_maxzoom_reason: str | None = None,
     pmtiles_detail_hint: str | None = None,
-    tippecanoe_extra_args: Sequence[str] = (),
     ogr2ogr_bin: str = "ogr2ogr",
-    tippecanoe_bin: str = "tippecanoe",
     pmtiles_bin: str = "pmtiles",
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
-    allow_point_dropping: bool = False,
 ) -> LocalizedPmtilesPlan:
     vector_asset.validate_asset_slug(asset_slug)
     if not fgb.exists():
@@ -552,44 +549,24 @@ def build_pmtiles_plan(
     csv_profile, _rows = validate_localization_csv(localizations)
     if csv_profile.errors:
         raise LocalizedVectorAssetError("; ".join(csv_profile.errors))
-    required_properties = (vector_asset.FEATURE_ID_COLUMN, JOIN_KEY)
-    effective_tippecanoe_args = (*vector_asset.DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args)
-    vector_asset.validate_tippecanoe_args(
-        effective_tippecanoe_args,
-        allow_point_dropping=allow_point_dropping,
-        required_properties=required_properties,
-    )
 
     work = work_dir or vector_asset.default_work_dir(asset_slug)
+    build_dir = work / "build"
+    lookup_geojsonseq = build_dir / f"{asset_slug}-metadata-lookup.ndgeojson"
+    mbtiles = build_dir / f"{asset_slug}-metadata-lookup.mbtiles"
     profile_path = work / "profiles" / "localized-pmtiles-profile.json"
     vector_asset.ensure_local_output_path(output, label="PMTiles output", allow_repo_output=allow_repo_output)
     vector_asset.ensure_local_output_path(work, label="work directory", allow_repo_output=allow_repo_output)
     layer = layer_name or vector_asset.slug_to_layer_name(asset_slug)
-    tippecanoe_command = [
-        tippecanoe_bin,
-        "-f",
-        "-q",
-        "--projection=EPSG:4326",
-        "--minimum-zoom",
-        str(minzoom),
-        "--maximum-zoom",
-        "<resolved-after-profile>" if resolved_maxzoom is None else str(resolved_maxzoom),
-        "-o",
-        str(output),
-        "-l",
-        layer,
-        "-n",
-        asset_slug.replace("-", " ").title(),
-        "-N",
-        f"{asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
-        *effective_tippecanoe_args,
-    ]
+    command_maxzoom = "<resolved-after-profile>" if resolved_maxzoom is None else str(resolved_maxzoom)
     return LocalizedPmtilesPlan(
         asset_slug=asset_slug,
         layer_name=layer,
         fgb_path=str(fgb),
         localization_path=str(localizations),
         output_path=str(output),
+        lookup_geojsonseq_path=str(lookup_geojsonseq),
+        mbtiles_path=str(mbtiles),
         work_dir=str(work),
         profile_path=str(profile_path),
         minzoom=minzoom,
@@ -601,114 +578,126 @@ def build_pmtiles_plan(
         pmtiles_maxzoom_reason=pmtiles_maxzoom_reason,
         pmtiles_detail_hint=pmtiles_detail_hint,
         localized_property_fields=localized_output_fields(csv_profile),
-        tippecanoe_extra_args=tuple(effective_tippecanoe_args),
         ogr2ogr_bin=ogr2ogr_bin,
-        tippecanoe_bin=tippecanoe_bin,
         pmtiles_bin=pmtiles_bin,
-        tool_paths=vector_asset.tool_paths(
-            ogr2ogr_bin=ogr2ogr_bin,
-            tippecanoe_bin=tippecanoe_bin,
-            pmtiles_bin=pmtiles_bin,
-        ),
-        tool_versions=vector_asset.tool_versions(
-            ogr2ogr_bin=ogr2ogr_bin,
-            tippecanoe_bin=tippecanoe_bin,
-            pmtiles_bin=pmtiles_bin,
-        ),
+        tool_paths={
+            "ogr2ogr": vector_asset.executable_path(ogr2ogr_bin),
+            "pmtiles": vector_asset.executable_path(pmtiles_bin),
+        },
+        tool_versions={
+            "ogr2ogr": vector_asset.executable_version([ogr2ogr_bin, "--version"]),
+            "pmtiles": vector_asset.executable_version([pmtiles_bin, "version"]),
+        },
         commands=(
             {
-                "kind": "metadata_lookup_pipeline_source",
+                "kind": "metadata_lookup_geojsonseq",
                 "argv": [ogr2ogr_bin, "-f", "GeoJSONSeq", "-t_srs", "EPSG:4326", "/vsistdout/", str(fgb)],
             },
-            {"kind": "metadata_lookup_pipeline_sink", "argv": tippecanoe_command},
+            {
+                "kind": "gdal_mbtiles",
+                "argv": gdal_mbtiles_command(
+                    ogr2ogr_bin=ogr2ogr_bin,
+                    layer_name=layer,
+                    title=asset_slug.replace("-", " ").title(),
+                    description=f"{asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
+                    minzoom=minzoom,
+                    maxzoom=command_maxzoom,
+                    mbtiles_path=str(mbtiles),
+                    source_path=f"GeoJSONSeq:{lookup_geojsonseq}",
+                ),
+            },
+            {"kind": "pmtiles_convert", "argv": [pmtiles_bin, "convert", str(mbtiles), str(output)]},
         ),
     )
 
 
-def run_metadata_lookup_pipeline(
+def gdal_mbtiles_command(
+    *,
+    ogr2ogr_bin: str,
+    layer_name: str,
+    title: str,
+    description: str,
+    minzoom: int,
+    maxzoom: int | str,
+    mbtiles_path: str,
+    source_path: str,
+) -> list[str]:
+    return [
+        ogr2ogr_bin,
+        "-f",
+        "MBTiles",
+        "-nln",
+        layer_name,
+        "-nlt",
+        "PROMOTE_TO_MULTI",
+        "-dsco",
+        f"NAME={title}",
+        "-dsco",
+        f"DESCRIPTION={description}",
+        "-dsco",
+        f"MINZOOM={minzoom}",
+        "-dsco",
+        f"MAXZOOM={maxzoom}",
+        "-lco",
+        f"NAME={layer_name}",
+        "-lco",
+        f"MINZOOM={minzoom}",
+        "-lco",
+        f"MAXZOOM={maxzoom}",
+        mbtiles_path,
+        source_path,
+    ]
+
+
+def write_metadata_lookup_geojsonseq(plan: LocalizedPmtilesPlan) -> None:
+    output = Path(plan.lookup_geojsonseq_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    source_command = [plan.ogr2ogr_bin, "-f", "GeoJSONSeq", "-t_srs", "EPSG:4326", "/vsistdout/", plan.fgb_path]
+    source = subprocess.Popen(source_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if source.stdout is None:
+        raise LocalizedVectorAssetError(f"metadata lookup source did not expose stdout: {shlex.join(source_command)}")
+    try:
+        with output.open("w", encoding="utf-8", newline="\n") as handle:
+            for line in source.stdout:
+                line = line.lstrip("\x1e").strip()
+                if not line:
+                    continue
+                feature = json.loads(line)
+                handle.write(json.dumps(metadata_lookup_feature(feature), ensure_ascii=False, separators=(",", ":")) + "\n")
+        source_stderr = source.stderr.read() if source.stderr is not None else ""
+        source_returncode = source.wait()
+    except Exception:
+        if source.poll() is None:
+            source.kill()
+            source.wait()
+        raise
+    if source_returncode != 0:
+        raise LocalizedVectorAssetError(
+            "metadata lookup GeoJSONSeq generation failed. "
+            f"source command: {shlex.join(source_command)} "
+            f"source exited {source_returncode}: {source_stderr.strip() or 'no stderr'}"
+        )
+
+
+def run_metadata_lookup_conversion(
     plan: LocalizedPmtilesPlan,
     *,
     resolved_maxzoom: int,
 ) -> None:
-    source_command = [plan.ogr2ogr_bin, "-f", "GeoJSONSeq", "-t_srs", "EPSG:4326", "/vsistdout/", plan.fgb_path]
-    sink_command = [
-        plan.tippecanoe_bin,
-        "-f",
-        "-q",
-        "--projection=EPSG:4326",
-        "--minimum-zoom",
-        str(plan.minzoom),
-        "--maximum-zoom",
-        str(resolved_maxzoom),
-        "-o",
-        plan.output_path,
-        "-l",
-        plan.layer_name,
-        "-n",
-        plan.asset_slug.replace("-", " ").title(),
-        "-N",
-        f"{plan.asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
-        *plan.tippecanoe_extra_args,
-    ]
-    source = subprocess.Popen(source_command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if source.stdout is None:
-        raise LocalizedVectorAssetError(f"pipeline source did not expose stdout: {shlex.join(source_command)}")
-    try:
-        sink = subprocess.Popen(
-            sink_command,
-            text=True,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+    write_metadata_lookup_geojsonseq(plan)
+    vector_asset.run_command(
+        gdal_mbtiles_command(
+            ogr2ogr_bin=plan.ogr2ogr_bin,
+            layer_name=plan.layer_name,
+            title=plan.asset_slug.replace("-", " ").title(),
+            description=f"{plan.asset_slug.replace('-', ' ').title()} metadata lookup vector tiles",
+            minzoom=plan.minzoom,
+            maxzoom=resolved_maxzoom,
+            mbtiles_path=plan.mbtiles_path,
+            source_path=f"GeoJSONSeq:{plan.lookup_geojsonseq_path}",
         )
-    except Exception:
-        source.kill()
-        source.wait()
-        raise
-    assert sink.stdin is not None
-    try:
-        for line in source.stdout:
-            if not line.strip():
-                continue
-            feature = json.loads(line)
-            sink.stdin.write(
-                json.dumps(
-                    metadata_lookup_feature(feature),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
-    except Exception:
-        source.kill()
-        sink.kill()
-        source.wait()
-        sink.wait()
-        raise
-    finally:
-        try:
-            sink.stdin.close()
-        except BrokenPipeError:
-            pass
-
-    sink_stdout = sink.stdout.read() if sink.stdout is not None else ""
-    sink_stderr = sink.stderr.read() if sink.stderr is not None else ""
-    source_stderr = source.stderr.read() if source.stderr is not None else ""
-    source_returncode = source.wait()
-    sink_returncode = sink.wait()
-    if source_returncode != 0 or sink_returncode != 0:
-        details = [
-            "metadata lookup PMTiles streaming pipeline failed.",
-            f"source command: {shlex.join(source_command)}",
-            f"sink command: {shlex.join(sink_command)}",
-        ]
-        if source_returncode != 0:
-            details.append(f"source exited {source_returncode}: {source_stderr.strip() or 'no stderr'}")
-        if sink_returncode != 0:
-            details.append(f"sink exited {sink_returncode}: {sink_stderr.strip() or 'no stderr'}")
-        if sink_stdout.strip():
-            details.append(f"sink stdout: {sink_stdout.strip()}")
-        raise LocalizedVectorAssetError(" ".join(details))
+    )
+    vector_asset.run_command([plan.pmtiles_bin, "convert", plan.mbtiles_path, plan.output_path])
 
 
 def validate_pmtiles_properties(
@@ -770,7 +759,7 @@ def validate_pmtiles_properties(
 
 def build_pmtiles(plan: LocalizedPmtilesPlan, *, overwrite: bool = False) -> dict[str, Any]:
     vector_asset.require_executable(plan.ogr2ogr_bin)
-    vector_asset.require_executable(plan.tippecanoe_bin)
+    vector_asset.require_executable(plan.pmtiles_bin)
     output = Path(plan.output_path)
     if output.exists() and not overwrite:
         raise FileExistsError(f"refusing to overwrite existing PMTiles output: {output}")
@@ -778,6 +767,9 @@ def build_pmtiles(plan: LocalizedPmtilesPlan, *, overwrite: bool = False) -> dic
     Path(plan.profile_path).parent.mkdir(parents=True, exist_ok=True)
     if overwrite and output.exists():
         output.unlink()
+    for path in (Path(plan.lookup_geojsonseq_path), Path(plan.mbtiles_path)):
+        if overwrite and path.exists():
+            path.unlink()
 
     csv_profile, _rows = validate_localization_csv(Path(plan.localization_path))
     if csv_profile.errors:
@@ -811,7 +803,7 @@ def build_pmtiles(plan: LocalizedPmtilesPlan, *, overwrite: bool = False) -> dic
     if recommendation.maxzoom is None or recommendation.status != "recommended":
         raise LocalizedVectorAssetError(f"could not resolve PMTiles maxzoom: {recommendation.reason}")
 
-    run_metadata_lookup_pipeline(
+    run_metadata_lookup_conversion(
         plan,
         resolved_maxzoom=recommendation.maxzoom,
     )
@@ -1024,14 +1016,11 @@ def cmd_build_pmtiles(args: argparse.Namespace) -> int:
         pmtiles_maxzoom=args.pmtiles_maxzoom,
         pmtiles_maxzoom_reason=args.pmtiles_maxzoom_reason,
         pmtiles_detail_hint=args.pmtiles_detail_hint,
-        tippecanoe_extra_args=args.tippecanoe_arg,
         ogr2ogr_bin=args.ogr2ogr_bin,
-        tippecanoe_bin=args.tippecanoe_bin,
         pmtiles_bin=args.pmtiles_bin,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
-        allow_point_dropping=args.allow_point_dropping,
     )
     if args.dry_run:
         print_json(asdict(plan))
@@ -1101,15 +1090,12 @@ def build_parser() -> argparse.ArgumentParser:
     build_parser_.add_argument("--pmtiles-maxzoom", type=int)
     build_parser_.add_argument("--pmtiles-maxzoom-reason")
     build_parser_.add_argument("--pmtiles-detail-hint", choices=["coarse", "medium", "detailed"])
-    build_parser_.add_argument("--tippecanoe-arg", action="append", default=[])
     build_parser_.add_argument("--ogr2ogr-bin", default="ogr2ogr")
-    build_parser_.add_argument("--tippecanoe-bin", default="tippecanoe")
     build_parser_.add_argument("--pmtiles-bin", default="pmtiles")
     build_parser_.add_argument("--overwrite", action="store_true")
     build_parser_.add_argument("--allow-repo-output", action="store_true")
     build_parser_.add_argument("--allow-low-maxzoom", action="store_true")
     build_parser_.add_argument("--allow-high-maxzoom", action="store_true")
-    build_parser_.add_argument("--allow-point-dropping", action="store_true")
     build_parser_.add_argument("--dry-run", action="store_true")
     build_parser_.set_defaults(func=cmd_build_pmtiles)
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -42,37 +41,27 @@ class VectorAssetTests(unittest.TestCase):
 
         self.assertEqual(plan.output_dir, str(work_dir / "publish"))
         self.assertEqual(plan.fgb_path, str(work_dir / "publish/natural-earth-10m-land.fgb"))
-        self.assertEqual(plan.tippecanoe_input_path, vector_asset.STREAMED_TIPPECANOE_INPUT)
         self.assertEqual(plan.mbtiles_path, str(work_dir / "build/natural-earth-10m-land.mbtiles"))
         self.assertEqual(plan.pmtiles_path, str(work_dir / "publish/natural-earth-10m-land.pmtiles"))
-        self.assertEqual(plan.pmtiles_engine, "tippecanoe")
         self.assertEqual(plan.pmtiles_profile_path, str(work_dir / "publish/pmtiles-profile.json"))
         self.assertIn("ogr2ogr", plan.tool_paths)
-        self.assertIn("tippecanoe", plan.tool_paths)
+        self.assertNotIn("tippecanoe", plan.tool_paths)
         self.assertIn("pmtiles", plan.tool_paths)
         self.assertIn("ogr2ogr", plan.tool_versions)
-        self.assertIn("tippecanoe", plan.tool_versions)
+        self.assertNotIn("tippecanoe", plan.tool_versions)
         self.assertIn("pmtiles", plan.tool_versions)
         self.assertEqual(plan.commands[0].argv[:3], ["ogr2ogr", "-f", "FlatGeobuf"])
         self.assertIn("-makevalid", plan.commands[0].argv)
         self.assertIn("SPATIAL_INDEX=YES", plan.commands[0].argv)
-        self.assertEqual(plan.commands[1].kind, "pipeline")
-        self.assertEqual(plan.commands[1].source[:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
-        self.assertIn("/vsistdout/", plan.commands[1].source)
-        self.assertIn("-simplify", plan.commands[1].source)
-        self.assertIn("0.01", plan.commands[1].source)
-        self.assertEqual(plan.commands[1].source[-1], plan.fgb_path)
-        self.assertEqual(plan.commands[1].sink[0], "tippecanoe")
-        self.assertIn("--maximum-zoom", plan.commands[1].sink)
+        self.assertEqual(plan.commands[1].kind, "command")
+        self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "MBTiles"])
+        self.assertIn("-simplify", plan.commands[1].argv)
+        self.assertIn("0.01", plan.commands[1].argv)
+        self.assertEqual(plan.commands[1].argv[-2:], [plan.mbtiles_path, plan.fgb_path])
+        self.assertEqual(plan.commands[2].argv, ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
         self.assertEqual(plan.maxzoom, 8)
-        self.assertEqual(
-            plan.tippecanoe_extra_args,
-            ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
-        )
-        self.assertIn("--no-feature-limit", plan.commands[1].sink)
-        self.assertIn("--drop-rate=1", plan.commands[1].sink)
 
-    def test_gdal_mbtiles_fallback_plan_converts_to_pmtiles(self):
+    def test_gdal_mbtiles_plan_converts_to_pmtiles(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -82,37 +71,13 @@ class VectorAssetTests(unittest.TestCase):
                 asset_slug="example-asset",
                 work_dir=Path(tmp) / "work",
                 maxzoom=8,
-                maxzoom_reason="GDAL MBTiles fallback fixture.",
-                pmtiles_engine="gdal-mbtiles",
+                maxzoom_reason="GDAL MBTiles fixture.",
             )
 
         self.assertEqual(plan.commands[1].argv[:3], ["ogr2ogr", "-f", "MBTiles"])
         self.assertEqual(plan.commands[2].argv[1], "convert")
 
-    def test_tippecanoe_defaults_retain_low_zoom_point_features(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            plan = vector_asset.build_plan(
-                source=source,
-                asset_slug="example-asset",
-                work_dir=Path(tmp) / "work",
-            )
-
-        self.assertEqual(
-            plan.tippecanoe_extra_args,
-            ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1"),
-        )
-        commands = vector_asset.pmtiles_commands(plan, 12)
-        self.assertEqual(commands[0].kind, "pipeline")
-        self.assertIn("--no-feature-limit", commands[0].sink)
-        self.assertIn("--no-tile-size-limit", commands[0].sink)
-        self.assertIn("--drop-rate=1", commands[0].sink)
-        self.assertIsNone(plan.maxzoom)
-        self.assertEqual(plan.maxzoom_mode, "auto")
-
-    def test_auto_dry_run_payload_previews_streamed_pmtiles_pipeline(self):
+    def test_auto_dry_run_payload_previews_gdal_mbtiles_conversion(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}\n')
@@ -126,10 +91,9 @@ class VectorAssetTests(unittest.TestCase):
         payload = vector_asset.dry_run_payload(plan)
 
         self.assertEqual(payload["commands"][0]["kind"], "command")
-        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["kind"], "pipeline")
-        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["source"][:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
-        sink = payload["pmtiles_commands_after_profile"][0]["sink"]
-        self.assertEqual(sink[sink.index("--maximum-zoom") + 1], "<auto>")
+        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["kind"], "command")
+        self.assertEqual(payload["pmtiles_commands_after_profile"][0]["argv"][:3], ["ogr2ogr", "-f", "MBTiles"])
+        self.assertEqual(payload["pmtiles_commands_after_profile"][1]["argv"][1], "convert")
 
     def test_group_id_field_adds_native_column_generation_before_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -196,20 +160,6 @@ class VectorAssetTests(unittest.TestCase):
                     generate_row_id=True,
                 )
 
-    def test_tippecanoe_include_must_preserve_required_row_id(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            with self.assertRaisesRegex(ValueError, "would omit required"):
-                vector_asset.build_plan(
-                    source=source,
-                    asset_slug="example-asset",
-                    work_dir=Path(tmp) / "work",
-                    generate_row_id=True,
-                    tippecanoe_extra_args=("--include", "NAME"),
-                )
-
     def test_group_id_strict_ambiguity_flag_is_passed_to_helper(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -253,9 +203,9 @@ class VectorAssetTests(unittest.TestCase):
 
         commands = vector_asset.pmtiles_commands(plan, 6, profile=profile)
 
-        self.assertEqual(commands[0].kind, "pipeline")
-        self.assertIn("-sql", commands[0].source)
-        sql = commands[0].source[commands[0].source.index("-sql") + 1]
+        self.assertEqual(commands[0].kind, "command")
+        self.assertIn("-sql", commands[0].argv)
+        sql = commands[0].argv[commands[0].argv.index("-sql") + 1]
         self.assertIn("'cerulean_s1_envelope' AS \"source_layer\"", sql)
 
     def test_pmtiles_commands_preserve_existing_properties_without_synthetic_layer(self):
@@ -285,8 +235,8 @@ class VectorAssetTests(unittest.TestCase):
 
         commands = vector_asset.pmtiles_commands(plan, 12, profile=profile)
 
-        self.assertEqual(commands[0].kind, "pipeline")
-        self.assertNotIn("-sql", commands[0].source)
+        self.assertEqual(commands[0].kind, "command")
+        self.assertNotIn("-sql", commands[0].argv)
 
     def test_pmtiles_feature_id_property_projects_tiles_to_metadata_lookup_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -325,8 +275,8 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(plan.required_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN))
         self.assertEqual(plan.exact_pmtiles_properties, (vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN))
         self.assertEqual(plan.pmtiles_feature_id_property, vector_asset.FEATURE_ID_COLUMN)
-        self.assertEqual(commands[0].kind, "pipeline")
-        sql = commands[0].source[commands[0].source.index("-sql") + 1]
+        self.assertEqual(commands[0].kind, "command")
+        sql = commands[0].argv[commands[0].argv.index("-sql") + 1]
         self.assertEqual(sql, 'SELECT "feature_id", "ext_id" FROM "example_asset"')
 
     def test_pmtiles_feature_id_property_must_use_standard_feature_id_name(self):
@@ -374,108 +324,6 @@ class VectorAssetTests(unittest.TestCase):
             )
 
         self.assertEqual(plan.maxzoom, 7)
-
-    def test_tippecanoe_rejects_property_stripping_exclude_all(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            with self.assertRaisesRegex(ValueError, "strips all feature properties"):
-                vector_asset.build_plan(
-                    source=source,
-                    asset_slug="example-asset",
-                    work_dir=Path(tmp) / "work",
-                    tippecanoe_extra_args=("--exclude-all",),
-                )
-
-    def test_tippecanoe_rejects_required_group_id_exclusion(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            with self.assertRaisesRegex(ValueError, "required PMTiles property"):
-                vector_asset.build_plan(
-                    source=source,
-                    asset_slug="example-asset",
-                    work_dir=Path(tmp) / "work",
-                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
-                    tippecanoe_extra_args=("--exclude", vector_asset.GENERATED_GROUP_ID_COLUMN),
-                )
-
-    def test_tippecanoe_include_must_preserve_required_group_id(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            with self.assertRaisesRegex(ValueError, "would omit required"):
-                vector_asset.build_plan(
-                    source=source,
-                    asset_slug="example-asset",
-                    work_dir=Path(tmp) / "work",
-                    required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
-                    tippecanoe_extra_args=("--include", "NAME"),
-                )
-
-            plan = vector_asset.build_plan(
-                source=source,
-                asset_slug="example-asset",
-                work_dir=Path(tmp) / "work-okay",
-                required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
-                tippecanoe_extra_args=("--include", vector_asset.GENERATED_GROUP_ID_COLUMN),
-            )
-
-        self.assertEqual(plan.required_properties, (vector_asset.GENERATED_GROUP_ID_COLUMN,))
-
-    def test_tippecanoe_repeated_include_args_are_preserved(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            plan = vector_asset.build_plan(
-                source=source,
-                asset_slug="example-asset",
-                work_dir=Path(tmp) / "work",
-                required_properties=(vector_asset.GENERATED_GROUP_ID_COLUMN,),
-                tippecanoe_extra_args=(
-                    "--include",
-                    "NAME",
-                    "--include",
-                    vector_asset.GENERATED_GROUP_ID_COLUMN,
-                ),
-            )
-
-        self.assertEqual(
-            plan.tippecanoe_extra_args,
-            (
-                "--no-feature-limit",
-                "--no-tile-size-limit",
-                "--drop-rate=1",
-                "--include",
-                "NAME",
-                "--include",
-                vector_asset.GENERATED_GROUP_ID_COLUMN,
-            ),
-        )
-        tippecanoe_command = vector_asset.pmtiles_commands(plan, 8)[0].sink
-        include_values = [
-            tippecanoe_command[index + 1]
-            for index, value in enumerate(tippecanoe_command)
-            if value == "--include"
-        ]
-        self.assertEqual(include_values, ["NAME", vector_asset.GENERATED_GROUP_ID_COLUMN])
-
-    def test_tippecanoe_rejects_point_dropping_flags_by_default(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source.geojson"
-            source.write_text('{"type":"FeatureCollection","features":[]}\n')
-
-            with self.assertRaisesRegex(ValueError, "drop or alter point features"):
-                vector_asset.build_plan(
-                    source=source,
-                    asset_slug="example-asset",
-                    work_dir=Path(tmp) / "work",
-                    tippecanoe_extra_args=("--drop-densest-as-needed",),
-                )
 
     def test_validation_rejects_pmtiles_features_without_properties(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -928,11 +776,9 @@ class VectorAssetTests(unittest.TestCase):
 
             def run(command, **kwargs):
                 if command[:5] == ["ogrinfo", "-ro", "-al", "-so", "-json"]:
-                    return SimpleNamespace(returncode=1, stdout="", stderr="no json support")
-                if command[:4] == ["ogrinfo", "-ro", "-al", "-so"]:
                     return SimpleNamespace(
                         returncode=0,
-                        stdout="Layer name: example\nFeature Count: 3\n",
+                        stdout='{"layers":[{"name":"example","featureCount":3,"fields":[]}]}',
                         stderr="",
                     )
                 if command[:5] == ["ogrinfo", "-ro", "-q", "-dialect", "SQLite"]:
@@ -1064,17 +910,17 @@ class VectorAssetTests(unittest.TestCase):
                 work_dir=Path(tmp) / "work",
             )
             executed = []
-            pipelines = []
 
             def fake_run_command(command):
                 executed.append(command)
                 if command[:3] == ["ogr2ogr", "-f", "FlatGeobuf"]:
                     Path(plan.fgb_path).parent.mkdir(parents=True, exist_ok=True)
                     Path(plan.fgb_path).write_bytes(b"fgb")
-
-            def fake_run_pipeline(source_command, sink_command):
-                pipelines.append((source_command, sink_command))
-                Path(plan.pmtiles_path).write_bytes(b"pmtiles")
+                if command[:3] == ["ogr2ogr", "-f", "MBTiles"]:
+                    Path(plan.mbtiles_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(plan.mbtiles_path).write_bytes(b"mbtiles")
+                if command[:2] == ["pmtiles", "convert"]:
+                    Path(plan.pmtiles_path).write_bytes(b"pmtiles")
 
             profile = pmtiles_zoom.FgbProfile(
                 path=plan.fgb_path,
@@ -1095,10 +941,6 @@ class VectorAssetTests(unittest.TestCase):
                 vector_asset,
                 "run_command",
                 side_effect=fake_run_command,
-            ), mock.patch.object(
-                vector_asset,
-                "run_pipeline",
-                side_effect=fake_run_pipeline,
             ), mock.patch.object(vector_asset, "profile_fgb", return_value=profile), mock.patch.object(
                 vector_asset.shutil,
                 "which",
@@ -1109,30 +951,10 @@ class VectorAssetTests(unittest.TestCase):
 
             self.assertTrue(result.valid)
             self.assertEqual(executed[0][:3], ["ogr2ogr", "-f", "FlatGeobuf"])
-            self.assertEqual(len(executed), 1)
-            self.assertEqual(pipelines[0][0][:3], ["ogr2ogr", "-f", "GeoJSONSeq"])
-            self.assertIn("/vsistdout/", pipelines[0][0])
-            self.assertIn("--maximum-zoom", pipelines[0][1])
-            self.assertEqual(pipelines[0][1][pipelines[0][1].index("--maximum-zoom") + 1], "12")
+            self.assertEqual(executed[1][:3], ["ogr2ogr", "-f", "MBTiles"])
+            self.assertIn("MAXZOOM=12", executed[1])
+            self.assertEqual(executed[2], ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
             self.assertEqual(payload["recommendation"]["maxzoom"], 12)
-
-    def test_run_pipeline_reports_source_and_sink_failures(self):
-        source_command = [
-            sys.executable,
-            "-c",
-            "import sys; sys.stdout.write('feature\\n'); sys.stderr.write('ogr failed'); sys.exit(3)",
-        ]
-        sink_command = [
-            sys.executable,
-            "-c",
-            "import sys; sys.stdin.read(); sys.stderr.write('tippecanoe failed'); sys.exit(4)",
-        ]
-
-        with self.assertRaisesRegex(
-            vector_asset.VectorAssetError,
-            "source exited 3: ogr failed.*sink exited 4: tippecanoe failed",
-        ):
-            vector_asset.run_pipeline(source_command, sink_command)
 
     def test_recommend_maxzoom_command_profiles_existing_fgb(self):
         with tempfile.TemporaryDirectory() as tmp:

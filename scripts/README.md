@@ -101,9 +101,8 @@ The build sequence is standardized as:
 1. `ogr2ogr` to FlatGeobuf with `PROMOTE_TO_MULTI` and `SPATIAL_INDEX=YES`.
 2. Profile the generated FGB to choose PMTiles maxzoom from source hints and
    measured geometry detail.
-3. Stream EPSG:4326 GeoJSONSeq from `ogr2ogr` directly into Tippecanoe for the
-   default PMTiles path; no full tiling GeoJSON is written.
-4. `tippecanoe` direct PMTiles output with explicit min/max zoom metadata.
+3. Build temporary MBTiles with GDAL using explicit min/max zoom metadata.
+4. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
 5. Local validation with `ogrinfo`, `pmtiles verify`, and a decoded PMTiles
    property sample when those tools exist.
 
@@ -134,16 +133,15 @@ tiles. This simplification applies only to PMTiles generation; the canonical FGB
 remains unsimplified.
 
 Run the helper through `uv run python` so repo Python dependencies come from the
-project environment. GDAL, Tippecanoe, and PMTiles are external command-line
-tools resolved from `PATH`; the helper records their versions in the build plan.
-The helper rejects Tippecanoe `--exclude-all` because it creates geometry-only
-display tiles and leaves catalog feature-inspector clicks with no properties.
+project environment. GDAL and PMTiles are external command-line tools resolved
+from `PATH`; the helper records their versions in the build plan.
 
 Generated group IDs are opt-in. Do not pick a grouping field inside the build
 step. First run the publishing concierge or another attribute profile and show
 the curator the standard decision table: likely provider `ext_id` candidates and
-likely grouping/search/filter candidates, with row/column counts, datatype,
-distinction, emptiness, domination, skew ratio, top examples, and concerns.
+likely grouping/search/filter candidates, plus the always-present `feature_id`
+fallback for `ext_id`, with row/column counts, datatype, distinction,
+emptiness, domination, skew ratio, top examples, and concerns.
 Distinction is role-dependent: provider IDs should be close to row-unique,
 while grouping fields are often useful at middle cardinality; very
 low-cardinality fields are usually filters and near-row-unique fields are
@@ -162,8 +160,7 @@ uv run python scripts/vector_asset.py build ./source.shp \
 The helper writes `shared_datasets_group_id` before FGB creation and validates
 that the property is present in the FGB schema and decoded PMTiles features.
 Use `--group-id-fail-on-ambiguous-geometry` when identical collective geometry
-should fail the build instead of being reported for curator review. If
-Tippecanoe `--include` filters are passed, include `shared_datasets_group_id`.
+should fail the build instead of being reported for curator review.
 
 If the curator rejects both provider IDs and grouping fields but still needs
 row-level addresses, pass `--generate-row-id` instead. This writes
@@ -174,9 +171,9 @@ This column is a last-resort row address, not a provider/entity/group ID, and is
 stable only while geometry and duplicate-geometry source order remain unchanged.
 Do not combine `--generate-row-id` with `--group-id-field`.
 
-Use `--pmtiles-engine gdal-mbtiles --pmtiles-bin /path/to/pmtiles` only as an
-explicit fallback when Tippecanoe is unavailable; it builds temporary MBTiles
-with GDAL and converts them with `pmtiles convert`.
+PMTiles generation always writes temporary MBTiles with GDAL and converts them
+with `pmtiles convert`. Direct Tippecanoe PMTiles output is disabled until a
+future Tippecanoe version is proven to generate valid PMTiles directly.
 
 Release feature metadata helpers live in:
 
@@ -365,10 +362,6 @@ metadata/admission fields, generated-ID decisions, artifact paths, validation
 commands, resolved tool paths/versions or not-applicable notes, scratch source
 generations, and canonical destination generation expectations before the
 workflow can render a PR.
-
-The older no-subcommand invocation still prints a one-shot JSON planner for
-diagnostics, but first-upload workflows should use `start`, `next`, and
-`confirm`.
 
 Slack notification helpers live in:
 

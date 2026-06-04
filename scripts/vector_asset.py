@@ -12,7 +12,6 @@ import json
 import math
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -39,7 +38,6 @@ from scripts.pmtiles_zoom import (  # noqa: E402
 
 WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-DEFAULT_TIPPECANOE_ARGS = ("--no-feature-limit", "--no-tile-size-limit", "--drop-rate=1")
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
 GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
@@ -51,19 +49,8 @@ GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
 GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
 GROUP_ID_VRT_SOURCE_LAYER = "source"
 GROUP_ID_VRT_MAP_LAYER = "group_ids"
-PROPERTY_STRIPPING_TIPPECANOE_ARGS = {"--exclude-all"}
-POINT_DROPPING_TIPPECANOE_ARGS = {
-    "--cluster-distance",
-    "--coalesce-densest-as-needed",
-    "--drop-densest-as-needed",
-    "--drop-fraction-as-needed",
-    "--drop-lines",
-    "--drop-polygons",
-    "--drop-smallest-as-needed",
-}
 STANDARD_PMTILES_MAXZOOM = 8
 AUTO_MAXZOOM = "auto"
-STREAMED_TIPPECANOE_INPUT = "<ogr2ogr-geojsonseq-stdout>"
 
 
 class VectorAssetError(ValueError):
@@ -77,16 +64,6 @@ class SimpleCommand:
 
 
 @dataclass(frozen=True)
-class PipelineCommand:
-    source: list[str]
-    sink: list[str]
-    kind: str = "pipeline"
-
-
-BuildCommand = SimpleCommand | PipelineCommand
-
-
-@dataclass(frozen=True)
 class VectorBuildPlan:
     source: str
     asset_slug: str
@@ -96,13 +73,10 @@ class VectorBuildPlan:
     group_id_source_path: str | None
     group_id_input_path: str | None
     fgb_path: str
-    tippecanoe_input_path: str
     mbtiles_path: str
     pmtiles_path: str
-    pmtiles_engine: str
     pmtiles_bin: str
     ogr2ogr_bin: str
-    tippecanoe_bin: str
     tool_paths: dict[str, str]
     tool_versions: dict[str, str]
     minzoom: int
@@ -116,7 +90,6 @@ class VectorBuildPlan:
     pmtiles_detail_hint: str | None
     pmtiles_profile_path: str
     tile_simplify: float | None
-    tippecanoe_extra_args: tuple[str, ...]
     required_properties: tuple[str, ...]
     required_fgb_properties: tuple[str, ...]
     required_pmtiles_properties: tuple[str, ...]
@@ -131,7 +104,7 @@ class VectorBuildPlan:
     pmtiles_feature_id_property: str | None
     title: str
     description: str
-    commands: list[BuildCommand]
+    commands: list[SimpleCommand]
 
 
 @dataclass(frozen=True)
@@ -169,54 +142,6 @@ def slug_to_layer_name(asset_slug: str) -> str:
 def validate_asset_slug(asset_slug: str) -> None:
     if not SLUG_PATTERN.fullmatch(asset_slug):
         raise ValueError(f"asset slug must be lowercase kebab-case: {asset_slug!r}")
-
-
-def tippecanoe_option_value(args: Sequence[str], index: int) -> str | None:
-    arg = args[index]
-    if "=" in arg:
-        return arg.split("=", 1)[1]
-    if index + 1 < len(args) and not args[index + 1].startswith("-"):
-        return args[index + 1]
-    return None
-
-
-def validate_tippecanoe_args(
-    args: Sequence[str],
-    *,
-    allow_point_dropping: bool = False,
-    required_properties: Sequence[str] = (),
-) -> None:
-    required = {property_name for property_name in required_properties if property_name}
-    included_properties: set[str] = set()
-    for index, arg in enumerate(args):
-        option = arg.split("=", 1)[0]
-        if option in PROPERTY_STRIPPING_TIPPECANOE_ARGS:
-            raise ValueError(
-                f"{option} strips all feature properties from PMTiles and breaks the catalog "
-                "feature inspector. Use narrower --exclude/--include filters or add compact "
-                "synthetic properties instead."
-            )
-        if option in {"--exclude", "-x"}:
-            value = tippecanoe_option_value(args, index)
-            if value in required:
-                raise ValueError(f"{option} would strip required PMTiles property {value!r}")
-        if option in {"--include", "-y"}:
-            value = tippecanoe_option_value(args, index)
-            if value:
-                included_properties.add(value)
-        if option == "--drop-rate" and arg != "--drop-rate=1" and not allow_point_dropping:
-            raise ValueError(
-                "--drop-rate values other than 1 can drop point features. Pass "
-                "--allow-point-dropping only for a documented exception."
-            )
-        if option in POINT_DROPPING_TIPPECANOE_ARGS and not allow_point_dropping:
-            raise ValueError(
-                f"{option} can drop or alter point features. Pass --allow-point-dropping "
-                "only for a documented exception."
-            )
-    if included_properties and not required.issubset(included_properties):
-        missing = ", ".join(sorted(required - included_properties))
-        raise ValueError(f"--include would omit required PMTiles propert{'y' if len(required - included_properties) == 1 else 'ies'}: {missing}")
 
 
 def parse_maxzoom(value: int | str | None) -> tuple[int | None, str]:
@@ -321,28 +246,22 @@ def executable_version(command: Sequence[str]) -> str:
     return (completed.stdout or "").strip().splitlines()[0] if completed.stdout else "unknown"
 
 
-def tool_versions(*, ogr2ogr_bin: str, tippecanoe_bin: str, pmtiles_bin: str) -> dict[str, str]:
+def tool_versions(*, ogr2ogr_bin: str, pmtiles_bin: str) -> dict[str, str]:
     return {
         "ogr2ogr": executable_version([ogr2ogr_bin, "--version"]),
-        "tippecanoe": executable_version([tippecanoe_bin, "--version"]),
         "pmtiles": executable_version([pmtiles_bin, "version"]),
     }
 
 
-def tool_paths(*, ogr2ogr_bin: str, tippecanoe_bin: str, pmtiles_bin: str) -> dict[str, str]:
+def tool_paths(*, ogr2ogr_bin: str, pmtiles_bin: str) -> dict[str, str]:
     return {
         "ogr2ogr": executable_path(ogr2ogr_bin),
-        "tippecanoe": executable_path(tippecanoe_bin),
         "pmtiles": executable_path(pmtiles_bin),
     }
 
 
 def command(argv: Sequence[str]) -> SimpleCommand:
     return SimpleCommand(list(argv))
-
-
-def pipeline(source: Sequence[str], sink: Sequence[str]) -> PipelineCommand:
-    return PipelineCommand(list(source), list(sink))
 
 
 def build_plan(
@@ -365,10 +284,7 @@ def build_plan(
     title: str | None = None,
     description: str | None = None,
     ogr2ogr_bin: str = "ogr2ogr",
-    tippecanoe_bin: str = "tippecanoe",
     pmtiles_bin: str = "pmtiles",
-    pmtiles_engine: str = "tippecanoe",
-    tippecanoe_extra_args: Sequence[str] = (),
     required_properties: Sequence[str] = (),
     group_id_fields: Sequence[str] = (),
     group_id_token_length: int | None = None,
@@ -379,7 +295,6 @@ def build_plan(
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
-    allow_point_dropping: bool = False,
 ) -> VectorBuildPlan:
     validate_asset_slug(asset_slug)
     resolved_maxzoom, maxzoom_mode = parse_maxzoom(maxzoom)
@@ -406,8 +321,6 @@ def build_plan(
     pmtiles_detail_hint = validate_detail_hint(pmtiles_detail_hint)
     if tile_simplify is not None and tile_simplify <= 0:
         raise ValueError("tile simplification tolerance must be positive")
-    if pmtiles_engine not in {"tippecanoe", "gdal-mbtiles"}:
-        raise ValueError("pmtiles engine must be 'tippecanoe' or 'gdal-mbtiles'")
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
     group_id_field_tuple = tuple(dict.fromkeys(field.strip() for field in group_id_fields if field.strip()))
@@ -445,12 +358,6 @@ def build_plan(
         required_pmtiles_property_tuple = base_required_property_tuple
         exact_pmtiles_property_tuple = ()
         required_property_tuple = base_required_property_tuple
-    validate_tippecanoe_args(
-        tippecanoe_extra_args,
-        allow_point_dropping=allow_point_dropping,
-        required_properties=required_pmtiles_property_tuple,
-    )
-
     layer = layer_name or slug_to_layer_name(asset_slug)
     work = work_dir or default_work_dir(asset_slug)
     output = output_dir or (work / "publish")
@@ -467,14 +374,11 @@ def build_plan(
     elif generate_row_id:
         group_id_source_path = build / f"{asset_slug}-row-id-map.csv"
         group_id_input_path = build / f"{asset_slug}-row-id-source.vrt"
-    tippecanoe_input_path = STREAMED_TIPPECANOE_INPUT
     mbtiles_path = build / f"{asset_slug}.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
     pmtiles_profile_path = output / "pmtiles-profile.json"
     dataset_title = title or asset_slug.replace("-", " ").title()
     dataset_description = description or f"{dataset_title} vector tiles"
-    effective_tippecanoe_args = (*DEFAULT_TIPPECANOE_ARGS, *tippecanoe_extra_args)
-
     fgb_source_path = group_id_input_path or source
     fgb_command = [
         ogr2ogr_bin,
@@ -504,7 +408,7 @@ def build_plan(
     elif source_layer:
         fgb_command.append(source_layer)
 
-    commands: list[BuildCommand] = []
+    commands: list[SimpleCommand] = []
     if generated_id_column and group_id_source_path and group_id_input_path:
         generated_id_command = [
             sys.executable,
@@ -545,21 +449,16 @@ def build_plan(
         group_id_source_path=str(group_id_source_path) if group_id_source_path else None,
         group_id_input_path=str(group_id_input_path) if group_id_input_path else None,
         fgb_path=str(fgb_path),
-        tippecanoe_input_path=str(tippecanoe_input_path),
         mbtiles_path=str(mbtiles_path),
         pmtiles_path=str(pmtiles_path),
-        pmtiles_engine=pmtiles_engine,
         pmtiles_bin=pmtiles_bin,
         ogr2ogr_bin=ogr2ogr_bin,
-        tippecanoe_bin=tippecanoe_bin,
         tool_paths=tool_paths(
             ogr2ogr_bin=ogr2ogr_bin,
-            tippecanoe_bin=tippecanoe_bin,
             pmtiles_bin=pmtiles_bin,
         ),
         tool_versions=tool_versions(
             ogr2ogr_bin=ogr2ogr_bin,
-            tippecanoe_bin=tippecanoe_bin,
             pmtiles_bin=pmtiles_bin,
         ),
         minzoom=minzoom,
@@ -573,7 +472,6 @@ def build_plan(
         pmtiles_detail_hint=pmtiles_detail_hint,
         pmtiles_profile_path=str(pmtiles_profile_path),
         tile_simplify=tile_simplify,
-        tippecanoe_extra_args=effective_tippecanoe_args,
         required_properties=required_property_tuple,
         required_fgb_properties=required_fgb_property_tuple,
         required_pmtiles_properties=required_pmtiles_property_tuple,
@@ -595,45 +493,8 @@ def build_plan(
     return plan
 
 
-def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbProfile | None = None) -> list[BuildCommand]:
+def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbProfile | None = None) -> list[SimpleCommand]:
     synthetic_sql = pmtiles_sql(plan, profile)
-    tile_source_command = [
-        plan.ogr2ogr_bin,
-        "-f",
-        "GeoJSONSeq",
-        "-t_srs",
-        "EPSG:4326",
-        "-nln",
-        plan.layer_name,
-        "-nlt",
-        "PROMOTE_TO_MULTI",
-    ]
-    if plan.tile_simplify is not None:
-        tile_source_command.extend(["-simplify", str(plan.tile_simplify)])
-    if synthetic_sql is not None:
-        tile_source_command.extend(["-dialect", "SQLite", "-sql", synthetic_sql])
-    tile_source_command.extend(["/vsistdout/", plan.fgb_path])
-
-    tippecanoe_command = [
-        plan.tippecanoe_bin,
-        "-f",
-        "-q",
-        "--projection=EPSG:4326",
-        "--minimum-zoom",
-        str(plan.minzoom),
-        "--maximum-zoom",
-        str(maxzoom),
-        "-o",
-        plan.pmtiles_path,
-        "-l",
-        plan.layer_name,
-        "-n",
-        plan.title,
-        "-N",
-        plan.description,
-    ]
-    tippecanoe_command.extend(plan.tippecanoe_extra_args)
-
     mbtiles_command = [
         plan.ogr2ogr_bin,
         "-f",
@@ -664,9 +525,7 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbP
     mbtiles_command.extend([plan.mbtiles_path, plan.fgb_path])
 
     convert_command = [plan.pmtiles_bin, "convert", plan.mbtiles_path, plan.pmtiles_path]
-    if plan.pmtiles_engine == "gdal-mbtiles":
-        return [command(mbtiles_command), command(convert_command)]
-    return [pipeline(tile_source_command, tippecanoe_command)]
+    return [command(mbtiles_command), command(convert_command)]
 
 
 def sql_identifier(value: str) -> str:
@@ -728,61 +587,7 @@ def run_command(command: Sequence[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def pipe_text(value: bytes | str | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.strip()
-    return value.decode("utf-8", errors="replace").strip()
-
-
-def display_command(command: Sequence[str]) -> str:
-    return shlex.join(str(part) for part in command)
-
-
-def run_pipeline(source_command: Sequence[str], sink_command: Sequence[str]) -> None:
-    source = subprocess.Popen(
-        source_command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if source.stdout is None:
-        raise VectorAssetError(f"pipeline source did not expose stdout: {display_command(source_command)}")
-    try:
-        sink = subprocess.Popen(
-            sink_command,
-            stdin=source.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except Exception:
-        source.kill()
-        source.wait()
-        raise
-    source.stdout.close()
-    sink_stdout, sink_stderr = sink.communicate()
-    source_stderr = source.stderr.read() if source.stderr is not None else b""
-    source_returncode = source.wait()
-    if source_returncode != 0 or sink.returncode != 0:
-        details = [
-            "PMTiles streaming pipeline failed.",
-            f"source command: {display_command(source_command)}",
-            f"sink command: {display_command(sink_command)}",
-        ]
-        if source_returncode != 0:
-            details.append(f"source exited {source_returncode}: {pipe_text(source_stderr) or 'no stderr'}")
-        if sink.returncode != 0:
-            details.append(f"sink exited {sink.returncode}: {pipe_text(sink_stderr) or 'no stderr'}")
-        sink_stdout_text = pipe_text(sink_stdout)
-        if sink_stdout_text:
-            details.append(f"sink stdout: {sink_stdout_text}")
-        raise VectorAssetError(" ".join(details))
-
-
-def run_build_command(build_command: BuildCommand) -> None:
-    if isinstance(build_command, PipelineCommand):
-        run_pipeline(build_command.source, build_command.sink)
-        return
+def run_build_command(build_command: SimpleCommand) -> None:
     run_command(build_command.argv)
 
 
@@ -859,12 +664,7 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
 
 
 def required_executables(plan: VectorBuildPlan) -> set[str]:
-    executables = {plan.ogr2ogr_bin}
-    if plan.pmtiles_engine == "gdal-mbtiles":
-        executables.add(plan.pmtiles_bin)
-    else:
-        executables.add(plan.tippecanoe_bin)
-    return executables
+    return {plan.ogr2ogr_bin, plan.pmtiles_bin}
 
 
 def resolve_maxzoom(plan: VectorBuildPlan, profile: FgbProfile) -> ZoomRecommendation:
@@ -994,21 +794,7 @@ def validate_outputs(
             stderr=subprocess.PIPE,
         )
         if completed.returncode != 0:
-            fallback = subprocess.run(
-                ["ogrinfo", "-ro", "-al", "-so", str(fgb_path)],
-                check=False,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            if fallback.returncode != 0:
-                errors.append(f"ogrinfo failed for FGB: {fallback.stderr.strip()}")
-            elif "Feature Count: 0" in fallback.stdout:
-                errors.append("FGB layer has no features.")
-            elif "Feature Count:" not in fallback.stdout:
-                errors.append("Could not confirm FGB feature count with ogrinfo.")
-            else:
-                fgb_layer_name = parse_ogrinfo_layer_name(fallback.stdout)
+            errors.append(f"ogrinfo -json failed for FGB: {completed.stderr.strip() or completed.stdout.strip()}")
         else:
             try:
                 payload = json.loads(completed.stdout)
@@ -1144,11 +930,6 @@ def ogrinfo_property_keys(layer: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(keys))
 
 
-def parse_ogrinfo_layer_name(output: str) -> str | None:
-    match = re.search(r"^Layer name:\s*(.+?)\s*$", output, flags=re.MULTILINE)
-    return match.group(1) if match else None
-
-
 def validate_fgb_geometry_validity(fgb_path: Path, layer_name: str) -> subprocess.CompletedProcess[str]:
     sql = (
         "SELECT COUNT(*) AS invalid_geometry_count "
@@ -1276,10 +1057,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         title=args.title,
         description=args.description,
         ogr2ogr_bin=args.ogr2ogr_bin,
-        tippecanoe_bin=args.tippecanoe_bin,
         pmtiles_bin=args.pmtiles_bin,
-        pmtiles_engine=args.pmtiles_engine,
-        tippecanoe_extra_args=args.tippecanoe_arg,
         required_properties=args.required_property,
         group_id_fields=args.group_id_field,
         group_id_token_length=args.group_id_token_length,
@@ -1290,7 +1068,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
-        allow_point_dropping=args.allow_point_dropping,
     )
     if args.dry_run:
         print(json.dumps(dry_run_payload(plan), indent=2, sort_keys=True))
@@ -1369,17 +1146,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     build_parser.add_argument("--title", help="Tileset title metadata.")
     build_parser.add_argument("--description", help="Tileset description metadata.")
     build_parser.add_argument("--ogr2ogr-bin", default="ogr2ogr")
-    build_parser.add_argument("--tippecanoe-bin", default="tippecanoe")
-    build_parser.add_argument(
-        "--tippecanoe-arg",
-        action="append",
-        default=[],
-        help=(
-            "Additional argument passed through to Tippecanoe. Repeat for multiple flags. "
-            "The build already adds --no-feature-limit, --no-tile-size-limit, and --drop-rate=1 "
-            "so low-zoom tiles retain published point features."
-        ),
-    )
     build_parser.add_argument("--pmtiles-bin", default="pmtiles")
     build_parser.add_argument(
         "--required-property",
@@ -1435,12 +1201,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
         ),
     )
-    build_parser.add_argument(
-        "--pmtiles-engine",
-        choices=["tippecanoe", "gdal-mbtiles"],
-        default="tippecanoe",
-        help="Prefer Tippecanoe direct PMTiles; use gdal-mbtiles only as an explicit fallback.",
-    )
     build_parser.add_argument("--overwrite", action="store_true", help="Replace existing generated local outputs.")
     build_parser.add_argument("--keep-mbtiles", action="store_true", help="Keep the intermediate MBTiles file.")
     build_parser.add_argument("--allow-repo-output", action="store_true", help="Allow generated outputs under repo root.")
@@ -1456,11 +1216,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--allow-high-maxzoom",
         action="store_true",
         help=f"Allow PMTiles maxzoom above the default cap of {DEFAULT_MAXZOOM_CAP} for a documented exception.",
-    )
-    build_parser.add_argument(
-        "--allow-point-dropping",
-        action="store_true",
-        help="Allow Tippecanoe point-dropping or point-altering flags for a documented exception.",
     )
     build_parser.add_argument("--dry-run", action="store_true", help="Print the plan without running GDAL or PMTiles.")
     build_parser.set_defaults(func=_cmd_build)

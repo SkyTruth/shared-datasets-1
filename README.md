@@ -588,8 +588,9 @@ UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
 Geospatial integration tests run only when the required native binaries are
-installed locally: GDAL CLI tools, Tippecanoe, and PMTiles. Enable the explicit
-GDAL integration flag for the tests that require it:
+installed locally: GDAL CLI tools, PMTiles, and the Tippecanoe decoder used for
+PMTiles sampling. Enable the explicit GDAL integration flag for the tests that
+require it:
 
 ```bash
 RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
@@ -698,7 +699,10 @@ remote operation. For manual dataset add/update work, read
 
 Use `scripts/vector_asset.py` to create upload-ready FGB and PMTiles artifacts
 without writing generated data into git. The helper uses GDAL for canonical FGB
-and Tippecanoe for direct PMTiles generation:
+and PMTiles display artifacts: it writes temporary MBTiles with GDAL, then
+converts them with `pmtiles convert`. Direct Tippecanoe PMTiles generation is
+disabled until a future Tippecanoe version is proven to generate valid PMTiles
+directly:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.shp \

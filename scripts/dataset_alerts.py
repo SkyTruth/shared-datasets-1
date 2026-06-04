@@ -7,7 +7,6 @@ import csv
 import datetime as dt
 import json
 import os
-import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -33,17 +32,6 @@ SAMPLE_COLUMN_LIMIT = 5
 SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
 SCHEMA_COMPATIBILITY_WARNING_KINDS = {"reordered"}
 WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
-OGRINFO_FIELD_RE = re.compile(r"^([^:]+):\s+([A-Za-z][A-Za-z0-9_]*)\b")
-OGRINFO_NON_FIELD_NAMES = {
-    "INFO",
-    "Layer name",
-    "Metadata",
-    "Geometry",
-    "Feature Count",
-    "Extent",
-    "Layer SRS WKT",
-    "Data axis to CRS axis mapping",
-}
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -183,14 +171,6 @@ def schema_from_ogr(
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0 and "Unknown option name '-json'" in result.stderr:
-        fallback = runner(
-            ["ogrinfo", "-ro", "-al", "-so", str(path)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return schema_from_ogrinfo_text(fallback.stdout)
     result.check_returncode()
     payload = json.loads(result.stdout)
     layers = payload.get("layers") or []
@@ -204,22 +184,6 @@ def schema_from_ogr(
         }
         for field in fields
     ]
-
-
-def schema_from_ogrinfo_text(text: str) -> list[dict[str, str]]:
-    """Parse field names/types from older GDAL ogrinfo -so text output."""
-    fields: list[dict[str, str]] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        match = OGRINFO_FIELD_RE.match(line)
-        if not match:
-            continue
-        name, type_name = match.groups()
-        if name in OGRINFO_NON_FIELD_NAMES:
-            continue
-        fields.append({"name": name, "type": type_name})
-    return fields
-
 
 def schema_for_path(path: Path) -> list[dict[str, str]]:
     if path.suffix.lower() == ".csv":

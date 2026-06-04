@@ -126,7 +126,7 @@ def validate_artifact_generation(
     if artifact is None:
         raise FeatureMetadataIndexError(f"manifest is missing {role!r} artifact")
     if uri is not None:
-        path = artifact.get("path") or artifact.get("uri") or artifact.get("release_uri")
+        path = artifact.get("path")
         if path != uri:
             raise FeatureMetadataIndexError(f"manifest {role} path does not match {uri}")
     if role != "manifest" and generation is not None and artifact.get("generation") != generation:

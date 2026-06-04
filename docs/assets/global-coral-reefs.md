@@ -135,7 +135,7 @@ No provider row-level external ID is documented for the polygon layer. `METADATA
 
 ## Update notes
 
-Manually converted from `/Users/jonathanraphael/Desktop/14_001_WCMC008_CoralReefs2018_v4_1` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
+Manually converted from `/Users/jonathanraphael/Desktop/14_001_WCMC008_CoralReefs2018_v4_1` on 2026-04-29 using GDAL and PMTiles tooling.
 
 PMTiles were rebuilt on 2026-05-04 at maxzoom 12 from the published polygon and point FGB layers. The rebuild keeps the `global_coral_reefs` and `global_coral_reefs_points` tile layers, preserves source properties, and retains all 925 point features at zoom 0.
 

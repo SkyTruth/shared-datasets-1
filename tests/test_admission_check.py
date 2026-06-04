@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -44,23 +43,6 @@ admission:
 """
 
 
-PR_BODY_WITH_ADMISSION = """
-## Dataset Admission
-
-- Intended consumer(s): Monitor and 30x30
-- Why this belongs in shared-datasets instead of project storage, scratch storage, or direct upstream access: Shared scheduled refresh used by multiple projects.
-- Source, license, and citation status: Example citation confirmed from source docs.
-- Named steward: SkyTruth data team
-- Update expectations: Monthly refresh when upstream changes.
-- Estimated published footprint, including canonical files, companion artifacts, and expected release copies: 2.5 GB
-- Large-data exception, required when the proposed published footprint is >= 10 GB:
-- Alternatives considered: Project storage and direct upstream access.
-- Deprecation or exit policy: Keep releases and point consumers to a successor asset.
-
-## Bucket Hygiene
-"""
-
-
 def write_doc(root: Path, text: str = FULL_ADMISSION, slug: str = "example-asset") -> str:
     path = root / "docs/assets" / f"{slug}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,12 +50,11 @@ def write_doc(root: Path, text: str = FULL_ADMISSION, slug: str = "example-asset
     return f"docs/assets/{slug}.md"
 
 
-def check(root: Path, changes, pr_body: str = "", exists_at_base=None):
+def check(root: Path, changes, exists_at_base=None):
     return admission_check.check_admission(
         repo_root=root,
         changes=changes,
         base_ref="base",
-        pr_body=pr_body,
         path_exists_at_base=exists_at_base or (lambda _path: False),
     )
 
@@ -136,27 +117,29 @@ class AdmissionCheckTests(unittest.TestCase):
 
         self.assertIn("missing admission.large_data_exception", "\n".join(result.errors))
 
-    def test_new_ingestion_pipeline_with_blank_pr_admission_fails(self):
+    def test_new_ingestion_pipeline_without_asset_doc_admission_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
             result = check(
                 root,
                 [admission_check.ChangedFile("A", "ingestion/example_monthly/run.py")],
-                pr_body="## Dataset Admission\n\n- Named steward:\n",
             )
 
         self.assertIn("new ingestion pipeline", "\n".join(result.errors))
-        self.assertIn("missing citation", "\n".join(result.errors))
+        self.assertIn("asset-doc frontmatter", "\n".join(result.errors))
 
-    def test_new_ingestion_pipeline_with_complete_pr_admission_passes(self):
+    def test_new_ingestion_pipeline_with_complete_asset_doc_admission_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            path = write_doc(root)
 
             result = check(
                 root,
-                [admission_check.ChangedFile("A", "ingestion/example_monthly/run.py")],
-                pr_body=PR_BODY_WITH_ADMISSION,
+                [
+                    admission_check.ChangedFile("A", "ingestion/example_monthly/run.py"),
+                    admission_check.ChangedFile("M", path),
+                ],
             )
 
         self.assertEqual(result.errors, ())
@@ -169,16 +152,6 @@ class AdmissionCheckTests(unittest.TestCase):
             result = check(root, [])
 
         self.assertEqual(result.errors, ())
-
-    def test_pr_body_from_event_reads_pull_request_body(self):
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
-            json.dump({"pull_request": {"body": PR_BODY_WITH_ADMISSION}}, tmp)
-            path = Path(tmp.name)
-        try:
-            self.assertIn("Dataset Admission", admission_check.pr_body_from_event(path))
-        finally:
-            path.unlink()
-
 
 if __name__ == "__main__":
     unittest.main()

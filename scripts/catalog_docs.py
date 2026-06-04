@@ -285,41 +285,6 @@ def infer_role(path: str, canonical_file: str) -> str:
     return "metadata"
 
 
-def parse_files_table(body: str, canonical_file: str, canonical_format: str) -> list[dict[str, str]]:
-    match = re.search(H2_RE_TEMPLATE.format(heading=re.escape("Files")), body)
-    if not match:
-        return []
-    entries: list[dict[str, str]] = []
-    for raw_line in match.group(0).splitlines():
-        line = raw_line.strip()
-        if not line.startswith("|") or "---" in line or line.lower().startswith("| file"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 2:
-            continue
-        file_path = cells[0].strip("` ")
-        if not file_path:
-            continue
-        entries.append(
-            {
-                "path": file_path,
-                "format": infer_format(file_path, canonical_format),
-                "role": infer_role(file_path, canonical_file),
-                "purpose": cells[1],
-            }
-        )
-    return entries
-
-
-def canonical_file_from_row(row: dict[str, str] | None) -> str:
-    if not row:
-        return ""
-    canonical_path = row.get("canonical_path", "")
-    if "/latest/" not in canonical_path:
-        return ""
-    return "latest/" + canonical_path.split("/latest/", 1)[1]
-
-
 def normalize_file_entries(raw_files: Any, canonical_file: str, canonical_format: str) -> list[dict[str, str]]:
     if not isinstance(raw_files, list):
         raise CatalogDocsError("files must be a list")
@@ -352,36 +317,21 @@ def normalize_metadata(
     raw: dict[str, Any],
     body: str,
     categories: dict[str, set[str]],
-    catalog_row: dict[str, str] | None,
-    allow_legacy: bool,
 ) -> tuple[dict[str, Any], list[str]]:
     metadata: dict[str, Any] = {}
     warnings: list[str] = []
 
-    if allow_legacy and not raw.get("schema_version"):
-        metadata["schema_version"] = SCHEMA_VERSION
-    else:
-        metadata["schema_version"] = raw.get("schema_version")
+    metadata["schema_version"] = raw.get("schema_version")
 
     for key in REQUIRED_SCALAR_FIELDS:
         value = raw.get(key)
-        if key == "access_tier" and not value and allow_legacy:
-            value = (catalog_row or {}).get("access_tier") or "public"
-        if key == "canonical_file" and not value and allow_legacy:
-            value = canonical_file_from_row(catalog_row)
-        if not value and catalog_row and key in {"source", "license", "citation"} and allow_legacy:
-            value = catalog_row.get(key)
         metadata[key] = as_text(value).strip()
 
     notes = raw.get("notes")
-    if notes is None and catalog_row and allow_legacy:
-        notes = catalog_row.get("notes", "")
     metadata["notes"] = as_text(notes).strip()
 
     for key in LIFECYCLE_FIELDS:
         value = raw.get(key)
-        if value is None and catalog_row and allow_legacy and catalog_row.get(key):
-            value = catalog_row.get(key)
         if value is not None:
             text = as_text(value).strip()
             if text:
@@ -401,20 +351,14 @@ def normalize_metadata(
             metadata["localized_names"] = localized_names
 
     available_formats = normalize_list(raw.get("available_formats"))
-    if not available_formats and catalog_row and allow_legacy:
-        available_formats = normalize_list(catalog_row.get("available_formats", ""))
     metadata["available_formats"] = available_formats
 
     metadata_paths = normalize_list(raw.get("metadata_paths"))
-    if not metadata_paths and catalog_row and allow_legacy:
-        metadata_paths = normalize_list(catalog_row.get("metadata_paths", ""))
     if not metadata_paths:
         metadata_paths = ["README.md"]
     metadata["metadata_paths"] = metadata_paths
 
     files = raw.get("files")
-    if files is None and allow_legacy:
-        files = parse_files_table(body, metadata["canonical_file"], metadata["canonical_format"])
     metadata["files"] = normalize_file_entries(files, metadata["canonical_file"], metadata["canonical_format"])
 
     validate_metadata(path, metadata, categories)
@@ -976,8 +920,6 @@ def read_asset_docs(
     *,
     docs_dir: Path,
     categories: dict[str, set[str]],
-    catalog_rows: dict[str, dict[str, str]],
-    allow_legacy: bool,
 ) -> list[AssetDoc]:
     docs: list[AssetDoc] = []
     seen: set[str] = set()
@@ -993,8 +935,6 @@ def read_asset_docs(
             raw=raw,
             body=body,
             categories=categories,
-            catalog_row=catalog_rows.get(slug),
-            allow_legacy=allow_legacy,
         )
         seen.add(metadata["asset_slug"])
         docs.append(AssetDoc(path=path, metadata=metadata, body=body, warnings=warnings))
@@ -1268,14 +1208,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def command_context(args: argparse.Namespace, *, allow_legacy: bool) -> list[AssetDoc]:
+def command_context(args: argparse.Namespace) -> list[AssetDoc]:
     categories = load_categories(args.categories)
-    catalog_rows = load_catalog_rows(args.catalog)
     return read_asset_docs(
         docs_dir=args.docs_dir,
         categories=categories,
-        catalog_rows=catalog_rows,
-        allow_legacy=allow_legacy,
     )
 
 
@@ -1283,7 +1220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        docs = command_context(args, allow_legacy=args.command == "generate")
+        docs = command_context(args)
         if args.command == "generate":
             changed = generate_outputs(docs=docs, catalog_path=args.catalog, index_path=args.index, bucket=args.bucket)
             for path in changed:

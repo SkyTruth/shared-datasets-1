@@ -392,7 +392,7 @@ def validate_release_manifest(
             errors.append(f"manifest has duplicate artifact role: {role}")
             continue
         artifacts_by_role[role] = artifact
-        path = artifact.get("path") or artifact.get("uri") or artifact.get("release_uri")
+        path = artifact.get("path")
         if not isinstance(path, str) or not path.startswith("gs://"):
             errors.append(f"manifest artifact {role!r} path must be a gs:// URI")
         if role != "manifest":

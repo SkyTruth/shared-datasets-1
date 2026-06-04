@@ -31,7 +31,6 @@ LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
     r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
 )
-LATEST_LOOKUP_RE = re.compile(r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*):lookup$")
 
 
 @dataclass(frozen=True)
@@ -367,18 +366,16 @@ def handle_request(
         return json_response(HTTPStatus.OK, {"status": "ok"}, {"Cache-Control": NO_STORE})
     try:
         match = LOOKUP_RE.fullmatch(request_path)
-        latest_match = LATEST_LOOKUP_RE.fullmatch(request_path)
-        lookup_match = match or latest_match
-        if lookup_match and method == "OPTIONS":
+        if match and method == "OPTIONS":
             return Response(HTTPStatus.NO_CONTENT, api_headers())
         if require_iap:
             require_authenticated_user(headers, allowed_email_domains=allowed_email_domains)
-        if lookup_match:
+        if match:
             if method != "POST":
                 raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "use POST for lookup")
             return handle_lookup(
-                asset_slug=lookup_match.group("asset_slug"),
-                release=match.group("release") if match else "latest",
+                asset_slug=match.group("asset_slug"),
+                release=match.group("release"),
                 headers=headers,
                 body=body,
                 release_resolver=release_resolver,

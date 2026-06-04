@@ -63,7 +63,7 @@ where relevant:
 
 | Field | Use |
 |---|---|
-| `asset_slug` / `slug` | Stable asset identifier for SDK calls and PMTiles URLs. |
+| `slug` | Stable asset identifier for SDK calls and PMTiles URLs. |
 | `status` and `consumer_guidance` | Whether the asset should be shown by default and any migration guidance. |
 | `access_tier` | Required for PMTiles URLs, authorization decisions, and private-cookie behavior. |
 | `canonical_path` and `canonical_format` | Primary analytical data object and format. |
@@ -169,8 +169,8 @@ Do not import the server entrypoint from browser bundles.
 Latest PMTiles use a tiered CDN URL:
 
 ```text
-https://tiles.skytruth.org/pmtiles/public/{asset_slug}.pmtiles
-https://tiles.skytruth.org/pmtiles/private/{asset_slug}.pmtiles
+https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles
+https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
 ```
 
 Public PMTiles can be loaded directly. Private PMTiles require a browser cookie
@@ -203,7 +203,7 @@ SkyTruth-only for all assets, even when the underlying catalog asset is public.
 Lookup endpoint:
 
 ```http
-POST /v1/assets/{asset_slug}/releases/{release}:lookup
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 Use `release=latest` for convenience; every response includes the concrete

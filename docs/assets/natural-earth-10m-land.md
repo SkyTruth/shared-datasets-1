@@ -20,8 +20,9 @@ license: Public domain per Natural Earth Terms of Use
 citation: Made with Natural Earth. Free vector and raster map data at naturalearthdata.com; land polygons version 5.1.1.
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
   fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
-  PMTiles rebuilt 2026-05-04 with Tippecanoe zooms 0-8, no pre-tiling simplification, --no-line-simplification, and --no-tiny-polygon-reduction-at-maximum-zoom
-  for higher-zoom display fidelity; canonical FGB preserves source geometry and fields
+  PMTiles rebuilt 2026-05-04 with zooms 0-8, no pre-tiling simplification, no line simplification, and no tiny-polygon reduction
+  at maximum zoom for higher-zoom display fidelity; future rebuilds must use the repo-standard GDAL MBTiles to PMTiles conversion
+  path; canonical FGB preserves source geometry and fields
 row_count: 11
 data_profile:
   field_count: 3
@@ -103,11 +104,11 @@ Geometry is WGS84 multipolygon geometry. The source shapefile reports 11 polygon
 features with extent `(-180, -90) - (180, 83.634101)`. The published FlatGeobuf
 promotes geometries to multipolygon and keeps the source fields unchanged.
 
-The PMTiles artifact was rebuilt on 2026-05-04 with Tippecanoe 2.79.0 from a
-temporary GeoJSON tiling input, with zooms 0 through 8, no pre-tiling
-simplification, `--no-line-simplification`, and
-`--no-tiny-polygon-reduction-at-maximum-zoom`. The canonical FlatGeobuf remains
-the analytical source and preserves the original source geometry. The maxzoom
+The PMTiles artifact was rebuilt on 2026-05-04 with zooms 0 through 8, no
+pre-tiling simplification, no line simplification, and no tiny-polygon reduction
+at maximum zoom. Future rebuilds must use GDAL MBTiles output converted with
+`pmtiles convert`. The canonical FlatGeobuf remains the analytical source and
+preserves the original source geometry. The maxzoom
 comes from the stable `source_scale_denominator: 10000000` hint, not from a
 meter-resolution interpretation of the Natural Earth `10m` label.
 
@@ -129,7 +130,7 @@ Output summary:
 - Source version: 5.1.1
 - Published features: 11
 - CRS: EPSG:4326
-- Toolchain: GDAL 3.6.2; Tippecanoe 2.79.0; PMTiles CLI unavailable locally, so validation used successful Tippecanoe generation plus `tippecanoe-decode`
+- PMTiles validation used `tippecanoe-decode`; future rebuilds must use GDAL MBTiles output converted with `pmtiles convert`
 - FGB SHA-256: `5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`
 - PMTiles SHA-256: `52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be`
 

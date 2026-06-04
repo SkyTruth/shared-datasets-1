@@ -127,7 +127,7 @@ The PMTiles artifact is generated from the same combined polygons, with zooms 0 
 
 ## Update notes
 
-Manually converted from `/Users/jonathanraphael/Desktop/Petrodata v12 Data (1)` on 2026-04-29 using GDAL, Tippecanoe, and PMTiles tooling.
+Manually converted from `/Users/jonathanraphael/Desktop/Petrodata v12 Data (1)` on 2026-04-29 using GDAL and PMTiles tooling.
 
 The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The sampled FGB profile resolved to maxzoom 9 from representative segment lengths and feature dimensions. The rebuilt PMTiles SHA-256 is `798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7`.
 

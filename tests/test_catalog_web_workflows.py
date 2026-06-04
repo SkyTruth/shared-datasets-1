@@ -82,8 +82,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("Refusing automatic PMTiles CDN sync", workflow)
         self.assertIn("Validate Terraform auth configuration", workflow)
         self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
-        self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("vars.GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
         self.assertNotIn("Read current ingestion images", workflow)
         self.assertNotIn("gcloud run jobs describe", workflow)
@@ -124,7 +125,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("Refusing automatic scratch cleanup IAM sync", workflow)
         self.assertIn("Validate Terraform auth configuration", workflow)
         self.assertIn("Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT", workflow)
-        self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertNotIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER || vars.GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
+        self.assertIn("Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER", workflow)
 
 
 if __name__ == "__main__":
