@@ -114,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          geospatial_pattern='^(\.github/(docker/geospatial-ci\.Dockerfile|workflows/ci\.yml)|ingestion/.*|scripts/(vector_asset|raster_asset|dataset_alerts)\.py|tests/test_(raster_standards|wdpa_monthly|sea_ice_daily|eamlis_monthly)\.py)$'
+          geospatial_pattern='^(\.github/(docker/geospatial-ci\.Dockerfile|workflows/ci\.yml)|ingestion/.*|scripts/(vector_asset|localized_vector_asset|raster_asset|dataset_alerts)\.py|tests/test_(localized_vector_asset|raster_standards|wdpa_monthly|sea_ice_daily|eamlis_monthly)\.py)$'
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -172,7 +172,7 @@ jobs:
             -e UV_PROJECT_ENVIRONMENT=/tmp/shared-datasets-geospatial-venv \
             -e RUN_GDAL_INTEGRATION_TESTS=1 \
             shared-datasets-geospatial-ci \
-            bash -lc 'uv sync --locked --all-groups && uv run pytest tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py --junitxml=test-results/geospatial-pytest.xml'
+            bash -lc 'uv sync --locked --all-groups && uv run pytest tests/test_localized_vector_asset.py tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py --junitxml=test-results/geospatial-pytest.xml'
 
       - name: Upload geospatial test results
         if: failure()

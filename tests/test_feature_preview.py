@@ -4,6 +4,13 @@ import re
 import unittest
 from pathlib import Path
 
+from workflow_helpers import (
+    load_workflow,
+    workflow_all_step_runs,
+    workflow_steps_by_name,
+    workflow_triggers,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-deploy.yml"
@@ -18,6 +25,31 @@ PROD_TF = REPO_ROOT / "terraform/envs/prod"
 
 
 class FeaturePreviewTests(unittest.TestCase):
+    def test_preview_deploy_workflow_semantic_safety_contract(self):
+        workflow = load_workflow(PREVIEW_WORKFLOW)
+        trigger = workflow_triggers(workflow)
+        job = workflow["jobs"]["preview"]
+        steps = workflow_steps_by_name(workflow, "preview")
+        all_runs = workflow_all_step_runs(workflow, "preview")
+
+        self.assertEqual(set(trigger), {"workflow_dispatch"})
+        self.assertEqual(
+            trigger["workflow_dispatch"]["inputs"]["preview_data_mode"]["options"],
+            ["preserve", "reset"],
+        )
+        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(job["environment"], "shared-datasets-production")
+        self.assertEqual(
+            job["concurrency"],
+            {"group": "feature-branch-preview", "cancel-in-progress": False},
+        )
+        self.assertEqual(workflow["env"]["SHARED_DATASETS_BUCKET"], "skytruth-shared-datasets-1-preview")
+        self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out selected feature branch"]["with"]["ref"], "${{ github.ref }}")
+        self.assertEqual(steps["Check out selected feature branch"]["with"]["path"], "preview-source")
+        self.assertNotIn("terraform -chdir=terraform/envs/prod", all_runs)
+        self.assertNotIn("-target=", all_runs)
+
     def test_preview_terraform_uses_isolated_preview_resources(self):
         main_tf = (PREVIEW_TF / "main.tf").read_text()
         catalog_viewer_tf = (PREVIEW_TF / "catalog_viewer.tf").read_text()
