@@ -33,6 +33,7 @@ def test_metadata_index_loader_iam_sync_is_protected_and_targeted():
 
     expected_targets = {
         "google_firestore_database.feature_metadata",
+        'google_project_service.required["firestore.googleapis.com"]',
         "google_project_iam_member.metadata_index_loader_firestore_user",
         "google_service_account_iam_member.metadata_index_loader_github_wif",
         "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
@@ -46,6 +47,7 @@ def test_metadata_index_loader_iam_sync_is_protected_and_targeted():
 
     assert python_literal_string_set(enforce_run, "allowed_exact") >= {
         "google_firestore_database.feature_metadata",
+        'google_project_service.required["firestore.googleapis.com"]',
         "google_project_iam_member.metadata_index_loader_firestore_user",
         "google_service_account_iam_member.metadata_index_loader_github_wif",
         "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",

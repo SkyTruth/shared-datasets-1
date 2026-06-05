@@ -43,7 +43,10 @@ def workflow_all_step_runs(workflow: dict[str, Any], job_name: str) -> str:
 
 
 def terraform_targets(plan_run: str) -> set[str]:
-    return set(re.findall(r"(?:^|\s)-target=([^\s\\]+)", plan_run))
+    return {
+        target.strip("'\"")
+        for target in re.findall(r"(?:^|\s)-target=([^\s\\]+)", plan_run)
+    }
 
 
 def python_literal_string_set(run: str, name: str) -> set[str]:

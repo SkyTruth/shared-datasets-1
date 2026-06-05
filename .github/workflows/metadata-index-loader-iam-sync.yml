@@ -81,6 +81,7 @@ jobs:
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/metadata-index-loader-iam-sync.tfplan" \
+            -target='google_project_service.required["firestore.googleapis.com"]' \
             -target=google_firestore_database.feature_metadata \
             -target=module.metadata_index_loader_service_account.google_service_account.this \
             -target=google_project_iam_member.metadata_index_loader_firestore_user \
@@ -105,6 +106,7 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_firestore_database.feature_metadata",
+              'google_project_service.required["firestore.googleapis.com"]',
               "google_project_iam_member.metadata_index_loader_firestore_user",
               "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
               "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
