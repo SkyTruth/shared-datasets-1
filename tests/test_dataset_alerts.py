@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import tempfile
-import unittest
+import contextlib
+import io
 import json
 import subprocess
+import tempfile
+import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import dataset_alerts
 
@@ -197,6 +200,55 @@ class DatasetAlertsTests(unittest.TestCase):
         self.assertEqual(command[3], dataset_alerts.SCHEMA_ALERT_LOG_NAME)
         self.assertEqual(json.loads(command[4])["asset_slug"], "asset")
         self.assertEqual(kwargs, {"check": True})
+
+    def test_schema_warning_logging_failure_is_nonfatal(self):
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            raise subprocess.CalledProcessError(1, command)
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            dataset_alerts.emit_cloud_logging_warning(
+                {"alert_type": "dataset_schema_changed", "asset_slug": "asset"},
+                runner=runner,
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("continuing schema snapshot update", stderr.getvalue())
+
+    def test_check_schema_updates_snapshot_when_warning_logging_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "asset.csv"
+            path.write_text("id,name,added\n1,alpha,new\n")
+
+            original_emit = dataset_alerts.emit_cloud_logging_warning
+
+            def failing_emit(payload, **kwargs):
+                def runner(command, **runner_kwargs):
+                    raise subprocess.CalledProcessError(1, command)
+
+                return original_emit(payload, runner=runner, **kwargs)
+
+            with (
+                mock.patch.object(
+                    dataset_alerts,
+                    "load_snapshot",
+                    return_value=({"fields": [{"name": "id", "type": "Integer"}]}, 12),
+                ),
+                mock.patch.object(dataset_alerts, "write_snapshot") as write_snapshot,
+                mock.patch.object(dataset_alerts, "emit_cloud_logging_warning", side_effect=failing_emit),
+            ):
+                dataset_alerts.check_schema(
+                    asset_slug="asset",
+                    dataset_path=path,
+                    snapshot_uri="gs://bucket/_catalog/schema-snapshots/asset.json",
+                    dry_run=False,
+                    skip_snapshot_upload=False,
+                )
+
+        write_snapshot.assert_called_once()
 
 
 if __name__ == "__main__":

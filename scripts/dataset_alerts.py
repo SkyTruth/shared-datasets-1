@@ -409,7 +409,14 @@ def emit_cloud_logging_warning(
         "--project",
         project_id,
     ]
-    runner(command, check=True)
+    try:
+        runner(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(
+            "schema warning logging failed; continuing schema snapshot update: "
+            f"{exc}",
+            file=sys.stderr,
+        )
 
 
 def snapshot_uri_for(asset_slug: str, bucket: str = DEFAULT_BUCKET) -> str:
