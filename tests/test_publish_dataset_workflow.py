@@ -85,6 +85,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         promote_run = self.apply_steps["Promote approved staged objects"]["run"]
         compatibility_run = self.apply_steps["Check approved schema compatibility"]["run"]
         release_index_run = self.apply_steps["Rebuild promoted release index"]["run"]
+        finalize_run = self.apply_steps["Finalize promoted release metadata"]["run"]
         summary_run = self.apply_steps["Send dataset upload summary"]["run"]
         cleanup_run = self.apply_steps["Delete promoted scratch source objects"]["run"]
 
@@ -93,6 +94,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
             names,
             "Check approved schema compatibility",
             "Promote approved staged objects",
+            "Finalize promoted release metadata",
             "Rebuild promoted release index",
             "Send dataset upload summary",
             "Delete promoted scratch source objects",
@@ -107,6 +109,9 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertLess(promote_run.index('"stat", promotion["destination_uri"]'), promote_run.index('"download",'))
         self.assertLess(promote_run.index('"download",'), promote_run.index('"check-schema",'))
 
+        self.assertIn("scripts/finalize_promoted_release_metadata.py", finalize_run)
+        self.assertIn("--publish-plan publish-plan.json", finalize_run)
+        self.assertIn("--output finalized-release-metadata.json", finalize_run)
         self.assertIn("catalog/shared-datasets-catalog.csv", release_index_run)
         self.assertIn('"release-index"', release_index_run)
         self.assertIn('"rebuild"', release_index_run)

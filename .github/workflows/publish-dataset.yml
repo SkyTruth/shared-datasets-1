@@ -548,6 +548,15 @@ jobs:
                   )
           PY
 
+      - name: Finalize promoted release metadata
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          uv run python scripts/finalize_promoted_release_metadata.py \
+            --publish-plan publish-plan.json \
+            --output finalized-release-metadata.json
+          cat finalized-release-metadata.json
+
       - name: Rebuild promoted release index
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |

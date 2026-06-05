@@ -20,12 +20,13 @@ source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
   Inventory System (e-AMLIS). https://amlis.osmre.gov/.
-notes: Monthly job publishes FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 12 from the point-only FGB profile
-  with all-point retention verified at zoom 0; future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles
-  to PMTiles conversion path; pmtiles sha256 09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4. Release history,
-  source fingerprints, row counts, and file hashes are recorded in the bucket release index and per-run records. Stale initial
-  GeoJSON remains only under source/provenance paths and is not advertised as an active data-plane format.
-row_count: 63112
+notes: Monthly job publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release adds provider feature_id
+  values from OBJECTID, feature_hash values, canonical metadata/schema/manifest artifacts, and an initial Spanish PA_NAME
+  metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup tiles with feature_id
+  and ext_id only. Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index
+  and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active
+  data-plane format.
+row_count: 63168
 data_profile:
   field_count: 57
   identity_candidates:
@@ -69,6 +70,14 @@ files:
   format: ndjson_gzip
   role: metadata
   purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Spanish metadata sidecar materialized from PA_NAME translations
+- path: latest/eamlis-abandoned-mine-land-inventory.metadata-translations.csv
+  format: csv
+  role: metadata
+  purpose: Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash
 - path: latest/eamlis-abandoned-mine-land-inventory.schema.json
   format: json
   role: metadata
@@ -85,6 +94,26 @@ files:
   format: pmtiles
   role: release
   purpose: Dated map-tile releases
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated canonical metadata sidecar
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Spanish metadata sidecar
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata-translations.csv
+  format: csv
+  role: release
+  purpose: Dated editable Spanish translation source
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.schema.json
+  format: json
+  role: release
+  purpose: Dated release feature schema
+- path: releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.manifest.json
+  format: json
+  role: release
+  purpose: Dated release manifest with artifact checksums and index-load policy
 - path: runs/YYYY-MM-DD.json
   format: json
   role: run-record
@@ -131,10 +160,17 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 | `latest/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `canonical` | Canonical WGS84 point dataset |
 | `latest/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point features |
 | `latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from PA_NAME translations |
+| `latest/eamlis-abandoned-mine-land-inventory.metadata-translations.csv` | `csv` | `metadata` | Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash |
 | `latest/eamlis-abandoned-mine-land-inventory.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/eamlis-abandoned-mine-land-inventory.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb` | `fgb` | `release` | Dated canonical releases |
 | `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles` | `pmtiles` | `release` | Dated map-tile releases |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Spanish metadata sidecar |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata-translations.csv` | `csv` | `release` | Dated editable Spanish translation source |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.schema.json` | `json` | `release` | Dated release feature schema |
+| `releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Scheduled ingestion run records |
 | `sources/eamlis-data-accessed-2025-10-24-4326.geojson` | `geojson` | `source` | Initial source GeoJSON supplied for the first upload; noncanonical because it is large and less efficient for analysis |
 <!-- END GENERATED files-table -->
@@ -143,11 +179,11 @@ The initial 2026-04-30 bucket release was converted from a supplied GeoJSON file
 
 Geometry is WGS84 point geometry derived from the public ArcGIS hosted feature layer. The public service also exposes `EST_LATITUDE` and `EST_LONGITUDE` display fields that may be less precise than the feature geometry; use the geometry column for geospatial analysis.
 
-Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The current 2026-05-02 scheduled release contains 63,112 features. Scheduled run records document the current public source count for each refresh attempt.
+Multiple records can share the same `AMLIS_KEY` and point geometry because rows represent individual abandoned mine land problem types within a problem area. The reviewed 2026-06-05 metadata-contract release contains 63,168 features. Scheduled run records document the current public source count for each refresh attempt.
 
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
 
-The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
+The 2026-06-05 PMTiles artifact is a lightweight metadata-lookup tile archive with only `feature_id` and `ext_id` properties. The canonical FGB and metadata sidecar preserve full feature attributes.
 
 ## Properties / columns
 
@@ -213,19 +249,26 @@ The PMTiles artifact is derived from the same point features, with zooms 0 throu
 
 ## Update notes
 
-The current FGB release was generated by the monthly Cloud Run job on 2026-05-02 from the public ArcGIS hosted feature layer. PMTiles were rebuilt on 2026-05-04 from that canonical FGB using auto maxzoom selection.
+The current metadata-contract release was prepared for reviewed promotion on 2026-06-05 from the public ArcGIS hosted feature layer.
 
 Output summary:
 
-- Source features: 63,112
-- Published FGB features: 63,112
-- PMTiles zoom 0 decoded point features: 63,112
+- Source features: 63,168
+- Published FGB features: 63,168
+- PMTiles zoom 0 decoded point features: 63,168
 - Unique `AMLIS_KEY` values: 24,427
 - Null geometries: 0
 - Extent: -161.234444, 28.503843 to -71.249444, 70.500000
-- FGB SHA-256: `23c517e741d86b0e9e676f699ae7f1345118c21dbc728d88edcbf086f0c3af80`
-- PMTiles SHA-256: `09ab492819612f8daf726f92048050daf78a31282ad0c083bd9dfec796535bf4`
-- PMTiles validation used zoom 0 decode feature-count checks. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`.
+- FGB SHA-256: `0997e6f7aaaa1233f86ccfb85fac18be3a69d6001c7db6919598e2d371c3491b`
+- PMTiles SHA-256: `26bbea96e5bd941b2fd77735b6163b760ea91034929f2ace97256d6d9b2bca19`
+- Metadata sidecar SHA-256: `84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46`
+- Spanish metadata sidecar SHA-256: `84e91b6af7a5ef9ce93afb7f5abccc31d79ae0fa0b7df50a159e5a82e5bf7c46`
+- Metadata translations CSV SHA-256: `94ec30bdbe93bf5cb7e94c580f80f816e8b2a06ec3845bc05c742eab132a2b59`
+- Translation field: `PA_NAME`
+- Translation locale: `es`
+- Translation rows: 63,168
+- Translation review state: `needs_review`; the initial Spanish sidecar preserves source proper-name values pending human review.
+- PMTiles validation used PMTiles v3 magic bytes, `pmtiles verify`, `pmtiles show`, and zoom 0 decode checks for `feature_id` and `ext_id`.
 
 Monthly scheduled ingestion was added after the initial manual upload. The job checks the public ArcGIS layer metadata and source statistics first, skips unchanged source fingerprints without downloading features, and also skips publication when a changed source fingerprint generates the same FGB SHA-256 as the latest successful run.
 
