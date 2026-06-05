@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-import yaml
+from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -9,12 +9,9 @@ WORKFLOW_PATH = REPO_ROOT / ".github/workflows/publish-typescript-sdk.yml"
 
 
 class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
-    def load_workflow(self):
-        workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
-        return workflow, workflow.get("on") or workflow.get(True)
-
     def test_publish_workflow_triggers_on_package_content_files(self):
-        workflow, trigger = self.load_workflow()
+        workflow = load_workflow(WORKFLOW_PATH)
+        trigger = workflow_triggers(workflow)
 
         self.assertIn("workflow_dispatch", trigger)
         self.assertEqual(trigger["push"]["branches"], ["main"])
@@ -32,9 +29,8 @@ class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(workflow["permissions"]["contents"], "write")
 
     def test_publish_workflow_bumps_before_publish_when_needed(self):
-        workflow, _trigger = self.load_workflow()
-        steps = workflow["jobs"]["publish"]["steps"]
-        steps_by_name = {step["name"]: step for step in steps}
+        workflow = load_workflow(WORKFLOW_PATH)
+        steps_by_name = workflow_steps_by_name(workflow, "publish")
 
         check_step = steps_by_name["Check release version"]
         self.assertEqual(check_step["id"], "release-version")
