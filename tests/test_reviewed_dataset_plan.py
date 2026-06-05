@@ -211,6 +211,28 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         self.assertEqual(deletion["generation"], "123")
         self.assertIn("duplicate release", deletion["reason"])
 
+    def test_normalize_delete_plan_accepts_exact_gcloud_composite_temp_object(self):
+        normalized = reviewed_dataset_plan.normalize_delete_plan(
+            {
+                "asset_slug": "cleanup",
+                "proposal_id": "pr-123",
+                "deletions": [
+                    {
+                        "uri": (
+                            f"gs://{BUCKET}/gcloud/tmp/parallel_composite_uploads/"
+                            "see_gcloud_storage_cp_help_for_details/123_part"
+                        ),
+                        "generation": 123,
+                        "reason": "Remove orphaned gcloud composite upload part created by an aborted scratch upload.",
+                    }
+                ],
+            }
+        )
+
+        deletion = normalized["deletions"][0]
+        self.assertEqual(deletion["generation"], "123")
+        self.assertIn("orphaned gcloud composite", deletion["reason"])
+
     def test_normalize_delete_plan_rejects_prefix_delete(self):
         with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "not a prefix"):
             reviewed_dataset_plan.normalize_delete_plan(
@@ -250,7 +272,7 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
             )
 
     def test_normalize_delete_plan_rejects_scratch_target(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "canonical mutation"):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
             reviewed_dataset_plan.normalize_delete_plan(
                 {
                     "asset_slug": "example-asset",
@@ -260,6 +282,25 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                             "uri": f"gs://{BUCKET}/_scratch/pending-publishes/example-asset/pr-123/file.fgb",
                             "generation": "123",
                             "reason": "Remove bad scratch object through the wrong path.",
+                        }
+                    ],
+                }
+            )
+
+    def test_normalize_delete_plan_rejects_nested_gcloud_temp_prefix(self):
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "approved delete prefixes"):
+            reviewed_dataset_plan.normalize_delete_plan(
+                {
+                    "asset_slug": "cleanup",
+                    "proposal_id": "pr-123",
+                    "deletions": [
+                        {
+                            "uri": (
+                                f"gs://{BUCKET}/gcloud/tmp/parallel_composite_uploads/"
+                                "see_gcloud_storage_cp_help_for_details/nested/part"
+                            ),
+                            "generation": "123",
+                            "reason": "Reject nested gcloud temp prefixes that are too broad.",
                         }
                     ],
                 }

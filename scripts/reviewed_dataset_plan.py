@@ -20,6 +20,7 @@ WILDCARD_CHARS = set("*?[]{}")
 SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
 WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
 NO_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"
+GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
 
 
 class PlanValidationError(ValueError):
@@ -98,6 +99,17 @@ def validate_canonical_object_name(name: str, *, label: str) -> None:
     blocked = name.startswith("_scratch/") or name.startswith("_deprecated/") or name.startswith("000-system/")
     if blocked or not approved:
         raise PlanValidationError(f"{label} is outside approved canonical mutation prefixes")
+
+
+def validate_delete_object_name(name: str, *, label: str) -> None:
+    try:
+        validate_canonical_object_name(name, label=label)
+        return
+    except PlanValidationError:
+        pass
+    if name.startswith(GCLOUD_COMPOSITE_TEMP_PREFIX) and "/" not in name.removeprefix(GCLOUD_COMPOSITE_TEMP_PREFIX):
+        return
+    raise PlanValidationError(f"{label} is outside approved delete prefixes")
 
 
 def require_slug_and_proposal(plan: dict[str, Any]) -> tuple[str, str]:
@@ -265,7 +277,7 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
             raise PlanValidationError(f"deletions[{index}] must be an object")
         uri = str(raw.get("uri", ""))
         object_name = object_name_from_uri(uri, bucket=bucket, label=f"deletions[{index}].uri")
-        validate_canonical_object_name(object_name, label=f"deletions[{index}].uri")
+        validate_delete_object_name(object_name, label=f"deletions[{index}].uri")
         generation = normalize_numeric_generation(
             raw.get("generation", ""),
             label=f"deletions[{index}].generation",

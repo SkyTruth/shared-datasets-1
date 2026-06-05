@@ -266,6 +266,22 @@ def release_file_for_format(files: Any, format_name: str) -> dict[str, Any] | No
     return None
 
 
+def canonical_metadata_release_file(files: Any) -> dict[str, Any] | None:
+    if not isinstance(files, list):
+        return None
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            continue
+        candidate = str(file_entry.get("format") or file_entry.get("role") or "").strip()
+        role = str(file_entry.get("role") or "").strip()
+        path = release_file_path(file_entry)
+        sidecar_match = RELEASE_METADATA_SIDECAR_RE.search(path)
+        is_localized_sidecar = bool(sidecar_match and sidecar_match.group("locale"))
+        if candidate == "metadata" and role != "metadata.es" and not is_localized_sidecar:
+            return file_entry
+    return release_file_for_format(files, "metadata")
+
+
 def release_file_path(file_entry: Any) -> str:
     if not isinstance(file_entry, dict):
         return ""
@@ -640,6 +656,30 @@ def validate_object_layout(root: str, blob: BlobInfo, row: Optional[Dict[str, st
                     "`runs/` records should be named YYYY-MM-DD.json.",
                     hint,
                     "Confirm run identity before renaming.",
+                )
+            )
+        return findings
+    if len(parts) == 3 and parts[0] == "index-loads":
+        if not DATE_RE.match(parts[1]):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    blob.name,
+                    "index-load-date",
+                    "`index-loads/` child should be YYYY-MM-DD.",
+                    hint,
+                    "Confirm load identity before renaming.",
+                )
+            )
+        if not parts[2].endswith(".json") or not LOAD_ID_RE.fullmatch(parts[2].removesuffix(".json")):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    blob.name,
+                    "index-load-name",
+                    "`index-loads/` records should be named {load-id}.json with a safe load ID.",
+                    hint,
+                    "Confirm load identity before renaming.",
                 )
             )
         return findings
@@ -1703,7 +1743,7 @@ def validate_feature_metadata_readiness(
                     if not isinstance(files, list):
                         issues.append("release index latest_release.files is missing or not an array")
                         files = []
-                    metadata_entry = release_file_for_format(files, "metadata")
+                    metadata_entry = canonical_metadata_release_file(files)
                     schema_entry = release_file_for_format(files, "schema")
                     manifest_entry = release_file_for_format(files, "manifest")
                     for role, entry in (
