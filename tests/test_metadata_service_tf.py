@@ -45,8 +45,17 @@ class MetadataServiceTerraformTests(unittest.TestCase):
         self.assertIn('resource "google_storage_bucket_iam_member" "metadata_index_loader_index_load_creator"', metadata_tf)
         self.assertIn('role   = "roles/storage.objectCreator"', metadata_tf)
         self.assertIn("metadata_index_loader_record_creator_condition", metadata_tf)
+        self.assertIn(
+            'metadata_index_loader_record_creator_condition = join(" && ", [',
+            metadata_tf,
+        )
         self.assertIn("resource.name.extract", metadata_tf)
         self.assertIn("resource.name.endsWith('.json')", metadata_tf)
+        self.assertIn(
+            "!resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/')",
+            metadata_tf,
+        )
+        self.assertNotIn('metadata_index_loader_record_creator_condition = join(" || "', metadata_tf)
         self.assertIn("/index-loads/", metadata_tf)
         self.assertIn('resource "google_service_account_iam_member" "metadata_index_loader_github_wif"', metadata_tf)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', metadata_tf)
