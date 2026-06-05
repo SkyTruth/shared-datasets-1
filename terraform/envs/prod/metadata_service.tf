@@ -14,6 +14,11 @@ locals {
     "resource.name.endsWith('.json')",
     "!resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/')",
   ])
+
+  metadata_index_loader_index_load_folder_condition = join(" && ", [
+    "resource.name.extract('${local.shared_bucket_folder_resource_prefix}{asset_path}/index-loads/') != ''",
+    "!resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/')",
+  ])
 }
 
 resource "google_firestore_database" "feature_metadata" {
@@ -97,6 +102,18 @@ resource "google_storage_bucket_iam_member" "metadata_index_loader_index_load_cr
     title       = "metadata_index_load_records_create"
     description = "Allow metadata index loader to create canonical index-load records only."
     expression  = local.metadata_index_loader_record_creator_condition
+  }
+}
+
+resource "google_storage_bucket_iam_member" "metadata_index_loader_index_load_folder_admin" {
+  bucket = var.bucket_name
+  role   = "roles/storage.folderAdmin"
+  member = module.metadata_index_loader_service_account.member
+
+  condition {
+    title       = "metadata_index_load_folders_create"
+    description = "Allow metadata index loader to create canonical index-load folders only."
+    expression  = local.metadata_index_loader_index_load_folder_condition
   }
 }
 

@@ -171,6 +171,7 @@ jobs:
             -target=google_storage_bucket_iam_member.metadata_service_object_viewer \
             -target=google_storage_bucket_iam_member.metadata_index_loader_object_viewer \
             -target=google_storage_bucket_iam_member.metadata_index_loader_index_load_creator \
+            -target=google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin \
             -target=google_service_account_iam_member.metadata_index_loader_github_wif \
             -target=google_cloud_run_v2_service.metadata_service \
             -target=google_cloud_run_v2_service_iam_member.metadata_service_iap_invoker \
@@ -203,6 +204,7 @@ jobs:
               'google_storage_bucket_iam_member.metadata_service_object_viewer',
               'google_storage_bucket_iam_member.metadata_index_loader_object_viewer',
               'google_storage_bucket_iam_member.metadata_index_loader_index_load_creator',
+              'google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin',
               'google_project_iam_member.metadata_service_firestore_viewer',
               'google_project_iam_member.metadata_index_loader_firestore_user',
               'google_service_account_iam_member.metadata_index_loader_github_wif',

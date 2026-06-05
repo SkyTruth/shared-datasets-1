@@ -76,6 +76,7 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
                 "google_project_iam_member.metadata_service_firestore_viewer",
                 "google_service_account_iam_member.metadata_index_loader_github_wif",
                 "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
+                "google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin",
                 "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
                 "google_storage_bucket_iam_member.metadata_service_object_viewer",
                 "module.metadata_index_loader_service_account.google_service_account.this",
@@ -102,6 +103,7 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
                 "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",
                 "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
                 "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
+                "google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin",
                 "google_service_account_iam_member.metadata_index_loader_github_wif",
             },
         )
