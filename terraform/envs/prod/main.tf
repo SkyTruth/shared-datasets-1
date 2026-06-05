@@ -30,5 +30,5 @@ resource "google_artifact_registry_repository" "jobs" {
   description   = "Container images for shared datasets ingestion jobs."
   format        = "DOCKER"
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["artifactregistry.googleapis.com"]]
 }

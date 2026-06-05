@@ -20,6 +20,20 @@ class MetadataServiceTerraformTests(unittest.TestCase):
         self.assertIn('resource "google_firestore_database" "feature_metadata"', metadata_tf)
         self.assertIn('type                        = "FIRESTORE_NATIVE"', metadata_tf)
         self.assertIn('delete_protection_state     = "DELETE_PROTECTION_ENABLED"', metadata_tf)
+        self.assertIn(
+            'depends_on = [google_project_service.required["firestore.googleapis.com"]]',
+            metadata_tf,
+        )
+        self.assertIn(
+            'depends_on = [google_project_service.required["iam.googleapis.com"]]',
+            metadata_tf,
+        )
+        self.assertIn(
+            'depends_on = [google_project_service.required["artifactregistry.googleapis.com"]]',
+            main_tf,
+        )
+        self.assertNotIn("depends_on = [google_project_service.required]", metadata_tf)
+        self.assertNotIn("depends_on = [google_storage_bucket.shared_bucket]", metadata_tf)
         self.assertIn('account_id   = "metadata-service"', metadata_tf)
         self.assertIn('account_id   = "metadata-index-loader"', metadata_tf)
         self.assertIn('resource "google_cloud_run_v2_service" "metadata_service"', metadata_tf)

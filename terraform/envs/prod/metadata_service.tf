@@ -24,7 +24,7 @@ resource "google_firestore_database" "feature_metadata" {
   concurrency_mode            = "OPTIMISTIC"
   app_engine_integration_mode = "DISABLED"
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["firestore.googleapis.com"]]
 }
 
 module "metadata_service_account" {
@@ -34,7 +34,7 @@ module "metadata_service_account" {
   account_id   = "metadata-service"
   display_name = "Shared datasets feature metadata service"
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["iam.googleapis.com"]]
 }
 
 module "metadata_index_loader_service_account" {
@@ -44,7 +44,7 @@ module "metadata_index_loader_service_account" {
   account_id   = "metadata-index-loader"
   display_name = "Shared datasets feature metadata index loader"
 
-  depends_on = [google_project_service.required]
+  depends_on = [google_project_service.required["iam.googleapis.com"]]
 }
 
 resource "google_project_iam_member" "metadata_service_firestore_viewer" {
@@ -73,8 +73,6 @@ resource "google_storage_bucket_iam_member" "metadata_service_object_viewer" {
     description = "Allow metadata service reads of generated release index/catalog metadata only."
     expression  = local.metadata_service_object_viewer_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "metadata_index_loader_object_viewer" {
@@ -87,8 +85,6 @@ resource "google_storage_bucket_iam_member" "metadata_index_loader_object_viewer
     description = "Allow metadata index loader reads of canonical feature metadata bundle objects only."
     expression  = local.metadata_service_object_viewer_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_storage_bucket_iam_member" "metadata_index_loader_index_load_creator" {
@@ -101,8 +97,6 @@ resource "google_storage_bucket_iam_member" "metadata_index_loader_index_load_cr
     description = "Allow metadata index loader to create canonical index-load records only."
     expression  = local.metadata_index_loader_record_creator_condition
   }
-
-  depends_on = [google_storage_bucket.shared_bucket]
 }
 
 resource "google_service_account_iam_member" "metadata_index_loader_github_wif" {
@@ -181,7 +175,7 @@ resource "google_cloud_run_v2_service" "metadata_service" {
   depends_on = [
     google_artifact_registry_repository.jobs,
     google_firestore_database.feature_metadata,
-    google_project_service.required,
+    google_project_service.required["run.googleapis.com"],
   ]
 }
 
@@ -192,7 +186,10 @@ resource "google_cloud_run_v2_service_iam_member" "metadata_service_iap_invoker"
   role     = "roles/run.invoker"
   member   = "serviceAccount:${local.catalog_viewer_iap_service_agent}"
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required["iap.googleapis.com"],
+    google_project_service.required["run.googleapis.com"],
+  ]
 }
 
 resource "google_iap_web_cloud_run_service_iam_member" "metadata_service_accessors" {
