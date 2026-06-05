@@ -184,6 +184,36 @@ class DatasetAlertsTests(unittest.TestCase):
         self.assertIn("gs://bucket/100/ref/asset", body)
         self.assertEqual(fields, {})
 
+    def test_row_count_from_asset_doc_reads_frontmatter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp)
+            (docs_dir / "asset.md").write_text("---\nrow_count: 304572\n---\n\n# Asset\n")
+
+            self.assertEqual(dataset_alerts.row_count_from_asset_doc("asset", docs_dir=docs_dir), 304572)
+
+    def test_upload_summary_falls_back_to_asset_doc_row_count(self):
+        row = {
+            "canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb",
+            "source": "source",
+        }
+        with (
+            mock.patch.object(dataset_alerts, "load_catalog", return_value={"asset": row}),
+            mock.patch.object(dataset_alerts, "row_count_from_asset_doc", return_value=42),
+            mock.patch.object(dataset_alerts, "notify") as notify,
+        ):
+            dataset_alerts.upload_summary(
+                asset_slug="asset",
+                changed_path=["gs://bucket/100/ref/asset/latest/asset.fgb"],
+                release_path=None,
+                row_count=None,
+                dataset_path=None,
+                sample_column=[],
+                dry_run=True,
+            )
+
+        self.assertIn("*Rows:* `42`", notify.call_args.kwargs["body"])
+        self.assertTrue(notify.call_args.kwargs["dry_run"])
+
     def test_schema_warning_writes_structured_cloud_log(self):
         calls = []
 

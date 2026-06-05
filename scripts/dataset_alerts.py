@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+import yaml
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
@@ -21,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import catalog_docs
 from scripts.gcs_asset import parse_gs_uri
 from scripts.slack_notify import notify
 
@@ -92,6 +94,24 @@ def format_sample_columns(sample_columns: list[str] | None, *, limit: int = SAMP
 
 def sample_columns_from_schema(fields: list[dict[str, str]]) -> list[str]:
     return [field["name"] for field in fields if field.get("name")]
+
+
+def row_count_from_asset_doc(asset_slug: str, docs_dir: Path = Path("docs/assets")) -> int | None:
+    path = docs_dir / f"{asset_slug}.md"
+    try:
+        metadata, _body = catalog_docs.split_frontmatter(path.read_text(), path)
+    except (OSError, UnicodeError, catalog_docs.CatalogDocsError, yaml.YAMLError):
+        return None
+    value = metadata.get("row_count")
+    if value in (None, ""):
+        return None
+    try:
+        row_count = int(value)
+    except (TypeError, ValueError):
+        return None
+    if row_count < 0:
+        return None
+    return row_count
 
 
 def build_upload_summary(
@@ -469,6 +489,7 @@ def upload_summary(
     """Post a lightweight dataset upload summary."""
 
     row = load_catalog().get(asset_slug)
+    resolved_row_count = row_count if row_count is not None else row_count_from_asset_doc(asset_slug)
     sample_columns = sample_column or (
         sample_columns_from_schema(schema_for_path(dataset_path)) if dataset_path else None
     )
@@ -477,7 +498,7 @@ def upload_summary(
         row=row,
         changed_paths=changed_path,
         release_path=release_path,
-        row_count=row_count,
+        row_count=resolved_row_count,
         sample_columns=sample_columns,
     )
     notify(title=title, body=body, status="new", fields=fields, dry_run=dry_run)
