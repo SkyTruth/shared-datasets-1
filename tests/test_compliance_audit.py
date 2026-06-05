@@ -153,6 +153,18 @@ class LocalComplianceAuditTests(unittest.TestCase):
 
         self.assertIn("approved-format", {finding.check for finding in findings})
 
+    def test_feature_metadata_index_load_records_are_allowed_in_asset_layout(self):
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        row = catalog_row(update_cadence="manual")
+
+        findings = audit.validate_object_layout(
+            root,
+            blob_info(f"{root}/index-loads/2026-05-01/example-load_1.json"),
+            row,
+        )
+
+        self.assertEqual(findings, [])
+
     def test_readme_validation_flags_generic_properties_placeholder(self):
         readme = blob_info("100-geographic-reference/110-boundaries/example-asset/README.md")
         text = """# Example Asset
@@ -533,6 +545,111 @@ Initial upload.
 
         self.assertEqual([finding.check for finding in findings], ["feature-metadata-contract-ready"])
         self.assertIn("no successful matching index-load record", findings[0].message)
+
+    def test_feature_metadata_readiness_accepts_localized_metadata_sidecar(self):
+        row = catalog_row(update_cadence="manual")
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        release = "2026-05-01"
+        metadata_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.metadata.ndjson.gz"
+        localized_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.metadata.es.ndjson.gz"
+        schema_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.schema.json"
+        manifest_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.manifest.json"
+        index_load_name = f"{root}/index-loads/{release}/example-load_1.json"
+        schema = {
+            "schema_version": 1,
+            "asset_slug": "example-asset",
+            "release": release,
+            "fields": [{"name": "name", "type": "String", "nullable": True, "projectable": True}],
+        }
+        manifest = {
+            "schema_version": 1,
+            "asset_slug": "example-asset",
+            "release": release,
+            "release_feature_model_schema_version": 1,
+            "source_inputs": [],
+            "artifacts": [
+                {
+                    "role": "fgb",
+                    "path": f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.fgb",
+                    "sha256": "a" * 64,
+                    "generation": 10,
+                },
+                {
+                    "role": "pmtiles",
+                    "path": f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.pmtiles",
+                    "sha256": "b" * 64,
+                    "generation": 11,
+                },
+                {
+                    "role": "metadata.es",
+                    "path": localized_uri,
+                    "sha256": "e" * 64,
+                    "generation": 15,
+                    "locale": "es",
+                },
+                {"role": "metadata", "path": metadata_uri, "sha256": "c" * 64, "generation": 12},
+                {"role": "schema", "path": schema_uri, "sha256": "d" * 64, "generation": 13},
+                {"role": "manifest", "path": manifest_uri},
+            ],
+            "schema": schema,
+            "id_strategy": {},
+            "feature_hash_algorithm": audit.release_feature_model.FEATURE_HASH_ALGORITHM,
+            "validation": {},
+            "index_status_policy": {"mode": "external_index_load_records", "path": f"index-loads/{release}/"},
+        }
+        release_index = {
+            "asset_slug": "example-asset",
+            "latest_release": {
+                "date": release,
+                "files": [
+                    {"format": "metadata", "role": "metadata", "locale": "es", "path": localized_uri, "generation": 15},
+                    {"format": "metadata", "path": metadata_uri, "generation": 12},
+                    {"format": "schema", "path": schema_uri, "generation": 13},
+                    {"format": "manifest", "path": manifest_uri, "generation": 14},
+                ],
+            },
+            "releases": [],
+        }
+        index_load = {
+            "status": "success",
+            "dry_run": False,
+            "load_id": "example-load_1",
+            "asset_slug": "example-asset",
+            "release": release,
+            "sidecar_uri": metadata_uri,
+            "sidecar_generation": 12,
+            "schema_uri": schema_uri,
+            "schema_generation": 13,
+            "manifest_uri": manifest_uri,
+            "manifest_generation": 14,
+        }
+        payloads = {
+            "_catalog/releases/example-asset.json": release_index,
+            f"{root}/releases/{release}/example-asset.schema.json": schema,
+            f"{root}/releases/{release}/example-asset.manifest.json": manifest,
+            index_load_name: index_load,
+        }
+        blobs = [
+            blob_info("_catalog/releases/example-asset.json"),
+            blob_info(f"{root}/latest/example-asset.metadata.ndjson.gz"),
+            blob_info(f"{root}/latest/example-asset.schema.json"),
+            blob_info(f"{root}/latest/example-asset.manifest.json"),
+            blob_info(f"{root}/releases/{release}/example-asset.metadata.es.ndjson.gz", generation="15"),
+            blob_info(f"{root}/releases/{release}/example-asset.metadata.ndjson.gz", generation="12"),
+            blob_info(f"{root}/releases/{release}/example-asset.schema.json", generation="13"),
+            blob_info(f"{root}/releases/{release}/example-asset.manifest.json", generation="14"),
+            blob_info(index_load_name),
+        ]
+
+        with mock.patch.object(audit, "download_object_text", side_effect=download_from(payloads)):
+            findings = audit.validate_feature_metadata_readiness(
+                bucket="skytruth-shared-datasets-1",
+                blobs=blobs,
+                catalog_rows=[row],
+                feature_metadata_docs={"example-asset": {"storage": "metadata_sidecar_v1"}},
+            )
+
+        self.assertEqual(findings, [])
 
     def test_assets_without_feature_metadata_do_not_require_sidecars(self):
         row = catalog_row(update_cadence="manual")
