@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
@@ -14,27 +16,51 @@ SCRATCH_CLEANUP_IAM_SYNC_READINESS = REPO_ROOT / ".github/workflows/scratch-clea
 
 class CatalogWebWorkflowTests(unittest.TestCase):
     def test_catalog_web_deploy_uses_publisher_identity_and_no_cache_publish_helper(self):
-        workflow = CATALOG_DEPLOY.read_text()
+        workflow = load_workflow(CATALOG_DEPLOY)
+        trigger = workflow_triggers(workflow)
+        env = workflow["env"]
+        job = workflow["jobs"]["deploy"]
+        steps = workflow_steps_by_name(workflow, "deploy")
+        step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
 
-        self.assertIn("push:", workflow)
-        self.assertIn("branches:", workflow)
-        self.assertIn("- main", workflow)
-        self.assertIn("web/catalog/**", workflow)
-        self.assertIn("scripts/catalog_site.py", workflow)
-        self.assertIn("scripts/catalog_web_publish.py", workflow)
-        self.assertIn("shared-datasets-production", workflow)
-        self.assertIn("Validate main ref", workflow)
-        self.assertIn("ref: main", workflow)
-        self.assertIn("PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com", workflow)
-        self.assertIn("SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: \"1\"", workflow)
-        self.assertIn("no-cache, max-age=0, must-revalidate", workflow)
-        self.assertIn("Validate publisher auth configuration", workflow)
-        self.assertIn("Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
-        self.assertIn("scripts/catalog_web_publish.py", workflow)
-        self.assertIn('--catalog-source "catalog/shared-datasets-catalog.csv"', workflow)
-        self.assertIn('--catalog-destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/shared-datasets-catalog.csv"', workflow)
-        self.assertIn("node --check web/catalog/app.js", workflow)
-        self.assertNotIn("shared-datasets-publish-plan", workflow)
+        self.assertEqual(trigger["push"]["branches"], ["main"])
+        self.assertEqual(
+            set(trigger["push"]["paths"]),
+            {
+                ".github/workflows/catalog-web-deploy.yml",
+                "catalog/**",
+                "docs/assets/**",
+                "scripts/catalog_docs.py",
+                "scripts/catalog_site.py",
+                "scripts/catalog_web_publish.py",
+                "web/catalog/**",
+            },
+        )
+        self.assertIn("workflow_dispatch", trigger)
+        self.assertEqual(job["environment"], "shared-datasets-production")
+        self.assertEqual(job["concurrency"]["group"], "catalog-web-deploy")
+        self.assertFalse(job["concurrency"]["cancel-in-progress"])
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(
+            env["PUBLISHER_SERVICE_ACCOUNT"],
+            "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
+        )
+        self.assertEqual(env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
+        self.assertEqual(env["CATALOG_WEB_CACHE_CONTROL"], "no-cache, max-age=0, must-revalidate")
+        self.assertIn("Catalog web deploy may only publish from main", steps["Validate main ref"]["run"])
+        self.assertIn(
+            "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER",
+            steps["Validate publisher auth configuration"]["run"],
+        )
+        self.assertIn("uv run python scripts/catalog_site.py", steps["Build catalog web bundle"]["run"])
+        self.assertIn("uv run python scripts/catalog_web_publish.py", steps["Publish catalog web bundle"]["run"])
+        self.assertIn('--catalog-source "catalog/shared-datasets-catalog.csv"', steps["Publish catalog web bundle"]["run"])
+        self.assertIn(
+            '--catalog-destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/shared-datasets-catalog.csv"',
+            steps["Publish catalog web bundle"]["run"],
+        )
+        self.assertIn("node --check web/catalog/app.js", steps["Check browser JavaScript syntax"]["run"])
+        self.assertNotIn("shared-datasets-publish-plan", step_runs)
 
     def test_pmtiles_cdn_sync_has_explicit_resource_change_allowlist(self):
         workflow = PMTILES_CDN_SYNC.read_text()
