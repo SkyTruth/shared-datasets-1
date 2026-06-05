@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import feature_metadata_translation_pipeline
 
@@ -71,6 +72,60 @@ class FeatureMetadataTranslationPipelineTests(unittest.TestCase):
             "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.metadata.pt_br.ndjson.gz",
         )
         self.assertEqual(feature_metadata_translation_pipeline.release_from_uri(translation_uri), "2026-05-01")
+
+    def test_materialize_upload_rebuilds_release_index(self):
+        class Report:
+            locale = "es"
+            output_sidecar = "/tmp/example-asset.metadata.es.ndjson.gz"
+
+            def to_dict(self):
+                return {"locale": self.locale}
+
+        translation_uri = (
+            "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/"
+            "example-asset/releases/2026-05-01/example-asset.metadata-translations.csv"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "download_object",
+                    return_value={"generation": "1"},
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline.feature_metadata_localization,
+                    "resolved_translatable_fields",
+                    return_value={"name"},
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline.feature_metadata_localization,
+                    "materialize_locale_sidecars",
+                    return_value=[Report()],
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "upload_object_with_current_generation",
+                    return_value={"uri": "localized", "generation": "2"},
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "rebuild_release_index_for_asset",
+                    return_value={"path": "release-index", "generation": 3},
+                ) as rebuild,
+            ):
+                result = feature_metadata_translation_pipeline.materialize_translation_source(
+                    translation_source_uri=translation_uri,
+                    work_dir=Path(tmp),
+                    asset_slug=None,
+                    release=None,
+                    upload=True,
+                    fail_on_stale=False,
+                )
+
+        rebuild.assert_called_once_with("example-asset")
+        self.assertEqual(result["release_index"], {"path": "release-index", "generation": 3})
+        self.assertEqual(result["uploads"], [{"uri": "localized", "generation": "2"}])
 
 
 if __name__ == "__main__":

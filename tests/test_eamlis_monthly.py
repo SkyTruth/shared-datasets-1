@@ -303,6 +303,12 @@ class EamlisMonthlyTests(unittest.TestCase):
                 "status": "success",
                 "source_fingerprint_hash": "same",
                 "release_path": "gs://test-bucket/release/",
+                "release_paths": [
+                    {"path": "gs://test-bucket/release/asset.fgb"},
+                    {"path": "gs://test-bucket/release/asset.metadata.ndjson.gz"},
+                    {"path": "gs://test-bucket/release/asset.schema.json"},
+                    {"path": "gs://test-bucket/release/asset.manifest.json"},
+                ],
                 "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
                 "sha256": {"fgb": "old-sha"},
             }
@@ -335,6 +341,53 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertFalse(download.called)
         run_blob = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
         self.assertEqual(run_blob.uploads[0][1], 0)
+
+    def test_run_publishes_contract_refresh_when_latest_success_lacks_metadata_bundle(self):
+        bucket = FakeBucket()
+        previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
+        previous.exists = True
+        previous.text = json.dumps(
+            {
+                "run_date": "2026-04-02",
+                "status": "success",
+                "source_fingerprint_hash": "same",
+                "release_path": "gs://test-bucket/release/",
+                "release_paths": [{"path": "gs://test-bucket/release/asset.fgb"}],
+                "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
+                "sha256": {"fgb": "same-sha"},
+            }
+        )
+        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
+        release_index.exists = True
+        release_index.text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": eamlis.ASSET.slug,
+                "latest_release": {
+                    "date": "2026-04-02",
+                    "run_record_path": f"gs://test-bucket/{previous.name}",
+                },
+            }
+        )
+        source = sample_source_state(fingerprint_hash="same")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
+            with (
+                mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
+                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
+                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
+                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
+                mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
+                mock.patch.object(eamlis, "build_asset_output", return_value=output),
+            ):
+                records = eamlis.run()
+
+        self.assertEqual(records[0]["status"], "success")
+        self.assertEqual(len(records[0]["release_paths"]), 5)
+        release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
+        release_metadata = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.ndjson.gz"))
+        self.assertTrue(release.uploads)
+        self.assertTrue(release_metadata.uploads)
 
     def test_download_source_geojson_pages_until_expected_count(self):
         source = sample_source_state(feature_count=3)
@@ -423,8 +476,14 @@ class EamlisMonthlyTests(unittest.TestCase):
                 "status": "success",
                 "source_fingerprint_hash": "old",
                 "release_path": "gs://test-bucket/release/",
+                "release_paths": [
+                    {"path": "gs://test-bucket/release/asset.fgb"},
+                    {"path": "gs://test-bucket/release/asset.metadata.ndjson.gz"},
+                    {"path": "gs://test-bucket/release/asset.schema.json"},
+                    {"path": "gs://test-bucket/release/asset.manifest.json"},
+                ],
                 "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
-                "sha256": {"fgb": "same-sha"},
+                "sha256": {"fgb": VALID_FGB_SHA},
             }
         )
         release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
@@ -441,7 +500,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         )
         source = sample_source_state(fingerprint_hash="new")
         with tempfile.TemporaryDirectory() as tmp:
-            output = fake_asset_output(Path(tmp), fgb_sha="same-sha")
+            output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
             with (
                 mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
                 mock.patch.object(eamlis, "require_binary", lambda _binary: None),
