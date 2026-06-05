@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TF_DIR = REPO_ROOT / "terraform/envs/prod"
+GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
 
 
 def terraform_resource_block(text: str, resource_type: str, resource_name: str) -> str:
@@ -158,17 +159,35 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
 
     def test_publisher_can_cleanup_pending_publish_scratch_only(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
+        viewer_block = terraform_resource_block(
+            iam_tf,
+            "google_storage_bucket_iam_member",
+            "shared_datasets_publisher_pending_publish_viewer",
+        )
         block = terraform_resource_block(
             iam_tf,
             "google_storage_bucket_iam_member",
             "shared_datasets_publisher_pending_publish_cleanup_user",
         )
 
+        self.assertIn('role   = "roles/storage.objectViewer"', viewer_block)
         self.assertIn('role   = "roles/storage.objectUser"', block)
+        self.assertIn("pending_publish_sources_read_only", viewer_block)
         self.assertIn("pending_publish_cleanup", block)
         self.assertIn("_scratch/pending-publishes/", iam_tf)
         self.assertIn("_scratch/cleanup-audit/", iam_tf)
+        self.assertIn(GCLOUD_COMPOSITE_TEMP_PREFIX, iam_tf)
+        self.assertNotIn("_scratch/*", viewer_block)
         self.assertNotIn("_scratch/*", block)
+
+    def test_scratch_cleanup_iam_sync_root_matches_publisher_temp_prefixes(self):
+        sync_tf = (PROD_TF_DIR / "scratch_cleanup_iam_sync/main.tf").read_text()
+
+        self.assertIn(GCLOUD_COMPOSITE_TEMP_PREFIX, sync_tf)
+        self.assertIn("shared_datasets_publisher_pending_publish_viewer", sync_tf)
+        self.assertIn("shared_datasets_publisher_pending_publish_cleanup_user", sync_tf)
+        self.assertIn("pending_publish_sources_read_only", sync_tf)
+        self.assertIn("pending_publish_cleanup", sync_tf)
 
     def test_publisher_has_bucket_level_list_only_role_for_scratch_cleanup(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()

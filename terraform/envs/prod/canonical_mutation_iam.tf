@@ -36,12 +36,14 @@ locals {
   pending_publish_source_condition = join(" || ", [
     "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')",
     "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/')",
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/')",
   ])
   pending_publish_cleanup_condition = join(" || ", [
     "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/pending-publishes/')",
     "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/pending-publishes/')",
     "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/cleanup-audit/')",
     "resource.name.startsWith('${local.shared_bucket_folder_resource_prefix}_scratch/cleanup-audit/')",
+    "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/')",
   ])
 
   shared_datasets_publisher_principal = "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.shared_datasets_publisher_service_account.email}"
@@ -177,7 +179,7 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
 
   condition {
     title       = "pending_publish_sources_read_only"
-    description = "Allow approved publisher reads from staged pending-publish objects only."
+    description = "Allow approved publisher reads from staged pending-publish objects and orphaned gcloud composite temp parts only."
     expression  = local.pending_publish_source_condition
   }
 
@@ -191,7 +193,7 @@ resource "google_storage_bucket_iam_member" "shared_datasets_publisher_pending_p
 
   condition {
     title       = "pending_publish_cleanup"
-    description = "Allow approved publisher cleanup of pending-publish scratch objects and cleanup warning markers."
+    description = "Allow approved publisher cleanup of pending-publish scratch objects, cleanup warning markers, and orphaned gcloud composite temp parts."
     expression  = local.pending_publish_cleanup_condition
   }
 
