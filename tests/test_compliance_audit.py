@@ -115,7 +115,13 @@ class LocalComplianceAuditTests(unittest.TestCase):
     def test_release_metadata_bundle_files_are_approved_under_latest_and_releases(self):
         root = "100-geographic-reference/110-boundaries/example-asset"
         row = catalog_row(update_cadence="manual")
-        suffixes = (".metadata.ndjson.gz", ".schema.json", ".manifest.json")
+        suffixes = (
+            ".metadata.ndjson.gz",
+            ".metadata.es.ndjson.gz",
+            ".metadata.pt_br.ndjson.gz",
+            ".schema.json",
+            ".manifest.json",
+        )
 
         findings = []
         for suffix in suffixes:
@@ -129,6 +135,23 @@ class LocalComplianceAuditTests(unittest.TestCase):
             )
 
         self.assertNotIn("approved-format", {finding.check for finding in findings})
+
+    def test_legacy_feature_sidecars_are_rejected_under_latest_and_releases(self):
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        row = catalog_row(update_cadence="manual")
+
+        findings = []
+        for suffix in (".features.ndjson.gz", ".metadata.pt-BR.ndjson.gz"):
+            findings.extend(audit.validate_object_layout(root, blob_info(f"{root}/latest/example-asset{suffix}"), row))
+            findings.extend(
+                audit.validate_object_layout(
+                    root,
+                    blob_info(f"{root}/releases/2026-05-01/example-asset{suffix}"),
+                    row,
+                )
+            )
+
+        self.assertIn("approved-format", {finding.check for finding in findings})
 
     def test_readme_validation_flags_generic_properties_placeholder(self):
         readme = blob_info("100-geographic-reference/110-boundaries/example-asset/README.md")

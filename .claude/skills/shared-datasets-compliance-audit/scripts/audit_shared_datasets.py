@@ -37,7 +37,9 @@ from scripts.raster_asset import (
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
-APPROVED_RELEASE_METADATA_SUFFIXES = (".metadata.ndjson.gz", ".schema.json", ".manifest.json")
+FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
+APPROVED_RELEASE_METADATA_SUFFIXES = (".schema.json", ".manifest.json")
+RELEASE_METADATA_SIDECAR_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z0-9_]+))?\.ndjson\.gz$")
 CATALOG_REQUIRED_COLUMNS = (
     "asset_slug",
     "title",
@@ -298,6 +300,14 @@ def has_raster_sidecar_name(name: str) -> bool:
     return lowered.endswith(RASTER_SIDECAR_SUFFIXES)
 
 
+def has_release_metadata_sidecar_name(name: str) -> bool:
+    match = RELEASE_METADATA_SIDECAR_RE.search(Path(name).name)
+    if not match:
+        return False
+    locale = match.group("locale")
+    return locale is None or bool(FIELD_SAFE_LOCALE_RE.fullmatch(locale))
+
+
 def row_format(row: Optional[Dict[str, str]]) -> str:
     return (row or {}).get("canonical_format", "").strip().lower()
 
@@ -338,7 +348,7 @@ def validate_data_extension(
         )
         return findings
 
-    if blob.name.endswith(APPROVED_RELEASE_METADATA_SUFFIXES):
+    if blob.name.endswith(APPROVED_RELEASE_METADATA_SUFFIXES) or has_release_metadata_sidecar_name(blob.name):
         return findings
 
     if ext in PREVIEW_EXTENSIONS:
