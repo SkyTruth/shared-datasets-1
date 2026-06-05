@@ -9,9 +9,10 @@ locals {
     ],
   ))
 
-  metadata_index_loader_record_creator_condition = join(" || ", [
-    for prefix in local.canonical_dataset_top_level_prefixes :
-    "(resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${prefix}') && resource.name.extract('${local.shared_bucket_object_resource_prefix}${prefix}{asset_path}/index-loads/') != '' && resource.name.endsWith('.json'))"
+  metadata_index_loader_record_creator_condition = join(" && ", [
+    "resource.name.extract('${local.shared_bucket_object_resource_prefix}{asset_path}/index-loads/') != ''",
+    "resource.name.endsWith('.json')",
+    "!resource.name.startsWith('${local.shared_bucket_object_resource_prefix}_scratch/')",
   ])
 }
 
