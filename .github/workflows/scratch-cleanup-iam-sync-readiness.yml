@@ -8,6 +8,7 @@ on:
       - ".github/workflows/scratch-cleanup-iam-sync-readiness.yml"
       - ".github/workflows/scratch-cleanup-iam-sync.yml"
       - "terraform/envs/prod/canonical_mutation_iam.tf"
+      - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
 

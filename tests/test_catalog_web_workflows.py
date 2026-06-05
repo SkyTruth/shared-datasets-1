@@ -87,7 +87,8 @@ def assert_protected_terraform_sync(
     testcase.assertIn(f'out="${{RUNNER_TEMP}}/{plan_name}.tfplan"', plan_run)
     testcase.assertEqual(python_literal_string_set(enforce_run, "allowed_exact"), expected_targets)
     testcase.assertIn("Refusing automatic", enforce_run)
-    testcase.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
+    testcase.assertIn("terraform -chdir=terraform/envs/prod", steps["Terraform apply"]["run"])
+    testcase.assertIn(" apply ", steps["Terraform apply"]["run"])
 
     for resource in blocked_resources:
         testcase.assertNotIn(f"-target={resource}", plan_run)
@@ -209,14 +210,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             expected_name="Scratch cleanup IAM sync",
             push_paths={
                 "terraform/envs/prod/canonical_mutation_iam.tf",
+                "terraform/envs/prod/scratch_cleanup_iam_sync/**",
                 "terraform/envs/prod/variables.tf",
                 "terraform/envs/prod/versions.tf",
             },
             plan_name="scratch-cleanup-iam-sync",
             enforce_step_name="Enforce scratch cleanup IAM resource-change allowlist",
             expected_targets={
-                "google_project_iam_custom_role.shared_datasets_publisher_object_lister",
-                "google_storage_bucket_iam_member.shared_datasets_publisher_object_lister",
+                "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
                 "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
             },
             blocked_resources={
@@ -228,10 +229,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             readiness_name="Scratch cleanup IAM sync readiness",
         )
 
-        self.assertIn(
-            "unused-by-scratch-cleanup-iam-sync",
-            workflow_steps_by_name(workflow, "sync")["Terraform plan"]["run"],
-        )
+        plan_step = workflow_steps_by_name(workflow, "sync")["Terraform plan"]["run"]
+        self.assertIn("terraform/envs/prod/scratch_cleanup_iam_sync", plan_step)
+        self.assertNotIn("unused-by-scratch-cleanup-iam-sync", plan_step)
 
 
 if __name__ == "__main__":

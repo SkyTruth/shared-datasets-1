@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "terraform/envs/prod/canonical_mutation_iam.tf"
+      - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
   workflow_dispatch:
@@ -72,46 +73,40 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
-        run: terraform -chdir=terraform/envs/prod init -input=false
+        run: terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync init -input=false
 
       - name: Terraform plan
         run: |
-          terraform -chdir=terraform/envs/prod plan \
+          terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync plan \
+            -no-color \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan" \
-            -target=google_project_iam_custom_role.shared_datasets_publisher_object_lister \
-            -target=google_storage_bucket_iam_member.shared_datasets_publisher_object_lister \
+            -target=google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer \
             -target=google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user \
-            -var="wdpa_monthly_image=unused-by-scratch-cleanup-iam-sync" \
-            -var="sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync" \
-            -var="eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync"
-
-      - name: Export Terraform plan JSON
-        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan" > "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan.json"
+            | tee "${RUNNER_TEMP}/scratch-cleanup-iam-sync.plan.txt"
 
       - name: Enforce scratch cleanup IAM resource-change allowlist
         run: |
-          python - "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan.json" <<'PY'
-          import json
+          python - "${RUNNER_TEMP}/scratch-cleanup-iam-sync.plan.txt" <<'PY'
+          import re
           import sys
 
-          plan = json.load(open(sys.argv[1]))
           allowed_exact = {
-              "google_project_iam_custom_role.shared_datasets_publisher_object_lister",
-              "google_storage_bucket_iam_member.shared_datasets_publisher_object_lister",
+              "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
               "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
           }
 
+          resource_line = re.compile(r"^\s*# (?P<address>\S+) (?:will|must) ")
           blocked = []
-          for resource in plan.get("resource_changes", []):
-              actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
+          for line in open(sys.argv[1], encoding="utf-8"):
+              match = resource_line.match(line)
+              if not match:
                   continue
-              address = resource.get("address", "")
+              address = match.group("address")
               if address in allowed_exact:
                   continue
-              blocked.append(f"{'/'.join(actions)} {address}")
+              blocked.append(address)
 
           if blocked:
               print("Refusing automatic scratch cleanup IAM sync because the Terraform plan changes non-allowlisted resources:")
@@ -121,4 +116,4 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan"
+        run: terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync apply -input=false "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan"
