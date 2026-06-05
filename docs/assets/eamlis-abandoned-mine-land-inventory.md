@@ -270,6 +270,10 @@ Output summary:
 - Translation review state: `needs_review`; the initial Spanish sidecar preserves source proper-name values pending human review.
 - PMTiles validation used PMTiles v3 magic bytes, `pmtiles verify`, `pmtiles show`, and zoom 0 decode checks for `feature_id` and `ext_id`.
 
+The reviewed promotion also refreshes the schema snapshot from the initial
+manual-upload snapshot to the current hosted-layer FGB schema that was already
+present in `latest/` before the metadata-contract release.
+
 Monthly scheduled ingestion was added after the initial manual upload. The job checks the public ArcGIS layer metadata and source statistics first, skips unchanged source fingerprints without downloading features, and also skips publication when a changed source fingerprint generates the same FGB SHA-256 as the latest successful run.
 
 ## Known caveats
