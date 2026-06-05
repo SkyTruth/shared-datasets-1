@@ -161,7 +161,21 @@ jobs:
         run: |
           terraform -chdir=terraform/envs/prod plan \
             -input=false \
+            -refresh=false \
             -out="${RUNNER_TEMP}/metadata-service.tfplan" \
+            -target=google_firestore_database.feature_metadata \
+            -target=module.metadata_service_account.google_service_account.this \
+            -target=module.metadata_index_loader_service_account.google_service_account.this \
+            -target=google_project_iam_member.metadata_service_firestore_viewer \
+            -target=google_project_iam_member.metadata_index_loader_firestore_user \
+            -target=google_storage_bucket_iam_member.metadata_service_object_viewer \
+            -target=google_storage_bucket_iam_member.metadata_index_loader_object_viewer \
+            -target=google_storage_bucket_iam_member.metadata_index_loader_index_load_creator \
+            -target=google_service_account_iam_member.metadata_index_loader_github_wif \
+            -target=google_cloud_run_v2_service.metadata_service \
+            -target=google_cloud_run_v2_service_iam_member.metadata_service_iap_invoker \
+            -target=google_iap_web_cloud_run_service_iam_member.metadata_service_accessors \
+            -target=google_monitoring_alert_policy.metadata_service_error_logs \
             -var="metadata_service_image=${METADATA_SERVICE_IMAGE}" \
             -var="wdpa_monthly_image=unused-by-metadata-service-deploy" \
             -var="sea_ice_daily_image=unused-by-metadata-service-deploy" \
