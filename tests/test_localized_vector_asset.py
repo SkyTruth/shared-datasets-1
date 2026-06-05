@@ -21,10 +21,14 @@ def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str] | No
         writer.writerows(rows)
 
 
-def feature(properties: dict[str, str]) -> dict[str, object]:
+def feature(
+    properties: dict[str, str],
+    *,
+    coordinates: tuple[float, float] = (0, 0),
+) -> dict[str, object]:
     return {
         "type": "Feature",
-        "geometry": {"type": "Point", "coordinates": [0, 0]},
+        "geometry": {"type": "Point", "coordinates": list(coordinates)},
         "properties": properties,
     }
 
@@ -475,7 +479,10 @@ class LocalizedVectorAssetTests(unittest.TestCase):
                         "type": "FeatureCollection",
                         "features": [
                             feature({"feature_id": "src:id:a", "ext_id": "a", "source_name": "Alpha"}),
-                            feature({"feature_id": "src:id:b", "ext_id": "b", "source_name": "Beta"}),
+                            feature(
+                                {"feature_id": "src:id:b", "ext_id": "b", "source_name": "Beta"},
+                                coordinates=(0.01, 0.01),
+                            ),
                         ],
                     }
                 )
@@ -511,9 +518,9 @@ class LocalizedVectorAssetTests(unittest.TestCase):
 
             result = localized_vector_asset.build_pmtiles(plan)
 
-        self.assertTrue(pmtiles.exists())
-        self.assertEqual(result["validation"]["valid"], True)
-        self.assertEqual(result["localized_property_fields"], ["name", "name_es"])
+            self.assertTrue(pmtiles.exists())
+            self.assertEqual(result["validation"]["valid"], True)
+            self.assertEqual(result["localized_property_fields"], ["name", "name_es"])
 
 
 if __name__ == "__main__":

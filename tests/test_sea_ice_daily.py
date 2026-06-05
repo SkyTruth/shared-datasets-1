@@ -498,15 +498,15 @@ ice_date: String (0.0)
     all(
         runnable_command(command)
         for command in (
-            ["gdal_create", "--help"],
+            ["gdal_create", "--help-general"],
             ["gdal_calc.py", "--help"],
             ["gdal_polygonize.py", "--help"],
             ["ogr2ogr", "--version"],
             ["ogrinfo", "--version"],
-            ["tippecanoe-decode", "--help"],
             ["pmtiles", "version"],
         )
-    ),
+    )
+    and shutil.which("tippecanoe-decode"),
     "requires runnable GDAL, tippecanoe-decode, and PMTiles binaries",
 )
 class SeaIceDailyIntegrationTests(unittest.TestCase):

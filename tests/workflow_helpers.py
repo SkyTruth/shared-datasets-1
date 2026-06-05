@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -24,3 +26,29 @@ def workflow_steps_by_name(
         for step in workflow["jobs"][job_name]["steps"]
         if "name" in step
     }
+
+
+def workflow_step_run(
+    workflow: dict[str, Any],
+    job_name: str,
+    step_name: str,
+) -> str:
+    return str(workflow_steps_by_name(workflow, job_name)[step_name].get("run", ""))
+
+
+def workflow_all_step_runs(workflow: dict[str, Any], job_name: str) -> str:
+    return "\n".join(
+        str(step.get("run", "")) for step in workflow["jobs"][job_name]["steps"]
+    )
+
+
+def terraform_targets(plan_run: str) -> set[str]:
+    return set(re.findall(r"(?:^|\s)-target=([^\s\\]+)", plan_run))
+
+
+def python_literal_string_set(run: str, name: str) -> set[str]:
+    match = re.search(rf"{re.escape(name)}\s*=\s*\{{(?P<body>.*?)\}}", run, re.DOTALL)
+    if not match:
+        return set()
+    parsed = ast.literal_eval("{" + match.group("body") + "}")
+    return set(parsed)

@@ -471,10 +471,10 @@ class WdpaMonthlyTests(unittest.TestCase):
         for command in (
             ["ogrinfo", "--version"],
             ["ogr2ogr", "--version"],
-            ["tippecanoe-decode", "--help"],
             ["pmtiles", "version"],
         )
-    ),
+    )
+    and shutil.which("tippecanoe-decode"),
     "requires runnable GDAL, tippecanoe-decode, and PMTiles binaries",
 )
 class WdpaMonthlyIntegrationTests(unittest.TestCase):
