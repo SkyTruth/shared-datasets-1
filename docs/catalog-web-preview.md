@@ -44,6 +44,7 @@ release index JSON files and pass that directory:
 WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
   --release-index-dir "$WORK_ROOT/release-indexes" \
+  --latest-from-release-index \
   --out "$WORK_ROOT/catalog-web"
 ```
 
@@ -252,15 +253,17 @@ if fully offline/self-contained hosting becomes a requirement.
 ## Deploy
 
 After trusted PRs merge to `main`, `.github/workflows/catalog-web-deploy.yml`
-rebuilds the catalog web bundle and publishes both `_catalog/web/` and the root
-`_catalog/shared-datasets-catalog.csv` contract with the approved publisher
-identity, generation preconditions, and `no-cache, max-age=0,
-must-revalidate`. This workflow is the normal PR-backed promotion path for
-repo-generated catalog web changes. Do not also add a
+downloads existing `_catalog/releases/*.json` release indexes, rebuilds the
+catalog web bundle with release-index-backed latest/version fields, and
+publishes both `_catalog/web/` and the root `_catalog/shared-datasets-catalog.csv`
+contract with the approved publisher identity, generation preconditions, and
+`no-cache, max-age=0, must-revalidate`. This workflow is the normal PR-backed
+promotion path for repo-generated catalog web changes. Do not also add a
 `shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
 web deploy workflow will run from the same PR; that duplicates the promotion and
 can race the automatic deploy. The live catalog drift guard runs after that
-deploy workflow completes so it does not race the object promotion.
+deploy workflow completes, using the same release-index hydration, so it does
+not race the object promotion and still detects stale release history.
 
 Use `scripts/gcs_asset.py` for every object write so generation preconditions are
 explicit. Manual catalog web deployments should stage files under

@@ -73,6 +73,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--docs-dir", type=Path, default=Path("docs/assets"))
     parser.add_argument("--site-prefix", default=catalog_site.DEFAULT_SITE_PREFIX)
     parser.add_argument(
+        "--release-index-dir",
+        type=Path,
+        default=Path("_catalog/releases"),
+        help="Local directory of _catalog/releases/*.json files used to hydrate the expected static catalog.",
+    )
+    parser.add_argument(
+        "--latest-from-release-index",
+        action="store_true",
+        help="Use release-index latest releases when building the expected static catalog.",
+    )
+    parser.add_argument(
         "--summary-file",
         type=Path,
         default=Path(os.environ["GITHUB_STEP_SUMMARY"]) if os.environ.get("GITHUB_STEP_SUMMARY") else None,
@@ -239,6 +250,8 @@ def expected_web_payload(args: argparse.Namespace) -> dict[str, Any]:
         docs_dir=args.docs_dir,
         bucket=args.bucket,
         site_prefix=args.site_prefix,
+        release_index_dir=args.release_index_dir,
+        latest_from_release_index=args.latest_from_release_index,
     )
 
 

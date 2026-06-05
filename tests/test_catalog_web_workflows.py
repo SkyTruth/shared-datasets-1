@@ -144,6 +144,17 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             steps["Validate publisher auth configuration"]["run"],
         )
         self.assertIn("uv run python scripts/catalog_site.py", steps["Build catalog web bundle"]["run"])
+        self.assertIn("Collect release indexes", steps)
+        self.assertIn(
+            'gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"',
+            steps["Collect release indexes"]["run"],
+        )
+        self.assertIn(
+            '--release-index-dir "${RUNNER_TEMP}/release-indexes"',
+            steps["Build catalog web bundle"]["run"],
+        )
+        self.assertIn("--latest-from-release-index", steps["Build catalog web bundle"]["run"])
+        self.assertNotIn("--release-index-assets-only", steps["Build catalog web bundle"]["run"])
         self.assertIn("uv run python scripts/catalog_web_publish.py", steps["Publish catalog web bundle"]["run"])
         self.assertIn(
             '--catalog-source "catalog/shared-datasets-catalog.csv"',

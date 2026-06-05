@@ -15,6 +15,7 @@ available_formats:
 - pmtiles
 metadata_paths:
 - README.md
+- runs/YYYY-MM-DD.json
 source: ACLED aggregated data for Europe and Central Asia
 source_url: https://acleddata.com/aggregated/aggregated-data-europe-and-central-asia
 license: ACLED Terms and Conditions; private internal shared-datasets use confirmed by SkyTruth authorization on 2026-05-08
@@ -25,9 +26,13 @@ license_flags:
 - private-internal-use
 - source-authorization-confirmed-2026-05-08
 notes: Manual private snapshot from ACLED weekly aggregated Europe and Central Asia XLSX export; release 2026-04-25; 120245
-  point features; fgb sha256 44eb1a9f3fc0e20d41dd3c1918b32907c1c3b066dd178a8d5ec59f2c45b66f47; pmtiles sha256 b4ddd762e69578c87dcd9e97c5916b2383755fa85e6dc38f7726fd968c88f7d2;
-  PMTiles maxzoom 12 with all-point retention verified at zoom 0; future rebuilds must use the repo-standard GeoJSONSeq to
-  Tippecanoe MBTiles to PMTiles conversion path.
+  point features. The 2026-06-05 same-release metadata-contract repair reused the current release FGB as the authoritative
+  source, added composite provider feature_id values, ext_id values equal to feature_id, feature_hash values, canonical metadata/schema/manifest
+  artifacts, and metadata-lookup PMTiles with only ext_id and feature_id properties. No shared_datasets_group_id, shared_datasets_row_id,
+  or localized metadata sidecars are generated for this private repair. FGB sha256 678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400;
+  PMTiles sha256 e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed; metadata sidecar sha256 f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1;
+  schema sha256 9a5c85f2eadc61d86379bf8bbc06a209bb6176ecfd36a4969cb50fa044178438; manifest sha256 1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec.
+  PMTiles maxzoom 12 with all-point retention verified at zoom 0.
 admission:
   intended_consumers:
   - SkyTruth internal regional conflict, risk, and exposure analyses
@@ -47,6 +52,22 @@ bounds:
 - 78.8154
 geometry_type: MultiPoint
 row_count: 120245
+data_profile:
+  field_count: 20
+  identity_candidates: []
+  notes: No single source/provider field is row-unique. admin1_id has 1023 distinct non-empty values across 120214 non-empty
+    rows, 31 missing rows, and 120112 duplicate rows. The release feature_id is a curator-approved composite provider key
+    over week, region, country, admin1_id, admin1, disorder_type, event_type, sub_event_type, centroid_latitude, and centroid_longitude
+    with __NULL__ used for missing preimage values; this produced 120245 distinct feature_id values for 120245 rows.
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz
+  schema_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.schema.json
+  manifest_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json
+  provenance_default: true
 pmtiles_detail_hint: detailed
 files:
 - path: latest/acled-europe-central-asia-aggregated-weekly-admin1.fgb
@@ -56,7 +77,19 @@ files:
 - path: latest/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles
   format: pmtiles
   role: companion
-  purpose: Web map tiles generated from the same point features
+  purpose: Metadata-lookup web map tiles generated from the same point features
+- path: latest/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/acled-europe-central-asia-aggregated-weekly-admin1.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 - path: releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.fgb
   format: fgb
   role: release
@@ -64,7 +97,23 @@ files:
 - path: releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles
   format: pmtiles
   role: release
-  purpose: Dated map-tile release for the source export up to week of 2026-04-25
+  purpose: Dated metadata-lookup map-tile release for the source export up to week of 2026-04-25
+- path: releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated canonical metadata sidecar
+- path: releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.schema.json
+  format: json
+  role: release
+  purpose: Dated release feature schema
+- path: releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json
+  format: json
+  role: release
+  purpose: Dated release manifest with artifact checksums and index-load policy
+- path: runs/YYYY-MM-DD.json
+  format: json
+  role: run-record
+  purpose: Manual repair and provenance run records
 ---
 
 # ACLED Europe and Central Asia Weekly Admin 1 Aggregated Events
@@ -101,9 +150,16 @@ The source workbook is named `Europe-Central-Asia_aggregated_data_up_to_week_of-
 | File | Format | Role | Purpose |
 |---|---|---|---|
 | `latest/acled-europe-central-asia-aggregated-weekly-admin1.fgb` | `fgb` | `canonical` | Canonical WGS84 Admin 1 centroid point dataset |
-| `latest/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same point features |
+| `latest/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles` | `pmtiles` | `companion` | Metadata-lookup web map tiles generated from the same point features |
+| `latest/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/acled-europe-central-asia-aggregated-weekly-admin1.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.fgb` | `fgb` | `release` | Dated canonical release for the source export up to week of 2026-04-25 |
-| `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles` | `pmtiles` | `release` | Dated map-tile release for the source export up to week of 2026-04-25 |
+| `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles` | `pmtiles` | `release` | Dated metadata-lookup map-tile release for the source export up to week of 2026-04-25 |
+| `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
+| `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.schema.json` | `json` | `release` | Dated release feature schema |
+| `releases/2026-04-25/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Manual repair and provenance run records |
 <!-- END GENERATED files-table -->
 
 ## Schema notes
@@ -114,7 +170,9 @@ The source workbook had one visible sheet with 120,245 data rows and 13 source c
 
 `population_exposure` is ACLED's best estimate of population exposed to events based on proximity. ACLED's aggregated data guidance says this value should not be summed for analysis.
 
-The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
+The repaired release adds a release feature model. `feature_id` is generated with `release_feature_model.composite_provider_feature_id(...)` from `week`, `region`, `country`, `admin1_id`, `admin1`, `disorder_type`, `event_type`, `sub_event_type`, `centroid_latitude`, and `centroid_longitude`; missing preimage values use the `__NULL__` sentinel. `ext_id` is equal to `feature_id`. `feature_hash` is computed from canonical GeoJSON geometry plus published non-ID source properties, excluding `feature_id`, `ext_id`, and `feature_hash`.
+
+The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. PMTiles features intentionally include only `feature_id` and `ext_id` so clients resolve full source properties through the feature metadata sidecar. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles with no feature or tile-size dropping for z0 point retention, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -137,6 +195,9 @@ The PMTiles artifact is derived from the same point features, with zooms 0 throu
 | `source_url` | string | ACLED source export URL used for this snapshot. |
 | `source_accessed_date` | datetime | Date this source export was supplied and processed for shared-datasets. |
 | `source_version` | string | Source freshness note from the file name: up to week of 2026-04-25. |
+| `feature_id` | string | Stable release feature identifier generated from the approved composite provider key. |
+| `ext_id` | string | External lookup identifier; equal to `feature_id` for this release. |
+| `feature_hash` | string | SHA-256 hash of canonical geometry plus published non-ID source properties. |
 
 ## Update notes
 
@@ -152,10 +213,15 @@ Output summary:
 - Total aggregated events: 646,638
 - Total reported fatalities: 274,001
 - Extent: -51.080100, 28.293100 to 169.514000, 78.815400
-- FGB SHA-256: `44eb1a9f3fc0e20d41dd3c1918b32907c1c3b066dd178a8d5ec59f2c45b66f47`
-- PMTiles SHA-256: `b4ddd762e69578c87dcd9e97c5916b2383755fa85e6dc38f7726fd968c88f7d2`
+- FGB SHA-256: `678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400` (79,245,080 bytes)
+- PMTiles SHA-256: `e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed` (36,532,401 bytes)
+- Metadata sidecar SHA-256: `f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1` (10,104,749 bytes)
+- Release schema SHA-256: `9a5c85f2eadc61d86379bf8bbc06a209bb6176ecfd36a4969cb50fa044178438` (2,245 bytes)
+- Release manifest SHA-256: `1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec` (8,428 bytes before protected finalization)
+- Composite feature IDs: 120,245 distinct values for 120,245 rows; 39 rows contain at least one `__NULL__` preimage sentinel.
 - PMTiles zoom 0 decoded point features: 120,245
-- PMTiles validation used zoom 0 decode feature-count and property checks. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`.
+- PMTiles decoded properties: exactly `ext_id` and `feature_id`
+- Metadata validation: sidecar row count 120,245; duplicate feature IDs 0; `feature_metadata_index.py --dry-run` succeeds with a local placeholder-generation manifest before protected promotion assigns canonical object generations.
 
 ## Known caveats
 

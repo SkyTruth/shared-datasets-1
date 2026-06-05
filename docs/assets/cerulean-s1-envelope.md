@@ -16,6 +16,9 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
+- latest/cerulean-s1-envelope.metadata.ndjson.gz
+- latest/cerulean-s1-envelope.schema.json
+- latest/cerulean-s1-envelope.manifest.json
 source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
@@ -24,31 +27,72 @@ notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footpr
   is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
   PMTiles rebuilt 2026-05-04 with zooms 0-6, no simplification, and synthetic source_layer property for catalog inspection;
-  future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles to PMTiles conversion path; canonical FGB preserves
-  the source WKT geometry as an envelope only
+  corrective metadata-contract release 2026-06-05 reuses latest FGB generation 1777669295802653, adds generated feature_id,
+  ext_id = feature_id, feature_hash, metadata sidecar, schema, manifest, and metadata-lookup PMTiles with only feature_id
+  and ext_id; fgb sha256 94520e1987bc4f84e253218c6467b1ddeb1b5ad4b59b17fba2ac037a935966ac; pmtiles sha256 825cb5d5142ce63752d71ec43e76098506c3cf07c683a4032d4c0fe00dd52fab;
+  metadata sha256 af34ee531b4404337b773107376b7d8c8cee4662b4b08992c59abdebddb492d6; schema sha256 c0a8f1b1f6916ff8488d5e1802cfafb1ef44ff3d63d4113f07a80df6eab6ea18;
+  manifest sha256 ab2dd57bb04704512d5493d6f734487c78a5805d6d9d70beebdf8e6654504dd7; canonical FGB preserves the source WKT
+  geometry as an envelope only
 row_count: 1
 data_profile:
-  field_count: 0
+  field_count: 3
   identity_candidates: []
-  notes: No attribute fields
+  notes: No source attribute fields or provider ID candidate; metadata-contract releases use a generated geometry-digest feature_id.
+feature_metadata:
+  storage: metadata_sidecar_v1
+  index_backend: firestore
+  feature_id_column: feature_id
+  feature_hash_column: feature_hash
+  sidecar_file: latest/cerulean-s1-envelope.metadata.ndjson.gz
+  schema_file: latest/cerulean-s1-envelope.schema.json
+  manifest_file: latest/cerulean-s1-envelope.manifest.json
+  provenance_default: true
 pmtiles_detail_hint: coarse
 files:
 - path: latest/cerulean-s1-envelope.fgb
   format: fgb
   role: canonical
-  purpose: Canonical WGS84 multipolygon envelope dataset
+  purpose: Canonical WGS84 multipolygon envelope dataset with release metadata fields
 - path: latest/cerulean-s1-envelope.pmtiles
   format: pmtiles
   role: companion
-  purpose: Web map tiles generated from the same envelope geometry
+  purpose: Metadata-lookup tiles generated from the same envelope geometry with only feature_id and ext_id properties
+- path: latest/cerulean-s1-envelope.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/cerulean-s1-envelope.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/cerulean-s1-envelope.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy
 - path: releases/2026-05-01/cerulean-s1-envelope.fgb
   format: fgb
   role: release
-  purpose: Dated canonical release
-- path: releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles
+  purpose: Dated legacy pre-metadata-contract canonical release
+- path: releases/2026-06-05/cerulean-s1-envelope.fgb
+  format: fgb
+  role: release
+  purpose: Dated metadata-contract canonical release
+- path: releases/2026-06-05/cerulean-s1-envelope.pmtiles
   format: pmtiles
   role: release
-  purpose: Dated map-tile releases
+  purpose: Dated metadata-lookup map-tile release
+- path: releases/2026-06-05/cerulean-s1-envelope.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Dated canonical feature metadata sidecar keyed by feature_id
+- path: releases/2026-06-05/cerulean-s1-envelope.schema.json
+  format: json
+  role: metadata
+  purpose: Dated release feature metadata schema for field projection
+- path: releases/2026-06-05/cerulean-s1-envelope.manifest.json
+  format: json
+  role: metadata
+  purpose: Dated release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy
 - path: runs/2026-05-01.json
   format: json
   role: run-record
@@ -77,15 +121,17 @@ one `wkt` column and one valid WGS84 `MultiPolygon` feature.
 
 This is an envelope or coverage mask used for Cerulean context, not a complete
 Sentinel-1 scene-footprint catalog. The canonical FlatGeobuf preserves the
-source geometry as a single multipolygon feature. The PMTiles artifact is
-generated from the same geometry for web-map display only.
+source geometry as a single multipolygon feature with generated release metadata
+fields. The PMTiles artifact is generated from the same geometry for web-map
+display and metadata lookup only.
 
 ## When to use it
 
 - Use this as a broad Cerulean Sentinel-1 analysis envelope for map display,
   coarse filtering, and context.
 - Use the FlatGeobuf file for analytical workflows.
-- Use the PMTiles file for web-map display.
+- Use the PMTiles file for web-map display and feature metadata lookup by
+  `feature_id`.
 - Do not use this as a scene-level Sentinel-1 catalog, acquisition metadata
   table, repeat-intensity surface, polarization inventory, orbit list, or
   public redistribution source without confirming the upstream source and
@@ -97,10 +143,17 @@ generated from the same geometry for web-map display only.
 <!-- BEGIN GENERATED files-table -->
 | File | Format | Role | Purpose |
 |---|---|---|---|
-| `latest/cerulean-s1-envelope.fgb` | `fgb` | `canonical` | Canonical WGS84 multipolygon envelope dataset |
-| `latest/cerulean-s1-envelope.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same envelope geometry |
-| `releases/2026-05-01/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated canonical release |
-| `releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated map-tile releases |
+| `latest/cerulean-s1-envelope.fgb` | `fgb` | `canonical` | Canonical WGS84 multipolygon envelope dataset with release metadata fields |
+| `latest/cerulean-s1-envelope.pmtiles` | `pmtiles` | `companion` | Metadata-lookup tiles generated from the same envelope geometry with only feature_id and ext_id properties |
+| `latest/cerulean-s1-envelope.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/cerulean-s1-envelope.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/cerulean-s1-envelope.manifest.json` | `json` | `metadata` | Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
+| `releases/2026-05-01/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated legacy pre-metadata-contract canonical release |
+| `releases/2026-06-05/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated metadata-contract canonical release |
+| `releases/2026-06-05/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated metadata-lookup map-tile release |
+| `releases/2026-06-05/cerulean-s1-envelope.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Dated canonical feature metadata sidecar keyed by feature_id |
+| `releases/2026-06-05/cerulean-s1-envelope.schema.json` | `json` | `metadata` | Dated release feature metadata schema for field projection |
+| `releases/2026-06-05/cerulean-s1-envelope.manifest.json` | `json` | `metadata` | Dated release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
 | `runs/2026-05-01.json` | `json` | `run-record` | Manual publish record |
 <!-- END GENERATED files-table -->
 
@@ -112,10 +165,21 @@ Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
 `cerulean_s1_envelope`.
 
 The source CSV is not published as a canonical format because shared-datasets
-CSV assets must not contain geometry columns. The PMTiles artifact is a display
-derivative with zooms 0 through 6 and no display simplification. Future rebuilds
-must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert
-with `pmtiles convert`.
+CSV assets must not contain geometry columns. The corrective 2026-06-05 release
+starts from the existing `latest/cerulean-s1-envelope.fgb` object, generation
+`1777669295802653`, and does not reacquire upstream source material.
+
+The metadata-contract release generates `feature_id` from the normalized
+geometry digest because the source has no provider identifier. `ext_id` is set
+equal to `feature_id`, and `feature_hash` is computed from canonical geometry
+plus projected sidecar properties. No `shared_datasets_group_id` or
+`shared_datasets_row_id` is published.
+
+The PMTiles artifact is a display and metadata-lookup derivative with zooms 0
+through 6 and no display simplification. The 2026-06-05 PMTiles archive keeps
+maxzoom 6 to preserve the accepted coarse envelope display from the 2026-05-04
+rebuild. PMTiles feature properties are intentionally limited to `feature_id`
+and `ext_id`.
 
 The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
 was an initial name for this dataset before the framing was corrected. It is
@@ -127,10 +191,12 @@ catalog asset and not as the canonical publishing location.
 | Name | Type | Description |
 |---|---|---|
 | `geometry` | MultiPolygon | Cerulean Sentinel-1 analysis envelope geometry in WGS84. |
+| `ext_id` | string | External lookup ID. For this metadata-contract release it mirrors the generated `feature_id`. |
+| `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
+| `feature_id` | string | Generated stable feature ID derived from the normalized geometry digest. |
 
-The canonical FGB publishes no non-geometry properties. PMTiles display tiles add
-a compact synthetic `source_layer` property so the catalog inspector can identify
-decoded features.
+The PMTiles display tiles publish only `feature_id` and `ext_id`; full feature
+metadata is served from the metadata sidecar and feature metadata index.
 
 ## Update notes
 
@@ -144,11 +210,27 @@ Output summary:
 - Source rows: 1
 - Published features: 1
 - CRS: EPSG:4326
-- PMTiles validation used the repo vector checks; future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles, and convert with `pmtiles convert`
-- FGB SHA-256: `4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11`
+- Legacy 2026-05-01 FGB SHA-256: `4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11`
+- Legacy 2026-05-04 PMTiles SHA-256: `33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d`
+
+The corrective 2026-06-05 release adds the release-oriented metadata contract.
+It starts from `latest/cerulean-s1-envelope.fgb` generation `1777669295802653`,
+generates `feature_id = gen:2b0493a605959729993ebdc1`, sets
+`ext_id = feature_id`, and publishes `feature_hash =
+sha256:ec963aca17dbd5389752844ec67376c4841e37990b5034ac611a1c6aa2de454c`.
+No translations are generated because the source has no human-readable metadata
+fields to localize.
+
+2026-06-05 artifact summary:
+
+- FGB SHA-256: `94520e1987bc4f84e253218c6467b1ddeb1b5ad4b59b17fba2ac037a935966ac`
+- PMTiles SHA-256: `825cb5d5142ce63752d71ec43e76098506c3cf07c683a4032d4c0fe00dd52fab`
+- Metadata sidecar SHA-256: `af34ee531b4404337b773107376b7d8c8cee4662b4b08992c59abdebddb492d6`
+- Schema SHA-256: `c0a8f1b1f6916ff8488d5e1802cfafb1ef44ff3d63d4113f07a80df6eab6ea18`
+- Manifest SHA-256: `ab2dd57bb04704512d5493d6f734487c78a5805d6d9d70beebdf8e6654504dd7`
 - PMTiles maxzoom: 6
-- PMTiles zoom 0 decoded feature properties: `source_layer`
-- PMTiles SHA-256: `33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d`
+- PMTiles zoom 0 decoded feature properties: `ext_id`, `feature_id`
+- PMTiles build path: WGS84 GeoJSONSeq to Tippecanoe MBTiles to PMTiles
 
 ## Known caveats
 

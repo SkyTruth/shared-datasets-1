@@ -104,6 +104,20 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
 
+      - name: Collect release indexes for drift guard
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/release-indexes"
+          if gcloud storage ls "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" >/dev/null 2>&1; then
+            gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json" "${RUNNER_TEMP}/release-indexes/"
+          else
+            echo "No release indexes found; checking catalog without release history."
+          fi
+
       - name: Check live catalog drift
         if: ${{ github.event_name != 'pull_request' }}
-        run: uv run python scripts/catalog_drift_guard.py
+        run: |
+          uv run python scripts/catalog_drift_guard.py \
+            --release-index-dir "${RUNNER_TEMP}/release-indexes" \
+            --latest-from-release-index

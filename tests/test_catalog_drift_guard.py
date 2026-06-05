@@ -4,6 +4,8 @@ import copy
 import json
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from scripts import catalog_drift_guard as guard
 
@@ -120,8 +122,29 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("uv run python scripts/catalog_site.py --out", workflow)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertGreaterEqual(workflow.count("if: ${{ github.event_name != 'pull_request' }}"), 3)
+        self.assertIn("Collect release indexes for drift guard", workflow)
+        self.assertIn('gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"', workflow)
         self.assertIn("Check live catalog drift", workflow)
         self.assertIn("uv run python scripts/catalog_drift_guard.py", workflow)
+        self.assertIn('--release-index-dir "${RUNNER_TEMP}/release-indexes"', workflow)
+        self.assertIn("--latest-from-release-index", workflow)
+
+    def test_expected_web_payload_passes_release_index_options(self):
+        args = SimpleNamespace(
+            catalog=Path("catalog/shared-datasets-catalog.csv"),
+            categories=Path("catalog/categories.yaml"),
+            docs_dir=Path("docs/assets"),
+            bucket="example-bucket",
+            site_prefix="_catalog/web",
+            release_index_dir=Path("/tmp/release-indexes"),
+            latest_from_release_index=True,
+        )
+
+        with mock.patch("scripts.catalog_drift_guard.catalog_site.build_catalog_payload", return_value={}) as build:
+            guard.expected_web_payload(args)
+
+        self.assertEqual(build.call_args.kwargs["release_index_dir"], Path("/tmp/release-indexes"))
+        self.assertTrue(build.call_args.kwargs["latest_from_release_index"])
 
     def test_bucket_hygiene_audit_workflow_uses_readonly_gcp_variables(self):
         workflow = (REPO_ROOT / ".github/workflows/bucket-hygiene-audit.yml").read_text()
