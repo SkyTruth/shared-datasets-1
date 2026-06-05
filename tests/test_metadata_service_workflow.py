@@ -60,8 +60,9 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
         self.assertIn("-f services/metadata_service/Dockerfile", build_run)
         self.assertIn("--platform linux/amd64", build_run)
         self.assertIn("docker push", build_run)
-        self.assertIn("fully_qualified_digest", build_run)
-        self.assertIn("METADATA_SERVICE_IMAGE=${image_digest}", build_run)
+        self.assertIn("docker buildx imagetools inspect", build_run)
+        self.assertNotIn("gcloud artifacts docker images describe", build_run)
+        self.assertIn("METADATA_SERVICE_IMAGE=${image_ref}", build_run)
 
         self.assertEqual(terraform_targets(plan_run), set())
         self.assertIn("metadata_service_image=${METADATA_SERVICE_IMAGE}", plan_run)
