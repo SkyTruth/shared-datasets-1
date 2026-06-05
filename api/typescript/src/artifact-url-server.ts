@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
 
 import {
-  DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE,
   DEFAULT_SHARED_DATASETS_BUCKET,
   SharedDatasetArtifactUrlOptions,
   sharedDatasetArtifactUrlFromGsUri
 } from './artifact-url.js';
+
+export const DEFAULT_SHARED_DATASETS_PRIVATE_ARTIFACTS_URL_BASE =
+  'https://tiles.skytruth.org/private';
 
 export type SharedDatasetArtifactSignedUrlConfig =
   SharedDatasetArtifactUrlOptions & {
@@ -15,7 +17,7 @@ export type SharedDatasetArtifactSignedUrlConfig =
   };
 
 export const DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG = {
-  artifactBaseUrl: DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE,
+  artifactBaseUrl: DEFAULT_SHARED_DATASETS_PRIVATE_ARTIFACTS_URL_BASE,
   bucketName: DEFAULT_SHARED_DATASETS_BUCKET,
   keyName: 'shared-datasets-pmtiles-v1',
   ttlSeconds: 15 * 60,

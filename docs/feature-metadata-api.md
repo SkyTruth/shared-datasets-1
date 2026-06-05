@@ -145,10 +145,11 @@ it falls back to the canonical `{asset-slug}.metadata.ndjson.gz`. Successful
 responses include `requested_locale`, `resolved_locale`, and
 `metadata_locale_fallback` so clients can log fallback behavior, but the browser
 still fetches exactly one metadata sidecar and parses the same record shape.
-When the resolver is used for public assets, `download_url` is a direct HTTPS
-GCS object URL. For private production assets, the resolver may return one
-signed Cloud CDN URL under
-`https://tiles.skytruth.org/artifacts/{bucket-object-path}`. Local development,
+When the resolver is used for public assets, `download_url` is a public Cloud
+CDN artifact URL under
+`https://tiles.skytruth.org/artifacts/{bucket-object-path}`. For private
+production assets, the resolver may return one signed Cloud CDN URL under
+`https://tiles.skytruth.org/private/{bucket-object-path}`. Local development,
 feature-preview buckets, or deployments without metadata CDN signing configured
 may still return one signed GCS URL. Clients must treat `download_url` as an
 opaque sidecar URL and must not fetch a translation overlay or merge

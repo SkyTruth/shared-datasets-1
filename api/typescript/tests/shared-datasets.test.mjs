@@ -34,6 +34,7 @@ import {
 } from '@skytruth/shared-datasets';
 import {
   DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG,
+  DEFAULT_SHARED_DATASETS_PRIVATE_ARTIFACTS_URL_BASE,
   DEFAULT_PMTILES_CDN_SESSION_CONFIG,
   decodePmtilesCdnSigningKey,
   getSignedSharedDatasetArtifactUrl,
@@ -379,6 +380,14 @@ test('resolves metadata sidecars and public artifact URLs from release indexes',
 });
 
 test('creates signed shared dataset artifact URLs on the server entrypoint', () => {
+  assert.equal(
+    DEFAULT_SHARED_DATASETS_PRIVATE_ARTIFACTS_URL_BASE,
+    'https://tiles.skytruth.org/private'
+  );
+  assert.equal(
+    DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG.artifactBaseUrl,
+    DEFAULT_SHARED_DATASETS_PRIVATE_ARTIFACTS_URL_BASE
+  );
   assert.equal(DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG.ttlSeconds, 15 * 60);
   const signingKey = Buffer.alloc(16, 9);
   const config = {

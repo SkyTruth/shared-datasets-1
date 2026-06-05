@@ -23,6 +23,7 @@ from services.feature_preview_service import run as feature_preview_run
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
+DEFAULT_PUBLIC_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts"
 DEFAULT_CATALOG_CACHE_TTL_SECONDS = 60.0
 DEFAULT_SIGNED_URL_TTL_SECONDS = 900
 DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
@@ -494,8 +495,13 @@ def handle_download_url(
             payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
         return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
+    public_url = (
+        gs_to_public_artifact_url(gs_uri, bucket_name=bucket_name)
+        if format_name == "metadata"
+        else gs_to_https(gs_uri)
+    )
     payload = {
-        "download_url": gs_to_https(gs_uri),
+        "download_url": public_url,
         "expires_at": None,
         "filename": filename,
         "gs_uri": gs_uri,
@@ -792,6 +798,18 @@ def basename(path: str) -> str:
 def gs_to_https(uri: str) -> str:
     bucket, object_name = split_gs_uri(uri)
     return f"https://storage.googleapis.com/{bucket}/{quote(object_name)}"
+
+
+def gs_to_public_artifact_url(
+    uri: str,
+    *,
+    bucket_name: str = DEFAULT_BUCKET,
+    base_url: str = DEFAULT_PUBLIC_ARTIFACTS_BASE_URL,
+) -> str:
+    bucket, object_name = split_gs_uri(uri)
+    if bucket != bucket_name:
+        raise ValueError(f"public artifact must be in gs://{bucket_name}/")
+    return f"{base_url.rstrip('/')}/{quote(object_name, safe='/')}"
 
 
 def content_type_for_name(name: str) -> str:

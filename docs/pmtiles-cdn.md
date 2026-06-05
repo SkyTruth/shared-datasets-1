@@ -17,10 +17,10 @@ https://tiles.skytruth.org/artifacts/{bucket-object-path}
 ```
 
 Public metadata sidecars are fetched from this route anonymously. Private
-metadata sidecars use short-lived signed URLs under the same route, issued only
+metadata sidecars use short-lived signed URLs under
+`/private/{bucket-object-path}`, issued only
 by a consuming backend or the IAP-protected catalog viewer after authorization.
-The legacy `/private/{bucket-object-path}` route remains as a compatibility
-alias during client migration. Both artifact routes strip their prefix before
+Both artifact routes strip their prefix before
 fetching from `gs://skytruth-shared-datasets-1/{bucket-object-path}`. Unsigned
 requests to private release artifacts must not return readable bytes after
 cutover.
@@ -32,7 +32,7 @@ through short-lived signed `storage.googleapis.com` URLs from
 `/api/pmtiles/signed-url?slug={asset-slug}`. The CDN remains the compatibility
 path for downstream consumers that use `tiles.skytruth.org` directly. For
 private metadata sidecars, the production catalog viewer may return a signed
-`tiles.skytruth.org/artifacts/...` URL from `/api/download-url`; private FGB and
+`tiles.skytruth.org/private/...` URL from `/api/download-url`; private FGB and
 PMTiles download behavior remains signed GCS.
 
 Public-tier PMTiles are anonymously readable. Private-tier PMTiles are present
@@ -64,9 +64,9 @@ The production Terraform stack owns:
   catalog web files, docs Markdown, and release indexes remain freely readable
   after direct public GCS access is removed.
 - A canonical artifact route from `/artifacts/*` to bucket object paths, used
-  for public metadata sidecars and signed private metadata sidecars.
-- A legacy compatibility artifact route from `/private/*` to bucket object
-  paths while older private metadata clients migrate to `/artifacts/*`.
+  for public metadata sidecars.
+- A private artifact route from `/private/*` to bucket object paths, used for
+  signed private metadata sidecars.
 - URL map rules from `/pmtiles/{access-tier}/{asset}.pmtiles` paths to
   canonical `latest/{asset}.pmtiles` objects, generated from active PMTiles
   catalog rows.
@@ -247,7 +247,7 @@ format for private metadata sidecar signed URLs. Those URLs sign the exact
 artifact object URL, for example:
 
 ```text
-https://tiles.skytruth.org/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
+https://tiles.skytruth.org/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
 ```
 
 Use signed URLs for metadata sidecars, not signed cookies, because the frontend
@@ -459,14 +459,12 @@ Live checks after CDN cutover and direct public GCS removal:
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.
 - Expired or malformed cookie returns `403`.
-- Unsigned `/artifacts/.../{asset}.metadata.{locale}.ndjson.gz` requests for
-  private assets return `403` or another non-readable status.
-- Unsigned legacy `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests
-  for private assets return
+- Unsigned `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests for
+  private assets return
   `403` or another non-readable status.
 - `/api/download-url?...format=metadata&locale={locale}` for an authorized
   private asset returns one signed
-  `https://tiles.skytruth.org/artifacts/...metadata.{locale}.ndjson.gz` URL when
+  `https://tiles.skytruth.org/private/...metadata.{locale}.ndjson.gz` URL when
   that locale exists, or one signed canonical `.metadata.ndjson.gz` fallback
   URL when it does not.
 - Fetching the signed private metadata URL returns `200` with

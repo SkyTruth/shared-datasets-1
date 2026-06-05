@@ -106,7 +106,7 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
 
       env {
         name  = "CATALOG_VIEWER_METADATA_CDN_BASE_URL"
-        value = "https://${var.pmtiles_cdn_host}/artifacts"
+        value = "https://${var.pmtiles_cdn_host}/private"
       }
 
       env {

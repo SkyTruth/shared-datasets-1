@@ -124,7 +124,7 @@ class FakeCdnSigner:
         self.calls.append((gs_uri, expires_at))
         object_name = gs_uri.removeprefix("gs://skytruth-shared-datasets-1/")
         expires = int(expires_at.timestamp())
-        return f"https://tiles.skytruth.org/artifacts/{object_name}?Expires={expires}&KeyName=test-key&Signature=abc"
+        return f"https://tiles.skytruth.org/private/{object_name}?Expires={expires}&KeyName=test-key&Signature=abc"
 
 
 class FakeFeatureReleaseResolver:
@@ -451,7 +451,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
         self.assertEqual(
             payload["download_url"],
-            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
         )
         self.assertEqual(payload["filename"], "wdpa-marine.metadata.ndjson.gz")
         self.assertEqual(signer.calls, [])
@@ -548,7 +548,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/artifacts/"))
+        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/private/"))
         self.assertIn("wdpa-marine.metadata.es.ndjson.gz", payload["download_url"])
         self.assertEqual(payload["expires_at"], "2026-05-09T12:02:00Z")
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_ES_RELEASE_PATH)
@@ -575,7 +575,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/artifacts/"))
+        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/private/"))
         self.assertIn("wdpa-marine.metadata.ndjson.gz", payload["download_url"])
         self.assertNotIn("metadata.fr.ndjson.gz", payload["download_url"])
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
@@ -585,7 +585,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(signer.calls, [])
         self.assertEqual(metadata_cdn_signer.calls[0][0], PUBLIC_METADATA_RELEASE_PATH)
 
-    def test_public_metadata_download_ignores_configured_metadata_cdn_signer(self):
+    def test_public_metadata_download_returns_artifact_cdn_url_without_private_signer(self):
         metadata_cdn_signer = FakeCdnSigner()
         response, signer = download_url_request(
             "wdpa-marine",
@@ -599,7 +599,7 @@ class CatalogViewerTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(
             payload["download_url"],
-            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz",
         )
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_ES_RELEASE_PATH)
         self.assertEqual(signer.calls, [])
