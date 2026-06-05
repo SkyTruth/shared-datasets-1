@@ -647,6 +647,10 @@ jobs:
 
           plan = json.load(open("publish-plan.json"))
           asset_slug = plan["asset_slug"]
+          if catalog_row(asset_slug) is None:
+              print(f"Skipping dataset upload summary because {asset_slug!r} is not a catalog asset.")
+              raise SystemExit(0)
+
           destinations = [promotion["destination_uri"] for promotion in plan["promotions"]]
           args = [
               "uv",

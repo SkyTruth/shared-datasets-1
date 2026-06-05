@@ -117,6 +117,11 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn('"rebuild"', release_index_run)
         self.assertIn("scripts/dataset_alerts.py", summary_run)
         self.assertIn("upload-summary", summary_run)
+        self.assertIn("not a catalog asset", summary_run)
+        self.assertLess(
+            summary_run.index("not a catalog asset"),
+            summary_run.index("scripts/dataset_alerts.py"),
+        )
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", self.apply_steps["Send dataset upload summary"]["env"])
         self.assertIn('promotion["source_generation"]', cleanup_run)
         self.assertIn('"delete"', cleanup_run)
