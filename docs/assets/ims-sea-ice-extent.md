@@ -20,14 +20,15 @@ source: NOAA/NSIDC IMS Daily Northern Hemisphere Snow and Ice Analysis G02156
 license: Public U.S. government work; cite NSIDC G02156
 citation: 'U.S. National Ice Center (2008). IMS Daily Northern Hemisphere Snow and Ice Analysis at 1 km, 4 km, and 24 km Resolutions,
   Version 1. Boulder, Colorado USA: National Snow and Ice Data Center. https://doi.org/10.7265/N52R3PMC. Accessed 2026-05-07.'
-notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. PMTiles were rebuilt 2026-05-04 at maxzoom 8 from the 4000-meter
-  source-resolution hint; pmtiles sha256 66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d. Release history,
-  source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
-row_count: 2632
+notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. The 2026-06-05 metadata-contract refresh release was built
+  from the unchanged 2026-06-03 latest FGB and adds generated feature_id/feature_hash fields, a metadata sidecar, release
+  schema, manifest, and lightweight lookup PMTiles. Release history, source versions, row counts, and file hashes are recorded
+  in the bucket release index and per-run records.
+row_count: 1755
 data_profile:
-  field_count: 2
+  field_count: 6
   identity_candidates: []
-  notes: No unique ID candidate; DN/ice_date are class/time attributes
+  notes: No source unique ID candidate; metadata-contract releases use generated geometry-digest feature IDs.
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
@@ -67,6 +68,18 @@ files:
   format: pmtiles
   role: release
   purpose: Dated map-tile release
+- path: releases/YYYY-MM-DD/ims-sea-ice-extent.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Dated canonical feature metadata sidecar keyed by feature_id
+- path: releases/YYYY-MM-DD/ims-sea-ice-extent.schema.json
+  format: json
+  role: metadata
+  purpose: Dated release feature metadata schema for field projection
+- path: releases/YYYY-MM-DD/ims-sea-ice-extent.manifest.json
+  format: json
+  role: metadata
+  purpose: Dated release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 - path: runs/YYYY-MM-DD.json
   format: json
   role: run-record
@@ -115,12 +128,19 @@ record preserves that documented valid date.
 | `latest/ims-sea-ice-extent.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/ims-sea-ice-extent.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/ims-sea-ice-extent.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `releases/YYYY-MM-DD/ims-sea-ice-extent.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Dated canonical feature metadata sidecar keyed by feature_id |
+| `releases/YYYY-MM-DD/ims-sea-ice-extent.schema.json` | `json` | `metadata` | Dated release feature metadata schema for field projection |
+| `releases/YYYY-MM-DD/ims-sea-ice-extent.manifest.json` | `json` | `metadata` | Dated release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Daily run record |
 <!-- END GENERATED files-table -->
 
 ## Schema notes
 
 The job derives a minimal schema from the source raster class and filename date.
+
+Metadata-contract releases add generated geometry-digest `feature_id` values and `feature_hash` checksums because the
+source IMS polygons do not include a provider feature ID. The lookup PMTiles contain only `feature_id` and `ext_id`.
+IMS has no schema-projectable name/title field, so the 2026-06-05 release does not include Spanish localized metadata.
 
 The PMTiles artifact is generated from the same vectorized output. Auto maxzoom selection uses the stable `source_resolution_meters: 4000` hint, resolving to zooms 0 through 8.
 
@@ -129,6 +149,10 @@ The PMTiles artifact is generated from the same vectorized output. Auto maxzoom 
 | Name | Type | Description |
 |---|---|---|
 | `DN` | integer | IMS raster value. Published features are class `3`, described by NSIDC as sea/lake ice. |
+| `ext_id` | string | External lookup ID. For IMS metadata-contract releases this mirrors the generated `feature_id`. |
+| `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
+| `feature_id` | string | Generated stable feature ID derived from the feature geometry digest. |
+| `id` | string | OGR-preserved feature identifier mirroring the generated feature ID in metadata-contract FGB releases. |
 | `ice_date` | string | Date encoded in the source GeoTIFF filename, formatted as `YYYY-MM-DD`. |
 
 ## Update notes
@@ -141,6 +165,13 @@ The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto
 A 2026-06-05 release-index backfill repaired legacy successful run records that
 stored row counts, release paths, and checksums under the pre-contract IMS run
 record shape. No release FGB or PMTiles artifacts were rewritten by that repair.
+
+A 2026-06-05 metadata-contract refresh release was staged from the unchanged
+2026-06-03 latest FGB so consumers can use feature metadata sidecars and
+Firestore index loads without waiting for upstream data to change. The release
+date marks the contract refresh; the run record, manifest, and metadata
+provenance preserve `source_filename_date: 2026-06-03` and
+`documented_valid_date: 2026-06-04`.
 
 ## Known caveats
 
