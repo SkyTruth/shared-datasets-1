@@ -1,8 +1,9 @@
 locals {
   catalog_viewer_iap_service_agent = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
+  catalog_viewer_service_name      = "catalog-viewer"
   pmtiles_browser_allowed_origins = distinct(concat(
     var.pmtiles_cdn_allowed_origins,
-    [google_cloud_run_v2_service.catalog_viewer.uri],
+    [data.google_cloud_run_v2_service.catalog_viewer_live.uri],
   ))
   catalog_viewer_object_viewer_condition = join(" || ", concat(
     [
@@ -13,6 +14,12 @@ locals {
       "resource.name.startsWith('${local.shared_bucket_object_resource_prefix}${prefix}')"
     ],
   ))
+}
+
+data "google_cloud_run_v2_service" "catalog_viewer_live" {
+  project  = var.project_id
+  location = var.region
+  name     = local.catalog_viewer_service_name
 }
 
 module "catalog_viewer_service_account" {
@@ -58,7 +65,7 @@ resource "google_service_account_iam_member" "catalog_viewer_self_sign_blob" {
 resource "google_cloud_run_v2_service" "catalog_viewer" {
   project             = var.project_id
   location            = var.region
-  name                = "catalog-viewer"
+  name                = local.catalog_viewer_service_name
   deletion_protection = false
   ingress             = "INGRESS_TRAFFIC_ALL"
   launch_stage        = "BETA"
