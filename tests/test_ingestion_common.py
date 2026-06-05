@@ -348,6 +348,44 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_release"]["date"], "2026-05-01")
         self.assertEqual(index["latest_run"]["status"], "success")
         self.assertEqual([item["format"] for item in index["latest_release"]["files"]], ["fgb", "pmtiles"])
+        self.assertNotIn("index_status_policy", index["latest_release"])
+
+    def test_write_metadata_bundle_run_record_adds_index_status_policy(self):
+        bucket = FakeBucket()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        asset = FakeAsset()
+        run_date = dt.date(2026, 5, 1)
+
+        publisher.write_run_record(
+            asset=asset,
+            run_date=run_date,
+            payload={
+                "schema_version": 1,
+                "asset_slug": asset.slug,
+                "run_date": run_date.isoformat(),
+                "release_date": run_date.isoformat(),
+                "status": "success",
+                "source_version": "source-v1",
+                "release_path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/",
+                "release_paths": [
+                    {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.fgb", "generation": 2},
+                    {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.metadata.ndjson.gz", "generation": 3},
+                    {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.schema.json", "generation": 4},
+                    {"path": f"gs://{bucket.name}/asset/releases/{run_date.isoformat()}/asset.manifest.json", "generation": 5},
+                ],
+                "row_count": 10,
+            },
+        )
+
+        release = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)["latest_release"]
+        self.assertEqual(release["index_load_status"], "tracked in index-loads/")
+        self.assertEqual(
+            release["index_status_policy"],
+            {
+                "mode": "external_index_load_records",
+                "path": "gs://test-bucket/asset/index-loads/2026-05-01/",
+            },
+        )
 
     def test_skipped_run_record_updates_latest_run_only(self):
         bucket = FakeBucket()
@@ -635,6 +673,18 @@ class GcsPublisherTests(unittest.TestCase):
         pmtiles.exists = True
         pmtiles.generation = 42
         pmtiles.size = 99
+        metadata = bucket.blob("asset/releases/2026-06-03/asset.metadata.ndjson.gz")
+        metadata.exists = True
+        metadata.generation = 43
+        metadata.size = 100
+        schema = bucket.blob("asset/releases/2026-06-03/asset.schema.json")
+        schema.exists = True
+        schema.generation = 44
+        schema.size = 101
+        manifest = bucket.blob("asset/releases/2026-06-03/asset.manifest.json")
+        manifest.exists = True
+        manifest.generation = 45
+        manifest.size = 102
         run_record = bucket.blob("asset/runs/2026-06-03.json")
         run_record.exists = True
         run_record.generation = 77
@@ -657,9 +707,30 @@ class GcsPublisherTests(unittest.TestCase):
                         "generation": 1,
                         "size": 2,
                     },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-06-03/asset.metadata.ndjson.gz",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-06-03/asset.schema.json",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-06-03/asset.manifest.json",
+                        "generation": 1,
+                        "size": 2,
+                    },
                 ],
                 "rows": 1755,
-                "sha256": {"fgb": "f" * 64, "pmtiles": "b" * 64},
+                "sha256": {
+                    "fgb": "f" * 64,
+                    "pmtiles": "b" * 64,
+                    "metadata": "c" * 64,
+                    "schema": "d" * 64,
+                    "manifest": "e" * 64,
+                },
                 "source_filename": "ims2026154_4km_GIS_v1.3.tif.gz",
             }
         )
@@ -684,6 +755,10 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(files["pmtiles"]["generation"], 42)
         self.assertEqual(files["pmtiles"]["size"], 99)
         self.assertEqual(files["pmtiles"]["sha256"], "b" * 64)
+        self.assertEqual(
+            release["index_status_policy"]["path"],
+            "gs://test-bucket/asset/index-loads/2026-06-03/",
+        )
 
 
 if __name__ == "__main__":

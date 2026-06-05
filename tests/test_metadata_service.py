@@ -104,7 +104,12 @@ class FakeGcsClient:
         return self._bucket
 
 
-def ready_release_bucket(*, manifest_metadata_generation: int = 12, load_id: str | None = "load-1") -> FakeGcsBucket:
+def ready_release_bucket(
+    *,
+    manifest_metadata_generation: int = 12,
+    load_id: str | None = "load-1",
+    release_index_policy_path: str | None = None,
+) -> FakeGcsBucket:
     asset_root = "100-geographic-reference/110-boundaries/example-asset"
     metadata_uri = f"gs://test-bucket/{asset_root}/releases/2026-05-01/example-asset.metadata.ndjson.gz"
     schema_uri = f"gs://test-bucket/{asset_root}/releases/2026-05-01/example-asset.schema.json"
@@ -114,10 +119,17 @@ def ready_release_bucket(*, manifest_metadata_generation: int = 12, load_id: str
         {"format": "schema", "path": schema_uri, "generation": 13, "size": 10},
         {"format": "manifest", "path": manifest_uri, "generation": 14, "size": 10},
     ]
+    latest_release = {"date": "2026-05-01", "files": files}
+    if release_index_policy_path:
+        latest_release["index_load_status"] = "tracked in index-loads/"
+        latest_release["index_status_policy"] = {
+            "mode": "external_index_load_records",
+            "path": release_index_policy_path,
+        }
     release_index = {
         "asset_slug": "example-asset",
-        "latest_release": {"date": "2026-05-01", "files": files},
-        "releases": [{"date": "2026-05-01", "files": files}],
+        "latest_release": latest_release,
+        "releases": [latest_release],
     }
     schema = {
         "asset_slug": "example-asset",
@@ -296,6 +308,41 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(resolved.manifest_generation, 14)
         self.assertEqual(resolved.index_load_id, "load-1")
         self.assertEqual(resolved.schema_fields, ("name",))
+
+    def test_catalog_resolver_accepts_release_index_policy(self):
+        resolver = CatalogReleaseResolver(
+            bucket_name="test-bucket",
+            client=FakeGcsClient(
+                ready_release_bucket(
+                    release_index_policy_path=(
+                        "gs://test-bucket/100-geographic-reference/110-boundaries/"
+                        "example-asset/index-loads/2026-05-01/"
+                    )
+                )
+            ),
+            ttl_seconds=0,
+        )
+
+        resolved = resolver.resolve("example-asset", "latest")
+
+        self.assertEqual(resolved.index_load_id, "load-1")
+
+    def test_catalog_resolver_rejects_off_bucket_release_index_policy(self):
+        resolver = CatalogReleaseResolver(
+            bucket_name="test-bucket",
+            client=FakeGcsClient(
+                ready_release_bucket(
+                    release_index_policy_path=(
+                        "gs://other-bucket/100-geographic-reference/110-boundaries/"
+                        "example-asset/index-loads/2026-05-01/"
+                    )
+                )
+            ),
+            ttl_seconds=0,
+        )
+
+        with self.assertRaisesRegex(IndexNotReady, "outside configured bucket"):
+            resolver.resolve("example-asset", "latest")
 
     def test_catalog_resolver_rejects_manifest_generation_mismatch(self):
         resolver = CatalogReleaseResolver(

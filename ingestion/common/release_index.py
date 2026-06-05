@@ -16,6 +16,8 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 SCHEMA_VERSION = 1
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_CONTENT_TYPE = "application/json"
+INDEX_LOAD_STATUS = "tracked in index-loads/"
+INDEX_STATUS_MODE = "external_index_load_records"
 
 FORMAT_EXTENSIONS = {
     ".metadata.ndjson.gz": "metadata",
@@ -210,6 +212,55 @@ def files_from_run_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(files, key=lambda item: (item.get("format", ""), item.get("path", "")))
 
 
+def canonical_metadata_file(files: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for file_entry in files:
+        if str(file_entry.get("format") or file_entry.get("role") or "") != "metadata":
+            continue
+        path = str(file_entry.get("path") or "")
+        if file_entry.get("locale") or metadata_locale_from_path(path):
+            continue
+        return file_entry
+    return None
+
+
+def release_file_for_format(files: list[dict[str, Any]], format_name: str) -> dict[str, Any] | None:
+    for file_entry in files:
+        if str(file_entry.get("format") or file_entry.get("role") or "") == format_name:
+            return file_entry
+    return None
+
+
+def index_status_policy_for_release(files: list[dict[str, Any]], release: str) -> dict[str, str] | None:
+    metadata_entry = canonical_metadata_file(files)
+    if not metadata_entry or not release_file_for_format(files, "schema") or not release_file_for_format(files, "manifest"):
+        return None
+    path = str(metadata_entry.get("path") or "")
+    try:
+        bucket_name, object_name = split_gs_uri(path)
+    except ReleaseIndexError:
+        return None
+    marker = f"/releases/{release}/"
+    if marker not in object_name:
+        return None
+    asset_root = object_name.split(marker, 1)[0]
+    return {
+        "mode": INDEX_STATUS_MODE,
+        "path": f"gs://{bucket_name}/{asset_root}/index-loads/{release}/",
+    }
+
+
+def add_index_status_policy(release_entry: dict[str, Any]) -> dict[str, Any]:
+    files = release_entry.get("files")
+    release = str(release_entry.get("date") or "")
+    if not isinstance(files, list) or not release:
+        return release_entry
+    policy = index_status_policy_for_release(files, release)
+    if policy:
+        release_entry["index_load_status"] = INDEX_LOAD_STATUS
+        release_entry["index_status_policy"] = policy
+    return release_entry
+
+
 def normalize_rebuild_run_record(record: dict[str, Any]) -> dict[str, Any] | None:
     """Normalize historical run records enough for release-index rebuilds."""
     if not isinstance(record, dict):
@@ -293,14 +344,14 @@ def release_entry_from_record(
     if not release_date:
         raise ReleaseIndexError("successful run record is missing release_date")
     files = files_from_run_record(record)
-    return {
+    return add_index_status_policy({
         "date": release_date,
         "release_path": str(record.get("release_path") or ""),
         "files": files,
         "run_record_path": run_record_path(record, run_record_info),
         "rows": record.get("row_count"),
         "source_version": str(record.get("source_version") or ""),
-    }
+    })
 
 
 def merge_latest_run(

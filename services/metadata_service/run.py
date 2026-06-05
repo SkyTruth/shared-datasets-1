@@ -27,6 +27,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+INDEX_STATUS_MODE = "external_index_load_records"
 LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
     r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
@@ -197,6 +198,7 @@ class CatalogReleaseResolver:
         index_load = self._successful_index_load(
             asset_slug=asset_slug,
             release=resolved_release,
+            release_entry=release_entry,
             metadata_entry=metadata_entry,
             schema_entry=schema_entry,
             manifest_entry=manifest_entry,
@@ -244,11 +246,19 @@ class CatalogReleaseResolver:
         *,
         asset_slug: str,
         release: str,
+        release_entry: Mapping[str, Any],
         metadata_entry: Mapping[str, Any],
         schema_entry: Mapping[str, Any],
         manifest_entry: Mapping[str, Any],
     ) -> dict[str, Any] | None:
-        prefix = f"{asset_root_from_release_entry(release_entry_path=metadata_entry.get('path'), release=release)}/index-loads/{release}/"
+        prefix = index_load_prefix_from_release_entry(
+            release_entry=release_entry,
+            bucket_name=self._bucket_name,
+            release=release,
+        ) or (
+            f"{asset_root_from_release_entry(release_entry_path=metadata_entry.get('path'), release=release)}"
+            f"/index-loads/{release}/"
+        )
         newest: dict[str, Any] | None = None
         for blob in self.bucket.list_blobs(prefix=prefix):
             if not blob.name.endswith(".json"):
@@ -635,6 +645,25 @@ def asset_root_from_release_entry(*, release_entry_path: Any, release: str) -> s
     if marker not in object_name:
         raise IndexNotReady(f"metadata sidecar path is not under releases/{release}/")
     return object_name.split(marker, 1)[0]
+
+
+def index_load_prefix_from_release_entry(
+    *,
+    release_entry: Mapping[str, Any],
+    bucket_name: str,
+    release: str,
+) -> str | None:
+    policy = release_entry.get("index_status_policy")
+    if policy is None:
+        return None
+    if not isinstance(policy, Mapping) or policy.get("mode") != INDEX_STATUS_MODE:
+        raise IndexNotReady("release index index_status_policy is invalid")
+    policy_bucket, object_name = split_gs_uri(str(policy.get("path") or ""))
+    if policy_bucket != bucket_name:
+        raise IndexNotReady("release index index_status_policy is outside configured bucket")
+    if not object_name.endswith(f"/index-loads/{release}/"):
+        raise IndexNotReady("release index index_status_policy path is invalid")
+    return object_name
 
 
 def as_int(value: Any) -> int | None:

@@ -544,6 +544,7 @@ Initial upload.
             )
 
         self.assertEqual([finding.check for finding in findings], ["feature-metadata-contract-ready"])
+        self.assertIn("release index latest_release is missing index_load_status", findings[0].message)
         self.assertIn("no successful matching index-load record", findings[0].message)
 
     def test_feature_metadata_readiness_accepts_localized_metadata_sidecar(self):
@@ -601,6 +602,11 @@ Initial upload.
             "asset_slug": "example-asset",
             "latest_release": {
                 "date": release,
+                "index_load_status": "tracked in index-loads/",
+                "index_status_policy": {
+                    "mode": "external_index_load_records",
+                    "path": f"gs://skytruth-shared-datasets-1/{root}/index-loads/{release}/",
+                },
                 "files": [
                     {"format": "metadata", "role": "metadata", "locale": "es", "path": localized_uri, "generation": 15},
                     {"format": "metadata", "path": metadata_uri, "generation": 12},
@@ -650,6 +656,36 @@ Initial upload.
             )
 
         self.assertEqual(findings, [])
+
+    def test_index_status_policy_validation_normalizes_manifest_relative_path(self):
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        release = "2026-05-01"
+
+        self.assertEqual(
+            audit.index_status_policy_issue(
+                bucket="skytruth-shared-datasets-1",
+                asset_root=root,
+                release=release,
+                policy={"mode": "external_index_load_records", "path": f"index-loads/{release}/"},
+                allow_relative_path=True,
+                label="manifest",
+            ),
+            "",
+        )
+        self.assertIn(
+            "outside the bucket",
+            audit.index_status_policy_issue(
+                bucket="skytruth-shared-datasets-1",
+                asset_root=root,
+                release=release,
+                policy={
+                    "mode": "external_index_load_records",
+                    "path": f"gs://other-bucket/{root}/index-loads/{release}/",
+                },
+                allow_relative_path=False,
+                label="release index latest_release",
+            ),
+        )
 
     def test_assets_without_feature_metadata_do_not_require_sidecars(self):
         row = catalog_row(update_cadence="manual")

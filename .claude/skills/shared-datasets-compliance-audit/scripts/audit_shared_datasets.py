@@ -74,6 +74,8 @@ SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 GENERIC_PROPERTIES_ROW_RE = re.compile(r"(?mi)^\|\s*Source fields\s*\|\s*varies\s*\|")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+INDEX_LOAD_STATUS = "tracked in index-loads/"
+INDEX_STATUS_MODE = "external_index_load_records"
 FEATURE_METADATA_LATEST_FILES = {
     "metadata": ".metadata.ndjson.gz",
     "schema": ".schema.json",
@@ -1665,6 +1667,34 @@ def feature_metadata_release_root(metadata_entry: dict[str, Any], release: str) 
     return name.split(marker, 1)[0]
 
 
+def index_status_policy_issue(
+    *,
+    bucket: str,
+    asset_root: str,
+    release: str,
+    policy: Any,
+    allow_relative_path: bool,
+    label: str,
+) -> str:
+    if not isinstance(policy, dict) or policy.get("mode") != INDEX_STATUS_MODE:
+        return f"{label} index_status_policy is missing or invalid"
+    path = str(policy.get("path") or "").strip()
+    expected_name = f"{asset_root}/index-loads/{release}/"
+    if path.startswith("gs://"):
+        policy_bucket, separator, object_name = path[5:].partition("/")
+        if policy_bucket != bucket or not separator:
+            return f"{label} index_status_policy path is outside the bucket"
+    elif allow_relative_path:
+        object_name = f"{asset_root}/{path.lstrip('/')}"
+    else:
+        return f"{label} index_status_policy path must be an absolute gs:// URI"
+    if not object_name.endswith("/"):
+        object_name += "/"
+    if object_name != expected_name:
+        return f"{label} index_status_policy path does not match index-loads/{release}/"
+    return ""
+
+
 def index_load_matches(
     record: Any,
     *,
@@ -1722,6 +1752,7 @@ def validate_feature_metadata_readiness(
         index_name = f"{RELEASE_INDEX_PREFIX}/{slug}.json"
         index_blob = object_by_name.get(index_name)
         release = ""
+        latest_release: dict[str, Any] | None = None
         metadata_entry: dict[str, Any] | None = None
         schema_entry: dict[str, Any] | None = None
         manifest_entry: dict[str, Any] | None = None
@@ -1735,6 +1766,7 @@ def validate_feature_metadata_readiness(
                 latest_release = index_payload.get("latest_release")
                 if not isinstance(latest_release, dict):
                     issues.append("release index latest_release is missing or not an object")
+                    latest_release = None
                 else:
                     release = str(latest_release.get("date") or "")
                     if not parse_iso_date(release):
@@ -1824,6 +1856,30 @@ def validate_feature_metadata_readiness(
             if not asset_root:
                 issues.append(f"metadata sidecar path is not under releases/{release}/")
             else:
+                if latest_release:
+                    if latest_release.get("index_load_status") != INDEX_LOAD_STATUS:
+                        issues.append("release index latest_release is missing index_load_status")
+                    policy_issue = index_status_policy_issue(
+                        bucket=bucket,
+                        asset_root=asset_root,
+                        release=release,
+                        policy=latest_release.get("index_status_policy"),
+                        allow_relative_path=False,
+                        label="release index latest_release",
+                    )
+                    if policy_issue:
+                        issues.append(policy_issue)
+                if manifest_payload:
+                    policy_issue = index_status_policy_issue(
+                        bucket=bucket,
+                        asset_root=asset_root,
+                        release=release,
+                        policy=manifest_payload.get("index_status_policy"),
+                        allow_relative_path=True,
+                        label="manifest",
+                    )
+                    if policy_issue:
+                        issues.append(policy_issue)
                 index_load_prefix = f"{asset_root}/index-loads/{release}/"
                 matching_load = False
                 for blob in sorted(
