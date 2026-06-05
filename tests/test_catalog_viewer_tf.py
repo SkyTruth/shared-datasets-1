@@ -31,7 +31,7 @@ class CatalogViewerTerraformTests(unittest.TestCase):
         self.assertIn('resource "google_iap_web_cloud_run_service_iam_member" "catalog_viewer_accessors"', catalog_viewer_tf)
         self.assertIn('roles/iap.httpsResourceAccessor', catalog_viewer_tf)
         self.assertIn('"CATALOG_VIEWER_METADATA_CDN_BASE_URL"', catalog_viewer_tf)
-        self.assertIn('value = "https://${var.pmtiles_cdn_host}/artifacts"', catalog_viewer_tf)
+        self.assertIn('value = "https://${var.pmtiles_cdn_host}/private"', catalog_viewer_tf)
         self.assertIn('"CATALOG_VIEWER_CDN_SIGNING_KEY_NAME"', catalog_viewer_tf)
         self.assertIn('"CATALOG_VIEWER_CDN_SIGNING_SECRET_ID"', catalog_viewer_tf)
         self.assertIn('${google_secret_manager_secret.pmtiles_cdn_signed_request_key.id}/versions/latest', catalog_viewer_tf)

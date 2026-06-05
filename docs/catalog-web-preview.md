@@ -100,7 +100,7 @@ public sidecars from the hydrated release index and fetches them directly from
 active `locale` first, then falls back to the canonical
 `{asset-slug}.metadata.ndjson.gz` sidecar. The IAP-protected catalog viewer
 keeps `/api/download-url?format=metadata` for authorized private inspection and
-returns one signed `/artifacts/{bucket-object-path}` URL when CDN signing is
+returns one signed `/private/{bucket-object-path}` URL when CDN signing is
 configured. The browser never fetches a separate translation overlay and does
 not merge translation rows over canonical metadata. Metadata sidecars must be
 `.ndjson.gz`; the browser expects gzip-compressed NDJSON.

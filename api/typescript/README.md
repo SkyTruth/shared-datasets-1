@@ -244,6 +244,10 @@ import { getSignedSharedDatasetArtifactUrl } from "@skytruth/shared-datasets/ser
 const signedUrl = getSignedSharedDatasetArtifactUrl(gsUri, signingKey);
 ```
 
+By default this server helper signs `https://tiles.skytruth.org/private/...`
+URLs for private metadata sidecars. Pass `artifactBaseUrl` only for tests or a
+deliberate deployment-specific CDN route.
+
 ## Browser PMTiles Fetching
 
 Before fetching private PMTiles, call the consumer backend session endpoint.
