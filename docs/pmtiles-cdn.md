@@ -443,8 +443,10 @@ authentication is not configured. Repository variables must include
 `GCP_TERRAFORM_SERVICE_ACCOUNT` and
 `GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER`; otherwise PMTiles access-tier
 changes are not allowed to merge as silently skipped post-merge work.
-Workflow-only changes to `.github/workflows/pmtiles-cdn-sync.yml` do not trigger
-the readiness/apply workflow because they do not require a live Terraform apply.
+Workflow-only changes to `.github/workflows/pmtiles-cdn-sync.yml` trigger the
+readiness workflow on PRs, but do not trigger the protected apply workflow after
+merge. Dispatch `PMTiles CDN sync` manually from `main` when a workflow-only
+change is intended to apply already-merged URL-map configuration.
 
 Live checks after CDN cutover and direct public GCS removal:
 

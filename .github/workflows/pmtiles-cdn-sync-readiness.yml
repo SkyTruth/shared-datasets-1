@@ -6,9 +6,9 @@ on:
       - main
     paths:
       - ".github/workflows/pmtiles-cdn-sync-readiness.yml"
+      - ".github/workflows/pmtiles-cdn-sync.yml"
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
-      - "terraform/envs/prod/catalog_viewer.tf"
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"

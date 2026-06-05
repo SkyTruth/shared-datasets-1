@@ -7,7 +7,6 @@ on:
     paths:
       - "catalog/shared-datasets-catalog.csv"
       - "docs/assets/**"
-      - "terraform/envs/prod/catalog_viewer.tf"
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"
@@ -88,8 +87,6 @@ jobs:
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
             -target=google_compute_url_map.pmtiles_cdn \
-            -target=google_cloud_run_v2_service.catalog_viewer \
-            -target=google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer \
             -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
             -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
@@ -106,8 +103,6 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_compute_url_map.pmtiles_cdn",
-              "google_cloud_run_v2_service.catalog_viewer",
-              "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
           }
 
           blocked = []
@@ -173,3 +168,60 @@ jobs:
           check_catalog_url "https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv" "text/csv"
           check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
           check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
+
+          wdpa_metadata_path="$(
+            python3 <<'PY'
+          import json
+          import urllib.request
+
+          release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"
+          with urllib.request.urlopen(release_index_url, timeout=30) as response:
+              release_index = json.load(response)
+
+          latest_release = release_index.get("latest_release") or {}
+          for file_entry in latest_release.get("files") or []:
+              file_path = str(file_entry.get("path") or "")
+              file_format = str(file_entry.get("format") or "").lower()
+              file_role = str(file_entry.get("role") or "").lower()
+              if (
+                  (file_format == "metadata" or file_role == "metadata")
+                  and file_path.startswith("gs://skytruth-shared-datasets-1/")
+                  and file_path.endswith(".metadata.ndjson.gz")
+              ):
+                  print(file_path.removeprefix("gs://skytruth-shared-datasets-1/"))
+                  break
+          else:
+              raise SystemExit("WDPA marine latest release does not include a canonical metadata sidecar")
+          PY
+          )"
+
+          check_public_artifact_url() {
+            local url="$1"
+            local headers
+            local status
+            local location
+
+            for attempt in {1..12}; do
+              headers="$(mktemp)"
+              if ! status="$(curl -sS -o /dev/null -D "$headers" -w "%{http_code}" "$url")"; then
+                status="curl-error"
+              fi
+              location="$(awk 'BEGIN { IGNORECASE = 1 } /^location:/ { print $0 }' "$headers" | tail -n 1 | tr -d '\r')"
+
+              if [[ "$status" == "200" && -z "$location" ]]; then
+                echo "$url returned $status without redirect"
+                rm -f "$headers"
+                return 0
+              fi
+
+              echo "Attempt ${attempt}: $url returned $status with ${location:-no redirect header}; expected 200 without redirect"
+              cat "$headers"
+              rm -f "$headers"
+              sleep 10
+            done
+
+            echo "Public metadata artifact route verification failed for $url" >&2
+            return 1
+          }
+
+          check_public_artifact_url "https://tiles.skytruth.org/artifacts/${wdpa_metadata_path}"

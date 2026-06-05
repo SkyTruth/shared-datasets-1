@@ -164,7 +164,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             push_paths={
                 "catalog/shared-datasets-catalog.csv",
                 "docs/assets/**",
-                "terraform/envs/prod/catalog_viewer.tf",
                 "terraform/envs/prod/pmtiles_cdn.tf",
                 "terraform/envs/prod/shared_bucket_public.tf",
                 "terraform/envs/prod/variables.tf",
@@ -174,11 +173,11 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
                 "google_compute_url_map.pmtiles_cdn",
-                "google_cloud_run_v2_service.catalog_viewer",
-                "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
             },
             blocked_resources={
                 "google_compute_backend_bucket.pmtiles_cdn",
+                "google_cloud_run_v2_service.catalog_viewer",
+                "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
                 "google_storage_bucket.shared_bucket",
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
                 "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
@@ -200,6 +199,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             verify_run,
         )
         self.assertIn('check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"', verify_run)
+        self.assertIn('release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"', verify_run)
+        self.assertIn('check_public_artifact_url "https://tiles.skytruth.org/artifacts/${wdpa_metadata_path}"', verify_run)
+        self.assertIn("expected 200 without redirect", verify_run)
         self.assertNotIn("curl -L", verify_run)
         self.assertNotIn("--location", verify_run)
 
