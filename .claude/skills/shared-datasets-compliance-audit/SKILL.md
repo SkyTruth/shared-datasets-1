@@ -48,7 +48,13 @@ uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shar
 uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --prefix 100-geographic-reference/
 uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --format json
 uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --fail-on-findings
+uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --health-profile production --format markdown
 ```
+
+Use `--health-profile production` for the scheduled main-bucket health gate.
+It enforces live release-index contracts and advertised feature-metadata
+readiness as hard errors, includes copy/paste Codex repair prompts for each
+hard failure, and keeps historical migration/backfill gaps as warnings.
 
 ## Completion Criteria
 

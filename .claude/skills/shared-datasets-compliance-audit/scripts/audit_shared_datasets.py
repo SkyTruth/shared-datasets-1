@@ -34,6 +34,7 @@ from scripts.raster_asset import (
     RASTER_SOURCE_EXTENSIONS,
     validate_zarr_manifest_payload,
 )
+from scripts import release_feature_model
 
 APPROVED_CANONICAL_FORMATS = {"fgb", "pmtiles", "geojson", "ndgeojson", "csv", "cog", "zarr"}
 APPROVED_DATA_EXTENSIONS = {".fgb", ".pmtiles", ".geojson", ".ndgeojson", ".csv", ".tif", ".tiff"}
@@ -71,6 +72,13 @@ RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_MODES = {"report": "INFO", "warn": "WARN", "enforce": "ERROR"}
 SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 GENERIC_PROPERTIES_ROW_RE = re.compile(r"(?mi)^\|\s*Source fields\s*\|\s*varies\s*\|")
+FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
+LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+FEATURE_METADATA_LATEST_FILES = {
+    "metadata": ".metadata.ndjson.gz",
+    "schema": ".schema.json",
+    "manifest": ".manifest.json",
+}
 
 README_REQUIRED_SNIPPETS = {
     "status": "**Status:**",
@@ -111,6 +119,16 @@ class Finding:
     message: str
     uploader_hint: str = "unknown"
     suggested_next_step: str = ""
+    impact: str = ""
+    repair_category: str = ""
+    codex_prompt: str = ""
+
+
+@dataclass
+class AuditRunResult:
+    findings: List[Finding]
+    object_count: int
+    exit_code: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -130,6 +148,11 @@ def parse_args() -> argparse.Namespace:
         "--categories",
         default="catalog/categories.yaml",
         help="Local categories YAML path.",
+    )
+    parser.add_argument(
+        "--asset-docs-dir",
+        default="docs/assets",
+        help="Directory containing local docs/assets/*.md metadata sources.",
     )
     parser.add_argument(
         "--format",
@@ -155,7 +178,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fail-on-findings",
         action="store_true",
-        help="Exit 1 if WARN or ERROR findings exist.",
+        help="Exit 1 if blocking findings exist.",
+    )
+    parser.add_argument(
+        "--health-profile",
+        choices=("advisory", "production"),
+        default="advisory",
+        help=(
+            "Use advisory for reporting-only audits, or production for hard live "
+            "contract health checks with Codex repair prompts."
+        ),
     )
     parser.add_argument(
         "--release-integrity-mode",
@@ -205,6 +237,118 @@ def download_object_text(bucket_name: str, blob_name: str, generation: str) -> s
     client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
     blob = client.bucket(bucket_name).blob(blob_name, generation=int(generation) if generation else None)
     return blob.download_as_text()
+
+
+def as_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def same_generation(expected: Any, actual: Any) -> bool:
+    expected_int = as_int(expected)
+    actual_int = as_int(actual)
+    return expected_int is not None and actual_int is not None and expected_int == actual_int
+
+
+def release_file_for_format(files: Any, format_name: str) -> dict[str, Any] | None:
+    if not isinstance(files, list):
+        return None
+    for file_entry in files:
+        if not isinstance(file_entry, dict):
+            continue
+        candidate = str(file_entry.get("format") or file_entry.get("role") or "").strip()
+        if candidate == format_name:
+            return file_entry
+    return None
+
+
+def release_file_path(file_entry: Any) -> str:
+    if not isinstance(file_entry, dict):
+        return ""
+    path = str(file_entry.get("path") or "").strip()
+    return path if path.startswith("gs://") else ""
+
+
+def load_asset_doc_feature_metadata(docs_dir: Path) -> Dict[str, dict[str, Any]]:
+    metadata_by_slug: Dict[str, dict[str, Any]] = {}
+    if not docs_dir.exists():
+        return metadata_by_slug
+    for path in sorted(docs_dir.glob("*.md")):
+        match = FRONTMATTER_RE.match(path.read_text())
+        if not match:
+            continue
+        payload = yaml.safe_load(match.group(1)) or {}
+        if not isinstance(payload, dict):
+            continue
+        slug = str(payload.get("asset_slug") or "").strip()
+        feature_metadata = payload.get("feature_metadata")
+        if slug and isinstance(feature_metadata, dict):
+            metadata_by_slug[slug] = feature_metadata
+    return metadata_by_slug
+
+
+def release_index_repair_next_step(asset_slug: str) -> str:
+    return (
+        "Generate a dry-run release-index repair candidate, review exact paths and generations, "
+        "then route canonical _catalog/ changes through a reviewed PR and the approved dataset "
+        "mutation workflow."
+    )
+
+
+def release_index_exists_prompt(*, asset_slug: str, exact_gcs_uri: str) -> str:
+    return (
+        "In shared-datasets-1, load AGENTS.md plus the gcp-shared-datasets and "
+        "shared-datasets-compliance-audit skills. The Bucket hygiene audit failed because this "
+        f"active versioned asset has no JSON release index: {exact_gcs_uri}. Do not mutate canonical "
+        f"GCS from a local terminal. Inspect the catalog row, docs/assets/{asset_slug}.md, existing "
+        f"latest/release objects, and object generations. Build a reviewed repair plan that creates "
+        f"_catalog/releases/{asset_slug}.json through the approved dataset mutation workflow, including "
+        "exact source object URIs, generations, checksums, row counts where known, and validation commands. "
+        "Rerun the production bucket hygiene audit in enforce mode after the PR-mediated repair."
+    )
+
+
+def successful_run_missing_prompt(*, asset_slug: str, exact_run_record_uri: str) -> str:
+    return (
+        "In shared-datasets-1, load AGENTS.md plus the gcp-shared-datasets and "
+        "shared-datasets-compliance-audit skills. The Bucket hygiene audit failed because this "
+        f"successful run record is not represented in _catalog/releases/{asset_slug}.json: "
+        f"{exact_run_record_uri}. Do not mutate canonical GCS locally. Inspect the run record, release "
+        "objects for the same date, and the current release index. Determine whether the run produced "
+        "a valid release that must be indexed or whether the run record status is wrong. Prepare a "
+        "reviewed repair PR with exact generation-aware _catalog/releases changes or the correct safe "
+        "alternative, then rerun the production audit."
+    )
+
+
+def canonical_file_missing_prompt(*, asset_slug: str, release_date: str) -> str:
+    return (
+        "In shared-datasets-1, load AGENTS.md plus the gcp-shared-datasets and "
+        "shared-datasets-compliance-audit skills. The Bucket hygiene audit failed because release "
+        f"{release_date} for {asset_slug} is indexed without the catalog canonical format file. Do not "
+        f"mutate canonical GCS locally. Inspect _catalog/releases/{asset_slug}.json, the asset doc, latest/ "
+        f"objects, and releases/{release_date}/ objects. Choose the safe repair: either index/promote the "
+        "existing canonical FGB for that release if it exists and validates, or retarget latest_release to "
+        "the newest complete release. Prepare the repair through a reviewed PR / approved mutation plan "
+        "with exact paths and generations, then rerun the production audit."
+    )
+
+
+def feature_metadata_prompt(*, asset_slug: str) -> str:
+    return (
+        "In shared-datasets-1, load AGENTS.md plus the gcp-shared-datasets, shared-datasets-compliance-audit, "
+        f"and publish-shared-dataset skills. The Bucket hygiene audit failed because docs/assets/{asset_slug}.md "
+        "advertises feature_metadata, but the live bucket does not have a complete usable metadata contract. "
+        "Do not mutate canonical GCS locally. Inspect the latest sidecar/schema/manifest paths, "
+        f"_catalog/releases/{asset_slug}.json, release manifest, and index-load records. Publish or repair a "
+        "complete metadata-backed release through the approved workflow: FGB, lightweight PMTiles, "
+        ".metadata.ndjson.gz, .schema.json, .manifest.json, release index entries with generations, and a "
+        "successful index-load record. Rerun the production bucket hygiene audit after the approved repair."
+    )
 
 
 def validate_remote_catalog(bucket_name: str, local_catalog_path: Path) -> List[Finding]:
@@ -1218,17 +1362,20 @@ def validate_release_integrity(
             continue
 
         index_name = f"{RELEASE_INDEX_PREFIX}/{slug}.json"
+        index_uri = f"gs://{bucket}/{index_name}"
         index_blob = object_by_name.get(index_name)
         if not index_blob:
             findings.append(
                 Finding(
                     severity,
-                    f"gs://{bucket}/{index_name}",
+                    index_uri,
                     "release-index-exists",
                     "Versioned active asset has no JSON release index.",
                     "unknown",
-                    "Run `uv run python scripts/gcs_asset.py release-index rebuild --asset-slug "
-                    f"{slug} --dry-run`, review it, then rerun without --dry-run.",
+                    release_index_repair_next_step(slug),
+                    "Consumers cannot discover release history or verify immutable release objects for this asset.",
+                    "release-index",
+                    release_index_exists_prompt(asset_slug=slug, exact_gcs_uri=index_uri),
                 )
             )
             continue
@@ -1286,6 +1433,8 @@ def validate_release_integrity(
             continue
 
         release_dates = []
+        canonical_format = str(row.get("canonical_format") or "").strip().lower()
+        cadence = scheduled_cadence(row)
         for release in releases:
             if not isinstance(release, dict):
                 findings.append(
@@ -1302,8 +1451,49 @@ def validate_release_integrity(
             release_date = str(release.get("date") or "")
             if parse_iso_date(release_date):
                 release_dates.append(release_date)
+            canonical_file = release_file_for_format(release.get("files") or [], canonical_format)
+            if canonical_format and not release_file_path(canonical_file):
+                findings.append(
+                    Finding(
+                        severity,
+                        index_uri,
+                        "release-index-canonical-file",
+                        f"Indexed release {release_date or '<unknown>'} is missing canonical {canonical_format} file.",
+                        uploader_hint(index_blob),
+                        release_index_repair_next_step(slug),
+                        "Catalog generation and SDK consumers require every indexed release to expose its canonical file.",
+                        "release-index",
+                        canonical_file_missing_prompt(asset_slug=slug, release_date=release_date or "<unknown>"),
+                    )
+                )
+            if parse_iso_date(release_date) and not isinstance(release.get("rows"), int):
+                findings.append(
+                    Finding(
+                        "WARN",
+                        index_uri,
+                        "release-index-rows",
+                        f"Indexed release {release_date} is missing an integer rows count.",
+                        uploader_hint(index_blob),
+                        "Backfill rows from validated release metadata when preparing the next reviewed release-index repair.",
+                        "Release counts are useful for auditability but do not currently break consumers.",
+                        "release-index-backfill",
+                    )
+                )
             run_record_path = str(release.get("run_record_path") or "")
             run_record_name = gcs_object_name_if_same_bucket(bucket, run_record_path) if run_record_path else ""
+            if cadence and parse_iso_date(release_date) and not run_record_path:
+                findings.append(
+                    Finding(
+                        "WARN",
+                        index_uri,
+                        "release-index-run-record",
+                        f"Scheduled release {release_date} is missing run_record_path.",
+                        uploader_hint(index_blob),
+                        "Backfill or document the run record path when preparing the next reviewed release-index repair.",
+                        "Run records are audit evidence for scheduled releases but missing historical records do not currently break consumers.",
+                        "release-index-backfill",
+                    )
+                )
             if run_record_path and (not run_record_name or run_record_name not in object_names):
                 findings.append(
                     Finding(
@@ -1326,6 +1516,21 @@ def validate_release_integrity(
                         severity=severity,
                     )
                 )
+                if isinstance(file_entry, dict) and release_file_path(file_entry):
+                    sha256 = str(file_entry.get("sha256") or "").strip()
+                    if not re.fullmatch(r"[a-fA-F0-9]{64}", sha256):
+                        findings.append(
+                            Finding(
+                                "WARN",
+                                index_uri,
+                                "release-index-file-sha256",
+                                f"Indexed release file for {release_date or '<unknown>'} is missing a valid sha256.",
+                                uploader_hint(index_blob),
+                                "Backfill sha256 from the immutable object bytes when preparing the next reviewed release-index repair.",
+                                "Checksums are useful audit evidence but missing historical hashes do not currently break consumers.",
+                                "release-index-backfill",
+                            )
+                        )
 
         latest_release = payload.get("latest_release") or {}
         latest_release_date = latest_release.get("date") if isinstance(latest_release, dict) else None
@@ -1353,18 +1558,21 @@ def validate_release_integrity(
                 continue
             run_date = str(run_payload.get("run_date") or Path(run_blob.name).stem)
             if run_payload.get("status") == "success" and run_date not in indexed_success_dates:
+                run_record_uri = f"gs://{bucket}/{run_blob.name}"
                 findings.append(
                     Finding(
                         severity,
-                        f"gs://{bucket}/{run_blob.name}",
+                        run_record_uri,
                         "release-index-success-run-indexed",
                         f"Successful run record {run_date} is not present in the release index.",
                         uploader_hint(run_blob),
-                        "Rebuild the release index from remote releases and run records.",
+                        release_index_repair_next_step(slug),
+                        "Successful scheduled runs are invisible to release-history consumers until indexed.",
+                        "release-index",
+                        successful_run_missing_prompt(asset_slug=slug, exact_run_record_uri=run_record_uri),
                     )
                 )
 
-        cadence = scheduled_cadence(row)
         if cadence:
             latest_run = payload.get("latest_run") or {}
             latest_run_date = parse_iso_date(latest_run.get("date") if isinstance(latest_run, dict) else None)
@@ -1397,7 +1605,233 @@ def validate_release_integrity(
     return findings
 
 
-def finding_blocks_exit(finding: Finding, *, release_integrity_mode: str) -> bool:
+def load_json_blob(bucket: str, blob: BlobInfo) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(download_object_text(bucket, blob.name, blob.generation))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def feature_metadata_release_root(metadata_entry: dict[str, Any], release: str) -> str:
+    path = release_file_path(metadata_entry)
+    marker = f"/releases/{release}/"
+    if marker not in path:
+        return ""
+    without_scheme = path[5:] if path.startswith("gs://") else path
+    _bucket, separator, name = without_scheme.partition("/")
+    if not separator:
+        return ""
+    return name.split(marker, 1)[0]
+
+
+def index_load_matches(
+    record: Any,
+    *,
+    asset_slug: str,
+    release: str,
+    metadata_entry: dict[str, Any],
+    schema_entry: dict[str, Any],
+    manifest_entry: dict[str, Any],
+) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("status") != "success" or record.get("dry_run") is True:
+        return False
+    load_id = record.get("load_id")
+    if not isinstance(load_id, str) or not LOAD_ID_RE.fullmatch(load_id):
+        return False
+    if record.get("asset_slug") != asset_slug or record.get("release") != release:
+        return False
+    return (
+        record.get("sidecar_uri") == metadata_entry.get("path")
+        and same_generation(record.get("sidecar_generation"), metadata_entry.get("generation"))
+        and record.get("schema_uri") == schema_entry.get("path")
+        and same_generation(record.get("schema_generation"), schema_entry.get("generation"))
+        and record.get("manifest_uri") == manifest_entry.get("path")
+        and same_generation(record.get("manifest_generation"), manifest_entry.get("generation"))
+    )
+
+
+def validate_feature_metadata_readiness(
+    *,
+    bucket: str,
+    blobs: Sequence[BlobInfo],
+    catalog_rows: Sequence[Dict[str, str]],
+    feature_metadata_docs: Dict[str, dict[str, Any]],
+) -> List[Finding]:
+    findings: List[Finding] = []
+    object_by_name = {blob.name: blob for blob in blobs}
+
+    for row in catalog_rows:
+        slug = (row.get("asset_slug") or "").strip()
+        if not slug or slug not in feature_metadata_docs:
+            continue
+        if (row.get("status") or "").strip().lower() != "active":
+            continue
+        root = row_asset_root(bucket, row)
+        issues: list[str] = []
+        if not root:
+            issues.append("catalog canonical_path does not resolve to a latest/ asset root")
+        else:
+            for role, suffix in FEATURE_METADATA_LATEST_FILES.items():
+                latest_name = f"{root}/latest/{slug}{suffix}"
+                if latest_name not in object_by_name:
+                    issues.append(f"missing latest {role} object: gs://{bucket}/{latest_name}")
+
+        index_name = f"{RELEASE_INDEX_PREFIX}/{slug}.json"
+        index_blob = object_by_name.get(index_name)
+        release = ""
+        metadata_entry: dict[str, Any] | None = None
+        schema_entry: dict[str, Any] | None = None
+        manifest_entry: dict[str, Any] | None = None
+        if not index_blob:
+            issues.append(f"missing release index: gs://{bucket}/{index_name}")
+        else:
+            index_payload = load_json_blob(bucket, index_blob)
+            if not index_payload:
+                issues.append(f"release index is not valid JSON object: gs://{bucket}/{index_name}")
+            else:
+                latest_release = index_payload.get("latest_release")
+                if not isinstance(latest_release, dict):
+                    issues.append("release index latest_release is missing or not an object")
+                else:
+                    release = str(latest_release.get("date") or "")
+                    if not parse_iso_date(release):
+                        issues.append("release index latest_release.date is not a concrete YYYY-MM-DD date")
+                    files = latest_release.get("files")
+                    if not isinstance(files, list):
+                        issues.append("release index latest_release.files is missing or not an array")
+                        files = []
+                    metadata_entry = release_file_for_format(files, "metadata")
+                    schema_entry = release_file_for_format(files, "schema")
+                    manifest_entry = release_file_for_format(files, "manifest")
+                    for role, entry in (
+                        ("metadata", metadata_entry),
+                        ("schema", schema_entry),
+                        ("manifest", manifest_entry),
+                    ):
+                        if not entry:
+                            issues.append(f"latest_release.files is missing {role} entry")
+                            continue
+                        object_name = gcs_object_name_if_same_bucket(bucket, release_file_path(entry))
+                        blob = object_by_name.get(object_name)
+                        if not blob:
+                            issues.append(f"indexed {role} object is missing: {entry.get('path')}")
+                            continue
+                        if not same_generation(entry.get("generation"), blob.generation):
+                            issues.append(
+                                f"indexed {role} generation {entry.get('generation')!r} does not match "
+                                f"live generation {blob.generation}"
+                            )
+
+        schema_payload: dict[str, Any] | None = None
+        manifest_payload: dict[str, Any] | None = None
+        if schema_entry:
+            schema_name = gcs_object_name_if_same_bucket(bucket, release_file_path(schema_entry))
+            schema_blob = object_by_name.get(schema_name)
+            if schema_blob:
+                schema_payload = load_json_blob(bucket, schema_blob)
+                if not schema_payload:
+                    issues.append(f"release schema is not a valid JSON object: {schema_entry.get('path')}")
+                else:
+                    try:
+                        release_feature_model.validate_release_schema(
+                            schema_payload,
+                            expected_asset_slug=slug,
+                            expected_release=release or None,
+                        )
+                    except release_feature_model.ReleaseFeatureModelError as exc:
+                        issues.append(f"release schema is invalid: {exc}")
+        if manifest_entry:
+            manifest_name = gcs_object_name_if_same_bucket(bucket, release_file_path(manifest_entry))
+            manifest_blob = object_by_name.get(manifest_name)
+            if manifest_blob:
+                manifest_payload = load_json_blob(bucket, manifest_blob)
+                if not manifest_payload:
+                    issues.append(f"release manifest is not a valid JSON object: {manifest_entry.get('path')}")
+                else:
+                    try:
+                        artifacts = release_feature_model.validate_release_manifest(
+                            manifest_payload,
+                            expected_asset_slug=slug,
+                            expected_release=release or None,
+                            require_generations=True,
+                        )
+                    except release_feature_model.ReleaseFeatureModelError as exc:
+                        issues.append(f"release manifest is invalid: {exc}")
+                    else:
+                        for role, entry in (
+                            ("metadata", metadata_entry),
+                            ("schema", schema_entry),
+                            ("manifest", manifest_entry),
+                        ):
+                            if not entry:
+                                continue
+                            artifact = artifacts.get(role)
+                            if not artifact:
+                                continue
+                            if artifact.get("path") != entry.get("path"):
+                                issues.append(f"manifest {role} path does not match release index")
+                            if role != "manifest" and not same_generation(
+                                artifact.get("generation"),
+                                entry.get("generation"),
+                            ):
+                                issues.append(f"manifest {role} generation does not match release index")
+
+        if release and metadata_entry and schema_entry and manifest_entry:
+            asset_root = feature_metadata_release_root(metadata_entry, release)
+            if not asset_root:
+                issues.append(f"metadata sidecar path is not under releases/{release}/")
+            else:
+                index_load_prefix = f"{asset_root}/index-loads/{release}/"
+                matching_load = False
+                for blob in sorted(
+                    (
+                        candidate
+                        for candidate in blobs
+                        if candidate.name.startswith(index_load_prefix) and candidate.name.endswith(".json")
+                    ),
+                    key=lambda candidate: candidate.name,
+                ):
+                    record = load_json_blob(bucket, blob)
+                    if index_load_matches(
+                        record,
+                        asset_slug=slug,
+                        release=release,
+                        metadata_entry=metadata_entry,
+                        schema_entry=schema_entry,
+                        manifest_entry=manifest_entry,
+                    ):
+                        matching_load = True
+                        break
+                if not matching_load:
+                    issues.append(
+                        f"no successful matching index-load record under gs://{bucket}/{index_load_prefix}"
+                    )
+
+        if issues:
+            findings.append(
+                Finding(
+                    "ERROR",
+                    f"docs/assets/{slug}.md",
+                    "feature-metadata-contract-ready",
+                    "Asset doc advertises feature_metadata, but the live bucket metadata contract is not usable: "
+                    + "; ".join(issues),
+                    "unknown",
+                    "Publish or repair a complete metadata-backed release through the approved workflow before advertising feature metadata.",
+                    "Consumers may see feature metadata in the catalog but receive missing-object errors or metadata-service 409 responses.",
+                    "feature-metadata",
+                    feature_metadata_prompt(asset_slug=slug),
+                )
+            )
+
+    return findings
+
+
+def finding_blocks_exit(finding: Finding, *, release_integrity_mode: str, health_profile: str = "advisory") -> bool:
+    if health_profile == "production":
+        return finding.severity == "ERROR"
     if finding.check.startswith("release-index-") and release_integrity_mode == "warn":
         return False
     return finding.severity in {"ERROR", "WARN"}
@@ -1440,12 +1874,45 @@ def render_markdown(findings: Sequence[Finding], bucket: str, prefix: str, objec
             )
             if finding.suggested_next_step:
                 lines.append(f"  - Suggested next step: {finding.suggested_next_step}")
+            if finding.impact:
+                lines.append(f"  - Impact: {finding.impact}")
+            if finding.repair_category:
+                lines.append(f"  - Repair category: `{finding.repair_category}`")
+            if finding.codex_prompt:
+                lines.extend(
+                    [
+                        "  - Codex repair prompt:",
+                        "",
+                        "```text",
+                        finding.codex_prompt,
+                        "```",
+                    ]
+                )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main() -> int:
-    args = parse_args()
+def apply_health_profile_defaults(args: argparse.Namespace) -> None:
+    if args.health_profile == "production":
+        args.release_integrity_mode = "enforce"
+        args.fail_on_findings = True
+
+
+def audit_exit_code(args: argparse.Namespace, findings: Sequence[Finding]) -> int:
+    if args.fail_on_findings and any(
+        finding_blocks_exit(
+            f,
+            release_integrity_mode=args.release_integrity_mode,
+            health_profile=args.health_profile,
+        )
+        for f in findings
+    ):
+        return 1
+    return 0
+
+
+def run_audit(args: argparse.Namespace) -> AuditRunResult:
+    apply_health_profile_defaults(args)
     categories = load_categories(Path(args.categories))
     catalog_rows, catalog_by_slug = load_catalog(Path(args.catalog))
     if args.local_only:
@@ -1477,6 +1944,26 @@ def main() -> int:
                 mode=args.release_integrity_mode,
             )
         )
+    if not args.local_only and not args.prefix and args.health_profile == "production":
+        findings.extend(
+            validate_feature_metadata_readiness(
+                bucket=args.bucket,
+                blobs=blobs,
+                catalog_rows=catalog_rows,
+                feature_metadata_docs=load_asset_doc_feature_metadata(Path(args.asset_docs_dir)),
+            )
+        )
+
+    return AuditRunResult(
+        findings=findings,
+        object_count=len(blobs),
+        exit_code=audit_exit_code(args, findings),
+    )
+
+
+def main() -> int:
+    args = parse_args()
+    result = run_audit(args)
 
     if args.format == "json":
         print(
@@ -1484,22 +1971,17 @@ def main() -> int:
                 {
                     "bucket": args.bucket,
                     "prefix": args.prefix,
-                    "objects_inspected": len(blobs),
-                    "findings": [asdict(finding) for finding in findings],
+                    "objects_inspected": result.object_count,
+                    "findings": [asdict(finding) for finding in result.findings],
                 },
                 indent=2,
                 sort_keys=True,
             )
         )
     else:
-        print(render_markdown(findings, args.bucket, args.prefix, len(blobs)))
+        print(render_markdown(result.findings, args.bucket, args.prefix, result.object_count))
 
-    if args.fail_on_findings and any(
-        finding_blocks_exit(f, release_integrity_mode=args.release_integrity_mode)
-        for f in findings
-    ):
-        return 1
-    return 0
+    return result.exit_code
 
 
 if __name__ == "__main__":

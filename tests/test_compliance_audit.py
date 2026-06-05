@@ -211,6 +211,41 @@ Initial upload.
         self.assertEqual(findings[0].severity, "WARN")
         self.assertFalse(audit.finding_blocks_exit(findings[0], release_integrity_mode="warn"))
 
+    def test_production_profile_makes_release_integrity_findings_blocking(self):
+        row = catalog_row(update_cadence="monthly")
+        release_blob = blob_info(
+            "100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb"
+        )
+
+        findings = audit.validate_release_integrity(
+            bucket="skytruth-shared-datasets-1",
+            blobs=[release_blob],
+            catalog_rows=[row],
+            mode="enforce",
+            today=dt.date(2026, 5, 2),
+        )
+
+        self.assertEqual([finding.check for finding in findings], ["release-index-exists"])
+        self.assertEqual(findings[0].severity, "ERROR")
+        self.assertTrue(
+            audit.finding_blocks_exit(
+                findings[0],
+                release_integrity_mode="enforce",
+                health_profile="production",
+            )
+        )
+
+    def test_production_profile_keeps_warnings_nonblocking(self):
+        finding = audit.Finding("WARN", "example", "release-index-rows", "missing rows")
+
+        self.assertFalse(
+            audit.finding_blocks_exit(
+                finding,
+                release_integrity_mode="enforce",
+                health_profile="production",
+            )
+        )
+
     def test_release_integrity_flags_missing_release_object(self):
         row = catalog_row(update_cadence="manual")
         index_name = "_catalog/releases/example-asset.json"
@@ -245,8 +280,45 @@ Initial upload.
                 today=dt.date(2026, 5, 2),
             )
 
-        self.assertIn("release-index-file-exists", {finding.check for finding in findings})
-        self.assertTrue(all(finding.severity == "ERROR" for finding in findings))
+        missing_file = next(finding for finding in findings if finding.check == "release-index-file-exists")
+        self.assertEqual(missing_file.severity, "ERROR")
+
+    def test_release_integrity_flags_release_missing_canonical_file(self):
+        row = catalog_row(update_cadence="manual")
+        index_name = "_catalog/releases/example-asset.json"
+        pmtiles_name = "100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.pmtiles"
+        payloads = {
+            index_name: {
+                "asset_slug": "example-asset",
+                "latest_release": {"date": "2026-05-01"},
+                "releases": [
+                    {
+                        "date": "2026-05-01",
+                        "files": [
+                            {
+                                "format": "pmtiles",
+                                "path": f"gs://skytruth-shared-datasets-1/{pmtiles_name}",
+                                "sha256": "a" * 64,
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+
+        with mock.patch.object(audit, "download_object_text", side_effect=download_from(payloads)):
+            findings = audit.validate_release_integrity(
+                bucket="skytruth-shared-datasets-1",
+                blobs=[blob_info(index_name), blob_info(pmtiles_name)],
+                catalog_rows=[row],
+                mode="enforce",
+                today=dt.date(2026, 5, 2),
+            )
+
+        self.assertIn("release-index-canonical-file", {finding.check for finding in findings})
+        canonical = next(finding for finding in findings if finding.check == "release-index-canonical-file")
+        self.assertEqual(canonical.severity, "ERROR")
+        self.assertIn("catalog canonical format file", canonical.codex_prompt)
 
     def test_release_integrity_flags_missing_indexed_run_record(self):
         row = catalog_row(update_cadence="manual")
@@ -341,8 +413,15 @@ Initial upload.
                 "releases": [
                     {
                         "date": "2026-02-01",
+                        "rows": 2,
                         "run_record_path": f"gs://skytruth-shared-datasets-1/{run_name}",
-                        "files": [{"format": "fgb", "path": f"gs://skytruth-shared-datasets-1/{release_name}"}],
+                        "files": [
+                            {
+                                "format": "fgb",
+                                "path": f"gs://skytruth-shared-datasets-1/{release_name}",
+                                "sha256": "a" * 64,
+                            }
+                        ],
                     }
                 ],
             },
@@ -360,12 +439,135 @@ Initial upload.
 
         self.assertEqual(findings, [])
 
+    def test_feature_metadata_readiness_flags_missing_latest_bundle(self):
+        row = catalog_row(update_cadence="manual")
 
-def blob_info(name: str) -> audit.BlobInfo:
+        findings = audit.validate_feature_metadata_readiness(
+            bucket="skytruth-shared-datasets-1",
+            blobs=[],
+            catalog_rows=[row],
+            feature_metadata_docs={"example-asset": {"storage": "metadata_sidecar_v1"}},
+        )
+
+        self.assertEqual([finding.check for finding in findings], ["feature-metadata-contract-ready"])
+        self.assertEqual(findings[0].severity, "ERROR")
+        self.assertIn("missing latest metadata object", findings[0].message)
+        self.assertIn("docs/assets/example-asset.md advertises feature_metadata", findings[0].codex_prompt)
+
+    def test_feature_metadata_readiness_flags_missing_successful_index_load(self):
+        row = catalog_row(update_cadence="manual")
+        root = "100-geographic-reference/110-boundaries/example-asset"
+        release = "2026-05-01"
+        metadata_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.metadata.ndjson.gz"
+        schema_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.schema.json"
+        manifest_uri = f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.manifest.json"
+        schema = {
+            "schema_version": 1,
+            "asset_slug": "example-asset",
+            "release": release,
+            "fields": [{"name": "name", "type": "String", "nullable": True, "projectable": True}],
+        }
+        manifest = {
+            "schema_version": 1,
+            "asset_slug": "example-asset",
+            "release": release,
+            "release_feature_model_schema_version": 1,
+            "source_inputs": [],
+            "artifacts": [
+                {
+                    "role": "fgb",
+                    "path": f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.fgb",
+                    "sha256": "a" * 64,
+                    "generation": 10,
+                },
+                {
+                    "role": "pmtiles",
+                    "path": f"gs://skytruth-shared-datasets-1/{root}/releases/{release}/example-asset.pmtiles",
+                    "sha256": "b" * 64,
+                    "generation": 11,
+                },
+                {"role": "metadata", "path": metadata_uri, "sha256": "c" * 64, "generation": 12},
+                {"role": "schema", "path": schema_uri, "sha256": "d" * 64, "generation": 13},
+                {"role": "manifest", "path": manifest_uri},
+            ],
+            "schema": schema,
+            "id_strategy": {},
+            "feature_hash_algorithm": audit.release_feature_model.FEATURE_HASH_ALGORITHM,
+            "validation": {},
+            "index_status_policy": {"mode": "external_index_load_records", "path": f"index-loads/{release}/"},
+        }
+        release_index = {
+            "asset_slug": "example-asset",
+            "latest_release": {
+                "date": release,
+                "files": [
+                    {"format": "metadata", "path": metadata_uri, "generation": 12},
+                    {"format": "schema", "path": schema_uri, "generation": 13},
+                    {"format": "manifest", "path": manifest_uri, "generation": 14},
+                ],
+            },
+            "releases": [],
+        }
+        payloads = {
+            "_catalog/releases/example-asset.json": release_index,
+            f"{root}/releases/{release}/example-asset.schema.json": schema,
+            f"{root}/releases/{release}/example-asset.manifest.json": manifest,
+        }
+        blobs = [
+            blob_info("_catalog/releases/example-asset.json"),
+            blob_info(f"{root}/latest/example-asset.metadata.ndjson.gz"),
+            blob_info(f"{root}/latest/example-asset.schema.json"),
+            blob_info(f"{root}/latest/example-asset.manifest.json"),
+            blob_info(f"{root}/releases/{release}/example-asset.metadata.ndjson.gz", generation="12"),
+            blob_info(f"{root}/releases/{release}/example-asset.schema.json", generation="13"),
+            blob_info(f"{root}/releases/{release}/example-asset.manifest.json", generation="14"),
+        ]
+
+        with mock.patch.object(audit, "download_object_text", side_effect=download_from(payloads)):
+            findings = audit.validate_feature_metadata_readiness(
+                bucket="skytruth-shared-datasets-1",
+                blobs=blobs,
+                catalog_rows=[row],
+                feature_metadata_docs={"example-asset": {"storage": "metadata_sidecar_v1"}},
+            )
+
+        self.assertEqual([finding.check for finding in findings], ["feature-metadata-contract-ready"])
+        self.assertIn("no successful matching index-load record", findings[0].message)
+
+    def test_assets_without_feature_metadata_do_not_require_sidecars(self):
+        row = catalog_row(update_cadence="manual")
+
+        findings = audit.validate_feature_metadata_readiness(
+            bucket="skytruth-shared-datasets-1",
+            blobs=[],
+            catalog_rows=[row],
+            feature_metadata_docs={},
+        )
+
+        self.assertEqual(findings, [])
+
+    def test_markdown_and_json_include_codex_repair_prompt(self):
+        finding = audit.Finding(
+            "ERROR",
+            "example",
+            "example-check",
+            "example finding",
+            codex_prompt="Copy this prompt.",
+        )
+
+        markdown = audit.render_markdown([finding], "test-bucket", "", 1)
+        payload = audit.asdict(finding)
+
+        self.assertIn("Codex repair prompt", markdown)
+        self.assertIn("Copy this prompt.", markdown)
+        self.assertEqual(payload["codex_prompt"], "Copy this prompt.")
+
+
+def blob_info(name: str, *, generation: str = "1") -> audit.BlobInfo:
     return audit.BlobInfo(
         name=name,
         size=1,
-        generation="1",
+        generation=generation,
         updated="2026-05-01T00:00:00+00:00",
         content_type="application/json" if name.endswith(".json") else "application/octet-stream",
         metadata={},

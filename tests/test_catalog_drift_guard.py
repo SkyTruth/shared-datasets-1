@@ -131,6 +131,14 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("Missing repository variable: GCP_READONLY_SERVICE_ACCOUNT", workflow)
         self.assertNotIn("vars.GCP_SERVICE_ACCOUNT", workflow)
 
+    def test_bucket_hygiene_audit_workflow_runs_production_health_profile(self):
+        workflow = (REPO_ROOT / ".github/workflows/bucket-hygiene-audit.yml").read_text()
+
+        self.assertIn("Bucket hygiene audit may only use production read-only auth from main", workflow)
+        self.assertIn("--health-profile production", workflow)
+        self.assertIn("--format markdown", workflow)
+        self.assertNotIn("--local-only", workflow)
+
     def test_scratch_cleanup_audit_uses_protected_publisher_path(self):
         workflow = (REPO_ROOT / ".github/workflows/scratch-cleanup-audit.yml").read_text()
 
