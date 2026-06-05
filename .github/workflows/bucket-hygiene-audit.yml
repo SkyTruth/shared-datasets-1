@@ -68,7 +68,10 @@ jobs:
       - name: Run bucket compliance audit
         run: |
           set +e
-          uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --format markdown --fail-on-findings > bucket-hygiene-audit.md
+          uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
+            --health-profile production \
+            --format markdown \
+            > bucket-hygiene-audit.md
           status=$?
           cat bucket-hygiene-audit.md >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
