@@ -625,6 +625,66 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(files["pmtiles"]["size"], 99)
         self.assertEqual(files["pmtiles"]["sha256"], "newpmtiles")
 
+    def test_rebuild_index_backfills_legacy_successful_run_records(self):
+        bucket = FakeBucket()
+        fgb = bucket.blob("asset/releases/2026-06-03/asset.fgb")
+        fgb.exists = True
+        fgb.generation = 8
+        fgb.size = 13
+        pmtiles = bucket.blob("asset/releases/2026-06-03/asset.pmtiles")
+        pmtiles.exists = True
+        pmtiles.generation = 42
+        pmtiles.size = 99
+        run_record = bucket.blob("asset/runs/2026-06-03.json")
+        run_record.exists = True
+        run_record.generation = 77
+        run_record.size = 123
+        run_record.text = json.dumps(
+            {
+                "asset_slug": "test-asset",
+                "record_version": 1,
+                "run_date": "2026-06-03",
+                "status": "success",
+                "release_path": "gs://test-bucket/asset/releases/2026-06-03/",
+                "release_paths": [
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-06-03/asset.fgb",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-06-03/asset.pmtiles",
+                        "generation": 1,
+                        "size": 2,
+                    },
+                ],
+                "rows": 1755,
+                "sha256": {"fgb": "f" * 64, "pmtiles": "b" * 64},
+                "source_filename": "ims2026154_4km_GIS_v1.3.tif.gz",
+            }
+        )
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        release = index["latest_release"]
+        self.assertEqual(release["date"], "2026-06-03")
+        self.assertEqual(release["rows"], 1755)
+        self.assertEqual(release["source_version"], "ims2026154_4km_GIS_v1.3.tif.gz")
+        self.assertEqual(release["run_record_path"], "gs://test-bucket/asset/runs/2026-06-03.json")
+        files = {entry["format"]: entry for entry in release["files"]}
+        self.assertEqual(files["fgb"]["generation"], 8)
+        self.assertEqual(files["fgb"]["size"], 13)
+        self.assertEqual(files["fgb"]["sha256"], "f" * 64)
+        self.assertEqual(files["pmtiles"]["generation"], 42)
+        self.assertEqual(files["pmtiles"]["size"], 99)
+        self.assertEqual(files["pmtiles"]["sha256"], "b" * 64)
+
 
 if __name__ == "__main__":
     unittest.main()

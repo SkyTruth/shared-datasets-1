@@ -16,7 +16,9 @@ if str(REPO_ROOT) not in sys.path:
 
 from google.api_core.exceptions import NotFound, PreconditionFailed  # noqa: E402
 
+from ingestion.common import release_index  # noqa: E402
 from scripts import feature_metadata_localization, gcs_asset, reviewed_dataset_plan  # noqa: E402
+from scripts import publish_release  # noqa: E402
 
 
 TRANSLATION_SOURCE_SUFFIX = ".metadata-translations.csv"
@@ -67,6 +69,15 @@ def release_from_uri(uri: str) -> str | None:
     return match.group(1) if match else None
 
 
+def asset_slug_from_translation_source_uri(uri: str) -> str:
+    name = Path(uri).name
+    if not name.endswith(TRANSLATION_SOURCE_SUFFIX):
+        raise FeatureMetadataTranslationPipelineError(
+            f"translation source URI must end with {TRANSLATION_SOURCE_SUFFIX}: {uri}"
+        )
+    return name[: -len(TRANSLATION_SOURCE_SUFFIX)]
+
+
 def download_object(uri: str, destination: Path) -> dict[str, Any]:
     blob = gcs_asset.get_blob(uri)
     try:
@@ -115,6 +126,20 @@ def upload_object_with_current_generation(src: Path, uri: str) -> dict[str, Any]
     }
 
 
+def rebuild_release_index_for_asset(asset_slug: str) -> dict[str, Any]:
+    catalog = publish_release.load_catalog(Path("catalog/shared-datasets-catalog.csv"))
+    row = catalog.get(asset_slug)
+    if row is None:
+        raise FeatureMetadataTranslationPipelineError(f"asset slug is not in catalog: {asset_slug}")
+    bucket_name, _asset_root = release_index.asset_root_from_catalog_row(row)
+    bucket = gcs_asset.get_client().bucket(bucket_name)
+    payload = release_index.rebuild_index_from_bucket(bucket, row)
+    loaded = release_index.load_release_index(bucket, asset_slug)
+    index_uri = release_index.release_index_uri(bucket.name, asset_slug)
+    gcs_asset.require_mutation_allowed(index_uri, operation="release-index rebuild")
+    return release_index.write_release_index(bucket, asset_slug, payload, generation=loaded.generation)
+
+
 def materialize_translation_source(
     *,
     translation_source_uri: str,
@@ -161,6 +186,11 @@ def materialize_translation_source(
                     localized_destination_uri(canonical_sidecar_uri, report.locale),
                 )
             )
+    release_index_info = None
+    if uploads:
+        release_index_info = rebuild_release_index_for_asset(
+            asset_slug or asset_slug_from_translation_source_uri(translation_source_uri)
+        )
     return {
         "translation_source_uri": translation_source_uri,
         "canonical_sidecar_uri": canonical_sidecar_uri,
@@ -171,6 +201,7 @@ def materialize_translation_source(
         "locales": [report.locale for report in reports],
         "reports": [report.to_dict() for report in reports],
         "uploads": uploads,
+        "release_index": release_index_info,
     }
 
 
@@ -235,6 +266,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     except (
         FeatureMetadataTranslationPipelineError,
+        release_index.ReleaseIndexError,
         feature_metadata_localization.FeatureMetadataLocalizationError,
         reviewed_dataset_plan.PlanValidationError,
         OSError,

@@ -210,6 +210,43 @@ def files_from_run_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(files, key=lambda item: (item.get("format", ""), item.get("path", "")))
 
 
+def normalize_rebuild_run_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize historical run records enough for release-index rebuilds."""
+    if not isinstance(record, dict):
+        return None
+    normalized = copy.deepcopy(record)
+
+    if normalized.get("schema_version") != SCHEMA_VERSION:
+        if normalized.get("record_version") is None:
+            return None
+        normalized["schema_version"] = SCHEMA_VERSION
+
+    release_date = str(
+        normalized.get("release_date")
+        or normalized.get("run_date")
+        or normalized.get("target_release_date")
+        or ""
+    )
+    if not release_date:
+        return None
+    normalized["release_date"] = release_date
+
+    if "row_count" not in normalized and "rows" in normalized:
+        normalized["row_count"] = normalized.get("rows")
+
+    if not normalized.get("source_version"):
+        source_version = (
+            normalized.get("source_filename")
+            or normalized.get("source_fingerprint_hash")
+            or normalized.get("source")
+            or ""
+        )
+        if source_version:
+            normalized["source_version"] = str(source_version)
+
+    return normalized
+
+
 def run_record_path(record: dict[str, Any], run_record_info: dict[str, Any] | None = None) -> str:
     if run_record_info and run_record_info.get("path"):
         return str(run_record_info["path"])
@@ -447,7 +484,8 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             record = json.loads(blob.download_as_text())
         except (json.JSONDecodeError, NotFound):
             continue
-        if record.get("schema_version") != SCHEMA_VERSION:
+        record = normalize_rebuild_run_record(record)
+        if record is None:
             continue
         run_date = str(record.get("release_date") or "")
         if not run_date:
