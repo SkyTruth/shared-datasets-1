@@ -25,7 +25,7 @@ viewer backed by `gs://skytruth-shared-datasets-1-preview/`; see
 `docs/feature-preview.md`. It is refreshed by the preview index-load workflow
 and intentionally lists only assets with preview-bucket release indexes.
 Preview-bucket objects are not served by the production
-`https://tiles.skytruth.org/private/` CDN route. Private preview artifacts,
+`https://tiles.skytruth.org/artifacts/` CDN route. Private preview artifacts,
 including localized metadata sidecars, continue to resolve through the preview
 viewer as signed GCS URLs unless a separate preview CDN is explicitly created.
 
@@ -94,16 +94,16 @@ localization CSV sidecar and metadata lookup contract, including `storage`,
 `join_key`, `localization_file`, available locales, declared fields, aggregate
 per-locale review state, and fallback field when present.
 Release-oriented vector assets may also publish canonical and localized feature
-metadata sidecars in the release index. The browser asks `/api/download-url` for
-`format=metadata` and the active `locale`; the catalog viewer resolves that to
-one materialized `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar when present
-or the canonical `{asset-slug}.metadata.ndjson.gz` fallback when absent. The
-browser never fetches a separate translation overlay and does not merge
-translation rows over canonical metadata. Metadata sidecars must be
-`.ndjson.gz`; the browser expects gzip-compressed NDJSON. In production, private
-shared-bucket metadata responses may use one signed
-`https://tiles.skytruth.org/private/{bucket-object-path}` URL; public metadata
-and preview-bucket metadata may continue to use one GCS URL.
+metadata sidecars in the release index. The static public viewer resolves
+public sidecars from the hydrated release index and fetches them directly from
+`https://tiles.skytruth.org/artifacts/{bucket-object-path}`. It tries the
+active `locale` first, then falls back to the canonical
+`{asset-slug}.metadata.ndjson.gz` sidecar. The IAP-protected catalog viewer
+keeps `/api/download-url?format=metadata` for authorized private inspection and
+returns one signed `/artifacts/{bucket-object-path}` URL when CDN signing is
+configured. The browser never fetches a separate translation overlay and does
+not merge translation rows over canonical metadata. Metadata sidecars must be
+`.ndjson.gz`; the browser expects gzip-compressed NDJSON.
 `generated_group_id` records the policy and counts for a native
 `shared_datasets_group_id` feature property when an asset needs generated group
 IDs. `generated_row_id` records the policy and warning for a native

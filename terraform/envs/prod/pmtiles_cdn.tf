@@ -234,6 +234,27 @@ resource "google_compute_url_map" "pmtiles_cdn" {
     }
 
     path_rule {
+      paths   = ["/artifacts/*"]
+      service = google_compute_backend_bucket.pmtiles_cdn.self_link
+
+      route_action {
+        cors_policy {
+          allow_credentials = false
+          allow_headers     = ["Accept", "Content-Type", "Origin"]
+          allow_methods     = ["GET", "HEAD", "OPTIONS"]
+          allow_origins     = ["*"]
+          disabled          = false
+          expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]
+          max_age           = 3600
+        }
+
+        url_rewrite {
+          path_prefix_rewrite = "/"
+        }
+      }
+    }
+
+    path_rule {
       paths   = ["/private/*"]
       service = google_compute_backend_bucket.pmtiles_cdn.self_link
 
@@ -244,7 +265,7 @@ resource "google_compute_url_map" "pmtiles_cdn" {
           allow_methods     = ["GET", "HEAD", "OPTIONS"]
           allow_origins     = local.pmtiles_browser_allowed_origins
           disabled          = false
-          expose_headers    = ["Cache-Control", "Content-Encoding", "Content-Length", "Content-Type", "ETag"]
+          expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]
           max_age           = 3600
         }
 
@@ -272,10 +293,10 @@ resource "google_compute_url_map" "pmtiles_cdn" {
 
         route_action {
           cors_policy {
-            allow_credentials = true
+            allow_credentials = split("/", path_rule.key)[0] == "private"
             allow_headers     = ["Range"]
             allow_methods     = ["GET", "HEAD", "OPTIONS"]
-            allow_origins     = local.pmtiles_browser_allowed_origins
+            allow_origins     = split("/", path_rule.key)[0] == "private" ? local.pmtiles_browser_allowed_origins : ["*"]
             disabled          = false
             expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag"]
             max_age           = 3600
@@ -312,6 +333,13 @@ resource "google_compute_url_map" "pmtiles_cdn" {
     path                = "/_catalog/web/catalog.json"
     service             = google_compute_backend_bucket.pmtiles_cdn.self_link
     expected_output_url = "https://${var.pmtiles_cdn_host}/_catalog/web/catalog.json"
+  }
+
+  test {
+    host                = var.pmtiles_cdn_host
+    path                = "/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    service             = google_compute_backend_bucket.pmtiles_cdn.self_link
+    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
   }
 
   test {

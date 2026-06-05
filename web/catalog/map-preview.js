@@ -1465,6 +1465,7 @@ function serializeFeature(feature, source) {
   return {
     assetSlug: source.asset.slug,
     assetTitle: source.asset.title,
+    accessTier: source.asset.access_tier || "",
     color: colorForFeature(properties, source),
     release: source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || "latest",
     sourceLayer: feature.sourceLayer || feature.layer?.["source-layer"] || "",

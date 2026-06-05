@@ -34,7 +34,9 @@ Maintainer-only publishing and infrastructure procedures live in
 | Browser may display private PMTiles | TypeScript SDK plus app-owned backend session route | Private PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
 | Backend route issues private PMTiles cookies | TypeScript server entrypoint | Cookie signing uses Node crypto and should stay behind the app backend. |
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
-| App has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id` and `ext_id`; full metadata is served by asset/release/ID lookup. |
+| Browser needs public feature attributes | TypeScript metadata artifact helpers | Resolve the release-index sidecar and fetch `tiles.skytruth.org/artifacts/...` directly. |
+| Browser needs private feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
+| Backend has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id` and `ext_id`; full metadata is served by asset/release/ID lookup. |
 
 Do not build browser integrations on anonymous
 `https://storage.googleapis.com/skytruth-shared-datasets-1/...` reads. Direct
@@ -82,6 +84,10 @@ canonical `{asset-slug}.metadata.ndjson.gz` fallback. Browser apps should not
 fetch a separate translation overlay or merge translations over canonical
 metadata client-side. Canonical FGB consumers should rely on `ext_id` for joins
 and should not expect localized name columns in the FGB.
+Public sidecars should be fetched from
+`https://tiles.skytruth.org/artifacts/{bucket-object-path}`. Private sidecars
+should be returned by a consumer backend as one short-lived signed artifact URL
+only after slug, release, locale, tier, and user entitlement checks pass.
 
 Release-oriented vector PMTiles carry geometry plus `feature_id` and `ext_id`
 only. Use the metadata API for full attributes, display labels, and provenance
@@ -148,6 +154,7 @@ Browser-safe entrypoint:
 import {
   ensurePmtilesCdnSession,
   getPmtilesFetchCredentials,
+  resolvePublicSharedDatasetMetadataSidecarUrl,
   resolveSharedDatasetPmtilesRef
 } from "@skytruth/shared-datasets";
 ```
@@ -157,6 +164,7 @@ Server-only entrypoint for the consumer app's backend route:
 ```ts
 import {
   decodePmtilesCdnSigningKey,
+  getSignedSharedDatasetArtifactUrl,
   getExpiredPmtilesCookies,
   getPrivatePmtilesSessionCookies
 } from "@skytruth/shared-datasets/server";
@@ -194,6 +202,17 @@ Minimum private PMTiles flow:
 Exact CORS origins and signer IAM grants are infrastructure concerns. Request a
 shared-datasets infrastructure PR before relying on private PMTiles from a new
 deployed frontend origin.
+
+Private metadata should use a separate backend route, for example:
+
+```text
+GET /api/shared-datasets/metadata-url?slug=&version=&locale=
+```
+
+The route should return `Cache-Control: no-store`, validate the requested asset
+against catalog and release-index data, apply app-owned authorization, and sign
+only the exact metadata sidecar path selected by the release index. Do not sign
+caller-provided bucket object paths.
 
 ## Feature Metadata API
 
@@ -244,13 +263,17 @@ When moving an existing app to shared-datasets:
    `access_tier`, `Cloud-CDN-Cookie`, and existing PMTiles session routes.
 2. Replace browser PMTiles URLs with catalog-derived `pmtiles_url` or the
    tiered `tiles.skytruth.org` URL shape.
-3. Use the TypeScript SDK for browser/private PMTiles work and the Python SDK
+3. Replace public metadata sidecar fetches with release-index-derived
+   `/artifacts/{bucket-object-path}` URLs.
+4. Add an authorized backend metadata URL route before exposing private
+   metadata sidecars.
+5. Use the TypeScript SDK for browser/private PMTiles work and the Python SDK
    for backend data downloads.
-4. Preserve citation, license, access tier, and freshness metadata in consumer
+6. Preserve citation, license, access tier, and freshness metadata in consumer
    config where the UI or outputs show provenance.
-5. Bump any layer/config cache key that may contain old direct GCS URLs.
-6. Run the consumer repo's lint, type, test, and production build checks.
-7. Record old path, new path, changed files, and validation results in the PR.
+7. Bump any layer/config cache key that may contain old direct GCS URLs.
+8. Run the consumer repo's lint, type, test, and production build checks.
+9. Record old path, new path, changed files, and validation results in the PR.
 
 ## Testing Checklist
 
@@ -265,6 +288,9 @@ Frontend PMTiles:
   `storage.googleapis.com`.
 - Private layers call the session endpoint before mounting.
 - PMTiles range requests include `credentials: "include"` for private layers.
+- Public metadata sidecars use `https://tiles.skytruth.org/artifacts/...`.
+- Private metadata URL routes return `Cache-Control: no-store` and never sign
+  caller-provided object paths.
 
 Backend data:
 

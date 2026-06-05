@@ -124,7 +124,7 @@ class FakeCdnSigner:
         self.calls.append((gs_uri, expires_at))
         object_name = gs_uri.removeprefix("gs://skytruth-shared-datasets-1/")
         expires = int(expires_at.timestamp())
-        return f"https://tiles.skytruth.org/private/{object_name}?Expires={expires}&KeyName=test-key&Signature=abc"
+        return f"https://tiles.skytruth.org/artifacts/{object_name}?Expires={expires}&KeyName=test-key&Signature=abc"
 
 
 class FakeFeatureReleaseResolver:
@@ -548,7 +548,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/private/"))
+        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/artifacts/"))
         self.assertIn("wdpa-marine.metadata.es.ndjson.gz", payload["download_url"])
         self.assertEqual(payload["expires_at"], "2026-05-09T12:02:00Z")
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_ES_RELEASE_PATH)
@@ -575,7 +575,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/private/"))
+        self.assertTrue(payload["download_url"].startswith("https://tiles.skytruth.org/artifacts/"))
         self.assertIn("wdpa-marine.metadata.ndjson.gz", payload["download_url"])
         self.assertNotIn("metadata.fr.ndjson.gz", payload["download_url"])
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
@@ -656,7 +656,7 @@ class CatalogViewerTests(unittest.TestCase):
     def test_cloud_cdn_signed_url_signer_builds_private_metadata_url(self):
         signer = CloudCdnSignedUrlSigner(
             bucket_name="skytruth-shared-datasets-1",
-            base_url="https://tiles.skytruth.org/private",
+            base_url="https://tiles.skytruth.org/artifacts",
             key_name="shared-datasets-pmtiles-v1",
             key=b"0123456789abcdef",
         )
@@ -665,7 +665,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertTrue(
             signed.startswith(
-                "https://tiles.skytruth.org/private/100-geographic-reference/130-protected-areas/"
+                "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/"
                 "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz?Expires=1778328000"
                 "&KeyName=shared-datasets-pmtiles-v1&Signature="
             )
@@ -675,7 +675,7 @@ class CatalogViewerTests(unittest.TestCase):
     def test_cloud_cdn_signed_url_signer_rejects_outside_bucket_paths(self):
         signer = CloudCdnSignedUrlSigner(
             bucket_name="skytruth-shared-datasets-1",
-            base_url="https://tiles.skytruth.org/private",
+            base_url="https://tiles.skytruth.org/artifacts",
             key_name="shared-datasets-pmtiles-v1",
             key=b"0123456789abcdef",
         )

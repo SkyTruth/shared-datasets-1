@@ -72,8 +72,10 @@ Node crypto and should stay behind the consumer application's backend boundary.
 |---|---|---|
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
-| Browser click needs full feature attributes | App backend route to the metadata API | PMTiles expose `feature_id`; the backend calls the IAP-protected metadata service and returns app-shaped data. |
+| Browser click needs public feature attributes | Metadata artifact helpers | Resolve the release-index sidecar and fetch the public artifact URL directly from the CDN. |
+| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose `feature_id`; the backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
+| Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
 
 Use the Python SDK instead when backend code needs to download canonical data
@@ -194,6 +196,53 @@ default production layer lists, use `status === "active"` and preserve the
 license, citation, source, docs, release, and localized-name metadata returned
 with each ref; if your app needs non-PMTiles assets or fields outside this
 type, fetch and parse the catalog JSON directly.
+
+## Metadata Artifact Helpers
+
+Release indexes list metadata sidecars for feature-inspector fields. Public
+assets can fetch those sidecars directly from the CDN artifact route:
+
+```ts
+import {
+  resolvePublicSharedDatasetMetadataSidecarUrl
+} from "@skytruth/shared-datasets";
+
+const sidecar = resolvePublicSharedDatasetMetadataSidecarUrl({
+  accessTier: ref.accessTier,
+  releaseIndex,
+  version: "latest",
+  locale: userLocale
+});
+
+if (sidecar) {
+  const response = await fetch(sidecar.url, { cache: "no-store" });
+  const metadataBytes = await response.arrayBuffer();
+}
+```
+
+The resolver tries the requested locale first and falls back to the canonical
+`.metadata.ndjson.gz` sidecar when a localized sidecar is absent. It returns
+`null` when the release index has no metadata sidecar.
+
+Private assets should not expose direct sidecar URLs from browser code. Consumer
+backends should expose an app-owned route such as:
+
+```text
+GET /api/shared-datasets/metadata-url?slug=&version=&locale=
+```
+
+That route should authenticate the user, apply app-specific authorization,
+resolve the exact sidecar from catalog and release-index data, verify the asset
+is private, sign the artifact URL, return `Cache-Control: no-store`, and never
+sign arbitrary caller-provided object paths.
+
+Server code can sign an exact resolved artifact path:
+
+```ts
+import { getSignedSharedDatasetArtifactUrl } from "@skytruth/shared-datasets/server";
+
+const signedUrl = getSignedSharedDatasetArtifactUrl(gsUri, signingKey);
+```
 
 ## Browser PMTiles Fetching
 

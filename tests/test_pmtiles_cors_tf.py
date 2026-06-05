@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class PmtilesCorsTerraformTests(unittest.TestCase):
-    def test_cdn_cors_uses_exact_origins_and_redirector_keeps_regexes(self):
+    def test_cdn_cors_splits_public_wildcard_and_private_exact_origins(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
         variables_tf = (REPO_ROOT / "terraform/envs/prod/variables.tf").read_text()
 
@@ -24,7 +24,11 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         self.assertIn('"https://monitor.skytruth.org"', variables_tf)
         self.assertIn("PMTILES_ALLOWED_ORIGIN_REGEXES", pmtiles_cdn_tf)
         self.assertIn("value = join(\",\", var.pmtiles_cdn_allowed_origin_regexes)", pmtiles_cdn_tf)
-        self.assertRegex(pmtiles_cdn_tf, r"allow_origins\s+= local\.pmtiles_browser_allowed_origins")
+        self.assertIn('allow_credentials = split("/", path_rule.key)[0] == "private"', pmtiles_cdn_tf)
+        self.assertIn(
+            'allow_origins     = split("/", path_rule.key)[0] == "private" ? local.pmtiles_browser_allowed_origins : ["*"]',
+            pmtiles_cdn_tf,
+        )
         self.assertNotIn("allow_origin_regexes", pmtiles_cdn_tf)
         self.assertNotIn('type        = "CLOUD_ARMOR_EDGE"', pmtiles_cdn_tf)
         self.assertNotIn("edge_security_policy", pmtiles_cdn_tf)
@@ -46,18 +50,24 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
             pmtiles_cdn_tf,
         )
 
-    def test_private_metadata_route_rewrites_to_bucket_object_path_without_credentials(self):
+    def test_artifact_routes_rewrite_to_bucket_object_paths(self):
         pmtiles_cdn_tf = (REPO_ROOT / "terraform/envs/prod/pmtiles_cdn.tf").read_text()
 
+        self.assertIn('paths   = ["/artifacts/*"]', pmtiles_cdn_tf)
+        self.assertIn('allow_origins     = ["*"]', pmtiles_cdn_tf)
         self.assertIn('paths   = ["/private/*"]', pmtiles_cdn_tf)
         self.assertIn("allow_credentials = false", pmtiles_cdn_tf)
         self.assertIn('allow_methods     = ["GET", "HEAD", "OPTIONS"]', pmtiles_cdn_tf)
         self.assertIn("allow_origins     = local.pmtiles_browser_allowed_origins", pmtiles_cdn_tf)
         self.assertIn(
-            'expose_headers    = ["Cache-Control", "Content-Encoding", "Content-Length", "Content-Type", "ETag"]',
+            'expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "ETag"]',
             pmtiles_cdn_tf,
         )
         self.assertIn('path_prefix_rewrite = "/"', pmtiles_cdn_tf)
+        self.assertIn(
+            'path                = "/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            pmtiles_cdn_tf,
+        )
         self.assertIn(
             'path                = "/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
             pmtiles_cdn_tf,

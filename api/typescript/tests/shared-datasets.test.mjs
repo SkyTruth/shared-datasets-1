@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import {
   DEFAULT_ACCESS_TIER_CACHE_TTL_MS,
+  DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE,
   DEFAULT_PMTILES_PRIVATE_PATH_PREFIX,
   DEFAULT_PMTILES_URL_BASE,
   DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL,
@@ -19,17 +20,23 @@ import {
   getPmtilesTier,
   getSharedDatasetAccessTier,
   isPrivatePmtilesUrl,
+  normalizeSharedDatasetMetadataLocale,
   normalizeSharedDatasetAssetSlug,
   parseSharedDatasetsCatalogJson,
   resolveAllSharedDatasetPmtilesRefs,
+  resolvePublicSharedDatasetMetadataSidecarUrl,
   resolveSharedDatasetPmtilesRef,
   resolveSharedDatasetPmtilesRefs,
   resolveSharedDatasetPmtilesRefsFromCatalogJson,
+  resolveSharedDatasetMetadataSidecar,
+  sharedDatasetArtifactUrlFromGsUri,
   ensurePmtilesCdnSession
 } from '@skytruth/shared-datasets';
 import {
+  DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG,
   DEFAULT_PMTILES_CDN_SESSION_CONFIG,
   decodePmtilesCdnSigningKey,
+  getSignedSharedDatasetArtifactUrl,
   getExpiredPmtilesCookies,
   getPrivatePmtilesSessionCookies
 } from '@skytruth/shared-datasets/server';
@@ -118,6 +125,49 @@ const catalogFixture = {
       pmtiles_url:
         'https://tiles.skytruth.org/pmtiles/private/invalid-tier-layer.pmtiles',
       slug: 'invalid-tier-layer'
+    }
+  ]
+};
+
+const releaseIndexFixture = {
+  schema_version: 1,
+  asset_slug: 'example-public-layer',
+  latest_release: {
+    date: '2026-01-15',
+    files: [
+      {
+        format: 'metadata',
+        path: 'gs://example-bucket/example-public-layer/latest/example-public-layer.metadata.ndjson.gz'
+      }
+    ]
+  },
+  releases: [
+    {
+      date: '2026-01-01',
+      files: [
+        {
+          format: 'metadata',
+          path: 'gs://example-bucket/example-public-layer/releases/2026-01-01/example-public-layer.metadata.ndjson.gz'
+        }
+      ]
+    },
+    {
+      date: '2026-01-15',
+      files: [
+        {
+          format: 'metadata',
+          path: 'gs://example-bucket/example-public-layer/releases/2026-01-15/example-public-layer.metadata.ndjson.gz'
+        },
+        {
+          format: 'metadata',
+          locale: 'es',
+          path: 'gs://example-bucket/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz'
+        },
+        {
+          format: 'feature_index',
+          path: 'gs://example-bucket/example-public-layer/releases/2026-01-15/example-public-layer.legacy.metadata.ndjson.gz'
+        }
+      ]
     }
   ]
 };
@@ -225,6 +275,140 @@ test('decodes and validates PMTiles CDN signing keys', () => {
       Buffer.alloc(8, 5)
     ),
     0
+  );
+});
+
+test('resolves metadata sidecars and public artifact URLs from release indexes', () => {
+  assert.equal(
+    DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE,
+    'https://tiles.skytruth.org/artifacts'
+  );
+  assert.equal(normalizeSharedDatasetMetadataLocale('pt-BR'), 'pt_br');
+  assert.throws(
+    () => normalizeSharedDatasetMetadataLocale('../es'),
+    SharedDatasetCatalogResolutionError
+  );
+
+  const latest = resolveSharedDatasetMetadataSidecar({
+    releaseIndex: releaseIndexFixture,
+    version: 'latest'
+  });
+  assert.equal(latest.resolvedVersion, '2026-01-15');
+  assert.equal(
+    latest.gsUri,
+    'gs://example-bucket/example-public-layer/releases/2026-01-15/example-public-layer.metadata.ndjson.gz'
+  );
+  assert.equal(latest.metadataLocaleFallback, false);
+
+  const historical = resolveSharedDatasetMetadataSidecar({
+    releaseIndex: releaseIndexFixture,
+    version: '2026-01-01'
+  });
+  assert.equal(historical.resolvedVersion, '2026-01-01');
+
+  const localized = resolveSharedDatasetMetadataSidecar({
+    releaseIndex: releaseIndexFixture,
+    locale: 'es'
+  });
+  assert.equal(localized.resolvedLocale, 'es');
+  assert.equal(localized.metadataLocaleFallback, false);
+  assert.match(localized.filename, /\.metadata\.es\.ndjson\.gz$/);
+
+  const fallback = resolveSharedDatasetMetadataSidecar({
+    releaseIndex: releaseIndexFixture,
+    locale: 'fr'
+  });
+  assert.equal(fallback.requestedLocale, 'fr');
+  assert.equal(fallback.resolvedLocale, null);
+  assert.equal(fallback.metadataLocaleFallback, true);
+
+  assert.equal(
+    resolveSharedDatasetMetadataSidecar({
+      releaseIndex: {
+        latest_release: { date: '2026-01-15', files: [] },
+        releases: [{ date: '2026-01-15', files: [] }]
+      }
+    }),
+    null
+  );
+  assert.throws(
+    () =>
+      resolveSharedDatasetMetadataSidecar({
+        releaseIndex: releaseIndexFixture,
+        version: 'yesterday'
+      }),
+    /latest or YYYY-MM-DD/
+  );
+
+  assert.equal(
+    sharedDatasetArtifactUrlFromGsUri(
+      'gs://example-bucket/a folder/file.metadata.ndjson.gz',
+      { bucketName: 'example-bucket' }
+    ),
+    'https://tiles.skytruth.org/artifacts/a%20folder/file.metadata.ndjson.gz'
+  );
+  assert.throws(
+    () =>
+      sharedDatasetArtifactUrlFromGsUri(
+        'gs://other-bucket/a/file.metadata.ndjson.gz',
+        { bucketName: 'example-bucket' }
+      ),
+    /gs:\/\/example-bucket\//
+  );
+
+  const publicUrl = resolvePublicSharedDatasetMetadataSidecarUrl({
+    releaseIndex: releaseIndexFixture,
+    accessTier: 'public',
+    locale: 'es',
+    bucketName: 'example-bucket',
+    artifactBaseUrl: 'https://tiles.example.test/artifacts'
+  });
+  assert.equal(
+    publicUrl.url,
+    'https://tiles.example.test/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz'
+  );
+  assert.throws(
+    () =>
+      resolvePublicSharedDatasetMetadataSidecarUrl({
+        releaseIndex: releaseIndexFixture,
+        accessTier: 'private',
+        bucketName: 'example-bucket'
+      }),
+    /public assets/
+  );
+});
+
+test('creates signed shared dataset artifact URLs on the server entrypoint', () => {
+  assert.equal(DEFAULT_SHARED_DATASETS_ARTIFACT_SIGNED_URL_CONFIG.ttlSeconds, 15 * 60);
+  const signingKey = Buffer.alloc(16, 9);
+  const config = {
+    bucketName: 'example-bucket',
+    artifactBaseUrl: 'https://tiles.example.test/artifacts',
+    keyName: 'test key',
+    ttlSeconds: 60,
+    now: () => 1_700_000_000_000
+  };
+  const signedUrl = getSignedSharedDatasetArtifactUrl(
+    'gs://example-bucket/example layer/file.metadata.ndjson.gz',
+    signingKey,
+    config
+  );
+  const unsignedUrl =
+    'https://tiles.example.test/artifacts/example%20layer/file.metadata.ndjson.gz?Expires=1700000060&KeyName=test%20key';
+  const expectedSignature = encodeURIComponent(
+    toUrlSafeBase64(
+      crypto.createHmac('sha1', signingKey).update(unsignedUrl).digest()
+    )
+  );
+  assert.equal(signedUrl, `${unsignedUrl}&Signature=${expectedSignature}`);
+  assert.throws(
+    () =>
+      getSignedSharedDatasetArtifactUrl(
+        'gs://other-bucket/file.metadata.ndjson.gz',
+        signingKey,
+        config
+      ),
+    /gs:\/\/example-bucket\//
   );
 });
 
@@ -607,10 +791,12 @@ test('caches shared dataset access-tier lookups', async () => {
 
 test('main package entrypoint stays browser safe', async () => {
   assert.equal('decodePmtilesCdnSigningKey' in mainEntrypoint, false);
+  assert.equal('getSignedSharedDatasetArtifactUrl' in mainEntrypoint, false);
   assert.equal('getPrivatePmtilesSessionCookies' in mainEntrypoint, false);
 
   const distIndex = await readFile(path.join(packageRoot, 'dist/index.js'), 'utf8');
   assert.doesNotMatch(distIndex, /node:crypto/);
+  assert.doesNotMatch(distIndex, /artifact-url-server/);
   assert.doesNotMatch(distIndex, /pmtiles-cdn-session-server/);
 });
 

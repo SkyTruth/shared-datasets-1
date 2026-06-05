@@ -131,6 +131,13 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             self,
             app,
             (
+                'const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts"',
+                "function gsToArtifactUrl",
+                "publicFeatureMetadataSidecarUrl(reference, sidecarFile)",
+                "privateFeatureMetadataSidecarUrl(assetSlug, release, locale)",
+                "function featureMetadataCanLoad",
+                "function catalogViewerApiAvailable",
+                "Private feature metadata requires an authorized catalog viewer or consuming application backend.",
                 "files: releaseFiles(files)",
                 "function releaseFiles(files)",
                 "featureMetadataCache",
@@ -152,6 +159,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             self,
             map_preview,
             (
+                "accessTier: source.asset.access_tier || \"\"",
                 "loadFeatureMetadataColorValues = null",
                 "metadataColorValueSource",
                 "colorFieldValueSource(context, context.colorField) === \"metadata\"",

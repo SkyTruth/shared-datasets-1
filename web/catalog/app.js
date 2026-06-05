@@ -128,6 +128,8 @@ const collator = new Intl.Collator("en", { sensitivity: "base" });
 const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
+const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
+const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
 
 function activeMetadataLocale() {
   const params = new URLSearchParams(window.location.search);
@@ -306,6 +308,24 @@ function basename(path) {
 function gsToHttps(path) {
   const match = String(path || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
   return match ? `https://storage.googleapis.com/${match[1]}/${match[2]}` : path;
+}
+
+function gsToArtifactUrl(path) {
+  const match = String(path || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (!match) {
+    return "";
+  }
+  const bucket = match[1];
+  const objectName = match[2];
+  const expectedBucket = String(state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET);
+  if (bucket !== expectedBucket) {
+    return "";
+  }
+  const encodedPath = objectName
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `${DEFAULT_ARTIFACTS_BASE_URL}/${encodedPath}`;
 }
 
 function wireEvents() {
@@ -1292,7 +1312,8 @@ function featureLookupGroups(features) {
 }
 
 async function lookupFeatureMetadata(group) {
-  if (!featureMetadataSidecarFile(group.assetSlug, group.release, group.locale)) {
+  const asset = assetReferenceForRelease(group.assetSlug, group.release);
+  if (!featureMetadataCanLoad(asset, group.release, group.locale)) {
     return new Map();
   }
   const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
@@ -1310,7 +1331,7 @@ function warmFeatureMetadataCaches(assets) {
   for (const asset of assets) {
     const assetSlug = String(asset?.slug || "").trim();
     const release = featureMetadataRelease(asset);
-    if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release, locale)) {
+    if (!assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
       continue;
     }
     const key = featureMetadataCacheKey(assetSlug, release, locale);
@@ -1344,18 +1365,13 @@ async function featureMetadataIndex(assetSlug, release, locale = state.metadataL
 }
 
 async function downloadFeatureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
-  const response = await fetch(featureMetadataDownloadUrl(assetSlug, release, locale), {
-    cache: "no-store",
-    credentials: "include",
-    headers: { Accept: "application/json" },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `feature metadata download URL returned HTTP ${response.status}`);
-  }
-  const downloadUrl = String(payload.download_url || "").trim();
+  const reference = assetReferenceForRelease(assetSlug, release);
+  const sidecarFile = metadataSidecarFileForReference(reference, locale);
+  const downloadUrl =
+    publicFeatureMetadataSidecarUrl(reference, sidecarFile) ||
+    (await privateFeatureMetadataSidecarUrl(assetSlug, release, locale));
   if (!downloadUrl) {
-    throw new Error("feature metadata download URL response did not include download_url");
+    throw new Error("feature metadata sidecar is unavailable for this catalog viewer");
   }
   const sidecarResponse = await fetch(downloadUrl, { cache: "no-store" });
   if (!sidecarResponse.ok) {
@@ -1413,7 +1429,7 @@ async function loadFeatureMetadataColorValues(asset, field) {
   const assetSlug = String(asset?.slug || "").trim();
   const release = featureMetadataRelease(asset);
   const locale = state.metadataLocale || activeMetadataLocale();
-  if (!assetSlug || !release || !featureMetadataSidecarFile(assetSlug, release, locale)) {
+  if (!assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
     return { fields: [], valuesByFeatureId: new Map() };
   }
   const index = await featureMetadataIndex(assetSlug, release, locale);
@@ -1457,7 +1473,27 @@ function featureMetadataValueIsEmpty(value) {
   return String(value).trim() === "";
 }
 
-function featureMetadataDownloadUrl(assetSlug, release, locale = state.metadataLocale) {
+async function privateFeatureMetadataSidecarUrl(assetSlug, release, locale = state.metadataLocale) {
+  if (!catalogViewerApiAvailable()) {
+    return "";
+  }
+  const response = await fetch(featureMetadataApiDownloadUrl(assetSlug, release, locale), {
+    cache: "no-store",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `feature metadata download URL returned HTTP ${response.status}`);
+  }
+  const downloadUrl = String(payload.download_url || "").trim();
+  if (!downloadUrl) {
+    throw new Error("feature metadata download URL response did not include download_url");
+  }
+  return downloadUrl;
+}
+
+function featureMetadataApiDownloadUrl(assetSlug, release, locale = state.metadataLocale) {
   const params = new URLSearchParams({
     slug: assetSlug,
     format: "metadata",
@@ -1470,17 +1506,41 @@ function featureMetadataDownloadUrl(assetSlug, release, locale = state.metadataL
   return `/api/download-url?${params.toString()}`;
 }
 
+function publicFeatureMetadataSidecarUrl(asset, sidecarFile) {
+  if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
+    return "";
+  }
+  return gsToArtifactUrl(releaseFilePath(sidecarFile));
+}
+
+function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
+  if (!asset) {
+    return false;
+  }
+  const sidecarFile = metadataSidecarFileForReference(asset, locale);
+  if (!sidecarFile) {
+    return false;
+  }
+  if (publicFeatureMetadataSidecarUrl(asset, sidecarFile)) {
+    return true;
+  }
+  return String(asset.access_tier || "public").toLowerCase() === "private" && catalogViewerApiAvailable();
+}
+
+function catalogViewerApiAvailable() {
+  const host = window.location.hostname;
+  if (!host || host === "tiles.skytruth.org" || window.location.protocol === "file:") {
+    return false;
+  }
+  return true;
+}
+
 function featureMetadataCacheKey(assetSlug, release, locale = state.metadataLocale) {
   return `${assetSlug}\n${release || "latest"}\n${normalizeMetadataLocale(locale)}`;
 }
 
 function featureMetadataRelease(asset) {
   return String(asset?.date || asset?.latest_release?.date || asset?.last_updated || "latest").trim();
-}
-
-function featureMetadataSidecarFile(assetSlug, release, locale = state.metadataLocale) {
-  const reference = assetReferenceForRelease(assetSlug, release);
-  return metadataSidecarFileForReference(reference, locale);
 }
 
 function assetReferenceForRelease(assetSlug, release) {
@@ -1929,10 +1989,18 @@ function appendFeatureHit(feature) {
   hitHeader.append(title, meta);
   hit.append(hitHeader);
 
+  const unavailableMessage = featureMetadataUnavailableMessage(feature);
+  if (unavailableMessage) {
+    const unavailable = document.createElement("p");
+    unavailable.className = "feature-inspector-empty";
+    unavailable.textContent = unavailableMessage;
+    hit.append(unavailable);
+  }
+
   if (!entries.length) {
     const empty = document.createElement("p");
     empty.className = "feature-inspector-empty";
-    empty.textContent = "This object has no published properties.";
+    empty.textContent = unavailableMessage ? "Tile feature properties are not available." : "This object has no published properties.";
     hit.append(empty);
     elements.featureInspector.append(hit);
     return;
@@ -1954,6 +2022,15 @@ function appendFeatureTable(container, entries) {
   }
   table.append(tbody);
   container.append(table);
+}
+
+function featureMetadataUnavailableMessage(feature) {
+  const asset = state.assets.find((candidate) => candidate.slug === feature?.assetSlug);
+  const accessTier = String(feature?.accessTier || asset?.access_tier || "").toLowerCase();
+  if (accessTier === "private" && !catalogViewerApiAvailable()) {
+    return "Private feature metadata requires an authorized catalog viewer or consuming application backend.";
+  }
+  return "";
 }
 
 function appendFeaturePair(row, entry, options = {}) {

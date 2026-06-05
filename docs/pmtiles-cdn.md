@@ -9,16 +9,19 @@ https://tiles.skytruth.org/pmtiles/public/{asset}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{asset}.pmtiles
 ```
 
-Private release artifacts that are not PMTiles, including generated localized
-metadata sidecars, use signed URLs under a separate private artifact route:
+Release artifacts that are not PMTiles, including generated localized metadata
+sidecars, use the artifact route:
 
 ```text
-https://tiles.skytruth.org/private/{bucket-object-path}?Expires=...&KeyName=...&Signature=...
+https://tiles.skytruth.org/artifacts/{bucket-object-path}
 ```
 
-The `/private/` URL-map rule strips that prefix before fetching from
-`gs://skytruth-shared-datasets-1/{bucket-object-path}`. The route is intended
-for trusted resolver output, not catalog-authored public URLs. Unsigned
+Public metadata sidecars are fetched from this route anonymously. Private
+metadata sidecars use short-lived signed URLs under the same route, issued only
+by a consuming backend or the IAP-protected catalog viewer after authorization.
+The legacy `/private/{bucket-object-path}` route remains as a compatibility
+alias during client migration. Both artifact routes strip their prefix before
+fetching from `gs://skytruth-shared-datasets-1/{bucket-object-path}`. Unsigned
 requests to private release artifacts must not return readable bytes after
 cutover.
 
@@ -29,7 +32,7 @@ through short-lived signed `storage.googleapis.com` URLs from
 `/api/pmtiles/signed-url?slug={asset-slug}`. The CDN remains the compatibility
 path for downstream consumers that use `tiles.skytruth.org` directly. For
 private metadata sidecars, the production catalog viewer may return a signed
-`tiles.skytruth.org/private/...` URL from `/api/download-url`; private FGB and
+`tiles.skytruth.org/artifacts/...` URL from `/api/download-url`; private FGB and
 PMTiles download behavior remains signed GCS.
 
 Public-tier PMTiles are anonymously readable. Private-tier PMTiles are present
@@ -60,9 +63,10 @@ The production Terraform stack owns:
 - Public `_catalog/*` routes on `tiles.skytruth.org` so catalog CSV, generated
   catalog web files, docs Markdown, and release indexes remain freely readable
   after direct public GCS access is removed.
-- A signed private artifact route from `/private/*` to canonical bucket object
-  paths, used by the catalog viewer for private metadata sidecars when CDN
-  signing is configured.
+- A canonical artifact route from `/artifacts/*` to bucket object paths, used
+  for public metadata sidecars and signed private metadata sidecars.
+- A legacy compatibility artifact route from `/private/*` to bucket object
+  paths while older private metadata clients migrate to `/artifacts/*`.
 - URL map rules from `/pmtiles/{access-tier}/{asset}.pmtiles` paths to
   canonical `latest/{asset}.pmtiles` objects, generated from active PMTiles
   catalog rows.
@@ -96,9 +100,11 @@ As of May 12, 2026:
 - The URL map serves latest PMTiles through `/pmtiles/{tier}/{asset}.pmtiles`.
 - The URL map serves public catalog files through `/_catalog/*` so the catalog
   remains freely readable after direct public GCS access is removed.
-- The URL map accepts signed private release-artifact URLs through
-  `/private/{bucket-object-path}`, including
+- The URL map serves release-artifact URLs through
+  `/artifacts/{bucket-object-path}`, including
   `{asset}.metadata.{locale}.ndjson.gz` sidecars.
+- The URL map still accepts legacy signed private release-artifact URLs through
+  `/private/{bucket-object-path}` as a compatibility alias.
 - The backend bucket has signed request key
   `shared-datasets-pmtiles-v1`.
 - The PMTiles CDN signing-key secret has an enabled version.
@@ -236,11 +242,12 @@ The cookie value must contain `URLPrefix`, `Expires`, `KeyName`, and
 Preserve base64url padding if the runtime emits it. The HMAC key is the decoded
 raw 16-byte key, not the encoded secret text.
 
-The catalog viewer uses the same Cloud CDN key for private metadata sidecar
-signed URLs. Those URLs sign the exact object URL, for example:
+The catalog viewer and approved consuming backends use the same Cloud CDN key
+format for private metadata sidecar signed URLs. Those URLs sign the exact
+artifact object URL, for example:
 
 ```text
-https://tiles.skytruth.org/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
+https://tiles.skytruth.org/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
 ```
 
 Use signed URLs for metadata sidecars, not signed cookies, because the frontend
@@ -272,6 +279,13 @@ Any consumer that may display private PMTiles should expose
   `Secure`, `HttpOnly`, `SameSite=None`, and a 24-hour TTL.
 - Returns `Cache-Control: no-store`.
 - Never logs or returns the key or cookie value.
+
+Any consumer that may display private feature metadata should expose a separate
+backend route such as
+`/api/shared-datasets/metadata-url?slug=&version=&locale=`. That route must
+validate the slug, release, locale, catalog access tier, and user entitlement
+before signing an exact artifact URL. It must return `Cache-Control: no-store`
+and must never sign arbitrary caller-provided bucket object paths.
 
 Consumer TypeScript apps should use `@skytruth/shared-datasets/server` for the
 cookie helpers and the browser-safe `@skytruth/shared-datasets` entrypoint for
@@ -387,16 +401,18 @@ Apply this recipe to any downstream repo, including 30x30:
    Redis or process cache key.
 4. Add a backend session endpoint with the behavior in
    [Consumer Runtime Contract](#consumer-runtime-contract).
-5. Use `getPmtilesFetchCredentials(url)` or an equivalent credentialed fetch
+5. Add a backend metadata URL endpoint if the app exposes private metadata
+   sidecars in the browser.
+6. Use `getPmtilesFetchCredentials(url)` or an equivalent credentialed fetch
    wrapper for every PMTiles fetch path, including internal range fetches used
    by PMTiles libraries.
-6. Before enabling a private layer, call `ensurePmtilesCdnSession`; public
+7. Before enabling a private layer, call `ensurePmtilesCdnSession`; public
    layers do not require a cookie.
-7. Keep `https://tiles.skytruth.org` in CSP `connect-src`.
-8. Add or update tests for public URL generation, private URL generation,
+8. Keep `https://tiles.skytruth.org` in CSP `connect-src`.
+9. Add or update tests for public URL generation, private URL generation,
    anonymous private rejection, authorized cookie issuance, no-store response
    headers, and credentialed PMTiles fetches.
-9. Run the consumer repo's lint, type-check, and production build.
+10. Run the consumer repo's lint, type-check, and production build.
 
 The signed cookie must be scoped to:
 
@@ -439,14 +455,18 @@ Live checks after CDN cutover and direct public GCS removal:
 - `https://tiles.skytruth.org/_catalog/web/catalog.json` returns `200`.
 - `https://tiles.skytruth.org/_catalog/web/index.html` returns `200`.
 - Public CDN range request without a cookie returns `200` or `206`.
+- Public metadata sidecar requests under `/artifacts/...` return `200`.
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.
 - Expired or malformed cookie returns `403`.
-- Unsigned `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests return
+- Unsigned `/artifacts/.../{asset}.metadata.{locale}.ndjson.gz` requests for
+  private assets return `403` or another non-readable status.
+- Unsigned legacy `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests
+  for private assets return
   `403` or another non-readable status.
 - `/api/download-url?...format=metadata&locale={locale}` for an authorized
   private asset returns one signed
-  `https://tiles.skytruth.org/private/...metadata.{locale}.ndjson.gz` URL when
+  `https://tiles.skytruth.org/artifacts/...metadata.{locale}.ndjson.gz` URL when
   that locale exists, or one signed canonical `.metadata.ndjson.gz` fallback
   URL when it does not.
 - Fetching the signed private metadata URL returns `200` with
