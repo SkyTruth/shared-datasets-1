@@ -37,6 +37,7 @@ def test_metadata_index_loader_iam_sync_is_protected_and_targeted():
         "google_project_iam_member.metadata_index_loader_firestore_user",
         "google_service_account_iam_member.metadata_index_loader_github_wif",
         "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
+        "google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin",
         "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
         "module.metadata_index_loader_service_account.google_service_account.this",
     }
@@ -51,6 +52,7 @@ def test_metadata_index_loader_iam_sync_is_protected_and_targeted():
         "google_project_iam_member.metadata_index_loader_firestore_user",
         "google_service_account_iam_member.metadata_index_loader_github_wif",
         "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
+        "google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin",
         "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
     }
     assert "module\\.metadata_index_loader_service_account" in enforce_run
