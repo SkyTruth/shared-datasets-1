@@ -64,7 +64,25 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
         self.assertNotIn("gcloud artifacts docker images describe", build_run)
         self.assertIn("METADATA_SERVICE_IMAGE=${image_ref}", build_run)
 
-        self.assertEqual(terraform_targets(plan_run), set())
+        self.assertEqual(
+            terraform_targets(plan_run),
+            {
+                "google_cloud_run_v2_service.metadata_service",
+                "google_cloud_run_v2_service_iam_member.metadata_service_iap_invoker",
+                "google_firestore_database.feature_metadata",
+                "google_iap_web_cloud_run_service_iam_member.metadata_service_accessors",
+                "google_monitoring_alert_policy.metadata_service_error_logs",
+                "google_project_iam_member.metadata_index_loader_firestore_user",
+                "google_project_iam_member.metadata_service_firestore_viewer",
+                "google_service_account_iam_member.metadata_index_loader_github_wif",
+                "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
+                "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
+                "google_storage_bucket_iam_member.metadata_service_object_viewer",
+                "module.metadata_index_loader_service_account.google_service_account.this",
+                "module.metadata_service_account.google_service_account.this",
+            },
+        )
+        self.assertIn("-refresh=false", plan_run)
         self.assertIn("metadata_service_image=${METADATA_SERVICE_IMAGE}", plan_run)
         self.assertIn("unused-by-metadata-service-deploy", plan_run)
         self.assertIn(
