@@ -138,6 +138,10 @@ Updated by `python -m ingestion.sea_ice_daily.run`, deployed as the
 
 The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto maxzoom selection. The 4000-meter source-resolution hint resolves to maxzoom 8. The rebuilt PMTiles SHA-256 is `66bff572665dc444734b9c8ced0047ecbe672bee8b12afa307862a77a94c958d`.
 
+A 2026-06-05 release-index backfill repaired legacy successful run records that
+stored row counts, release paths, and checksums under the pre-contract IMS run
+record shape. No release FGB or PMTiles artifacts were rewritten by that repair.
+
 ## Known caveats
 
 IMS GeoTIFF filename dates are documented by NSIDC as creation dates, while the
