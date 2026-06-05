@@ -45,6 +45,7 @@ LOCALIZED_RELEASE_METADATA_RE = re.compile(r"\.metadata\.[a-z]{2,3}(?:_[a-z0-9]{
 PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
 ALLOW_CANONICAL_MUTATION_ENV = "SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"
+GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
 
 
 def parse_gs_uri(uri: str) -> Tuple[str, str]:
@@ -139,6 +140,8 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
     parts = [part for part in name.split("/") if part]
     if not parts:
         return ["object path is empty"]
+    if name.startswith(GCLOUD_COMPOSITE_TEMP_PREFIX) and "/" not in name.removeprefix(GCLOUD_COMPOSITE_TEMP_PREFIX):
+        return []
     if len(parts) == 1:
         if parts[0] in ROOT_ALLOWED_DOCS:
             return []

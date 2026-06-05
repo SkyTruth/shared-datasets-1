@@ -51,6 +51,7 @@ class GcsAssetPathValidationTests(unittest.TestCase):
             "200-imagery-derived/250-weather-climate/example/previews/example-preview.png",
             "200-imagery-derived/250-weather-climate/example/runs/2026-04-29.json",
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/index-loads/2026-04-29/load-1.json",
+            "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/123_part",
         ]
 
         for path in paths:
