@@ -442,7 +442,7 @@ def convert_geojsonseq_to_fgb(geojsonseq: Path, output: Path) -> None:
             "-nlt",
             "PROMOTE_TO_MULTI",
             str(output),
-            str(geojsonseq),
+            f"GeoJSONSeq:{geojsonseq}",
         ]
     )
 

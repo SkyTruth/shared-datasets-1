@@ -227,6 +227,19 @@ ice_date: String (0.0)
             ("DN", "ice_date"),
         )
 
+    def test_convert_geojsonseq_to_fgb_uses_geojsonseq_driver_prefix(self):
+        with mock.patch.object(sea_ice, "remove_if_exists"), mock.patch.object(
+            sea_ice,
+            "run_command",
+        ) as run_command:
+            sea_ice.convert_geojsonseq_to_fgb(
+                Path("features.geojsonseq"),
+                Path("out.fgb"),
+            )
+
+        command = run_command.call_args.args[0]
+        self.assertEqual(command[-1], "GeoJSONSeq:features.geojsonseq")
+
     def test_probe_source_uses_common_request_helper(self):
         source_url = "https://example.test/source.tif.gz"
         outcome = sea_ice.RequestOutcome(
