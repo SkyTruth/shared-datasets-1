@@ -32,9 +32,10 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   point features. The release adds generated feature_id values, ext_id mirroring feature_id, feature_hash values, geometry_role,
   canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with only feature_id and ext_id. No shared_datasets_group_id,
   shared_datasets_row_id, or localized metadata sidecar is generated for this release. fgb sha256 843a00eb56572d2b6b42ef21a67fe01899b212348c236fda14537f460d895c63;
-  point fgb sha256 c9c0e12cad445c29e08de4767866332bee09898600736e668aabf682649976c3; pmtiles sha256 c7588490ece0e5e1121ed2e527bb4f5efde5ddf1c736e21e8a3bd75934a18818;
-  metadata sha256 479f8defa534da8016e665f488293c5fd9628c148c1f634e501583e165f74f36; schema sha256 0c59dffa6d785fc3f7b6b1fd6a875b5712e135bf134b470e87f51e857e717547;
-  manifest sha256 4f336cf9f16f7ff811cfa2174db9cb4abbbe77f31fd0fd2fb60c26041c67eb87
+  point fgb sha256 c9c0e12cad445c29e08de4767866332bee09898600736e668aabf682649976c3; pmtiles sha256 def9354c709e14aaae1085f178bba37f753817d43926d1f12d557ddb717b8674,
+  corrected 2026-06-06 with Tippecanoe drop-rate 1 after verifying all 925 point features decode at zoom 0; metadata sha256
+  479f8defa534da8016e665f488293c5fd9628c148c1f634e501583e165f74f36; schema sha256 0c59dffa6d785fc3f7b6b1fd6a875b5712e135bf134b470e87f51e857e717547;
+  finalized manifest checksum is recorded in the release run record after promotion.
 row_count: 18429
 data_profile:
   field_count: 22
