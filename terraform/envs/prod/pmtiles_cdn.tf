@@ -429,9 +429,30 @@ resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_cookie_signers" 
   member    = each.value
 }
 
+resource "google_project_iam_member" "github_actions_pmtiles_cdn_secret_iam_policy_manager" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+
+  condition {
+    title       = "pmtiles_cdn_signed_request_key_iam_policy_admin"
+    description = "Allow protected Terraform workflows to manage IAM on the PMTiles CDN signing key only."
+    expression = join(" || ", [
+      "resource.name == 'projects/${var.project_id}/secrets/${var.pmtiles_cdn_secret_id}'",
+      "resource.name == 'projects/${data.google_project.current.number}/secrets/${var.pmtiles_cdn_secret_id}'",
+    ])
+  }
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_catalog_viewer_signer" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.pmtiles_cdn_signed_request_key.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = module.catalog_viewer_service_account.member
+
+  depends_on = [
+    google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager,
+  ]
 }

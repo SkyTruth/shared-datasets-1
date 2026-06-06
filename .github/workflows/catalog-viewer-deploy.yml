@@ -109,6 +109,54 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 
+      - name: Terraform plan Secret Manager IAM bootstrap
+        run: |
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -refresh=false \
+            -out="${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" \
+            -target=google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager \
+            -var="wdpa_monthly_image=unused-by-catalog-viewer-deploy" \
+            -var="sea_ice_daily_image=unused-by-catalog-viewer-deploy" \
+            -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
+
+      - name: Export Secret Manager IAM bootstrap plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
+
+      - name: Enforce Secret Manager IAM bootstrap allowlist
+        run: |
+          python - "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager",
+          }
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address in allowed_exact:
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing catalog-viewer Secret Manager IAM bootstrap because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply Secret Manager IAM bootstrap
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan"
+
+      - name: Wait for Secret Manager IAM propagation
+        run: sleep 30
+
       - name: Terraform plan
         run: |
           terraform -chdir=terraform/envs/prod plan \

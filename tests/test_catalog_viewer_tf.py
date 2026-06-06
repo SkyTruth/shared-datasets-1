@@ -58,6 +58,42 @@ class CatalogViewerTerraformTests(unittest.TestCase):
         self.assertIn('pmtiles_serving_mode                   = "cdn"', prod_tfvars)
         self.assertIn("pmtiles_cdn_grant_fill_service_account = true", prod_tfvars)
 
+    def test_pmtiles_secret_iam_policy_bootstrap_is_condition_scoped(self):
+        pmtiles_cdn_tf = (PROD_TF / "pmtiles_cdn.tf").read_text()
+
+        binding_start = pmtiles_cdn_tf.index(
+            'resource "google_project_iam_member" '
+            '"github_actions_pmtiles_cdn_secret_iam_policy_manager"'
+        )
+        accessor_start = pmtiles_cdn_tf.index(
+            'resource "google_secret_manager_secret_iam_member" "pmtiles_cdn_catalog_viewer_signer"',
+            binding_start,
+        )
+        binding_block = pmtiles_cdn_tf[binding_start:accessor_start]
+        accessor_block = pmtiles_cdn_tf[accessor_start:]
+
+        self.assertEqual(pmtiles_cdn_tf.count('role    = "roles/secretmanager.admin"'), 1)
+        self.assertIn('role    = "roles/secretmanager.admin"', binding_block)
+        self.assertIn(
+            'member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"',
+            binding_block,
+        )
+        self.assertIn("condition {", binding_block)
+        self.assertIn("pmtiles_cdn_signed_request_key_iam_policy_admin", binding_block)
+        self.assertIn(
+            "resource.name == 'projects/${var.project_id}/secrets/${var.pmtiles_cdn_secret_id}'",
+            binding_block,
+        )
+        self.assertIn(
+            "resource.name == 'projects/${data.google_project.current.number}/secrets/${var.pmtiles_cdn_secret_id}'",
+            binding_block,
+        )
+        self.assertIn("depends_on = [google_project_service.required]", binding_block)
+        self.assertIn(
+            "google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager",
+            accessor_block,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

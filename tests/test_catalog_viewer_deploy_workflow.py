@@ -23,6 +23,9 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         trigger = workflow_triggers(workflow)
         deploy = workflow["jobs"]["deploy"]
         steps = workflow_steps_by_name(workflow, "deploy")
+        step_names = list(steps)
+        bootstrap_plan_run = steps["Terraform plan Secret Manager IAM bootstrap"]["run"]
+        bootstrap_enforce_run = steps["Enforce Secret Manager IAM bootstrap allowlist"]["run"]
         plan_run = steps["Terraform plan"]["run"]
         enforce_run = steps["Enforce catalog-viewer resource-change allowlist"]["run"]
 
@@ -43,6 +46,40 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertIn("docker push", build_run)
         self.assertIn("docker buildx imagetools inspect", build_run)
         self.assertIn("CATALOG_VIEWER_IMAGE=${image_ref}", build_run)
+
+        self.assertEqual(
+            terraform_targets(bootstrap_plan_run),
+            {"google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"},
+        )
+        self.assertIn("-refresh=false", bootstrap_plan_run)
+        self.assertIn("wdpa_monthly_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
+        self.assertIn("sea_ice_daily_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
+        self.assertIn("eamlis_monthly_image=unused-by-catalog-viewer-deploy", bootstrap_plan_run)
+        self.assertIn(
+            "catalog-viewer-secret-manager-iam-bootstrap.tfplan",
+            steps["Export Secret Manager IAM bootstrap plan JSON"]["run"],
+        )
+        self.assertEqual(
+            python_literal_string_set(bootstrap_enforce_run, "allowed_exact"),
+            {"google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"},
+        )
+        self.assertIn(
+            "terraform -chdir=terraform/envs/prod apply",
+            steps["Terraform apply Secret Manager IAM bootstrap"]["run"],
+        )
+        self.assertEqual(steps["Wait for Secret Manager IAM propagation"]["run"], "sleep 30")
+        self.assertLess(
+            step_names.index("Enforce Secret Manager IAM bootstrap allowlist"),
+            step_names.index("Terraform apply Secret Manager IAM bootstrap"),
+        )
+        self.assertLess(
+            step_names.index("Terraform apply Secret Manager IAM bootstrap"),
+            step_names.index("Wait for Secret Manager IAM propagation"),
+        )
+        self.assertLess(
+            step_names.index("Wait for Secret Manager IAM propagation"),
+            step_names.index("Terraform plan"),
+        )
 
         self.assertEqual(
             terraform_targets(plan_run),
@@ -68,8 +105,8 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         )
         self.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
         self.assertLess(
-            list(steps).index("Enforce catalog-viewer resource-change allowlist"),
-            list(steps).index("Terraform apply"),
+            step_names.index("Enforce catalog-viewer resource-change allowlist"),
+            step_names.index("Terraform apply"),
         )
         self.assertGreaterEqual(
             python_literal_string_set(enforce_run, "allowed_exact"),
