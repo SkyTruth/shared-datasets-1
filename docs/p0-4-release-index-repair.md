@@ -22,7 +22,6 @@ non-null `rows`, `run_record_path`, and per-file `sha256` values:
 | `global-coral-reefs` | 2026-04-29 | 18,429 |
 | `gogi` | 2026-05-02 | 1,624,200 |
 | `iho-world-seas` | 2026-04-29 | 101 |
-| `marine-regions-eez` | 2026-04-29 | 285 |
 | `natural-earth-10m-land` | 2026-04-30 | 11 |
 | `petrodata` | 2026-04-29 | 1,273 |
 | `wdpa-marine` | 2026-04-29 | 17,528 |
