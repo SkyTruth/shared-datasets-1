@@ -59,6 +59,9 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         )
         self.assertIn("-refresh=false", plan_run)
         self.assertIn("catalog_viewer_image=${CATALOG_VIEWER_IMAGE}", plan_run)
+        self.assertIn("wdpa_monthly_image=unused-by-catalog-viewer-deploy", plan_run)
+        self.assertIn("sea_ice_daily_image=unused-by-catalog-viewer-deploy", plan_run)
+        self.assertIn("eamlis_monthly_image=unused-by-catalog-viewer-deploy", plan_run)
         self.assertIn(
             "terraform -chdir=terraform/envs/prod show -json",
             steps["Export Terraform plan JSON"]["run"],

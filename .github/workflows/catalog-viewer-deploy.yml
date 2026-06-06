@@ -123,7 +123,10 @@ jobs:
             -target=google_cloud_run_v2_service.catalog_viewer \
             -target=google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker \
             -target=google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors \
-            -var="catalog_viewer_image=${CATALOG_VIEWER_IMAGE}"
+            -var="catalog_viewer_image=${CATALOG_VIEWER_IMAGE}" \
+            -var="wdpa_monthly_image=unused-by-catalog-viewer-deploy" \
+            -var="sea_ice_daily_image=unused-by-catalog-viewer-deploy" \
+            -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
 
       - name: Export Terraform plan JSON
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer.tfplan" > "${RUNNER_TEMP}/catalog-viewer.tfplan.json"
