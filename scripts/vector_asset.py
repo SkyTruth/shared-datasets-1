@@ -54,6 +54,7 @@ GROUP_ID_VRT_SOURCE_LAYER = "source"
 GROUP_ID_VRT_MAP_LAYER = "group_ids"
 STANDARD_PMTILES_MAXZOOM = 8
 AUTO_MAXZOOM = "auto"
+UNEXPANDED_LOCAL_PATH_RE = re.compile(r"(?<!\\)\$(?:\{[^}]*\}?|[A-Za-z_][A-Za-z0-9_]*)")
 
 
 class VectorAssetError(ValueError):
@@ -216,7 +217,17 @@ def path_is_under(path: Path, parent: Path) -> bool:
     return True
 
 
+def ensure_expanded_local_path(path: Path, *, label: str) -> None:
+    raw = str(path)
+    if UNEXPANDED_LOCAL_PATH_RE.search(raw):
+        raise ValueError(
+            f"{label} contains unexpanded shell-variable syntax: {raw!r}. "
+            "Assign WORK_ROOT first or pass an already expanded path."
+        )
+
+
 def ensure_local_output_path(path: Path, *, label: str, allow_repo_output: bool = False) -> None:
+    ensure_expanded_local_path(path, label=label)
     if path_is_under(path, REPO_ROOT) and not allow_repo_output:
         raise ValueError(
             f"{label} must be outside the repository. Use --work-dir under system temp "
