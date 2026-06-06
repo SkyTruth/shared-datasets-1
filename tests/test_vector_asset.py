@@ -74,6 +74,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(plan.commands[2].argv[0], "tippecanoe")
         self.assertIn("--simplification", plan.commands[2].argv)
         self.assertIn("0.01", plan.commands[2].argv)
+        self.assertNotIn("--drop-rate=1", plan.commands[2].argv)
         self.assertEqual(plan.commands[2].argv[-1], plan.tile_source_path)
         self.assertEqual(plan.commands[3].argv, ["pmtiles", "convert", plan.mbtiles_path, plan.pmtiles_path])
         self.assertEqual(plan.maxzoom, 8)
@@ -300,6 +301,7 @@ class VectorAssetTests(unittest.TestCase):
         self.assertNotIn("-sql", commands[0].argv)
         tippecanoe_argv = commands[1].argv
         self.assertEqual(tippecanoe_argv[0], "tippecanoe")
+        self.assertIn("--drop-rate=1", tippecanoe_argv)
         self.assertEqual(
             [tippecanoe_argv[index + 1] for index, value in enumerate(tippecanoe_argv) if value == "-y"],
             [vector_asset.FEATURE_ID_COLUMN, vector_asset.EXT_ID_COLUMN],
