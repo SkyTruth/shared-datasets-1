@@ -247,7 +247,7 @@ format for private metadata sidecar signed URLs. Those URLs sign the exact
 artifact object URL, for example:
 
 ```text
-https://tiles.skytruth.org/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz
+https://tiles.skytruth.org/private/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz
 ```
 
 Use signed URLs for metadata sidecars, not signed cookies, because the frontend

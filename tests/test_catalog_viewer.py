@@ -140,7 +140,7 @@ class FakeFeatureReleaseResolver:
             release_index_generation=12345,
             sidecar_uri=(
                 "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/"
-                "marine-regions-eez/releases/2026-05-01/marine-regions-eez.metadata.ndjson.gz"
+                "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz"
             ),
             sidecar_generation=1001,
         )
@@ -260,7 +260,7 @@ def feature_lookup_request(body, headers=None, resolver=None, index=None):
     index = index or FakeFeatureIndex()
     response = handle_request(
         "POST",
-        "/v1/assets/marine-regions-eez/releases/latest:lookup",
+        "/v1/assets/wdpa-marine/releases/latest:lookup",
         headers or {},
         json.dumps(body).encode("utf-8"),
         catalog_cache=CatalogJsonCache(loader=store.read_catalog_json),
@@ -728,19 +728,19 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["asset_slug"], "marine-regions-eez")
+        self.assertEqual(payload["asset_slug"], "wdpa-marine")
         self.assertEqual(payload["requested_release"], "latest")
         self.assertEqual(payload["resolved_release"], "2026-05-01")
         self.assertEqual(payload["release_index_generation"], 12345)
-        self.assertEqual(resolver.calls, [("marine-regions-eez", "latest")])
+        self.assertEqual(resolver.calls, [("wdpa-marine", "latest")])
         self.assertEqual(
             index.calls,
             [
                 (
-                    "marine-regions-eez",
+                    "wdpa-marine",
                     "2026-05-01",
                     ["src:MRGID:48943"],
-                    "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/marine-regions-eez/releases/2026-05-01/marine-regions-eez.metadata.ndjson.gz",
+                    "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
                     1001,
                 )
             ],

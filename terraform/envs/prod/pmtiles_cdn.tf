@@ -337,16 +337,16 @@ resource "google_compute_url_map" "pmtiles_cdn" {
 
   test {
     host                = var.pmtiles_cdn_host
-    path                = "/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    path                = "/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
     service             = google_compute_backend_bucket.pmtiles_cdn.self_link
-    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
   }
 
   test {
     host                = var.pmtiles_cdn_host
-    path                = "/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    path                = "/private/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
     service             = google_compute_backend_bucket.pmtiles_cdn.self_link
-    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"
+    expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
   }
 
   depends_on = [google_project_service.required]
