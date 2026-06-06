@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import unittest
+from urllib.parse import urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
 from services.catalog_viewer.run import (
@@ -670,6 +671,9 @@ class CatalogViewerTests(unittest.TestCase):
                 "&KeyName=shared-datasets-pmtiles-v1&Signature="
             )
         )
+        signature = urlsplit(signed).query.rsplit("Signature=", 1)[1]
+        self.assertTrue(signature.endswith("="))
+        self.assertNotIn("%3D", signature)
         self.assertNotIn("storage.googleapis.com", signed)
 
     def test_cloud_cdn_signed_url_signer_rejects_outside_bucket_paths(self):

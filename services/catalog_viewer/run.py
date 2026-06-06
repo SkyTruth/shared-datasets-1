@@ -229,7 +229,8 @@ class CloudCdnSignedUrlSigner:
         unsigned_url = f"{url}?Expires={expires}&KeyName={quote(self._key_name, safe='')}"
         digest = hmac.new(self._key, unsigned_url.encode("utf-8"), hashlib.sha1).digest()
         signature = base64.urlsafe_b64encode(digest).decode("ascii")
-        return f"{unsigned_url}&Signature={quote(signature, safe='')}"
+        # Cloud CDN expects raw base64url signature padding; %3D padding is rejected.
+        return f"{unsigned_url}&Signature={signature}"
 
 
 def default_credentials():
