@@ -1,0 +1,170 @@
+name: Catalog viewer deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/catalog-viewer-deploy.yml"
+      - "api/python/src/**"
+      - "services/catalog_viewer/**"
+      - "terraform/envs/prod/catalog_viewer.tf"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/pmtiles_cdn.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  IMAGE_NAME: catalog-viewer
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  deploy:
+    name: Build image and apply catalog-viewer Terraform
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Catalog viewer deploy may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build catalog-viewer image
+        run: |
+          set -euo pipefail
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build \
+            --platform linux/amd64 \
+            -f services/catalog_viewer/Dockerfile \
+            -t "${image_tag}" \
+            .
+          docker push "${image_tag}"
+          image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
+          if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
+            image_digest="$(docker buildx imagetools inspect "${image_tag}" | awk '/^Digest:/ {print $2; exit}')"
+          fi
+          if [[ -z "${image_digest}" || "${image_digest}" != sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${image_tag}" >&2
+            exit 1
+          fi
+          image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
+          echo "CATALOG_VIEWER_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/prod init -input=false
+
+      - name: Terraform plan
+        run: |
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -refresh=false \
+            -out="${RUNNER_TEMP}/catalog-viewer.tfplan" \
+            -target=module.catalog_viewer_service_account.google_service_account.this \
+            -target=google_storage_bucket_iam_member.catalog_viewer_object_viewer \
+            -target=google_project_iam_custom_role.catalog_viewer_sign_blob \
+            -target=google_service_account_iam_member.catalog_viewer_self_sign_blob \
+            -target=google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer \
+            -target=google_cloud_run_v2_service.catalog_viewer \
+            -target=google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker \
+            -target=google_iap_web_cloud_run_service_iam_member.catalog_viewer_accessors \
+            -var="catalog_viewer_image=${CATALOG_VIEWER_IMAGE}"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer.tfplan" > "${RUNNER_TEMP}/catalog-viewer.tfplan.json"
+
+      - name: Enforce catalog-viewer resource-change allowlist
+        run: |
+          python - "${RUNNER_TEMP}/catalog-viewer.tfplan.json" <<'PY'
+          import json
+          import re
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_cloud_run_v2_service.catalog_viewer",
+              "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
+              "google_project_iam_custom_role.catalog_viewer_sign_blob",
+              "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
+              "google_service_account_iam_member.catalog_viewer_self_sign_blob",
+              "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
+          }
+          allowed_patterns = [
+              re.compile(r"^module\.catalog_viewer_service_account\."),
+              re.compile(r"^google_iap_web_cloud_run_service_iam_member\.catalog_viewer_accessors\["),
+          ]
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing catalog-viewer deploy because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer.tfplan"

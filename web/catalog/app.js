@@ -251,6 +251,7 @@ function versionsFromReleaseIndex(asset, releaseIndex) {
       files: releaseFiles(files),
       source_version: release.source_version || "",
       rows: release.rows ?? null,
+      row_count: release.rows ?? asset.row_count ?? null,
       release_path: release.release_path || "",
       run_record_path: release.run_record_path || "",
       canonical_sha256: canonicalSha256 || "",
@@ -747,10 +748,20 @@ function selectedVersionValue(asset) {
   return "latest";
 }
 
+function latestVersionForAsset(asset) {
+  const versions = Array.isArray(asset?.versions) ? asset.versions : [];
+  const latestDate = String(asset?.latest_release?.date || "").trim();
+  if (latestDate) {
+    return versions.find((candidate) => String(candidate?.date || "").trim() === latestDate) || null;
+  }
+  return versions[0] || null;
+}
+
 function selectedReference(asset) {
   const selected = selectedVersionValue(asset);
   if (selected === "latest") {
-    return asset;
+    const latestVersion = latestVersionForAsset(asset);
+    return latestVersion ? { ...asset, ...latestVersion } : asset;
   }
   const version = asset.versions.find((candidate) => candidate.date === selected);
   return version ? { ...asset, ...version } : asset;
@@ -1551,7 +1562,8 @@ function assetReferenceForRelease(assetSlug, release) {
   const releaseDate = String(release || "latest").trim();
   const latestDate = String(asset.latest_release?.date || asset.last_updated || "").trim();
   if (releaseDate === "latest" || releaseDate === latestDate) {
-    return asset;
+    const latestVersion = latestVersionForAsset(asset);
+    return latestVersion ? { ...asset, ...latestVersion } : asset;
   }
   const version = Array.isArray(asset.versions)
     ? asset.versions.find((candidate) => String(candidate?.date || "").trim() === releaseDate)

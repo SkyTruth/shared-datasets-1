@@ -550,6 +550,9 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbP
         f"--name={plan.title}",
         f"--description={plan.description}",
     ]
+    if plan.pmtiles_feature_id_property:
+        # Metadata lookup tiles must preserve point features at overview zooms.
+        mbtiles_command.append("--drop-rate=1")
     if plan.tile_simplify is not None:
         mbtiles_command.extend(["--simplification", str(plan.tile_simplify)])
     for property_name in pmtiles_include_properties(plan):
