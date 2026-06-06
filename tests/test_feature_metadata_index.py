@@ -28,7 +28,7 @@ def write_sidecar(path: Path, count: int = 3) -> None:
             feature_id=f"src:id:{index}",
             feature_hash="sha256:" + f"{index:064x}",
             geometry=None,
-            properties={"name": f"Feature {index}"},
+            properties={"ext_id": str(index + 1), "name": f"Feature {index}"},
             provenance={"source": "fixture"},
         )
         records.append(
@@ -53,7 +53,10 @@ def write_bundle(tmp_path: Path, *, count: int = 3):
     schema_payload = release_feature_model.build_release_schema(
         asset_slug="example-asset",
         release="2026-05-01",
-        fields=[release_feature_model.ReleaseSchemaField("name", "String")],
+        fields=[
+            release_feature_model.ReleaseSchemaField("ext_id", "String"),
+            release_feature_model.ReleaseSchemaField("name", "String"),
+        ],
     )
     schema.write_text(json.dumps(schema_payload, sort_keys=True) + "\n")
     artifacts = [

@@ -178,9 +178,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   `publishing_concierge.py` or an equivalent profile. The table must include
   file row/column counts and, for displayed candidates, datatype, distinction
   (`distinct values / profiled rows`), emptiness, domination, skew ratio,
-  top-value examples, and concerns. Show only likely provider `ext_id` options
-  and likely grouping/search/filter options by default; keep the full per-field
-  profile in JSON or notes for inspection. Run exact stats on all local rows
+  top-value examples, and concerns. Show only likely URL-safe provider
+  `ext_id` options, the generated sequence fallback, and likely
+  grouping/search/filter options by default; keep the full per-field profile in
+  JSON or notes for inspection. Run exact stats on all local rows
   when the source is small enough. When exact full-column counters would be too
   expensive, use a deterministic random sample of about 10,000 rows, never the
   first N rows, and label the output as sampled. If a suitable provider ID

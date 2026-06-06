@@ -26,11 +26,16 @@ NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+EXT_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 INDEX_STATUS_MODE = "external_index_load_records"
 LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
     r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
+)
+LOOKUP_BY_EXT_ID_RE = re.compile(
+    r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
+    r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookupByExtId$"
 )
 
 
@@ -68,6 +73,16 @@ class FeatureIndex(Protocol):
         release: str,
         index_load_id: str,
         feature_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        ...
+
+    def lookup_by_ext_ids(
+        self,
+        *,
+        asset_slug: str,
+        release: str,
+        index_load_id: str,
+        ext_ids: list[str],
     ) -> dict[str, dict[str, Any]]:
         ...
 
@@ -355,6 +370,56 @@ class FirestoreFeatureIndex:
                 found[feature_id] = payload
         return found
 
+    def lookup_by_ext_ids(
+        self,
+        *,
+        asset_slug: str,
+        release: str,
+        index_load_id: str,
+        ext_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        refs = [
+            self.client.collection(self._collection_root)
+            .document(asset_slug)
+            .collection("releases")
+            .document(release)
+            .collection("loads")
+            .document(index_load_id)
+            .collection("ext_ids")
+            .document(ext_id)
+            for ext_id in ext_ids
+        ]
+        try:
+            snapshots = self.client.get_all(refs)
+        except Exception as exc:
+            raise ApiError(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "index_unavailable",
+                "feature metadata ext_id lookup failed",
+            ) from exc
+        feature_ids: list[str] = []
+        ext_id_to_feature_id: dict[str, str] = {}
+        for snapshot in snapshots:
+            if not getattr(snapshot, "exists", False):
+                continue
+            payload = snapshot.to_dict() or {}
+            ext_id = str(payload.get("ext_id") or getattr(snapshot.reference, "id", ""))
+            feature_id = str(payload.get("feature_id") or "")
+            if ext_id and feature_id:
+                ext_id_to_feature_id[ext_id] = feature_id
+                feature_ids.append(feature_id)
+        documents = self.lookup(
+            asset_slug=asset_slug,
+            release=release,
+            index_load_id=index_load_id,
+            feature_ids=list(dict.fromkeys(feature_ids)),
+        )
+        return {
+            ext_id: documents[feature_id]
+            for ext_id, feature_id in ext_id_to_feature_id.items()
+            if feature_id in documents
+        }
+
 
 def handle_request(
     method: str,
@@ -376,16 +441,17 @@ def handle_request(
         return json_response(HTTPStatus.OK, {"status": "ok"}, {"Cache-Control": NO_STORE})
     try:
         match = LOOKUP_RE.fullmatch(request_path)
-        if match and method == "OPTIONS":
+        ext_id_match = LOOKUP_BY_EXT_ID_RE.fullmatch(request_path)
+        if (match or ext_id_match) and method == "OPTIONS":
             return Response(HTTPStatus.NO_CONTENT, api_headers())
         if require_iap:
             require_authenticated_user(headers, allowed_email_domains=allowed_email_domains)
-        if match:
+        if match or ext_id_match:
             if method != "POST":
                 raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "use POST for lookup")
             return handle_lookup(
-                asset_slug=match.group("asset_slug"),
-                release=match.group("release"),
+                asset_slug=(match or ext_id_match).group("asset_slug"),
+                release=(match or ext_id_match).group("release"),
                 headers=headers,
                 body=body,
                 release_resolver=release_resolver,
@@ -393,6 +459,7 @@ def handle_request(
                 max_ids=max_ids,
                 max_fields=max_fields,
                 max_response_bytes=max_response_bytes,
+                lookup_by_ext_id=ext_id_match is not None,
             )
         raise ApiError(HTTPStatus.NOT_FOUND, "not_found", "unknown endpoint")
     except ApiError as exc:
@@ -415,28 +482,51 @@ def handle_lookup(
     max_ids: int,
     max_fields: int,
     max_response_bytes: int,
+    lookup_by_ext_id: bool = False,
 ) -> Response:
-    request = parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
+    request = (
+        parse_ext_id_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
+        if lookup_by_ext_id
+        else parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
+    )
     resolved = release_resolver.resolve(asset_slug, release)
     if not resolved.index_load_id or not LOAD_ID_RE.fullmatch(resolved.index_load_id):
         raise IndexNotReady(f"{asset_slug} release {resolved.resolved_release} metadata index load ID is invalid")
     validate_requested_fields(request["fields"], resolved.schema_fields)
-    unique_ids = list(dict.fromkeys(request["ids"]))
-    documents = feature_index.lookup(
-        asset_slug=asset_slug,
-        release=resolved.resolved_release,
-        index_load_id=resolved.index_load_id,
-        feature_ids=unique_ids,
-    )
-    items = [
-        response_item(
-            feature_id=feature_id,
-            document=documents.get(feature_id),
-            fields=request["fields"],
-            include_provenance=request["include_provenance"],
+    if lookup_by_ext_id:
+        unique_ids = list(dict.fromkeys(request["ext_ids"]))
+        documents = feature_index.lookup_by_ext_ids(
+            asset_slug=asset_slug,
+            release=resolved.resolved_release,
+            index_load_id=resolved.index_load_id,
+            ext_ids=unique_ids,
         )
-        for feature_id in request["ids"]
-    ]
+        items = [
+            response_item_for_ext_id(
+                ext_id=ext_id,
+                document=documents.get(ext_id),
+                fields=request["fields"],
+                include_provenance=request["include_provenance"],
+            )
+            for ext_id in request["ext_ids"]
+        ]
+    else:
+        unique_ids = list(dict.fromkeys(request["ids"]))
+        documents = feature_index.lookup(
+            asset_slug=asset_slug,
+            release=resolved.resolved_release,
+            index_load_id=resolved.index_load_id,
+            feature_ids=unique_ids,
+        )
+        items = [
+            response_item(
+                feature_id=feature_id,
+                document=documents.get(feature_id),
+                fields=request["fields"],
+                include_provenance=request["include_provenance"],
+            )
+            for feature_id in request["ids"]
+        ]
     payload = {
         "asset_slug": asset_slug,
         "requested_release": resolved.requested_release,
@@ -472,6 +562,22 @@ def handle_lookup(
 
 
 def parse_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[str, Any]:
+    payload = parse_json_body(body)
+    ids = payload.get("ids")
+    normalized_ids = normalize_id_list(ids, key="ids", max_ids=max_ids, regex=FEATURE_ID_RE, label="feature_id")
+    normalized_fields, include_provenance = parse_lookup_options(payload, max_fields=max_fields)
+    return {"ids": normalized_ids, "fields": normalized_fields, "include_provenance": include_provenance}
+
+
+def parse_ext_id_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[str, Any]:
+    payload = parse_json_body(body)
+    ext_ids = payload.get("ext_ids")
+    normalized_ext_ids = normalize_id_list(ext_ids, key="ext_ids", max_ids=max_ids, regex=EXT_ID_RE, label="ext_id")
+    normalized_fields, include_provenance = parse_lookup_options(payload, max_fields=max_fields)
+    return {"ext_ids": normalized_ext_ids, "fields": normalized_fields, "include_provenance": include_provenance}
+
+
+def parse_json_body(body: bytes) -> dict[str, Any]:
     if not body:
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_json", "request body is required")
     try:
@@ -480,16 +586,23 @@ def parse_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_json", "request body must be valid JSON") from exc
     if not isinstance(payload, dict):
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_json", "request body must be a JSON object")
-    ids = payload.get("ids")
+    return payload
+
+
+def normalize_id_list(ids: Any, *, key: str, max_ids: int, regex: re.Pattern[str], label: str) -> list[str]:
     if not isinstance(ids, list) or not ids:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_argument", "ids must be a non-empty array")
+        raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_argument", f"{key} must be a non-empty array")
     if len(ids) > max_ids:
-        raise ApiError(HTTPStatus.BAD_REQUEST, "limit_exceeded", f"ids may contain at most {max_ids} values")
+        raise ApiError(HTTPStatus.BAD_REQUEST, "limit_exceeded", f"{key} may contain at most {max_ids} values")
     normalized_ids = []
     for index, value in enumerate(ids, start=1):
-        if not isinstance(value, str) or not FEATURE_ID_RE.fullmatch(value):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_argument", f"ids[{index}] is not a valid feature_id")
+        if not isinstance(value, str) or not regex.fullmatch(value):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_argument", f"{key}[{index}] is not a valid {label}")
         normalized_ids.append(value)
+    return normalized_ids
+
+
+def parse_lookup_options(payload: Mapping[str, Any], *, max_fields: int) -> tuple[list[str] | None, bool]:
     fields = payload.get("fields")
     normalized_fields: list[str] | None
     if fields is None:
@@ -508,7 +621,7 @@ def parse_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[
     include_provenance = payload.get("include_provenance", True)
     if not isinstance(include_provenance, bool):
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_argument", "include_provenance must be boolean")
-    return {"ids": normalized_ids, "fields": normalized_fields, "include_provenance": include_provenance}
+    return normalized_fields, include_provenance
 
 
 def response_item(
@@ -536,6 +649,26 @@ def response_item(
         item["ext_id"] = ext_id
     if include_provenance:
         item["provenance"] = document.get("provenance") or {}
+    return item
+
+
+def response_item_for_ext_id(
+    *,
+    ext_id: str,
+    document: Mapping[str, Any] | None,
+    fields: list[str] | None,
+    include_provenance: bool,
+) -> dict[str, Any]:
+    if document is None:
+        return {"ext_id": ext_id, "found": False}
+    feature_id = str(document.get("feature_id") or "").strip()
+    item = response_item(
+        feature_id=feature_id,
+        document=document,
+        fields=fields,
+        include_provenance=include_provenance,
+    )
+    item["ext_id"] = ext_id
     return item
 
 

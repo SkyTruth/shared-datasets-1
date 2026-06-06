@@ -21,11 +21,11 @@ license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
   Inventory System (e-AMLIS). https://amlis.osmre.gov/.
 notes: Monthly job publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release adds provider feature_id
-  values from OBJECTID, feature_hash values, canonical metadata/schema/manifest artifacts, and an initial Spanish PA_NAME
-  metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup tiles with feature_id
-  and ext_id only. Release history, source fingerprints, row counts, and file hashes are recorded in the bucket release index
-  and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not advertised as an active
-  data-plane format.
+  values from OBJECTID, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest artifacts,
+  and an initial Spanish PA_NAME metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup
+  tiles with feature_id and ext_id only. Release history, source fingerprints, row counts, and file hashes are recorded in
+  the bucket release index and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not
+  advertised as an active data-plane format.
 row_count: 63168
 data_profile:
   field_count: 57

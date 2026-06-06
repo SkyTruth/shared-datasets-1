@@ -124,7 +124,7 @@ def write_vector_bundle(
         feature_id="src:id:1",
         feature_hash="sha256:" + "a" * 64,
         geometry=None,
-        properties={"name": "A"},
+        properties={"ext_id": "1", "name": "A"},
         provenance={"source": "fixture"},
     )
     sidecar = tmp_path / f"{asset_slug}.metadata.ndjson.gz"
@@ -135,7 +135,10 @@ def write_vector_bundle(
     schema_payload = release_feature_model.build_release_schema(
         asset_slug=asset_slug,
         release=release,
-        fields=[release_feature_model.ReleaseSchemaField("name", "String")],
+        fields=[
+            release_feature_model.ReleaseSchemaField("ext_id", "String"),
+            release_feature_model.ReleaseSchemaField("name", "String"),
+        ],
     )
     schema = tmp_path / f"{asset_slug}.schema.json"
     schema.write_text(json.dumps(schema_payload, sort_keys=True) + "\n")

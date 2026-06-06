@@ -111,6 +111,25 @@ class FakeIndex:
             }
         }
 
+    def lookup_by_ext_ids(
+        self,
+        asset_slug: str,
+        release: str,
+        ext_ids: list[str],
+        *,
+        sidecar_uri: str,
+        sidecar_generation: int | None,
+    ):
+        self.last_ext_lookup = (asset_slug, release, ext_ids, sidecar_uri, sidecar_generation)
+        return {
+            "1": {
+                "feature_id": "src:id:1",
+                "feature_hash": "sha256:a",
+                "properties": {"ext_id": "1", "name": "A", "status": "active"},
+                "provenance": {"source": "test"},
+            }
+        }
+
 
 def release_index_payload(
     *,
@@ -173,11 +192,11 @@ def sidecar_record(feature_id: str = "src:id:1", *, name: str = "A") -> dict:
     }
 
 
-def lookup(body, headers=None):
+def lookup(body, headers=None, path="/v1/assets/wdpa-marine/releases/latest:lookup"):
     index = FakeIndex()
     response = run.handle_request(
         "POST",
-        "/v1/assets/wdpa-marine/releases/latest:lookup",
+        path,
         headers or {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
         json.dumps(body).encode("utf-8"),
         release_resolver=FakeResolver(),
@@ -252,6 +271,33 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
         self.assertIn("ETag", response.headers)
 
+    def test_lookup_by_ext_id_resolves_latest_filters_fields_and_marks_missing_ids(self):
+        response, index = lookup(
+            {"ext_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": False},
+            path="/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(index.last_ext_lookup, ("wdpa-marine", "2026-06-01", ["1", "2"], SIDECAR_URI, 1001))
+        payload = json.loads(response.body)
+        self.assertEqual(payload["resolved_release"], "2026-06-01")
+        self.assertEqual(payload["items"][0]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
+        self.assertNotIn("provenance", payload["items"][0])
+        self.assertEqual(payload["items"][1], {"ext_id": "2", "found": False})
+        self.assertEqual(payload["items"][2]["feature_id"], "src:id:1")
+        self.assertIn("ETag", response.headers)
+
+    def test_lookup_by_ext_id_rejects_invalid_public_ids(self):
+        response, _index = lookup(
+            {"ext_ids": ["src:id:1"]},
+            path="/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "invalid_request")
+
     def test_lookup_supports_etag_not_modified(self):
         response, _index = lookup({"ids": ["src:id:1"]})
         cached, _index = lookup({"ids": ["src:id:1"]}, headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org", "If-None-Match": response.headers["ETag"]})
@@ -281,6 +327,32 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
         self.assertEqual(payload["items"][0]["ext_id"], "1")
         self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
+        self.assertEqual(sidecar_blob.download_count, 1)
+
+    def test_sidecar_cache_supports_lookup_by_ext_id(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record()]), generation=1001)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            json.dumps({"ext_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
+            release_resolver=FakeResolver(),
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["items"][0]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
+        self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
+        self.assertEqual(payload["items"][1], {"ext_id": "2", "found": False})
+        self.assertEqual(payload["items"][2]["feature_id"], "src:id:1")
         self.assertEqual(sidecar_blob.download_count, 1)
 
     def test_sidecar_cache_reuses_loaded_release(self):
@@ -374,10 +446,16 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
     def test_bad_sidecar_contents_return_not_ready(self):
         duplicate = sidecar_record("src:id:1")
+        unsafe_ext_id = sidecar_record("src:id:3")
+        unsafe_ext_id["properties"]["ext_id"] = "bad-id"
+        duplicate_ext_id = sidecar_record("src:id:2")
+        duplicate_ext_id["properties"]["ext_id"] = "1"
         cases = {
             "bad gzip": b"not gzip",
             "bad ndjson": gzip.compress(b"{bad\n"),
             "duplicate feature_id": sidecar_bytes([duplicate, duplicate]),
+            "invalid ext_id": sidecar_bytes([unsafe_ext_id]),
+            "duplicate ext_id": sidecar_bytes([sidecar_record("src:id:1"), duplicate_ext_id]),
         }
 
         for label, payload in cases.items():

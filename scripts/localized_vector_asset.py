@@ -22,7 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import catalog_docs, vector_asset  # noqa: E402
+from scripts import catalog_docs, release_feature_model, vector_asset  # noqa: E402
 from scripts.pmtiles_zoom import profile_fgb, profile_payload, recommend_maxzoom, validate_detail_hint  # noqa: E402
 
 
@@ -189,6 +189,8 @@ def validate_localization_csv(path: Path) -> tuple[LocalizationCsvProfile, list[
         ext_id = as_text(row.get(JOIN_KEY)).strip()
         if not ext_id:
             errors.append(f"row {row_number}: ext_id is required")
+        elif not release_feature_model.EXT_ID_RE.fullmatch(ext_id):
+            errors.append(f"row {row_number}: ext_id must be 1-64 URL-safe alphanumeric characters")
         elif ext_id in seen_ext_ids:
             errors.append(f"row {row_number}: duplicate ext_id {ext_id!r}; first seen on row {seen_ext_ids[ext_id]}")
         else:
@@ -342,6 +344,8 @@ def load_fgb_key_profile(
         ext_id = as_text(properties.get(ext_id_field)).strip()
         if not ext_id:
             errors.append(f"feature {feature_index}: {ext_id_field} is required")
+        elif not release_feature_model.EXT_ID_RE.fullmatch(ext_id):
+            errors.append(f"feature {feature_index}: {ext_id_field} must be 1-64 URL-safe alphanumeric characters")
         elif ext_id in seen:
             errors.append(f"feature {feature_index}: duplicate {ext_id_field} {ext_id!r}; first seen on feature {seen[ext_id]}")
         else:

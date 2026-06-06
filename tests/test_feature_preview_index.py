@@ -36,14 +36,14 @@ class FeaturePreviewIndexTests(unittest.TestCase):
                         "release": "2026-06-01",
                         "feature_id": "src:id:1",
                         "feature_hash": "sha256:a",
-                        "properties": {"name": "A"},
+                        "properties": {"ext_id": "1", "name": "A"},
                     },
                     {
                         "asset_slug": "wdpa-marine",
                         "release": "2026-06-01",
                         "feature_id": "src:id:2",
                         "feature_hash": "sha256:b",
-                        "properties": {"name": "B"},
+                        "properties": {"ext_id": "2", "name": "B"},
                     },
                 ],
             )
@@ -68,12 +68,49 @@ class FeaturePreviewIndexTests(unittest.TestCase):
             write_sidecar(
                 sidecar,
                 [
-                    {"feature_id": "src:id:1", "feature_hash": "sha256:a", "properties": {}},
-                    {"feature_id": "src:id:1", "feature_hash": "sha256:b", "properties": {}},
+                    {"feature_id": "src:id:1", "feature_hash": "sha256:a", "properties": {"ext_id": "1"}},
+                    {"feature_id": "src:id:1", "feature_hash": "sha256:b", "properties": {"ext_id": "2"}},
                 ],
             )
 
             with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "duplicate feature_id"):
+                feature_preview_index.load_sidecar_to_index(
+                    sidecar_path=sidecar,
+                    asset_slug="wdpa-marine",
+                    release="2026-06-01",
+                    writer=FakeWriter(),
+                )
+
+    def test_invalid_ext_id_blocks_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
+            write_sidecar(
+                sidecar,
+                [
+                    {"feature_id": "src:id:1", "feature_hash": "sha256:a", "properties": {"ext_id": "src:id:1"}},
+                ],
+            )
+
+            with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "invalid ext_id"):
+                feature_preview_index.load_sidecar_to_index(
+                    sidecar_path=sidecar,
+                    asset_slug="wdpa-marine",
+                    release="2026-06-01",
+                    writer=FakeWriter(),
+                )
+
+    def test_duplicate_ext_id_blocks_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
+            write_sidecar(
+                sidecar,
+                [
+                    {"feature_id": "src:id:1", "feature_hash": "sha256:a", "properties": {"ext_id": "1"}},
+                    {"feature_id": "src:id:2", "feature_hash": "sha256:b", "properties": {"ext_id": "1"}},
+                ],
+            )
+
+            with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "duplicate ext_id"):
                 feature_preview_index.load_sidecar_to_index(
                     sidecar_path=sidecar,
                     asset_slug="wdpa-marine",

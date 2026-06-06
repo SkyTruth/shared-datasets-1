@@ -143,9 +143,11 @@ from `PATH`; the helper records their versions in the build plan.
 Generated group IDs are opt-in. Do not pick a grouping field inside the build
 step. First run the publishing concierge or another attribute profile and show
 the curator the standard decision table: likely provider `ext_id` candidates and
-likely grouping/search/filter candidates, plus the always-present `feature_id`
+likely grouping/search/filter candidates, plus the generated numeric sequence
 fallback for `ext_id`, with row/column counts, datatype, distinction,
-emptiness, domination, skew ratio, top examples, and concerns.
+emptiness, domination, skew ratio, top examples, and concerns. Provider or group
+fields may be used as `ext_id` only when every value is unique, nonblank, and
+matches `^[A-Za-z0-9]{1,64}$`.
 Distinction is role-dependent: provider IDs should be close to row-unique,
 while grouping fields are often useful at middle cardinality; very
 low-cardinality fields are usually filters and near-row-unique fields are
@@ -250,9 +252,10 @@ URI.
 
 Localized display names use a same-asset CSV sidecar rather than localized
 columns in the canonical FGB or PMTiles. The FGB and PMTiles must have a unique
-nonblank `ext_id`; PMTiles also carry `feature_id` for metadata lookup. The
-localization CSV must have `ext_id`, fallback `name`, `name_review_state`, and
-optional `name_{locale_code}` / `name_{locale_code}_review_state` pairs.
+nonblank URL-safe `ext_id` matching `^[A-Za-z0-9]{1,64}$`; PMTiles also carry
+`feature_id` for metadata lookup. The localization CSV must have `ext_id`,
+fallback `name`, `name_review_state`, and optional `name_{locale_code}` /
+`name_{locale_code}_review_state` pairs.
 
 Seed missing rows from a freshly built FGB without overwriting existing
 translations:

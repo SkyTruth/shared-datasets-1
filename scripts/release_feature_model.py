@@ -27,6 +27,7 @@ FEATURE_HASH_ALGORITHM = "sha256:canonical-feature-content:v1"
 MAX_FIRESTORE_DOCUMENT_BYTES = 1_048_576
 DEFAULT_MAX_SIDECAR_RECORD_BYTES = 900 * 1024
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+EXT_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 FEATURE_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
 ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
@@ -155,9 +156,70 @@ def validate_feature_id(feature_id: str) -> None:
         )
 
 
+def validate_ext_id(ext_id: str) -> None:
+    if not EXT_ID_RE.fullmatch(ext_id):
+        raise ReleaseFeatureModelError("ext_id must be 1-64 URL-safe alphanumeric characters")
+
+
 def validate_feature_hash(feature_hash: str) -> None:
     if not FEATURE_HASH_RE.fullmatch(feature_hash):
         raise ReleaseFeatureModelError("feature_hash must be sha256: followed by 64 lowercase hex characters")
+
+
+def ext_id_from_record(record: Mapping[str, Any]) -> str:
+    properties = record.get("properties") if isinstance(record.get("properties"), Mapping) else {}
+    return str(record.get("ext_id") or properties.get("ext_id") or "").strip()
+
+
+def ext_id_mapping_from_records(records: Iterable[SidecarRecord | Mapping[str, Any]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    seen_ext_ids: dict[str, str] = {}
+    for index, record in enumerate(records, start=1):
+        payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
+        feature_id = str(payload.get("feature_id") or "").strip()
+        ext_id = ext_id_from_record(payload)
+        try:
+            validate_feature_id(feature_id)
+            validate_ext_id(ext_id)
+        except ReleaseFeatureModelError as exc:
+            raise ReleaseFeatureModelError(f"invalid ext_id mapping at record {index}: {exc}") from exc
+        if feature_id in mapping:
+            raise ReleaseFeatureModelError(f"duplicate feature_id in ext_id mapping: {feature_id}")
+        if ext_id in seen_ext_ids:
+            raise ReleaseFeatureModelError(
+                f"duplicate ext_id in ext_id mapping: {ext_id} for {seen_ext_ids[ext_id]} and {feature_id}"
+            )
+        mapping[feature_id] = ext_id
+        seen_ext_ids[ext_id] = feature_id
+    return mapping
+
+
+def assign_sequence_ext_ids(
+    feature_ids: Iterable[str],
+    *,
+    previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
+) -> dict[str, str]:
+    previous = ext_id_mapping_from_records(previous_records or ())
+    assigned: dict[str, str] = {}
+    used_ext_ids = set(previous.values())
+    numeric_ext_ids = [int(ext_id) for ext_id in used_ext_ids if ext_id.isdigit()]
+    next_sequence = max(numeric_ext_ids, default=0) + 1
+    for feature_id in feature_ids:
+        feature_id = str(feature_id).strip()
+        validate_feature_id(feature_id)
+        if feature_id in assigned:
+            raise ReleaseFeatureModelError(f"duplicate feature_id while assigning ext_id: {feature_id}")
+        if feature_id in previous:
+            assigned[feature_id] = previous[feature_id]
+            continue
+        while str(next_sequence) in used_ext_ids:
+            next_sequence += 1
+        ext_id = str(next_sequence)
+        validate_ext_id(ext_id)
+        assigned[feature_id] = ext_id
+        used_ext_ids.add(ext_id)
+        next_sequence += 1
+    return assigned
 
 
 def sidecar_record(
@@ -168,6 +230,7 @@ def sidecar_record(
 ) -> SidecarRecord:
     validate_feature_id(feature.feature_id)
     validate_feature_hash(feature.feature_hash)
+    validate_ext_id(ext_id_from_record({"properties": feature.properties}))
     return SidecarRecord(
         schema_version=METADATA_SIDECAR_SCHEMA_VERSION,
         asset_slug=asset_slug,
@@ -193,6 +256,8 @@ def validate_sidecar_records(
 ) -> ValidationResult:
     seen: set[str] = set()
     duplicates: set[str] = set()
+    seen_ext_ids: dict[str, str] = {}
+    duplicate_ext_ids: set[str] = set()
     oversized: list[str] = []
     errors: list[str] = []
     count = 0
@@ -201,6 +266,7 @@ def validate_sidecar_records(
         count += 1
         feature_id = str(payload.get("feature_id") or "")
         feature_hash = str(payload.get("feature_hash") or "")
+        ext_id = ext_id_from_record(payload)
         try:
             validate_feature_id(feature_id)
         except ReleaseFeatureModelError as exc:
@@ -209,9 +275,17 @@ def validate_sidecar_records(
             validate_feature_hash(feature_hash)
         except ReleaseFeatureModelError as exc:
             errors.append(f"invalid feature_hash at record {count}: {exc}")
+        try:
+            validate_ext_id(ext_id)
+        except ReleaseFeatureModelError as exc:
+            errors.append(f"invalid ext_id at record {count}: {exc}")
         if feature_id in seen:
             duplicates.add(feature_id)
         seen.add(feature_id)
+        if ext_id in seen_ext_ids:
+            duplicate_ext_ids.add(ext_id)
+        elif ext_id:
+            seen_ext_ids[ext_id] = feature_id
         if len(sidecar_record_bytes(payload)) > max_record_bytes:
             oversized.append(feature_id or f"record-{count}")
         if payload.get("schema_version") != METADATA_SIDECAR_SCHEMA_VERSION:
@@ -226,6 +300,8 @@ def validate_sidecar_records(
             errors.append(f"record {count} provenance must be an object")
     if duplicates:
         errors.append("duplicate feature_id values: " + ", ".join(sorted(duplicates)))
+    if duplicate_ext_ids:
+        errors.append("duplicate ext_id values: " + ", ".join(sorted(duplicate_ext_ids)))
     if oversized:
         errors.append(
             "metadata sidecar record(s) exceed the configured serving document size: "
@@ -262,6 +338,21 @@ def read_metadata_sidecar(path: Path) -> Iterator[dict[str, Any]]:
             if not isinstance(payload, dict):
                 raise ReleaseFeatureModelError(f"{path}:{line_number}: sidecar row must be a JSON object")
             yield payload
+
+
+def read_metadata_sidecar_bytes(payload: bytes, *, label: str = "metadata sidecar") -> Iterator[dict[str, Any]]:
+    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as gzip_file:
+        with io.TextIOWrapper(gzip_file, encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ReleaseFeatureModelError(f"{label}:{line_number}: invalid JSON") from exc
+                if not isinstance(row, dict):
+                    raise ReleaseFeatureModelError(f"{label}:{line_number}: sidecar row must be a JSON object")
+                yield row
 
 
 def release_artifact_name(asset_slug: str, role: str) -> str:

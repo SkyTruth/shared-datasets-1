@@ -22,13 +22,15 @@ def write_translation_source(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def sidecar_record(feature_id: str, feature_hash: str, properties: dict[str, object]) -> dict[str, object]:
+    sidecar_properties = dict(properties)
+    sidecar_properties.setdefault("ext_id", feature_id.rsplit(":", 1)[-1])
     return {
         "schema_version": release_feature_model.METADATA_SIDECAR_SCHEMA_VERSION,
         "asset_slug": "example-asset",
         "release": "2026-05-01",
         "feature_id": feature_id,
         "feature_hash": feature_hash,
-        "properties": properties,
+        "properties": sidecar_properties,
         "provenance": {"source": "fixture"},
     }
 
