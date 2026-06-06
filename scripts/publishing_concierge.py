@@ -56,6 +56,7 @@ FORMAT_FILE_EXTENSIONS = {
     "cog": "tif",
     "zarr": "zarr",
 }
+STANDARD_WORK_ROOT_SHELL = "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
 SUPPORTED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 PROFILE_RANDOM_SAMPLE_SIZE = int(os.environ.get("SHARED_DATASETS_PROFILE_SAMPLE_SIZE", "10000"))
 PROFILE_RANDOM_SEED = int(os.environ.get("SHARED_DATASETS_PROFILE_RANDOM_SEED", "0"))
@@ -1088,7 +1089,7 @@ def build_plan(
     ext = FORMAT_FILE_EXTENSIONS[resolved_format]
     canonical_file = f"latest/{slug}.{ext}" if resolved_format != "zarr" else "latest/manifest.json"
     canonical_path = f"gs://{bucket}/{asset_root}/{canonical_file}"
-    work_dir = f"$TMPDIR/shared-datasets-1/vector-assets/{slug}"
+    work_dir = f"{STANDARD_WORK_ROOT_SHELL}/vector-assets/{slug}"
     publish_dir = f"{work_dir}/publish"
     include_pmtiles = resolved_format == "fgb"
     formats = [resolved_format]
@@ -1650,7 +1651,7 @@ def detect_existing_asset(plan: ConciergePlan, *, catalog_path: Path = Path("cat
 
 def render_catalog_web_command() -> str:
     return (
-        'WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}" '
+        f'WORK_ROOT="{STANDARD_WORK_ROOT_SHELL}"\n'
         "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py --out \"$WORK_ROOT/catalog-web\""
     )
 
@@ -1785,7 +1786,8 @@ def commands_for_catalog_outputs(_state: dict[str, Any]) -> list[str]:
     return [
         "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py generate",
         "UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py check",
-        'UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py export-readmes --output-dir "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/readmes"',
+        f'WORK_ROOT="{STANDARD_WORK_ROOT_SHELL}"\n'
+        'UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_docs.py export-readmes --output-dir "$WORK_ROOT/readmes"',
     ]
 
 

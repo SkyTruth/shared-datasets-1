@@ -35,6 +35,24 @@ class GcsAssetPathValidationTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(gcs_asset.content_type_for(Path(name), None), content_type)
 
+    def test_local_paths_reject_unexpanded_shell_variables(self):
+        bad_paths = [
+            Path("${TMPDIR:-/tmp}/shared-datasets-1/source.fgb"),
+            Path("$TMPDIR/shared-datasets-1/source.fgb"),
+        ]
+
+        for path in bad_paths:
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(Exception, "unexpanded shell-variable syntax"):
+                    gcs_asset.ensure_expanded_local_path(path, label="test path")
+
+    def test_download_rejects_unexpanded_destination_before_gcs_lookup(self):
+        with mock.patch("scripts.gcs_asset.get_blob") as get_blob:
+            with self.assertRaisesRegex(Exception, "unexpanded shell-variable syntax"):
+                gcs_asset.download("gs://test-bucket/source.fgb", Path("${TMPDIR:-/tmp}/source.fgb"))
+
+        get_blob.assert_not_called()
+
     def test_valid_asset_paths_pass(self):
         paths = [
             "100-geographic-reference/130-protected-areas/wdpa-terrestrial/README.md",

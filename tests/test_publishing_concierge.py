@@ -842,6 +842,54 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertTrue(any("resolved after the canonical FGB" in note for note in plan.notes))
         self.assertTrue(any("shared_datasets_group_id" in note for note in plan.notes))
 
+    def test_generated_temp_workspace_commands_are_copy_paste_safe(self):
+        catalog_web_command = publishing_concierge.render_catalog_web_command()
+
+        self.assertIn('WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"\n', catalog_web_command)
+        self.assertIn('--out "$WORK_ROOT/catalog-web"', catalog_web_command)
+        self.assertNotIn('}" UV_CACHE_DIR=', catalog_web_command)
+
+        export_command = publishing_concierge.commands_for_catalog_outputs({})[-1]
+        self.assertIn('WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"\n', export_command)
+        self.assertIn('--output-dir "$WORK_ROOT/readmes"', export_command)
+        self.assertNotIn('}/readmes"', export_command)
+
+    def test_plan_uses_documented_standard_work_root_expression(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            categories = root / "categories.yaml"
+            categories.write_text(CATEGORIES_YAML)
+            source = root / "source.shp"
+            source.write_text("placeholder")
+
+            plan = publishing_concierge.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                title="Example Asset",
+                category="100-geographic-reference",
+                subcategory="110-boundaries",
+                owner="SkyTruth",
+                source_name="Example source",
+                license_text="Example license",
+                citation="Example citation",
+                update_cadence="manual",
+                canonical_format=None,
+                access_tier="public",
+                bucket="example-bucket",
+                release_date="2026-05-01",
+                categories_path=categories,
+                docs_dir=root / "docs/assets",
+            )
+
+        self.assertEqual(
+            plan.standard_work_dir,
+            "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/example-asset",
+        )
+        self.assertEqual(
+            plan.publish_dir,
+            "${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/example-asset/publish",
+        )
+
     def test_missing_source_and_license_are_blocking_questions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

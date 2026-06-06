@@ -20,6 +20,20 @@ class VectorAssetTests(unittest.TestCase):
             Path("/tmp/shared-datasets-1/vector-assets/natural-earth-10m-land"),
         )
 
+    def test_work_dir_rejects_unexpanded_shell_variables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}\n')
+
+            with self.assertRaisesRegex(ValueError, "unexpanded shell-variable syntax"):
+                vector_asset.build_plan(
+                    source=source,
+                    asset_slug="example-asset",
+                    work_dir=Path("${TMPDIR:-/tmp}/shared-datasets-1/vector-assets/example-asset"),
+                    maxzoom=8,
+                    maxzoom_reason="Fixture maxzoom.",
+                )
+
     def test_build_plan_uses_standard_output_names_and_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"

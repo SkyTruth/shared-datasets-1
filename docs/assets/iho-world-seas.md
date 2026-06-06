@@ -24,9 +24,9 @@ notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha
   PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
   from sampled FGB geometry detail with local tile and browser QA. The 2026-06-05 reviewed metadata-contract release uses
   MRGID as the selected provider identifier, adds feature_id, ext_id, feature_hash, metadata/schema/manifest artifacts, and
-  keeps the 2026-04-29 release readable and unchanged. No shared_datasets_group_id, shared_datasets_row_id, or localized
-  metadata sidecars are generated. PMTiles are metadata-lookup tiles with feature_id and ext_id only. Release history, source
-  generations, row counts, and hashes are recorded in the bucket release index and per-run record.
+  keeps the 2026-04-29 release readable and unchanged. No shared_datasets_group_id, shared_datasets_row_id, or localized metadata
+  sidecars are generated. PMTiles are metadata-lookup tiles with feature_id and ext_id only. Release history, source generations,
+  row counts, and hashes are recorded in the bucket release index and per-run record.
 row_count: 101
 data_profile:
   field_count: 13
@@ -139,10 +139,17 @@ generated from the same source layer for web-map display and feature lookup.
 <!-- BEGIN GENERATED files-table -->
 | File | Format | Role | Purpose |
 |---|---|---|---|
-| `latest/iho-world-seas.fgb` | `fgb` | `canonical` | Canonical World Seas polygon dataset |
-| `latest/iho-world-seas.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same source layer |
-| `releases/2026-04-29/iho-world-seas.fgb` | `fgb` | `release` | Dated canonical release |
-| `releases/2026-04-29/iho-world-seas.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `latest/iho-world-seas.fgb` | `fgb` | `canonical` | Canonical World Seas polygon dataset with source fields plus feature_id, ext_id, and feature_hash |
+| `latest/iho-world-seas.pmtiles` | `pmtiles` | `companion` | Web map metadata-lookup tiles with feature_id and ext_id |
+| `latest/iho-world-seas.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/iho-world-seas.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
+| `latest/iho-world-seas.manifest.json` | `json` | `metadata` | Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
+| `releases/YYYY-MM-DD/iho-world-seas.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/YYYY-MM-DD/iho-world-seas.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.schema.json` | `json` | `release` | Dated release feature schema |
+| `releases/YYYY-MM-DD/iho-world-seas.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Manual metadata-contract release run record |
 <!-- END GENERATED files-table -->
 
 ## Schema notes

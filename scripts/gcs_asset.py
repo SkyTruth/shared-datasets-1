@@ -46,6 +46,7 @@ PREVIEW_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SOURCE_ARCHIVE_EXTENSIONS = APPROVED_DATA_EXTENSIONS | {".nc", ".grib", ".grib2", ".hdf", ".h5", ".hdf5"}
 ALLOW_CANONICAL_MUTATION_ENV = "SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"
 GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
+UNEXPANDED_LOCAL_PATH_RE = re.compile(r"(?<!\\)\$(?:\{[^}]*\}?|[A-Za-z_][A-Za-z0-9_]*)")
 
 
 def parse_gs_uri(uri: str) -> Tuple[str, str]:
@@ -88,6 +89,15 @@ def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool
         f"{operation} to non-scratch objects requires {ALLOW_CANONICAL_MUTATION_ENV}=1 "
         "from the approved publisher workflow, scheduled job, or documented break-glass path"
     )
+
+
+def ensure_expanded_local_path(path: Path, *, label: str) -> None:
+    raw = str(path)
+    if UNEXPANDED_LOCAL_PATH_RE.search(raw):
+        raise typer.BadParameter(
+            f"{label} contains unexpanded shell-variable syntax: {raw!r}. "
+            "Use double quotes in shell commands, assign WORK_ROOT first, or pass an already expanded path."
+        )
 
 
 def content_type_for(path: Path, explicit: Optional[str]) -> Optional[str]:
@@ -285,6 +295,7 @@ def download(
     generation: Optional[int] = typer.Option(None, help="Download only this generation."),
 ) -> None:
     """Download one object."""
+    ensure_expanded_local_path(dest, label="download destination")
     blob = get_blob(uri)
     kwargs = {}
     if generation is not None:
@@ -316,6 +327,7 @@ def upload(
     Use --replace-generation for safe replacement of an existing object.
     Use --unsafe-overwrite only when explicitly approved.
     """
+    ensure_expanded_local_path(src, label="upload source")
     require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite)
     blob = get_blob(uri)
     if cache_control:
