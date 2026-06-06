@@ -237,7 +237,7 @@ class PublishingConciergeTests(unittest.TestCase):
                     "generated_group_id_decision": "not-needed",
                     "group_id_fields": [],
                     "generated_row_id_decision": "approved",
-                    "ext_id_decision": "feature-id",
+                    "ext_id_decision": "generated-sequence",
                     "ext_id_fields": [],
                     "search_fields": ["NAME"],
                 },
@@ -1024,7 +1024,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(disc_profile.empty_values, 1)
         self.assertEqual(disc_profile.sentinel_value_count, 1)
 
-    def test_profile_field_evidence_accepts_feature_id_ext_id_fallback(self):
+    def test_profile_field_evidence_accepts_generated_sequence_ext_id_fallback(self):
         state = {}
 
         normalized = publishing_concierge.validate_profile_fields(
@@ -1037,13 +1037,13 @@ class PublishingConciergeTests(unittest.TestCase):
                 "generated_group_id_decision": "not-needed",
                 "group_id_fields": [],
                 "generated_row_id_decision": "approved",
-                "ext_id_decision": "feature-id",
+                "ext_id_decision": "generated-sequence",
                 "ext_id_fields": [],
                 "search_fields": ["NAME"],
             },
         )
 
-        self.assertEqual(normalized["ext_id_decision"], "feature-id")
+        self.assertEqual(normalized["ext_id_decision"], "generated-sequence")
         self.assertEqual(normalized["ext_id_fields"], [])
 
     def test_profile_field_evidence_rejects_deferred_decisions(self):
@@ -1055,7 +1055,7 @@ class PublishingConciergeTests(unittest.TestCase):
             "generated_group_id_decision": "not-needed",
             "group_id_fields": [],
             "generated_row_id_decision": "rejected",
-            "ext_id_decision": "feature-id",
+            "ext_id_decision": "generated-sequence",
             "ext_id_fields": [],
             "search_fields": [],
         }

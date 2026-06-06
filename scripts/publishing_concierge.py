@@ -1671,7 +1671,7 @@ def commands_for_settle_contract(state: dict[str, Any]) -> list[str]:
 def commands_for_profile_fields(state: dict[str, Any]) -> list[str]:
     return [
         "Review `plan.curator_field_options` in `status --json` output.",
-        "Choose whether ext_id comes from a selected provider ID, selected group ID, or the always-present feature_id fallback.",
+        "Choose whether ext_id comes from a URL-safe provider ID, URL-safe group ID, or generated numeric sequence.",
         "If planning-time profile was unavailable, profile the canonical artifact after conversion before confirming.",
     ]
 
@@ -1910,8 +1910,8 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
     if row not in {"not-needed", "approved", "rejected"}:
         raise WorkflowError("evidence.generated_row_id_decision must be not-needed, approved, or rejected")
     ext_id_decision = require_non_empty_string(evidence, "ext_id_decision")
-    if ext_id_decision not in {"provider-id", "group-id", "feature-id"}:
-        raise WorkflowError("evidence.ext_id_decision must be provider-id, group-id, or feature-id")
+    if ext_id_decision not in {"provider-id", "group-id", "generated-sequence"}:
+        raise WorkflowError("evidence.ext_id_decision must be provider-id, group-id, or generated-sequence")
     normalized = {
         "decision_table_present": True,
         "profile_scope": profile_scope,
@@ -1921,7 +1921,7 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
         "group_id_fields": require_string_list(evidence, "group_id_fields", allow_empty=group != "approved"),
         "generated_row_id_decision": row,
         "ext_id_decision": ext_id_decision,
-        "ext_id_fields": require_string_list(evidence, "ext_id_fields", allow_empty=ext_id_decision == "feature-id"),
+        "ext_id_fields": require_string_list(evidence, "ext_id_fields", allow_empty=ext_id_decision == "generated-sequence"),
         "search_fields": require_string_list(evidence, "search_fields", allow_empty=True),
         "notes": str(evidence.get("notes", "")).strip(),
     }
@@ -1933,8 +1933,8 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
         raise WorkflowError("evidence.ext_id_decision=provider-id requires provider_id_decision=use-provider-id")
     if ext_id_decision == "group-id" and group != "approved":
         raise WorkflowError("evidence.ext_id_decision=group-id requires generated_group_id_decision=approved")
-    if ext_id_decision == "feature-id" and normalized["ext_id_fields"]:
-        raise WorkflowError("evidence.ext_id_fields must be empty when ext_id_decision=feature-id")
+    if ext_id_decision == "generated-sequence" and normalized["ext_id_fields"]:
+        raise WorkflowError("evidence.ext_id_fields must be empty when ext_id_decision=generated-sequence")
     return normalized
 
 
@@ -2666,7 +2666,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "generated_group_id_decision": "not-needed|approved",
             "group_id_fields": ["string"],
             "generated_row_id_decision": "not-needed|approved|rejected",
-            "ext_id_decision": "provider-id|group-id|feature-id",
+            "ext_id_decision": "provider-id|group-id|generated-sequence",
             "ext_id_fields": ["string"],
             "search_fields": ["string"],
         },

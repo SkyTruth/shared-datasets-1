@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, Sequence
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
@@ -495,7 +495,14 @@ def output_layer_summary(path: Path) -> dict[str, Any]:
     return parse_ogrinfo_summary(text)
 
 
-def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: Path, release_date: dt.date) -> AssetOutput:
+def build_asset_output(
+    *,
+    source: SourceState,
+    extract: SourceExtract,
+    workdir: Path,
+    release_date: dt.date,
+    previous_records: Sequence[Mapping[str, Any]] | None = None,
+) -> AssetOutput:
     fgb = workdir / f"{ASSET.slug}.fgb"
     pmtiles = workdir / f"{ASSET.slug}.pmtiles"
     metadata = workdir / f"{ASSET.slug}.metadata.ndjson.gz"
@@ -508,6 +515,7 @@ def build_asset_output(*, source: SourceState, extract: SourceExtract, workdir: 
         release=release_date.isoformat(),
         id_field="OBJECTID",
         provenance={"source": source.layer_url, "where": source.where},
+        previous_records=previous_records,
     )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
@@ -912,7 +920,13 @@ def run() -> list[dict[str, Any]]:
             dest=workdir / f"{ASSET.slug}.geojson",
             page_size=page_size,
         )
-        output = build_asset_output(source=source, extract=extract, workdir=workdir, release_date=run_date)
+        output = build_asset_output(
+            source=source,
+            extract=extract,
+            workdir=workdir,
+            release_date=run_date,
+            previous_records=publisher.load_latest_metadata_records(ASSET),
+        )
         previous_sha = ((previous_record or {}).get("sha256") or {}).get("fgb")
         if previous_sha and previous_sha == output.sha256["fgb"] and not contract_refresh:
             LOGGER.info("%s output hash unchanged; skipping", ASSET.slug)

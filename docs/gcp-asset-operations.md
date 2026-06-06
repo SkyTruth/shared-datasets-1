@@ -160,9 +160,11 @@ preserving click-to-metadata joins through the Cloud Run metadata service.
 Generated group IDs are opt-in. Present provider ID candidates and
 grouping/search field candidates before adding `--group-id-field`. Use the
 standard concierge decision table: row/column counts plus likely provider
-`ext_id` options, the `feature_id` fallback, and likely grouping/search/filter
-options, each with datatype, distinction, emptiness, domination, skew ratio,
-top examples, and concerns. Run
+`ext_id` options, the generated numeric sequence fallback, and likely
+grouping/search/filter options, each with datatype, distinction, emptiness,
+domination, skew ratio, top examples, and concerns. Provider or group fields may
+be used as `ext_id` only when every value is unique, nonblank, and matches
+`^[A-Za-z0-9]{1,64}$`. Run
 exact stats on all local rows when practical; if that is too expensive, use a
 deterministic random sample of about 10,000 rows, not a first-N-row sample. When
 a curator chooses group-level addressing for an asset that lacks a useful

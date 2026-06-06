@@ -73,7 +73,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
 | Browser click needs public feature attributes | Metadata artifact helpers | Resolve the release-index sidecar and fetch the public artifact URL directly from the CDN. |
-| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose `feature_id`; the backend authenticates, authorizes, and returns only app-approved metadata access. |
+| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose internal `feature_id`; URL workflows use public `ext_id`. The backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
@@ -84,10 +84,18 @@ Credentials.
 
 Release-oriented vector PMTiles are intentionally lightweight and should not be
 treated as the source of full feature attributes. Use the PMTiles `feature_id`
-property to request metadata through an app-owned backend route that calls:
+property for internal click-to-metadata joins through an app-owned backend route
+that calls:
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
+```
+
+For user-visible URLs, pass the URL-safe public `ext_id` handle through the app
+backend and call:
+
+```http
+POST /v1/assets/{slug}/releases/{release}:lookupByExtId
 ```
 
 ## Catalog Helpers

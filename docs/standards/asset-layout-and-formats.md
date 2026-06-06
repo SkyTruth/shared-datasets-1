@@ -157,11 +157,20 @@ Identity strategy priority:
 3. Curator-approved generated per-feature ID. The approving curator is the
    maintainer uploading the file the first time or setting up the cron job.
 
+`ext_id` is the public/user-facing URL handle, separate from the internal
+`feature_id`. It must be unique, nonblank, and match
+`^[A-Za-z0-9]{1,64}$`; do not publish colon, underscore, slash, dot, hyphen,
+space, or other punctuation in `ext_id`. Provider or group fields may be used
+only when every value is unique, nonblank, and matches that regex. When
+maintainers choose neither a URL-safe provider ID nor a URL-safe group ID,
+publish generated decimal sequence handles (`1`, `2`, `3`, ...), preserving
+existing `feature_id -> ext_id` mappings on refreshes and never reusing retired
+sequence values.
+
 `shared_datasets_group_id` and `shared_datasets_row_id` remain separate
 concepts. A group ID is not unique per feature. A generated row ID is a
-last-resort row address and does not replace the release `feature_id` decision.
-When maintainers choose neither a provider ID nor a group ID for `ext_id`,
-publish `ext_id` as the same value as `feature_id`.
+last-resort row address and does not replace either the internal `feature_id`
+decision or the public `ext_id` decision.
 
 Required release artifacts for vector releases:
 
@@ -390,11 +399,12 @@ review states must be `source_provided`, `machine_translated`, or
 `human_reviewed`; the asset-doc aggregate `review_state` may also be `mixed`
 when a locale has values from more than one state.
 
-The canonical FGB must contain a unique nonblank `ext_id` column, and PMTiles
-must carry the same `ext_id` value as a feature property. For release-oriented
-assets that do not use a provider ID or group ID as `ext_id`, this column is the
-always-present `feature_id`. The localization CSV must contain one unique
-nonblank row for every current FGB `ext_id`. The fallback `name` value is
+The canonical FGB must contain a unique nonblank URL-safe `ext_id` column, and
+PMTiles must carry the same `ext_id` value as a feature property. For
+release-oriented assets that do not use a URL-safe provider ID or URL-safe group
+ID as `ext_id`, this column is the generated decimal sequence handle. The
+localization CSV must contain one unique nonblank row for every current FGB
+`ext_id`. The fallback `name` value is
 required for every row. Blank localized values must have blank review states,
 and nonblank localized values must have a review state. Per-value review-state
 fields stay in the CSV and catalog metadata.
@@ -425,8 +435,9 @@ before generating `shared_datasets_group_id`; if the current request has not
 selected a grouping field, stop at the options step. Use the standard decision
 table from `scripts/publishing_concierge.py` or an equivalent profile. It must
 show file row and column counts, then compact sections for likely provider
-`ext_id` options, the `feature_id` fallback, and likely grouping/search/filter
-options. For displayed candidate fields, include datatype, distinction
+`ext_id` options, the generated sequence fallback, and likely
+grouping/search/filter options. For displayed candidate fields, include
+datatype, distinction
 (`distinct values / profiled rows`), emptiness, domination, skew ratio
 (`top-value count / (non-empty rows / distinct values)`), top-value examples,
 and concerns. Distinction is a different signal by role: provider IDs should be

@@ -22,11 +22,11 @@ citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Pr
   Other Effective Area-based Conservation Measures (WD-OECM) [Online], June 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available
   at: www.protectedplanet.net.'
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release
-  adds provider feature_id values from SITE_PID, feature_hash values, canonical metadata/schema/manifest artifacts, and an
-  initial Spanish NAME_ENG metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup
-  tiles with feature_id and ext_id only. The release preserves 2,661 upstream invalid geometries from the current FGB; no
-  geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in the bucket release
-  index and per-run records.
+  adds provider feature_id values from SITE_PID, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest
+  artifacts, and an initial Spanish NAME_ENG metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight
+  metadata-lookup tiles with feature_id and ext_id only. The release preserves 2,661 upstream invalid geometries from the
+  current FGB; no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded
+  in the bucket release index and per-run records.
 row_count: 304572
 data_profile:
   field_count: 33
@@ -210,7 +210,7 @@ releases add `ext_id`, `feature_hash`, and `feature_id` fields.
 | `OECM_ASMT` | string | OECM assessment status. |
 | `GIS_M_AREA` | real | GIS-calculated marine area in square kilometers; null for point rows where not supplied. |
 | `GIS_AREA` | real | GIS-calculated total area in square kilometers; null for point rows where not supplied. |
-| `ext_id` | string | External lookup ID. For metadata-contract releases this mirrors the SITE_PID-derived provider feature ID. |
+| `ext_id` | string | Public lookup handle. The 2026-06-05 values are legacy non-URL-safe handles; future releases use URL-safe `SITE_PID` only when every value is unique, nonblank, and alphanumeric, otherwise generated decimal sequence handles. |
 | `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
 | `feature_id` | string | Provider-backed feature ID derived from `SITE_PID`, formatted as `src:SITE_PID:{SITE_PID}`. |
 

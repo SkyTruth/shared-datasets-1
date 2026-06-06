@@ -118,7 +118,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         self.assertEqual(first[0]["properties"]["feature_id"], second[0]["properties"]["feature_id"])
 
-    def test_common_generated_ids_default_ext_id_to_feature_id(self):
+    def test_common_generated_ids_default_ext_id_to_sequence(self):
         feature = {
             "type": "Feature",
             "properties": {"DN": 3},
@@ -132,15 +132,14 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             provenance={},
         )
 
-        feature_id = enriched[0]["properties"]["feature_id"]
-        self.assertEqual(enriched[0]["properties"]["ext_id"], feature_id)
-        self.assertEqual(sidecar[0]["properties"]["ext_id"], feature_id)
-        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "feature_id")
+        self.assertEqual(enriched[0]["properties"]["ext_id"], "1")
+        self.assertEqual(sidecar[0]["properties"]["ext_id"], "1")
+        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "generated_sequence")
 
     def test_common_provider_ids_can_use_selected_ext_id_field(self):
         feature = {
             "type": "Feature",
-            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider-123"},
+            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider123"},
             "geometry": {"type": "Point", "coordinates": [0, 0]},
         }
 
@@ -154,9 +153,47 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         )
 
         self.assertEqual(enriched[0]["properties"]["feature_id"], "src:SITE_PID:WDPA-123")
-        self.assertEqual(enriched[0]["properties"]["ext_id"], "provider-123")
-        self.assertEqual(sidecar[0]["properties"]["ext_id"], "provider-123")
+        self.assertEqual(enriched[0]["properties"]["ext_id"], "provider123")
+        self.assertEqual(sidecar[0]["properties"]["ext_id"], "provider123")
         self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "stable_key")
+
+    def test_common_provider_ids_reject_unsafe_ext_id_field_values(self):
+        feature = {
+            "type": "Feature",
+            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider-123"},
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "URL-safe alphanumeric"):
+            feature_metadata.enrich_features_with_provider_ids(
+                [feature],
+                asset_slug="wdpa-polygons",
+                release="2026-05-01",
+                id_field="SITE_PID",
+                ext_id_field="stable_key",
+                provenance={},
+            )
+
+    def test_sequence_ext_ids_preserve_previous_and_never_reuse_retired_ids(self):
+        previous_records = [
+            {"feature_id": "src:id:a", "properties": {"ext_id": "7"}},
+            {"feature_id": "src:id:retired", "properties": {"ext_id": "9"}},
+        ]
+
+        assigned = model.assign_sequence_ext_ids(
+            ["src:id:b", "src:id:a", "src:id:c"],
+            previous_records=previous_records,
+        )
+
+        self.assertEqual(assigned, {"src:id:b": "10", "src:id:a": "7", "src:id:c": "11"})
+
+    def test_validate_ext_id_rejects_url_unfriendly_values(self):
+        for ext_id in ("", "src:SITE_PID:123", "abc_def", "abc.def", "abc/def", "abc def", "a" * 65, "abc-def"):
+            with self.subTest(ext_id=ext_id), self.assertRaisesRegex(
+                model.ReleaseFeatureModelError,
+                "URL-safe alphanumeric",
+            ):
+                model.validate_ext_id(ext_id)
 
     def test_common_generated_ids_reject_duplicate_geometry(self):
         feature = {
@@ -178,7 +215,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             feature_id="src:id:1",
             feature_hash=VALID_HASH,
             geometry={"type": "Point", "coordinates": [0, 0]},
-            properties={"name": "A"},
+            properties={"ext_id": "1", "name": "A"},
             provenance={"source": "fixture"},
         )
         record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
@@ -194,7 +231,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             feature_id="src:id:1",
             feature_hash=VALID_HASH,
             geometry=None,
-            properties={"name": "A"},
+            properties={"ext_id": "1", "name": "A"},
             provenance={"source": "fixture"},
         )
         record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
@@ -205,14 +242,14 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             rows = list(model.read_metadata_sidecar(path))
 
         self.assertEqual(rows[0]["feature_id"], "src:id:1")
-        self.assertEqual(rows[0]["properties"], {"name": "A"})
+        self.assertEqual(rows[0]["properties"], {"ext_id": "1", "name": "A"})
 
     def test_sidecar_writers_are_deterministic(self):
         feature = model.FeatureRecord(
             feature_id="src:id:1",
             feature_hash=VALID_HASH,
             geometry=None,
-            properties={"name": "A"},
+            properties={"ext_id": "1", "name": "A"},
             provenance={"source": "fixture"},
         )
         record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
@@ -239,7 +276,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             "release": "2026-05-02",
             "feature_id": "src:id:1",
             "feature_hash": "sha256:abc",
-            "properties": {"name": "A"},
+            "properties": {"ext_id": "1", "name": "A"},
             "provenance": {},
         }
 

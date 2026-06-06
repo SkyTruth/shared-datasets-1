@@ -19,7 +19,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from google.cloud import storage
 
@@ -692,6 +692,7 @@ def build_asset_outputs(
     workdir: Path,
     run_date: dt.date,
     cleanup_after_gpkg: tuple[Path, ...] = (),
+    previous_records: Sequence[Mapping[str, Any]] | None = None,
 ) -> AssetOutputs:
     expected_rows = expected_feature_count(source, source_layers, where)
     if expected_rows <= 0:
@@ -724,6 +725,7 @@ def build_asset_outputs(
         release=run_date.isoformat(),
         id_field="SITE_PID",
         provenance={"source": source, "where": where},
+        previous_records=previous_records,
     )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
@@ -1040,6 +1042,7 @@ def run() -> list[dict[str, Any]]:
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
+                previous_records=publisher.load_latest_metadata_records(asset),
             )
             records.append(
                 publish_asset(

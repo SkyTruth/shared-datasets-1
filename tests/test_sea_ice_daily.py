@@ -59,6 +59,10 @@ class FakeBlob:
         self.reload()
         return self.text
 
+    def download_as_bytes(self) -> bytes:
+        self.reload()
+        return self.data
+
     def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
         self._check_generation(if_generation_match)
         self.exists = True

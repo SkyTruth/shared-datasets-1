@@ -149,7 +149,7 @@ The PMTiles artifact is generated from the same vectorized output. Auto maxzoom 
 | Name | Type | Description |
 |---|---|---|
 | `DN` | integer | IMS raster value. Published features are class `3`, described by NSIDC as sea/lake ice. |
-| `ext_id` | string | External lookup ID. For IMS metadata-contract releases this mirrors the generated `feature_id`. |
+| `ext_id` | string | Public lookup handle. Releases without a URL-safe provider ID use generated decimal sequence handles. |
 | `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
 | `feature_id` | string | Generated stable feature ID derived from the feature geometry digest. |
 | `id` | string | OGR-preserved feature identifier mirroring the generated feature ID in metadata-contract FGB releases. |

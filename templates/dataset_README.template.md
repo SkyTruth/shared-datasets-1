@@ -157,8 +157,8 @@ localization source in `latest/{asset-slug}-localizations.csv`, keyed by
 `ext_id`, and declare it in `localized_names`. Resolve display labels through
 the metadata API or localization sidecar; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
-must keep unique nonblank `ext_id` values but does not need native localized
-name columns.
+must keep unique nonblank URL-safe `ext_id` values matching
+`^[A-Za-z0-9]{1,64}$` but does not need native localized name columns.
 For vector assets, keep `feature_id` and `feature_hash` in the canonical FGB,
 keep `feature_id` and `ext_id` in PMTiles, publish the metadata
 sidecar/schema/manifest files, and declare them in `feature_metadata`.

@@ -27,7 +27,7 @@ license_flags:
 - source-authorization-confirmed-2026-05-08
 notes: Manual private snapshot from ACLED weekly aggregated Europe and Central Asia XLSX export; release 2026-04-25; 120245
   point features. The 2026-06-05 same-release metadata-contract repair reused the current release FGB as the authoritative
-  source, added composite provider feature_id values, ext_id values equal to feature_id, feature_hash values, canonical metadata/schema/manifest
+  source, added composite provider feature_id values, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest
   artifacts, and metadata-lookup PMTiles with only ext_id and feature_id properties. No shared_datasets_group_id, shared_datasets_row_id,
   or localized metadata sidecars are generated for this private repair. FGB sha256 678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400;
   PMTiles sha256 e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed; metadata sidecar sha256 f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1;
@@ -170,7 +170,7 @@ The source workbook had one visible sheet with 120,245 data rows and 13 source c
 
 `population_exposure` is ACLED's best estimate of population exposed to events based on proximity. ACLED's aggregated data guidance says this value should not be summed for analysis.
 
-The repaired release adds a release feature model. `feature_id` is generated with `release_feature_model.composite_provider_feature_id(...)` from `week`, `region`, `country`, `admin1_id`, `admin1`, `disorder_type`, `event_type`, `sub_event_type`, `centroid_latitude`, and `centroid_longitude`; missing preimage values use the `__NULL__` sentinel. `ext_id` is equal to `feature_id`. `feature_hash` is computed from canonical GeoJSON geometry plus published non-ID source properties, excluding `feature_id`, `ext_id`, and `feature_hash`.
+The repaired release adds a release feature model. `feature_id` is generated with `release_feature_model.composite_provider_feature_id(...)` from `week`, `region`, `country`, `admin1_id`, `admin1`, `disorder_type`, `event_type`, `sub_event_type`, `centroid_latitude`, and `centroid_longitude`; missing preimage values use the `__NULL__` sentinel. Its published `ext_id` values are legacy non-URL-safe public handles and require a corrective release with generated decimal sequence handles. `feature_hash` is computed from canonical GeoJSON geometry plus published non-ID source properties, excluding `feature_id`, `ext_id`, and `feature_hash`.
 
 The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. PMTiles features intentionally include only `feature_id` and `ext_id` so clients resolve full source properties through the feature metadata sidecar. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles with no feature or tile-size dropping for z0 point retention, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
 
@@ -196,7 +196,7 @@ The PMTiles artifact is derived from the same point features, with zooms 0 throu
 | `source_accessed_date` | datetime | Date this source export was supplied and processed for shared-datasets. |
 | `source_version` | string | Source freshness note from the file name: up to week of 2026-04-25. |
 | `feature_id` | string | Stable release feature identifier generated from the approved composite provider key. |
-| `ext_id` | string | External lookup identifier; equal to `feature_id` for this release. |
+| `ext_id` | string | Public lookup handle. The repaired release values are legacy non-URL-safe handles and must be replaced by generated sequence IDs in a corrective release. |
 | `feature_hash` | string | SHA-256 hash of canonical geometry plus published non-ID source properties. |
 
 ## Update notes

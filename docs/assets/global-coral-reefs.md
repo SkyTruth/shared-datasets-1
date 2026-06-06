@@ -29,13 +29,14 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   sha256 387d9999983a2cf9916ce3d7d496c45319ed8196eccfe9b3d2e8622b82756869; point fgb sha256 a81fcf8264e397fe08cd2655ad580cf36da6fea6010e830b97947fb091bb8ccf;
   pmtiles sha256 2e33c2bbbf0942d0b692e663815177c47f87a008a5206451e0e293f8af82b7b6; metadata-contract release 2026-06-05 changes
   the active canonical contract from polygon-only to a mixed polygon+point FGB containing 17,504 polygon features and 925
-  point features. The release adds generated feature_id values, ext_id mirroring feature_id, feature_hash values, geometry_role,
-  canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with only feature_id and ext_id. No shared_datasets_group_id,
-  shared_datasets_row_id, or localized metadata sidecar is generated for this release. fgb sha256 843a00eb56572d2b6b42ef21a67fe01899b212348c236fda14537f460d895c63;
-  point fgb sha256 c9c0e12cad445c29e08de4767866332bee09898600736e668aabf682649976c3; pmtiles sha256 def9354c709e14aaae1085f178bba37f753817d43926d1f12d557ddb717b8674,
-  corrected 2026-06-06 with Tippecanoe drop-rate 1 after verifying all 925 point features decode at zoom 0; metadata sha256
-  479f8defa534da8016e665f488293c5fd9628c148c1f634e501583e165f74f36; schema sha256 0c59dffa6d785fc3f7b6b1fd6a875b5712e135bf134b470e87f51e857e717547;
-  finalized manifest checksum is recorded in the release run record after promotion.
+  point features. The release adds generated feature_id values, legacy non-URL-safe ext_id values derived from those internal
+  IDs, feature_hash values, geometry_role, canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with
+  only feature_id and ext_id. No shared_datasets_group_id, shared_datasets_row_id, or localized metadata sidecar is generated
+  for this release. fgb sha256 843a00eb56572d2b6b42ef21a67fe01899b212348c236fda14537f460d895c63; point fgb sha256 c9c0e12cad445c29e08de4767866332bee09898600736e668aabf682649976c3;
+  pmtiles sha256 def9354c709e14aaae1085f178bba37f753817d43926d1f12d557ddb717b8674, corrected 2026-06-06 with Tippecanoe drop-rate
+  1 after verifying all 925 point features decode at zoom 0; metadata sha256 479f8defa534da8016e665f488293c5fd9628c148c1f634e501583e165f74f36;
+  schema sha256 0c59dffa6d785fc3f7b6b1fd6a875b5712e135bf134b470e87f51e857e717547; finalized manifest checksum is recorded
+  in the release run record after promotion.
 row_count: 18429
 data_profile:
   field_count: 22
@@ -46,8 +47,8 @@ data_profile:
     duplicate_row_count: 17490
     status: non_unique
     notes: Metadata link, not row-unique
-  notes: No documented source provider feature ID candidate; metadata-contract releases use generated per-feature IDs and
-    ext_id mirrors feature_id.
+  notes: No documented source provider feature ID candidate; the 2026-06-05 metadata-contract release used legacy non-URL-safe
+    ext_id values and needs a corrective release with generated sequence handles.
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
@@ -166,7 +167,7 @@ This is a format conversion from the local source shapefiles `WCMC008_CoralReef2
 
 The local source package contains 17,504 polygon features and 925 point features. The reviewed 2026-06-05 metadata-contract release publishes all 18,429 features. This is an incompatible geometry-contract change for consumers that assumed `latest/global-coral-reefs.fgb` was polygon-only; those consumers should filter `geometry_role = 'polygon'` or pin an older dated release.
 
-No provider row-level external ID is documented. `METADATA_I` is a low-cardinality metadata grouping value, not a unique feature identifier. The 2026-06-05 release therefore uses generated per-feature `feature_id` values derived from the asset slug, source component, source row order, canonical geometry hash, and stable source identifying fields where present. `ext_id` is set equal to `feature_id`. `feature_hash` is computed from normalized geometry plus published nonvolatile properties. No `shared_datasets_group_id` or `shared_datasets_row_id` is published, and no localized metadata sidecar is generated for this release.
+No provider row-level external ID is documented. `METADATA_I` is a low-cardinality metadata grouping value, not a unique feature identifier. The 2026-06-05 release therefore uses generated per-feature internal `feature_id` values derived from the asset slug, source component, source row order, canonical geometry hash, and stable source identifying fields where present. Its published `ext_id` values are legacy non-URL-safe public handles derived from those internal IDs and require a corrective release with generated decimal sequence handles. `feature_hash` is computed from normalized geometry plus published nonvolatile properties. No `shared_datasets_group_id` or `shared_datasets_row_id` is published, and no localized metadata sidecar is generated for this release.
 
 The PMTiles artifact is a lightweight metadata-lookup archive. Decoded feature properties are intentionally limited to `feature_id` and `ext_id`; full attributes remain in the canonical FGB and metadata sidecar.
 
@@ -174,7 +175,7 @@ The PMTiles artifact is a lightweight metadata-lookup archive. Decoded feature p
 
 | Name | Type | Description |
 |---|---|---|
-| `ext_id` | string | External lookup ID. For this release it mirrors the generated `feature_id`. |
+| `ext_id` | string | Public lookup handle. The 2026-06-05 values are legacy non-URL-safe handles and must be replaced by generated sequence IDs in a corrective release. |
 | `feature_hash` | string | SHA-256 content hash computed from normalized geometry plus published nonvolatile properties. |
 | `feature_id` | string | Generated stable feature ID for release metadata lookup. |
 | `geometry_role` | string | Published geometry discriminator with values `polygon` and `point`. |

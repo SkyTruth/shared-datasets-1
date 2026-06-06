@@ -14,7 +14,7 @@ import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from google.cloud import storage
 
@@ -547,6 +547,7 @@ def build_outputs(
     source_tif: Path,
     source_date: dt.date,
     workdir: Path,
+    previous_records: Sequence[Mapping[str, Any]] | None = None,
 ) -> AssetOutputs:
     mask_tif = workdir / "ice-mask.tif"
     raw_gpkg = workdir / "ice-polygons.gpkg"
@@ -586,6 +587,7 @@ def build_outputs(
         asset_slug=ASSET.slug,
         release=source_date.isoformat(),
         provenance={"source_date": source_date.isoformat(), "generated_id_strategy": "geometry-digest"},
+        previous_records=previous_records,
     )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
@@ -886,6 +888,7 @@ def run() -> dict[str, Any]:
             source_tif=source_tif,
             source_date=downloaded.filename_date,
             workdir=workdir,
+            previous_records=publisher.load_latest_metadata_records(ASSET),
         )
         return publish_outputs(
             publisher=publisher,

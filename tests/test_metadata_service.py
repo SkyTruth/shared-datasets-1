@@ -46,6 +46,7 @@ class NotReadyResolver(FakeResolver):
 class FakeIndex:
     def __init__(self) -> None:
         self.calls = []
+        self.ext_id_calls = []
         self.documents = {
             "src:id:1": {
                 "feature_id": "src:id:1",
@@ -65,10 +66,18 @@ class FakeIndex:
         self.calls.append((asset_slug, release, index_load_id, feature_ids))
         return {feature_id: self.documents[feature_id] for feature_id in feature_ids if feature_id in self.documents}
 
+    def lookup_by_ext_ids(self, *, asset_slug: str, release: str, index_load_id: str, ext_ids: list[str]):
+        self.ext_id_calls.append((asset_slug, release, index_load_id, ext_ids))
+        by_ext_id = {document["properties"]["ext_id"]: document for document in self.documents.values()}
+        return {ext_id: by_ext_id[ext_id] for ext_id in ext_ids if ext_id in by_ext_id}
+
 
 class FailingIndex(FakeIndex):
     def lookup(self, *, asset_slug: str, release: str, index_load_id: str, feature_ids: list[str]):
         raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature metadata index lookup failed")
+
+    def lookup_by_ext_ids(self, *, asset_slug: str, release: str, index_load_id: str, ext_ids: list[str]):
+        raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature metadata ext_id lookup failed")
 
 
 class FakeGcsBlob:
@@ -237,6 +246,36 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][2], {"feature_id": "src:id:missing", "found": False})
         self.assertEqual(resolver.calls, [("example-asset", "latest")])
         self.assertEqual(index.calls, [("example-asset", "2026-05-01", "load-1", ["src:id:1", "src:id:missing"])])
+
+    def test_lookup_by_ext_id_resolves_latest_and_preserves_duplicate_order(self):
+        response, resolver, index = post_lookup(
+            {"ext_ids": ["1", "1", "missing"], "fields": ["name"], "include_provenance": False},
+            path="/v1/assets/example-asset/releases/latest:lookupByExtId",
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["requested_release"], "latest")
+        self.assertEqual(payload["resolved_release"], "2026-05-01")
+        self.assertEqual(payload["deduplicated_lookup_count"], 2)
+        self.assertEqual(payload["items"][0]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
+        self.assertNotIn("provenance", payload["items"][0])
+        self.assertEqual(payload["items"][1]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][2], {"ext_id": "missing", "found": False})
+        self.assertEqual(resolver.calls, [("example-asset", "latest")])
+        self.assertEqual(index.ext_id_calls, [("example-asset", "2026-05-01", "load-1", ["1", "missing"])])
+
+    def test_lookup_by_ext_id_rejects_invalid_public_ids(self):
+        response, _resolver, index = post_lookup(
+            {"ext_ids": ["src:id:1"]},
+            path="/v1/assets/example-asset/releases/latest:lookupByExtId",
+        )
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "invalid_argument")
+        self.assertEqual(index.ext_id_calls, [])
 
     def test_lookup_without_release_segment_is_rejected(self):
         response, resolver, index = post_lookup(

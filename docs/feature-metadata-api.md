@@ -16,6 +16,7 @@ serving index loaded from that sidecar.
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
+POST /v1/assets/{slug}/releases/{release}:lookupByExtId
 ```
 
 `release` is either `latest` or `YYYY-MM-DD`. The service resolves the release
@@ -26,7 +27,11 @@ The service is IAP-protected for all assets at launch. Consuming browser apps
 should call their own backend, and that backend should call the metadata
 service.
 
-## Request
+`lookup` is keyed by internal `feature_id` values emitted in PMTiles. Use
+`lookupByExtId` for browser/user URL workflows that carry public handles.
+`ext_id` values must be unique, nonblank, and match `^[A-Za-z0-9]{1,64}$`.
+
+## Feature ID Request
 
 ```json
 {
@@ -43,6 +48,22 @@ Rules:
 - `fields: []` returns identifiers, hashes, and provenance only.
 - `include_provenance` defaults to `true`.
 - A request may project up to 500 fields.
+
+## Ext ID Request
+
+```json
+{
+  "ext_ids": ["1", "2"],
+  "fields": ["name", "source_id"],
+  "include_provenance": true
+}
+```
+
+Rules:
+
+- `ext_ids` is required and accepts up to 500 public ext IDs.
+- Every `ext_id` must match `^[A-Za-z0-9]{1,64}$`.
+- `fields`, `include_provenance`, and projection limits match `lookup`.
 
 ## Response
 
@@ -70,7 +91,7 @@ Rules:
       }
     },
     {
-      "feature_id": "src:id:missing",
+      "ext_id": "missing",
       "found": false
     }
   ],
@@ -83,10 +104,12 @@ Rules:
 }
 ```
 
-Duplicate IDs preserve request order in `items`; the backend lookup is
+Duplicate IDs or ext IDs preserve request order in `items`; the backend lookup is
 deduplicated. Missing IDs are item-level `"found": false` results in a `200`
 response after the index is confirmed ready. Lookup requests are keyed by
-`feature_id`; when a found document has an `ext_id` property, the response also
+`feature_id`; lookup-by-ext-ID requests resolve the public `ext_id` to the
+current internal `feature_id` and return both values on found items. When a
+found feature-ID lookup document has an `ext_id` property, the response also
 mirrors it as top-level `ext_id` for PMTiles clients. Unknown fields are
 rejected against the release schema before Firestore lookup, even if every
 requested ID is missing. Explicit valid fields that are absent from a particular
@@ -108,7 +131,7 @@ Errors use:
 
 Status codes:
 
-- `400`: invalid JSON, invalid IDs, invalid fields, or request limit exceeded.
+- `400`: invalid JSON, invalid IDs or ext IDs, invalid fields, or request limit exceeded.
 - `401`: IAP identity missing.
 - `403`: IAP identity is outside the allowed domains.
 - `404`: unknown asset, unknown release, or no latest release.
@@ -177,8 +200,9 @@ Do not rewrite release manifests to update index load status. To rebuild an
 index, read the canonical sidecar for the release, write a new immutable
 Firestore load under
 `feature_metadata/{asset_slug}/releases/{release}/loads/{load_id}/features/`,
-validate counts and sample lookups, then write a new index-load record through
-the protected `Feature metadata index load` workflow. The service reads only the
+validate counts and sample lookups, write the `ext_id -> feature_id` mapping
+for public-handle lookup, then write a new index-load record through the
+protected `Feature metadata index load` workflow. The service reads only the
 `load_id` selected from the newest successful matching index-load record.
 
 Dispatch `.github/workflows/feature-metadata-index-load.yml` in the
@@ -209,6 +233,8 @@ Operational checks:
 
 - Sidecar row count equals Firestore document count for the selected load.
 - Sample feature IDs from PMTiles exist in Firestore.
+- Sample public `ext_id` values resolve through `lookupByExtId` to the expected
+  feature IDs.
 - Firestore documents preserve `feature_id`, `feature_hash`, `properties`, and
   provenance.
 - The latest release index resolves to the same release used during index load.

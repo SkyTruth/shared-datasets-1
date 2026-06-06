@@ -28,7 +28,7 @@ notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footpr
   1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
   PMTiles rebuilt 2026-05-04 with zooms 0-6, no simplification, and synthetic source_layer property for catalog inspection;
   corrective metadata-contract release 2026-06-05 reuses latest FGB generation 1777669295802653, adds generated feature_id,
-  ext_id = feature_id, feature_hash, metadata sidecar, schema, manifest, and metadata-lookup PMTiles with only feature_id
+  legacy non-URL-safe ext_id, feature_hash, metadata sidecar, schema, manifest, and metadata-lookup PMTiles with only feature_id
   and ext_id; fgb sha256 94520e1987bc4f84e253218c6467b1ddeb1b5ad4b59b17fba2ac037a935966ac; pmtiles sha256 825cb5d5142ce63752d71ec43e76098506c3cf07c683a4032d4c0fe00dd52fab;
   metadata sha256 af34ee531b4404337b773107376b7d8c8cee4662b4b08992c59abdebddb492d6; schema sha256 c0a8f1b1f6916ff8488d5e1802cfafb1ef44ff3d63d4113f07a80df6eab6ea18;
   manifest sha256 ab2dd57bb04704512d5493d6f734487c78a5805d6d9d70beebdf8e6654504dd7; canonical FGB preserves the source WKT
@@ -170,10 +170,11 @@ starts from the existing `latest/cerulean-s1-envelope.fgb` object, generation
 `1777669295802653`, and does not reacquire upstream source material.
 
 The metadata-contract release generates `feature_id` from the normalized
-geometry digest because the source has no provider identifier. `ext_id` is set
-equal to `feature_id`, and `feature_hash` is computed from canonical geometry
-plus projected sidecar properties. No `shared_datasets_group_id` or
-`shared_datasets_row_id` is published.
+geometry digest because the source has no provider identifier. Its published
+`ext_id` value is a legacy non-URL-safe public handle and requires a corrective
+release with a generated decimal sequence handle. `feature_hash` is computed
+from canonical geometry plus projected sidecar properties. No
+`shared_datasets_group_id` or `shared_datasets_row_id` is published.
 
 The PMTiles artifact is a display and metadata-lookup derivative with zooms 0
 through 6 and no display simplification. The 2026-06-05 PMTiles archive keeps
@@ -191,7 +192,7 @@ catalog asset and not as the canonical publishing location.
 | Name | Type | Description |
 |---|---|---|
 | `geometry` | MultiPolygon | Cerulean Sentinel-1 analysis envelope geometry in WGS84. |
-| `ext_id` | string | External lookup ID. For this metadata-contract release it mirrors the generated `feature_id`. |
+| `ext_id` | string | Public lookup handle. The 2026-06-05 value is a legacy non-URL-safe handle and must be replaced by a generated sequence ID in a corrective release. |
 | `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
 | `feature_id` | string | Generated stable feature ID derived from the normalized geometry digest. |
 
@@ -215,8 +216,9 @@ Output summary:
 
 The corrective 2026-06-05 release adds the release-oriented metadata contract.
 It starts from `latest/cerulean-s1-envelope.fgb` generation `1777669295802653`,
-generates `feature_id = gen:2b0493a605959729993ebdc1`, sets
-`ext_id = feature_id`, and publishes `feature_hash =
+generates `feature_id = gen:2b0493a605959729993ebdc1`, publishes a legacy
+non-URL-safe `ext_id` value that needs replacement by a generated sequence ID in
+a corrective release, and publishes `feature_hash =
 sha256:ec963aca17dbd5389752844ec67376c4841e37990b5034ac611a1c6aa2de454c`.
 No translations are generated because the source has no human-readable metadata
 fields to localize.

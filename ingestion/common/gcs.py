@@ -14,6 +14,7 @@ from google.cloud import storage
 from ingestion.common import release_index
 from ingestion.common.feature_metadata import VECTOR_BUNDLE_SUFFIXES
 from ingestion.common.runtime import content_type_for
+from scripts import release_feature_model
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,6 +61,31 @@ class GcsPublisher:
         except NotFound:
             return None
         return json.loads(blob.download_as_text())
+
+    def load_latest_metadata_records(self, asset: ReleaseAsset) -> list[dict[str, Any]] | None:
+        object_name = asset.latest_object(".metadata.ndjson.gz")
+        blob = self.bucket.blob(object_name)
+        try:
+            blob.reload()
+        except NotFound:
+            return None
+        records = list(
+            release_feature_model.read_metadata_sidecar_bytes(
+                blob.download_as_bytes(),
+                label=f"gs://{self.bucket.name}/{object_name}",
+            )
+        )
+        try:
+            release_feature_model.ext_id_mapping_from_records(records)
+        except release_feature_model.ReleaseFeatureModelError as exc:
+            self.logger.warning(
+                "%s latest metadata sidecar has incompatible ext_id mappings; "
+                "generated sequence ext_id values will start fresh: %s",
+                asset.slug,
+                exc,
+            )
+            return None
+        return records
 
     def load_successful_run_record(
         self,
