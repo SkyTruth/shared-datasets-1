@@ -27,6 +27,19 @@ notes: Initial reviewed shared-datasets release from the supplied FlatGeobuf Wor
   values, canonical metadata/schema/manifest artifacts, and localized GEONAME metadata sidecars for es, fr, id, pt, pt_br,
   and sw generated from Cerulean AOI translations. PMTiles are lightweight metadata-lookup tiles with feature_id and ext_id
   only. Release history, source generations, row counts, and hashes are recorded in the bucket release index and per-run record.
+admission:
+  intended_consumers:
+  - SkyTruth and Global Fishing Watch analysis workflows
+  - Shared catalog map previews and reusable marine-boundary spatial lookups
+  shared_rationale: Reusable global marine-boundary reference with a versioned shared copy so consumers do not maintain divergent
+    project-local copies of EEZ, overlapping-claim, joint-regime, and high-seas boundaries.
+  steward: SkyTruth
+  update_expectations: Manual refreshes when Marine Regions publishes newer EEZ or High Seas releases needed by shared consumers.
+  estimated_published_size_gb: 0.7
+  alternatives_considered: Direct Marine Regions downloads by each consumer, project-local storage, and scratch-only staging.
+    Shared-datasets is preferred for reviewed reuse, stable shared paths, documented metadata, and canonical geospatial formats.
+  deprecation_policy: Keep dated releases readable; supersede with newer Marine Regions EEZ or High Seas releases; retire or
+    make private if upstream terms change.
 row_count: 286
 data_profile:
   field_count: 39
