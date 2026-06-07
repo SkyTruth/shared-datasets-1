@@ -252,13 +252,19 @@ if fully offline/self-contained hosting becomes a requirement.
 
 ## Deploy
 
-After trusted PRs merge to `main`, `.github/workflows/catalog-web-deploy.yml`
-downloads existing `_catalog/releases/*.json` release indexes, rebuilds the
-catalog web bundle with release-index-backed latest/version fields, and
-publishes both `_catalog/web/` and the root `_catalog/shared-datasets-catalog.csv`
-contract with the approved publisher identity, generation preconditions, and
+After trusted PRs merge to `main`, or after a successful
+`Approved dataset mutation` workflow completes on `main`,
+`.github/workflows/catalog-web-deploy.yml` downloads existing
+`_catalog/releases/*.json` release indexes, rebuilds the catalog web bundle with
+release-index-backed latest/version fields, and publishes both `_catalog/web/`
+and the root `_catalog/shared-datasets-catalog.csv` contract with the approved
+publisher identity, generation preconditions, and
 `no-cache, max-age=0, must-revalidate`. This workflow is the normal PR-backed
-promotion path for repo-generated catalog web changes. Do not also add a
+promotion path for repo-generated catalog web changes and the automatic refresh
+path after approved canonical data mutations. The protected
+`.github/workflows/catalog-viewer-deploy.yml` workflow also starts after a
+successful `Approved dataset mutation` workflow so the IAP-protected viewer is
+rebuilt and reapplied through the production environment. Do not also add a
 `shared-datasets-publish-plan` for `_catalog/web/catalog.json` when the catalog
 web deploy workflow will run from the same PR; that duplicates the promotion and
 can race the automatic deploy. The live catalog drift guard runs after that
@@ -322,7 +328,8 @@ Production Terraform owns the production IAP-protected Cloud Run viewer. It
 does not require a SkyTruth custom domain or load balancer; direct Cloud Run IAP
 protects the service's generated `run.app` URL. Build and push an immutable
 viewer image, then update `catalog_viewer_image` in Terraform by PR. The
-protected production workflow applies after review and merge:
+protected production workflow applies after review and merge, and it also runs
+after successful approved dataset mutations:
 
 ```bash
 IMAGE=us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:$(date -u +%Y%m%d%H%M%S)

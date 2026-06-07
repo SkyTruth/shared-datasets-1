@@ -127,8 +127,15 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "web/catalog/**",
             },
         )
+        self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
+        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertEqual(job["environment"], "shared-datasets-production")
+        job_condition = " ".join(job["if"].split())
+        self.assertEqual(
+            job_condition,
+            "${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}",
+        )
         self.assertEqual(job["concurrency"]["group"], "catalog-web-deploy")
         self.assertFalse(job["concurrency"]["cancel-in-progress"])
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
