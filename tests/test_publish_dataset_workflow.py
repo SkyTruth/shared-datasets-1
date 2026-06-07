@@ -102,6 +102,8 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         )
 
         self.assertIn("filename == canonical_filename", compatibility_run + promote_run + summary_run)
+        self.assertIn('not promotion.get("destination_generation")', compatibility_run)
+        self.assertIn("Skipping schema compatibility check for new destination", compatibility_run)
         self.assertNotIn('f"{asset_slug}{suffix}"', compatibility_run + promote_run + summary_run)
         self.assertNotIn('f"{slug}{suffix}"', compatibility_run + promote_run + summary_run)
         self.assertLess(promote_run.index('"stat", promotion["source_uri"]'), promote_run.index('"copy",'))

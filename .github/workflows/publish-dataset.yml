@@ -327,6 +327,9 @@ jobs:
           asset_slug = plan["asset_slug"]
           for index, promotion in enumerate(plan["promotions"], start=1):
               destination_uri = promotion["destination_uri"]
+              if not promotion.get("destination_generation"):
+                  print(f"Skipping schema compatibility check for new destination {index}: {destination_uri}")
+                  continue
               if not is_schema_target(asset_slug, destination_uri):
                   print(f"Skipping schema compatibility check for promotion {index}: {destination_uri}")
                   continue
