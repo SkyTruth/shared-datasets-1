@@ -25,9 +25,9 @@ notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha
   from sampled FGB geometry detail with local tile and browser QA. The 2026-06-05 reviewed metadata-contract release uses
   MRGID as the selected provider identifier, adds feature_id, ext_id, feature_hash, metadata/schema/manifest artifacts, and
   keeps the 2026-04-29 release readable and unchanged. It also adds machine-translated NAME metadata sidecars for es, fr,
-  id, pt, pt_br, and sw. No shared_datasets_group_id or shared_datasets_row_id is generated. PMTiles are metadata-lookup
-  tiles with feature_id and ext_id only. Release history, source generations, row counts, and hashes are recorded in the
-  bucket release index and per-run record.
+  id, pt, pt_br, and sw. No shared_datasets_group_id or shared_datasets_row_id is generated. PMTiles are metadata-lookup tiles
+  with feature_id and ext_id only. Release history, source generations, row counts, and hashes are recorded in the bucket
+  release index and per-run record.
 row_count: 101
 data_profile:
   field_count: 13
