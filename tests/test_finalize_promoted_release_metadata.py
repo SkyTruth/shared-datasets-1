@@ -113,6 +113,58 @@ class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(release_entries[uri(".manifest.json")]["sha256"], "f" * 64)
         self.assertEqual(latest_entries[f"{ROOT}/latest/{ASSET}.manifest.json"]["generation"], 31)
 
+    def test_finalized_run_record_converts_string_paths_to_metadata_objects(self):
+        release_manifest = finalizer.BlobInfo(
+            uri(".manifest.json"),
+            generation=30,
+            size=600,
+            content_type="application/json",
+            sha256="f" * 64,
+        )
+        latest_manifest = finalizer.BlobInfo(
+            f"{ROOT}/latest/{ASSET}.manifest.json",
+            generation=31,
+            size=600,
+            content_type="application/json",
+            sha256="f" * 64,
+        )
+        stats = {
+            uri(".fgb"): finalizer.BlobInfo(
+                uri(".fgb"),
+                generation=10,
+                size=100,
+                content_type="application/octet-stream",
+            ),
+            f"{ROOT}/latest/{ASSET}.fgb": finalizer.BlobInfo(
+                f"{ROOT}/latest/{ASSET}.fgb",
+                generation=20,
+                size=100,
+                content_type="application/octet-stream",
+            ),
+        }
+        record = {
+            "sha256": {"fgb": "a" * 64, "manifest": "0" * 64},
+            "release_paths": [uri(".fgb"), uri(".manifest.json")],
+            "latest_paths": [f"{ROOT}/latest/{ASSET}.fgb", f"{ROOT}/latest/{ASSET}.manifest.json"],
+        }
+
+        payload = finalizer.finalized_run_record_payload(
+            record,
+            stat=lambda path: stats[path],
+            manifest_infos={
+                release_manifest.path: release_manifest,
+                latest_manifest.path: latest_manifest,
+            },
+        )
+
+        release_entries = {entry["path"]: entry for entry in payload["release_paths"]}
+        latest_entries = {entry["path"]: entry for entry in payload["latest_paths"]}
+        self.assertEqual(release_entries[uri(".fgb")]["generation"], 10)
+        self.assertEqual(release_entries[uri(".manifest.json")]["generation"], 30)
+        self.assertEqual(release_entries[uri(".manifest.json")]["sha256"], "f" * 64)
+        self.assertEqual(latest_entries[f"{ROOT}/latest/{ASSET}.fgb"]["generation"], 20)
+        self.assertEqual(latest_entries[f"{ROOT}/latest/{ASSET}.manifest.json"]["generation"], 31)
+
     def test_plan_helpers_find_manifest_and_run_record_destinations(self):
         plan = {
             "promotions": [

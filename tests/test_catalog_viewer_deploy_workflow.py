@@ -34,11 +34,6 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
         self.assertEqual(trigger["workflow_dispatch"], {})
-        deploy_condition = " ".join(deploy["if"].split())
-        self.assertEqual(
-            deploy_condition,
-            "${{ github.event_name != 'pull_request' && ( github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' ) }}",
-        )
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],

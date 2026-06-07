@@ -218,6 +218,10 @@ def update_path_entries(
 ) -> list[Any]:
     updated: list[Any] = []
     for value in values or []:
+        if isinstance(value, str):
+            info = manifest_infos.get(value) if value.endswith(".manifest.json") else stat(value)
+            updated.append(info.to_record())
+            continue
         if not isinstance(value, Mapping):
             updated.append(value)
             continue

@@ -598,13 +598,15 @@ class PublishReleaseTests(unittest.TestCase):
             run_record.exists = True
             run_record.text = json.dumps(
                 {
+                    "schema_version": 1,
                     "asset_slug": "example-asset",
-                    "run_date": "2026-05-01",
+                    "release_date": "2026-05-01",
                     "status": "success",
                     "release_path": "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/",
                     "release_paths": [
                         "gs://test-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.fgb"
                     ],
+                    "row_count": 13,
                 }
             )
             with mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(bucket)):

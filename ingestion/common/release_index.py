@@ -155,10 +155,14 @@ def metadata_locale_from_path(path: str) -> str:
 def path_from_info(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("path") or "")
+    if isinstance(value, str):
+        return value
     return ""
 
 
 def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = None) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        value = {"path": value}
     if not isinstance(value, dict):
         raise ReleaseIndexError("release path entries must be JSON objects")
     path = path_from_info(value)
