@@ -21,12 +21,12 @@ license: See Protected Planet WDPA terms
 citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Protected Areas (WDPA) and World Database on
   Other Effective Area-based Conservation Measures (WD-OECM) [Online], June 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available
   at: www.protectedplanet.net.'
-notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release
-  adds provider feature_id values from SITE_PID, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest
-  artifacts, and an initial Spanish NAME_ENG metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight
-  metadata-lookup tiles with feature_id and ext_id only. The release preserves 331 upstream invalid geometries from the current
-  FGB; no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in the bucket
-  release index and per-run records.
+notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-07 ext_id contract repair release uses
+  provider feature_id values from SITE_PID, generated URL-safe decimal ext_id values carried forward by feature_id where possible,
+  feature_hash values, canonical metadata/schema/manifest artifacts, metadata-translations CSV, and an initial Spanish NAME_ENG
+  metadata sidecar. PMTiles are lightweight metadata-lookup tiles with feature_id and ext_id only. The release preserves 331
+  upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release history, source versions,
+  row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 17657
 data_profile:
   field_count: 33
@@ -210,7 +210,7 @@ releases add `ext_id`, `feature_hash`, and `feature_id` fields.
 | `OECM_ASMT` | string | OECM assessment status. |
 | `GIS_M_AREA` | real | GIS-calculated marine area in square kilometers; null for point rows where not supplied. |
 | `GIS_AREA` | real | GIS-calculated total area in square kilometers; null for point rows where not supplied. |
-| `ext_id` | string | Public lookup handle. The 2026-06-05 values are legacy non-URL-safe handles; future releases use URL-safe `SITE_PID` only when every value is unique, nonblank, and alphanumeric, otherwise generated decimal sequence handles. |
+| `ext_id` | string | Public URL-safe lookup handle. The current 2026-06-07 repair release uses generated decimal sequence handles because some `SITE_PID` values contain non-alphanumeric characters; scheduled refreshes carry prior generated handles forward by `feature_id` where possible. |
 | `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
 | `feature_id` | string | Provider-backed feature ID derived from `SITE_PID`, formatted as `src:SITE_PID:{SITE_PID}`. |
 
@@ -224,9 +224,10 @@ maxzoom selection. The mixed point/vector FGB profile resolved to maxzoom 12
 with point retention. The rebuilt PMTiles SHA-256 is
 `963e851bf7f0952a9eee321074d77bd071bc935e74692932569a98fa4801ed8e`.
 
-A 2026-06-05 metadata-contract release was staged from the unchanged June 2026
-latest FGB so consumers can use feature metadata sidecars and Firestore index
-loads. The release adds SITE_PID-backed `feature_id` values, `feature_hash`
+A 2026-06-07 ext_id contract repair release was staged from the unchanged June
+2026 source FGB so consumers can use feature metadata sidecars and Firestore
+index loads with URL-safe lookup handles. The release adds SITE_PID-backed
+`feature_id` values, generated decimal `ext_id` values, `feature_hash`
 checksums, a canonical metadata sidecar, release schema, manifest,
 metadata-translations CSV, and generated Spanish localized sidecar for
 `NAME_ENG`. The PMTiles release is a lightweight lookup archive with only
@@ -238,7 +239,7 @@ The canonical FGB intentionally keeps mixed point and polygon geometries. Some
 desktop GIS and map clients handle mixed-geometry layers less gracefully than
 single-geometry layers.
 
-The 2026-06-05 metadata-contract release preserves 331 invalid geometries already
-present in the June 2026 source FGB. Geometry repair was intentionally out of
-scope for this contract repair because it would change canonical feature
+The 2026-06-07 ext_id contract repair release preserves 331 invalid geometries
+already present in the June 2026 source FGB. Geometry repair was intentionally
+out of scope for this contract repair because it would change canonical feature
 geometry and feature hashes.
