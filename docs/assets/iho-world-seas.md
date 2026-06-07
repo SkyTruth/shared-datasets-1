@@ -24,9 +24,10 @@ notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha
   PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
   from sampled FGB geometry detail with local tile and browser QA. The 2026-06-05 reviewed metadata-contract release uses
   MRGID as the selected provider identifier, adds feature_id, ext_id, feature_hash, metadata/schema/manifest artifacts, and
-  keeps the 2026-04-29 release readable and unchanged. No shared_datasets_group_id, shared_datasets_row_id, or localized metadata
-  sidecars are generated. PMTiles are metadata-lookup tiles with feature_id and ext_id only. Release history, source generations,
-  row counts, and hashes are recorded in the bucket release index and per-run record.
+  keeps the 2026-04-29 release readable and unchanged. It also adds machine-translated NAME metadata sidecars for es, fr,
+  id, pt, pt_br, and sw. No shared_datasets_group_id or shared_datasets_row_id is generated. PMTiles are metadata-lookup tiles
+  with feature_id and ext_id only. Release history, source generations, row counts, and hashes are recorded in the bucket
+  release index and per-run record.
 row_count: 101
 data_profile:
   field_count: 13
@@ -69,6 +70,34 @@ files:
   format: ndjson_gzip
   role: metadata
   purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/iho-world-seas.metadata.es.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Spanish metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated French metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Indonesian metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Portuguese metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Brazilian Portuguese metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Swahili metadata sidecar materialized from NAME translations
+- path: latest/iho-world-seas.metadata-translations.csv
+  format: csv
+  role: metadata
+  purpose: Editable translation source keyed by feature_id, field, locale, and source-value hash
 - path: latest/iho-world-seas.schema.json
   format: json
   role: metadata
@@ -89,6 +118,34 @@ files:
   format: ndjson_gzip
   role: release
   purpose: Dated canonical metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.es.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Spanish metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated French metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Indonesian metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Brazilian Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Swahili metadata sidecar
+- path: releases/YYYY-MM-DD/iho-world-seas.metadata-translations.csv
+  format: csv
+  role: release
+  purpose: Dated editable translation source
 - path: releases/YYYY-MM-DD/iho-world-seas.schema.json
   format: json
   role: release
@@ -131,6 +188,7 @@ generated from the same source layer for web-map display and feature lookup.
 
 - Use this for named sea and ocean areas in contextual maps or spatial joins.
 - Use the FlatGeobuf file for analysis and the PMTiles file for display.
+- Use localized metadata sidecars when an application needs translated display names for `NAME`.
 - Do not treat this as an authoritative legal maritime boundary dataset.
 - Do not use the PMTiles artifact as the analytical source.
 
@@ -142,11 +200,25 @@ generated from the same source layer for web-map display and feature lookup.
 | `latest/iho-world-seas.fgb` | `fgb` | `canonical` | Canonical World Seas polygon dataset with source fields plus feature_id, ext_id, and feature_hash |
 | `latest/iho-world-seas.pmtiles` | `pmtiles` | `companion` | Web map metadata-lookup tiles with feature_id and ext_id |
 | `latest/iho-world-seas.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
+| `latest/iho-world-seas.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata.fr.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated French metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata.id.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Indonesian metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata.pt.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Portuguese metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Brazilian Portuguese metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata.sw.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Swahili metadata sidecar materialized from NAME translations |
+| `latest/iho-world-seas.metadata-translations.csv` | `csv` | `metadata` | Editable translation source keyed by feature_id, field, locale, and source-value hash |
 | `latest/iho-world-seas.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/iho-world-seas.manifest.json` | `json` | `metadata` | Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/iho-world-seas.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/iho-world-seas.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
 | `releases/YYYY-MM-DD/iho-world-seas.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.es.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Spanish metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.fr.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated French metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.id.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Indonesian metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.pt.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Brazilian Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata.sw.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Swahili metadata sidecar |
+| `releases/YYYY-MM-DD/iho-world-seas.metadata-translations.csv` | `csv` | `release` | Dated editable translation source |
 | `releases/YYYY-MM-DD/iho-world-seas.schema.json` | `json` | `release` | Dated release feature schema |
 | `releases/YYYY-MM-DD/iho-world-seas.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Manual metadata-contract release run record |
@@ -168,7 +240,7 @@ definitions.
 
 | Name | Type | Description |
 |---|---|---|
-| `NAME` | string | Source sea or ocean name. |
+| `NAME` | string | Source sea or ocean name; translatable field in localized metadata sidecars. |
 | `ID` | string | Source identifier for the named sea feature; exact code semantics need source confirmation. |
 | `Longitude` | real | Source-provided representative longitude in decimal degrees. |
 | `Latitude` | real | Source-provided representative latitude in decimal degrees. |
@@ -196,8 +268,16 @@ The 2026-06-05 release repairs the asset to the release-oriented vector metadata
 contract from the existing latest FGB generation `1777477236329598`, without
 refetching or changing the 2026-04-29 release. The selected provider ID is
 `MRGID`; `feature_id` is `src:MRGID:{MRGID}`, `ext_id` is the string form of
-`MRGID`, and no group ID, row ID, translations, or localized metadata sidecars
-are generated.
+`MRGID`, and no group ID or row ID is generated.
+
+## Localized Metadata
+
+Machine translations for `NAME` are recorded in
+`iho-world-seas.metadata-translations.csv` and materialized into localized
+metadata sidecars for `es`, `fr`, `id`, `pt`, `pt_br`, and `sw`. Each localized
+sidecar preserves all 101 feature records and carries one translated `NAME`
+value per feature. Translation rows carry `review_state = machine_translated`
+and have not been human reviewed.
 
 ## Known caveats
 

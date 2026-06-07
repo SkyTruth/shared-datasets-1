@@ -12,6 +12,11 @@ on:
       - "scripts/catalog_site.py"
       - "scripts/catalog_web_publish.py"
       - "web/catalog/**"
+  workflow_run:
+    workflows:
+      - Approved dataset mutation
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -33,6 +38,11 @@ jobs:
     name: Build and publish catalog web
     runs-on: ubuntu-latest
     environment: shared-datasets-production
+    if: >-
+      ${{
+        github.event_name != 'workflow_run' ||
+        github.event.workflow_run.conclusion == 'success'
+      }}
     concurrency:
       group: catalog-web-deploy
       cancel-in-progress: false

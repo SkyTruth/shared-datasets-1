@@ -13,6 +13,11 @@ on:
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
+  workflow_run:
+    workflows:
+      - Approved dataset mutation
+    types:
+      - completed
   workflow_dispatch: {}
 
 permissions:
@@ -33,7 +38,14 @@ env:
 jobs:
   deploy:
     name: Build image and apply catalog-viewer Terraform
-    if: ${{ github.event_name != 'pull_request' }}
+    if: >-
+      ${{
+        github.event_name != 'pull_request' &&
+        (
+          github.event_name != 'workflow_run' ||
+          github.event.workflow_run.conclusion == 'success'
+        )
+      }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:

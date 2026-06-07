@@ -265,7 +265,11 @@ breaking existing paths.
 12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
-    dispatch by PR number is restricted to `jonaraphael`.
+    dispatch by PR number is restricted to `jonaraphael`. After a successful
+    approved mutation, the catalog web deploy workflow automatically rebuilds
+    `_catalog/web/` and `_catalog/shared-datasets-catalog.csv` from the current
+    release indexes, and the catalog viewer deploy workflow refreshes the
+    IAP-protected viewer through the production environment.
 
 ### Upload a new version of an existing dataset
 
@@ -307,7 +311,11 @@ breaking existing paths.
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects. Order the plan so dated release objects come before `latest/`, and
     write run records and `_catalog/releases/{asset-slug}.json` only from actual
-    promoted object metadata.
+    promoted object metadata. After a successful approved mutation, the catalog
+    web deploy workflow automatically rebuilds `_catalog/web/` and
+    `_catalog/shared-datasets-catalog.csv` from the current release indexes,
+    and the catalog viewer deploy workflow refreshes the IAP-protected viewer
+    through the production environment.
 
 ### Delete canonical dataset objects
 

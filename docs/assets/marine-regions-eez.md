@@ -302,12 +302,12 @@ metadata sidecars for `es`, `fr`, `id`, `pt`, `pt_br`, and `sw`.
 The Cerulean source contains 282 EEZ translation rows. The supplied feature set
 matched 280 of those MRGIDs. Two Cerulean MRGIDs, `8489` and `33176`, were not
 present in the supplied FGB, and six supplied feature MRGIDs, `64430`, `64431`,
-`64440`, `64446`, `64459`, and `64460`, had no Cerulean translation row. One
-matched source row, `src:MRGID:63203`, had blank translated values in all six
-locales; those blank source rows remain in the translation CSV but are not
-applied to the localized sidecars. Each localized sidecar still preserves all
-286 feature records and falls back to canonical `GEONAME` where no localized
-value is available.
+`64440`, `64446`, `64459`, and `64460`, had no Cerulean translation row. The
+High Seas feature, `src:MRGID:63203`, has localized `name` values in all six
+locales because the canonical metadata record stores its display label in
+`name` rather than `GEONAME`. Each localized sidecar still preserves all 286
+feature records and falls back to canonical names where no localized value is
+available.
 
 ## Source and Terms
 
