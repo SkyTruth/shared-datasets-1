@@ -52,7 +52,7 @@ REPROJECT_SEGMENTIZE_MAX_DISTANCE = 10_000
 USER_AGENT = "shared-datasets-1-sea-ice-daily/1.0"
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
-PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN, feature_metadata.EXT_ID_COLUMN)
+PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
 FEATURE_COUNT_RE = re.compile(r"^\s*Feature Count:\s*(\d+)\s*$", re.MULTILINE)
 FIELD_LINE_RE = re.compile(
     r"^\s*([^:\s][^:]*):\s+"
@@ -582,13 +582,17 @@ def build_outputs(
         )
 
     convert_fgb_to_geojsonseq(normalized_fgb, geojsonseq)
-    enriched_features, sidecar_records = feature_metadata.enrich_features_with_generated_ids(
+    enriched_features, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
         feature_metadata.iter_geojsonseq(geojsonseq),
         asset_slug=ASSET.slug,
         release=source_date.isoformat(),
-        provenance={"source_date": source_date.isoformat(), "generated_id_strategy": "geometry-digest"},
+        provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
         previous_records=previous_records,
     )
+    if ambiguities:
+        raise RuntimeError(
+            f"{ASSET.slug} has {len(ambiguities)} partial identity hash match(es) requiring maintainer review"
+        )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
     schema_payload = feature_metadata.schema_from_records(
@@ -603,13 +607,15 @@ def build_outputs(
         "DN",
         "ice_date",
         feature_metadata.FEATURE_ID_COLUMN,
-        feature_metadata.FEATURE_HASH_COLUMN,
+        feature_metadata.GEOMETRY_HASH_COLUMN,
+        feature_metadata.PROPERTIES_HASH_COLUMN,
     } - final_fields
     if missing_final_fields:
         raise RuntimeError(
             f"{ASSET.slug} FGB missing required field(s): "
             + ", ".join(sorted(missing_final_fields))
         )
+    final_row_count = feature_count(fgb)
     build_pmtiles(enriched_geojsonseq, pmtiles)
     validate_pmtiles(pmtiles)
     remove_if_exists(normalized_fgb)
@@ -622,7 +628,7 @@ def build_outputs(
         metadata=metadata,
         schema=schema,
         manifest=manifest,
-        row_count=actual_rows,
+        row_count=final_row_count,
         sha256={
             "fgb": sha256_file(fgb),
             "pmtiles": sha256_file(pmtiles),
@@ -709,10 +715,11 @@ def publish_outputs(
             sha256_by_role=outputs.sha256,
             schema=outputs.schema_payload,
             source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename}],
-            id_strategy={
-                "strategy": "generated",
-                "preimage": ["geometry_digest"],
-            },
+            identity=feature_metadata.release_feature_model.build_identity_metadata(
+                strategy="generated_sequence_content_hash",
+                assignment_key=["geometry_hash", "properties_hash"],
+                next_generated_feature_id_after_release=next_generated_feature_id(outputs.sidecar_records),
+            ),
             feature_count=outputs.row_count,
             release_blob_info_by_role={
                 "fgb": release_fgb,
@@ -793,6 +800,15 @@ def metadata_for_source(
         "source_filename": source.source_filename,
         "source_url": source.source_url,
     }
+
+
+def next_generated_feature_id(records: Sequence[Mapping[str, Any]]) -> int:
+    numeric_ids = [
+        int(str(record.get("feature_id") or ""))
+        for record in records
+        if str(record.get("feature_id") or "").isdigit()
+    ]
+    return max(numeric_ids, default=0) + 1
 
 
 def run() -> dict[str, Any]:

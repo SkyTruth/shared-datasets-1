@@ -74,8 +74,8 @@ SCHEDULE_FRESHNESS_DAYS = {"daily": 3, "monthly": 45}
 GENERIC_PROPERTIES_ROW_RE = re.compile(r"(?mi)^\|\s*Source fields\s*\|\s*varies\s*\|")
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-INDEX_LOAD_STATUS = "tracked in index-loads/"
-INDEX_STATUS_MODE = "external_index_load_records"
+INDEX_LOAD_STATUS = "Firestore metadata serving is inactive"
+INDEX_STATUS_MODE = "inactive_firestore_serving"
 FEATURE_METADATA_LATEST_FILES = {
     "metadata": ".metadata.ndjson.gz",
     "schema": ".schema.json",
@@ -362,10 +362,11 @@ def feature_metadata_prompt(*, asset_slug: str) -> str:
         f"and publish-shared-dataset skills. The Bucket hygiene audit failed because docs/assets/{asset_slug}.md "
         "advertises feature_metadata, but the live bucket does not have a complete usable metadata contract. "
         "Do not mutate canonical GCS locally. Inspect the latest sidecar/schema/manifest paths, "
-        f"_catalog/releases/{asset_slug}.json, release manifest, and index-load records. Publish or repair a "
+        f"_catalog/releases/{asset_slug}.json, and release manifest. Publish or repair a "
         "complete metadata-backed release through the approved workflow: FGB, lightweight PMTiles, "
         ".metadata.ndjson.gz, .schema.json, .manifest.json, release index entries with generations, and a "
-        "successful index-load record. Rerun the production bucket hygiene audit after the approved repair."
+        "manifest/release-index policy marking Firestore metadata serving inactive. Rerun the production bucket "
+        "hygiene audit after the approved repair."
     )
 
 
@@ -1678,20 +1679,8 @@ def index_status_policy_issue(
 ) -> str:
     if not isinstance(policy, dict) or policy.get("mode") != INDEX_STATUS_MODE:
         return f"{label} index_status_policy is missing or invalid"
-    path = str(policy.get("path") or "").strip()
-    expected_name = f"{asset_root}/index-loads/{release}/"
-    if path.startswith("gs://"):
-        policy_bucket, separator, object_name = path[5:].partition("/")
-        if policy_bucket != bucket or not separator:
-            return f"{label} index_status_policy path is outside the bucket"
-    elif allow_relative_path:
-        object_name = f"{asset_root}/{path.lstrip('/')}"
-    else:
-        return f"{label} index_status_policy path must be an absolute gs:// URI"
-    if not object_name.endswith("/"):
-        object_name += "/"
-    if object_name != expected_name:
-        return f"{label} index_status_policy path does not match index-loads/{release}/"
+    if policy.get("path") is not None:
+        return f"{label} index_status_policy path must be null while Firestore serving is inactive"
     return ""
 
 
@@ -1880,32 +1869,6 @@ def validate_feature_metadata_readiness(
                     )
                     if policy_issue:
                         issues.append(policy_issue)
-                index_load_prefix = f"{asset_root}/index-loads/{release}/"
-                matching_load = False
-                for blob in sorted(
-                    (
-                        candidate
-                        for candidate in blobs
-                        if candidate.name.startswith(index_load_prefix) and candidate.name.endswith(".json")
-                    ),
-                    key=lambda candidate: candidate.name,
-                ):
-                    record = load_json_blob(bucket, blob)
-                    if index_load_matches(
-                        record,
-                        asset_slug=slug,
-                        release=release,
-                        metadata_entry=metadata_entry,
-                        schema_entry=schema_entry,
-                        manifest_entry=manifest_entry,
-                    ):
-                        matching_load = True
-                        break
-                if not matching_load:
-                    issues.append(
-                        f"no successful matching index-load record under gs://{bucket}/{index_load_prefix}"
-                    )
-
         if issues:
             findings.append(
                 Finding(

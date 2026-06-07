@@ -56,7 +56,7 @@ METADATA_CONTRACT_SUFFIXES = (
 )
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
-PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN, feature_metadata.EXT_ID_COLUMN)
+PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
 
 
 @dataclass(frozen=True)
@@ -509,13 +509,12 @@ def build_asset_output(
     schema = workdir / f"{ASSET.slug}.schema.json"
     manifest = workdir / f"{ASSET.slug}.manifest.json"
     enriched_geojsonseq = workdir / f"{ASSET.slug}.metadata.geojsonseq"
-    enriched_features, sidecar_records = feature_metadata.enrich_features_with_provider_ids(
+    enriched_features, sidecar_records = feature_metadata.enrich_features_with_source_field_ids(
         feature_metadata.iter_geojson_features(extract.geojson),
         asset_slug=ASSET.slug,
         release=release_date.isoformat(),
         id_field="OBJECTID",
         provenance={"source": source.layer_url, "where": source.where},
-        previous_records=previous_records,
     )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
@@ -537,7 +536,14 @@ def build_asset_output(
         raise RuntimeError(f"Expected point FGB geometry, got {summary['geometry_type']}")
 
     missing_fields = sorted(
-        (set(field_names(source.fields)) | {feature_metadata.FEATURE_ID_COLUMN, feature_metadata.FEATURE_HASH_COLUMN})
+        (
+            set(field_names(source.fields))
+            | {
+                feature_metadata.FEATURE_ID_COLUMN,
+                feature_metadata.GEOMETRY_HASH_COLUMN,
+                feature_metadata.PROPERTIES_HASH_COLUMN,
+            }
+        )
         - set(summary["fields"])
     )
     if missing_fields:
@@ -748,7 +754,10 @@ def publish_changed_asset(
             sha256_by_role=output.sha256,
             schema=output.schema_payload,
             source_inputs=[{"uri": source.layer_url, "where": source.where}],
-            id_strategy={"strategy": "provider", "field": "OBJECTID"},
+            identity=feature_metadata.release_feature_model.build_identity_metadata(
+                strategy="source_field",
+                source_fields=["OBJECTID"],
+            ),
             feature_count=output.row_count,
             release_blob_info_by_role={
                 "fgb": release_fgb,

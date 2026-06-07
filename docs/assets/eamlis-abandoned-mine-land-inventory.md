@@ -20,12 +20,12 @@ source: U.S. Department of the Interior OSMRE e-AMLIS
 license: Creative Commons Attribution per EDX listing; cite OSMRE e-AMLIS
 citation: U.S. Department of the Interior, Office of Surface Mining Reclamation and Enforcement. Enhanced Abandoned Mine Land
   Inventory System (e-AMLIS). https://amlis.osmre.gov/.
-notes: Monthly job publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release adds provider feature_id
-  values from OBJECTID, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest artifacts,
-  and an initial Spanish PA_NAME metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup
-  tiles with feature_id and ext_id only. Release history, source fingerprints, row counts, and file hashes are recorded in
-  the bucket release index and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not
-  advertised as an active data-plane format.
+notes: Monthly job publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release adds source-field feature_id
+  values from OBJECTID, geometry_hash values, properties_hash values, canonical metadata/schema/manifest artifacts, and an
+  initial Spanish PA_NAME metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight metadata-lookup
+  tiles with feature_id only. Release history, source fingerprints, row counts, and file hashes are recorded in the bucket
+  release index and per-run records. Stale initial GeoJSON remains only under source/provenance paths and is not advertised
+  as an active data-plane format.
 row_count: 63168
 data_profile:
   field_count: 57
@@ -52,7 +52,8 @@ feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
   schema_file: latest/eamlis-abandoned-mine-land-inventory.schema.json
   manifest_file: latest/eamlis-abandoned-mine-land-inventory.manifest.json
@@ -183,7 +184,7 @@ Multiple records can share the same `AMLIS_KEY` and point geometry because rows 
 
 Scheduled refreshes preserve the public ArcGIS hosted layer fields. ArcGIS date fields are normalized to ISO `YYYY-MM-DD` values during ingestion; unit and cost fields are numeric where the hosted layer exposes numeric types.
 
-The 2026-06-05 PMTiles artifact is a lightweight metadata-lookup tile archive with only `feature_id` and `ext_id` properties. The canonical FGB and metadata sidecar preserve full feature attributes.
+The 2026-06-05 PMTiles artifact is a lightweight metadata-lookup tile archive with only `feature_id` properties. The canonical FGB and metadata sidecar preserve full feature attributes.
 
 ## Properties / columns
 
@@ -268,7 +269,7 @@ Output summary:
 - Translation locale: `es`
 - Translation rows: 63,168
 - Translation review state: `needs_review`; the initial Spanish sidecar preserves source proper-name values pending human review.
-- PMTiles validation used PMTiles v3 magic bytes, `pmtiles verify`, `pmtiles show`, and zoom 0 decode checks for `feature_id` and `ext_id`.
+- PMTiles validation used PMTiles v3 magic bytes, `pmtiles verify`, `pmtiles show`, and zoom 0 decode checks for `feature_id`.
 
 The reviewed promotion also refreshes the schema snapshot from the initial
 manual-upload snapshot to the current hosted-layer FGB schema that was already

@@ -73,7 +73,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
 | Browser click needs public feature attributes | Metadata artifact helpers | Resolve the release-index sidecar and fetch the public artifact URL directly from the CDN. |
-| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose internal `feature_id`; URL workflows use public `ext_id`. The backend authenticates, authorizes, and returns only app-approved metadata access. |
+| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
@@ -91,11 +91,11 @@ that calls:
 POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
-For user-visible URLs, pass the URL-safe public `ext_id` handle through the app
+For user-visible URLs, pass the URL-safe public `feature_id` handle through the app
 backend and call:
 
 ```http
-POST /v1/assets/{slug}/releases/{release}:lookupByExtId
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 ## Catalog Helpers
@@ -146,7 +146,7 @@ use `ref.localizedNames` to choose the declared `name_${locale_code}` property.
 Prefer the requested locale when present, then `fallback_field` (`name` for the
 sidecar CSV contract), then a consumer-owned generic label fallback. Do not
 hardcode source-native fields; localized source data lives in the same-asset
-`{asset-slug}-localizations.csv` sidecar keyed by `ext_id`, while PMTiles
+metadata translation sources keyed by `feature_id`, `field`, `locale`, and `source_value_hash`, while PMTiles
 features expose `name` and declared nonblank `name_*` properties. Use aggregate
 `review_state` to show or filter confidence for source-provided,
 machine-translated, human-reviewed, and mixed labels.

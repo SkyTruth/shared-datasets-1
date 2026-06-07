@@ -231,19 +231,17 @@ breaking existing paths.
    contracts. Use FGB plus PMTiles for geographic vector data, COG/Zarr for
    raster or array data, and CSV only for non-geometry tables.
 5. For vector/table assets, use the publishing concierge output and canonical
-   artifact profile to identify provider ID candidates and high-value
-   `search_fields`. Prefer real source IDs. If the asset publishes localized
-   feature display metadata, keep PMTiles lightweight with geometry plus
-   lookup IDs, maintain editable rows in
-   `{asset-slug}.metadata-translations.csv`, and materialize generated
-   `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar views from the canonical
-   `{asset-slug}.metadata.ndjson.gz`. If no useful provider row ID exists and the
-   asset needs group-level addressing, choose the curator-approved grouping field before generating
-   `shared_datasets_group_id`. For vector assets, if neither a provider ID nor
-   grouping field is suitable and row-level addresses are still required,
-   explicitly choose the last-resort `shared_datasets_row_id` fallback.
+   artifact profile to identify source field ID candidates and high-value
+   `search_fields`. Prefer a real unique non-null source field when its values
+   already satisfy `feature_id` rules. If no source field is suitable, generate
+   monotonic decimal `feature_id` values from an approved assignment key or the
+   stored geometry/properties hash pair. If the asset publishes localized
+   feature metadata, keep PMTiles lightweight with `feature_id` only, maintain
+   editable rows in `{asset-slug}.metadata-translations.csv`, and materialize
+   generated `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar views from the
+   canonical `{asset-slug}.metadata.ndjson.gz`.
 6. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. When a generated group ID is approved, pass `--group-id-field FIELD` so the helper writes and validates `shared_datasets_group_id`. When the row-ID fallback is approved, pass `--generate-row-id` so the helper writes and validates `shared_datasets_row_id`.
+7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. Ensure the canonical FGB contains `feature_id`, `geometry_hash`, and `properties_hash`, and that PMTiles expose only `feature_id` for metadata lookup.
    For localized feature metadata, generate locale views with
    `scripts/feature_metadata_localization.py` after the canonical metadata
    sidecar and schema are ready. Do not put translated full metadata back into
@@ -733,15 +731,15 @@ The policy biases toward detailed display, caps at zoom 12 by default, and only
 uses zooms below 8 when source/profile evidence or a documented override proves
 the asset is intentionally coarse.
 
-Generated group IDs are opt-in. When the curator chooses group-level addressing
-for an asset that lacks a useful provider row ID, add `--group-id-field FIELD`
-to the vector build, repeating the flag for composite grouping fields. The
-helper writes `shared_datasets_group_id` before FGB creation and validates that
-the property survives into decoded PMTiles features.
+Generated IDs are opt-in. When no source field is suitable, assign monotonic
+decimal `feature_id` values from an approved assignment key or the pair of
+stored `geometry_hash` and `properties_hash` values. The manifest `identity`
+block records the strategy, source fields or assignment key, hash algorithm,
+canonicalization version, previous release, and next generated ID.
 
 For localized feature metadata, keep the canonical FGB faithful to the source
-geometry and stable identifier fields, with `feature_id` and `feature_hash`
-preserved in the release metadata sidecar. Store editable translations in
+geometry and stable identifier fields, with `feature_id`, `geometry_hash`, and
+`properties_hash` preserved in the release metadata sidecar. Store editable translations in
 `{asset-slug}.metadata-translations.csv` keyed by `feature_id`, field, locale,
 and source-value hash, then materialize one sidecar per locale:
 

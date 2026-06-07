@@ -39,19 +39,13 @@ from scripts.pmtiles_zoom import (  # noqa: E402
 WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SYNTHETIC_PMTILES_PROPERTY = "source_layer"
-GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
-GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 FEATURE_ID_COLUMN = "feature_id"
-EXT_ID_COLUMN = "ext_id"
-FEATURE_HASH_COLUMN = "feature_hash"
-PMTILES_METADATA_COLUMNS = (FEATURE_ID_COLUMN, EXT_ID_COLUMN)
+GEOMETRY_HASH_COLUMN = "geometry_hash"
+PROPERTIES_HASH_COLUMN = "properties_hash"
+PMTILES_METADATA_COLUMNS = (FEATURE_ID_COLUMN,)
 PMTILES_MAGIC = b"PMTiles"
 PMTILES_V3_VERSION = 3
 SQLITE_HEADER = b"SQLite format 3"
-GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
-GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
-GROUP_ID_VRT_SOURCE_LAYER = "source"
-GROUP_ID_VRT_MAP_LAYER = "group_ids"
 STANDARD_PMTILES_MAXZOOM = 8
 AUTO_MAXZOOM = "auto"
 UNEXPANDED_LOCAL_PATH_RE = re.compile(r"(?<!\\)\$(?:\{[^}]*\}?|[A-Za-z_][A-Za-z0-9_]*)")
@@ -74,8 +68,6 @@ class VectorBuildPlan:
     layer_name: str
     work_dir: str
     output_dir: str
-    group_id_source_path: str | None
-    group_id_input_path: str | None
     fgb_path: str
     tile_source_path: str
     mbtiles_path: str
@@ -100,13 +92,6 @@ class VectorBuildPlan:
     required_fgb_properties: tuple[str, ...]
     required_pmtiles_properties: tuple[str, ...]
     exact_pmtiles_properties: tuple[str, ...]
-    group_id_fields: tuple[str, ...]
-    group_id_token_length: int | None
-    group_id_fail_on_ambiguous_geometry: bool
-    generate_row_id: bool
-    row_id_token_length: int | None
-    generated_id_column: str | None
-    generated_id_algorithm: str | None
     pmtiles_feature_id_property: str | None
     title: str
     description: str
@@ -307,11 +292,6 @@ def build_plan(
     tippecanoe_bin: str = "tippecanoe",
     pmtiles_bin: str = "pmtiles",
     required_properties: Sequence[str] = (),
-    group_id_fields: Sequence[str] = (),
-    group_id_token_length: int | None = None,
-    group_id_fail_on_ambiguous_geometry: bool = False,
-    generate_row_id: bool = False,
-    row_id_token_length: int | None = None,
     pmtiles_feature_id_property: str | None = None,
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
@@ -344,15 +324,6 @@ def build_plan(
         raise ValueError("tile simplification tolerance must be positive")
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
-    group_id_field_tuple = tuple(dict.fromkeys(field.strip() for field in group_id_fields if field.strip()))
-    if generate_row_id and group_id_field_tuple:
-        raise ValueError("--generate-row-id cannot be combined with --group-id-field")
-    if group_id_token_length is not None and group_id_token_length < 8:
-        raise ValueError("group ID token length must be at least 8")
-    if row_id_token_length is not None and row_id_token_length < 8:
-        raise ValueError("row ID token length must be at least 8")
-    generated_id_column = GENERATED_GROUP_ID_COLUMN if group_id_field_tuple else GENERATED_ROW_ID_COLUMN if generate_row_id else None
-    generated_id_algorithm = GENERATED_GROUP_ID_ALGORITHM if group_id_field_tuple else GENERATED_ROW_ID_ALGORITHM if generate_row_id else None
     pmtiles_feature_id_property = (pmtiles_feature_id_property or "").strip() or None
     if pmtiles_feature_id_property and pmtiles_feature_id_property != FEATURE_ID_COLUMN:
         raise ValueError("--pmtiles-feature-id-property must be feature_id for release metadata PMTiles")
@@ -360,14 +331,13 @@ def build_plan(
         dict.fromkeys(
             [
                 *(property_name.strip() for property_name in required_properties if property_name.strip()),
-                *([generated_id_column] if generated_id_column else []),
                 *([pmtiles_feature_id_property] if pmtiles_feature_id_property else []),
             ]
         )
     )
     if pmtiles_feature_id_property:
         required_fgb_property_tuple = tuple(
-            dict.fromkeys((*base_required_property_tuple, *PMTILES_METADATA_COLUMNS, FEATURE_HASH_COLUMN))
+            dict.fromkeys((*base_required_property_tuple, *PMTILES_METADATA_COLUMNS, GEOMETRY_HASH_COLUMN, PROPERTIES_HASH_COLUMN))
         )
         required_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
         exact_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
@@ -387,21 +357,12 @@ def build_plan(
     ensure_local_output_path(output, label="output directory", allow_repo_output=allow_repo_output)
 
     fgb_path = output / f"{asset_slug}.fgb"
-    group_id_source_path = None
-    group_id_input_path = None
-    if group_id_field_tuple:
-        group_id_source_path = build / f"{asset_slug}-group-id-map.csv"
-        group_id_input_path = build / f"{asset_slug}-group-id-source.vrt"
-    elif generate_row_id:
-        group_id_source_path = build / f"{asset_slug}-row-id-map.csv"
-        group_id_input_path = build / f"{asset_slug}-row-id-source.vrt"
     tile_source_path = build / f"{asset_slug}.tippecanoe.ndgeojson"
     mbtiles_path = build / f"{asset_slug}.tippecanoe.mbtiles"
     pmtiles_path = output / f"{asset_slug}.pmtiles"
     pmtiles_profile_path = output / "pmtiles-profile.json"
     dataset_title = title or asset_slug.replace("-", " ").title()
     dataset_description = description or f"{dataset_title} vector tiles"
-    fgb_source_path = group_id_input_path or source
     fgb_command = [
         ogr2ogr_bin,
         "-f",
@@ -414,52 +375,12 @@ def build_plan(
         "-lco",
         "SPATIAL_INDEX=YES",
         str(fgb_path),
-        str(fgb_source_path),
+        str(source),
     ]
-    if generated_id_column:
-        fgb_command.extend(
-            [
-                "-t_srs",
-                "EPSG:4326",
-                "-dialect",
-                "SQLite",
-                "-sql",
-                generated_id_join_sql(generated_id_column),
-            ]
-        )
-    elif source_layer:
+    if source_layer:
         fgb_command.append(source_layer)
 
     commands: list[SimpleCommand] = []
-    if generated_id_column and group_id_source_path and group_id_input_path:
-        generated_id_command = [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "shared_dataset_group_ids.py"),
-            str(source),
-            "--ogr-source",
-            "--asset-slug",
-            asset_slug,
-            "--out-map",
-            str(group_id_source_path),
-            "--out-vrt",
-            str(group_id_input_path),
-            "--ogr2ogr-bin",
-            ogr2ogr_bin,
-        ]
-        if source_layer:
-            generated_id_command.extend(["--source-layer", source_layer])
-        if generate_row_id:
-            generated_id_command.append("--row-id")
-            if row_id_token_length is not None:
-                generated_id_command.extend(["--token-length", str(row_id_token_length)])
-        else:
-            for field in group_id_field_tuple:
-                generated_id_command.extend(["--grouping-field", field])
-            if group_id_token_length is not None:
-                generated_id_command.extend(["--token-length", str(group_id_token_length)])
-            if group_id_fail_on_ambiguous_geometry:
-                generated_id_command.append("--fail-on-ambiguous-geometry")
-        commands.append(command(generated_id_command))
     commands.append(command(fgb_command))
 
     plan = VectorBuildPlan(
@@ -468,8 +389,6 @@ def build_plan(
         layer_name=layer,
         work_dir=str(work),
         output_dir=str(output),
-        group_id_source_path=str(group_id_source_path) if group_id_source_path else None,
-        group_id_input_path=str(group_id_input_path) if group_id_input_path else None,
         fgb_path=str(fgb_path),
         tile_source_path=str(tile_source_path),
         mbtiles_path=str(mbtiles_path),
@@ -502,13 +421,6 @@ def build_plan(
         required_fgb_properties=required_fgb_property_tuple,
         required_pmtiles_properties=required_pmtiles_property_tuple,
         exact_pmtiles_properties=exact_pmtiles_property_tuple,
-        group_id_fields=group_id_field_tuple,
-        group_id_token_length=group_id_token_length,
-        group_id_fail_on_ambiguous_geometry=group_id_fail_on_ambiguous_geometry,
-        generate_row_id=generate_row_id,
-        row_id_token_length=row_id_token_length,
-        generated_id_column=generated_id_column,
-        generated_id_algorithm=generated_id_algorithm,
         pmtiles_feature_id_property=pmtiles_feature_id_property,
         title=dataset_title,
         description=dataset_description,
@@ -571,21 +483,6 @@ def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def generated_id_join_sql(column_name: str) -> str:
-    source = sql_identifier(GROUP_ID_VRT_SOURCE_LAYER)
-    map_layer = sql_identifier(GROUP_ID_VRT_MAP_LAYER)
-    column = sql_identifier(column_name)
-    return (
-        f"SELECT {source}.*, {map_layer}.{column} "
-        f"FROM {source} LEFT JOIN {map_layer} "
-        f"ON {source}.rowid = CAST({map_layer}.rowid AS INTEGER)"
-    )
-
-
-def group_id_join_sql() -> str:
-    return generated_id_join_sql(GENERATED_GROUP_ID_COLUMN)
-
-
 def pmtiles_synthetic_property_sql(plan: VectorBuildPlan, profile: FgbProfile | None = None) -> str | None:
     if profile is None or profile.property_keys:
         return None
@@ -629,10 +526,6 @@ def remove_existing_outputs(plan: VectorBuildPlan, *, keep_mbtiles: bool) -> Non
         Path(plan.pmtiles_path),
         Path(plan.pmtiles_profile_path),
     ]
-    if plan.group_id_source_path:
-        paths.append(Path(plan.group_id_source_path))
-    if plan.group_id_input_path:
-        paths.append(Path(plan.group_id_input_path))
     if not keep_mbtiles:
         paths.append(Path(plan.mbtiles_path))
     for path in paths:
@@ -671,10 +564,6 @@ def run_build(plan: VectorBuildPlan, *, overwrite: bool = False, keep_mbtiles: b
 
     if not keep_mbtiles:
         intermediates = [Path(plan.tile_source_path), Path(plan.mbtiles_path)]
-        if plan.group_id_source_path:
-            intermediates.append(Path(plan.group_id_source_path))
-        if plan.group_id_input_path:
-            intermediates.append(Path(plan.group_id_input_path))
         for intermediate in intermediates:
             if intermediate.exists():
                 intermediate.unlink()
@@ -744,13 +633,6 @@ def write_pmtiles_profile(
     payload = profile_payload(profile, recommendation)
     payload["asset_slug"] = plan.asset_slug
     payload["minzoom"] = plan.minzoom
-    if plan.generated_id_column and plan.generated_id_algorithm:
-        payload["generated_id"] = {
-            "column": plan.generated_id_column,
-            "algorithm": plan.generated_id_algorithm,
-            "grouping_fields": list(plan.group_id_fields),
-            "row_id": plan.generate_row_id,
-        }
     if plan.required_properties:
         payload["required_properties"] = list(plan.required_properties)
     if plan.required_fgb_properties:
@@ -1138,11 +1020,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
         tippecanoe_bin=args.tippecanoe_bin,
         pmtiles_bin=args.pmtiles_bin,
         required_properties=args.required_property,
-        group_id_fields=args.group_id_field,
-        group_id_token_length=args.group_id_token_length,
-        group_id_fail_on_ambiguous_geometry=args.group_id_fail_on_ambiguous_geometry,
-        generate_row_id=args.generate_row_id,
-        row_id_token_length=args.row_id_token_length,
         pmtiles_feature_id_property=args.pmtiles_feature_id_property,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
@@ -1233,51 +1110,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help=(
             "Property that must be present in the generated FGB schema and decoded PMTiles features. "
-            f"Use --required-property {GENERATED_GROUP_ID_COLUMN} for shared group IDs or "
-            f"{GENERATED_ROW_ID_COLUMN} for fallback row IDs."
+            "Repeat for each source property that must survive the build."
         ),
-    )
-    build_parser.add_argument(
-        "--group-id-field",
-        action="append",
-        default=[],
-        help=(
-            "Curator-selected field used to generate shared_datasets_group_id before FGB creation. "
-            "Run publishing_concierge.py or an equivalent profile and get an explicit field choice before using. "
-            "Repeat for composite grouping fields."
-        ),
-    )
-    build_parser.add_argument(
-        "--group-id-token-length",
-        type=int,
-        help="Optional base62 token length for generated shared_datasets_group_id values; defaults to policy calculation.",
-    )
-    build_parser.add_argument(
-        "--group-id-fail-on-ambiguous-geometry",
-        action="store_true",
-        help=(
-            "Fail group ID generation when multiple grouping values share identical collective geometry "
-            "and would receive the same generated ID."
-        ),
-    )
-    build_parser.add_argument(
-        "--generate-row-id",
-        action="store_true",
-        help=(
-            f"Generate last-resort {GENERATED_ROW_ID_COLUMN} values before FGB creation. "
-            "Use only after the curator confirms there is no suitable provider ID or grouping field."
-        ),
-    )
-    build_parser.add_argument(
-        "--row-id-token-length",
-        type=int,
-        help="Optional base62 token length for generated shared_datasets_row_id values; defaults to policy calculation.",
     )
     build_parser.add_argument(
         "--pmtiles-feature-id-property",
         default=None,
         help=(
-            f"Filter PMTiles feature properties down to {FEATURE_ID_COLUMN} and {EXT_ID_COLUMN}. "
+            f"Filter PMTiles feature properties down to {FEATURE_ID_COLUMN}. "
             f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
         ),
     )

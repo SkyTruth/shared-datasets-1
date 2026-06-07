@@ -693,10 +693,10 @@ def final_manifest_payload(
         artifacts.append({key: value for key, value in entry.items() if value is not None})
     payload = dict(template)
     payload["artifacts"] = artifacts
-    payload["index_load_status"] = "tracked in index-loads/"
+    payload["index_load_status"] = "Firestore metadata serving is inactive"
     payload["index_status_policy"] = {
-        "mode": "external_index_load_records",
-        "path": f"gs://{plan.bucket}/{plan.asset_root}/index-loads/{plan.release_date}/",
+        "mode": "inactive_firestore_serving",
+        "path": None,
     }
     release_feature_model.validate_release_manifest(
         payload,

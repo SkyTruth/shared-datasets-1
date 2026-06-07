@@ -22,8 +22,9 @@ Selection:
   deploy into the preview slot.
 - In **Preview data handling**, choose `preserve` to update the preview services
   and catalog viewer while keeping the existing preview bucket, release indexes,
-  and Firestore index. Choose `reset` only when you want a clean preview slot
-  and are prepared to reload preview data.
+  and dormant Firestore metadata state. Choose `reset` only when you want a
+  clean preview slot; do not reload preview Firestore metadata while serving is
+  inactive.
 
 The selected branch or tag is both the workflow ref and the preview source ref.
 The protected workflow checks out `main` at the workspace root and checks out

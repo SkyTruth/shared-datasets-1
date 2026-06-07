@@ -66,8 +66,8 @@ const elements = {
   identityField: document.querySelector("#detail-identity-field"),
   searchFieldsCard: document.querySelector("#detail-search-fields-card"),
   searchFields: document.querySelector("#detail-search-fields"),
-  groupIdCard: document.querySelector("#detail-group-id-card"),
-  groupId: document.querySelector("#detail-group-id"),
+  featureIdentityCard: document.querySelector("#detail-feature-identity-card"),
+  featureIdentity: document.querySelector("#detail-feature-identity"),
   distinctValuesCard: document.querySelector("#detail-distinct-values-card"),
   distinctValues: document.querySelector("#detail-distinct-values"),
   duplicateSummaryCard: document.querySelector("#detail-duplicate-summary-card"),
@@ -478,7 +478,7 @@ function searchableText(asset) {
       formatBounds(asset.bounds),
       searchableDataProfile(asset.data_profile),
       searchableSearchFields(asset.search_fields),
-      searchableGeneratedGroupId(asset.generated_group_id),
+      searchableFeatureIdentity(asset.feature_identity),
       asset.source,
       asset.source_url,
       asset.license,
@@ -830,7 +830,7 @@ function renderDiscoveryMetadata(asset, reference = selectedReference(asset)) {
   setOptionalMeta(elements.fieldCountCard, elements.fieldCount, formatInteger(profileFieldCount(asset)));
   setOptionalMeta(elements.identityFieldCard, elements.identityField, formatIdentityField(asset));
   setOptionalMeta(elements.searchFieldsCard, elements.searchFields, formatSearchFields(asset));
-  setOptionalMeta(elements.groupIdCard, elements.groupId, formatGeneratedGroupId(asset));
+  setOptionalMeta(elements.featureIdentityCard, elements.featureIdentity, formatFeatureIdentity(asset));
   setOptionalMeta(elements.distinctValuesCard, elements.distinctValues, formatDistinctValues(asset));
   setOptionalMeta(elements.duplicateSummaryCard, elements.duplicateSummary, formatDuplicateSummary(asset));
   setOptionalMeta(elements.profileNoteCard, elements.profileNote, profileNote(asset));
@@ -916,22 +916,20 @@ function formatProfileField(field) {
   return distinct ? `${field.field} (${distinct})` : field.field;
 }
 
-function generatedGroupId(asset) {
-  const value = asset?.generated_group_id;
+function featureIdentity(asset) {
+  const value = asset?.feature_identity;
   return value && typeof value === "object" ? value : null;
 }
 
-function formatGeneratedGroupId(asset) {
-  const groupId = generatedGroupId(asset);
-  if (!groupId?.column) {
+function formatFeatureIdentity(asset) {
+  const identity = featureIdentity(asset);
+  if (!identity?.strategy) {
     return "";
   }
-  const groupCount =
-    groupId.group_count === null || groupId.group_count === undefined ? "" : `${formatInteger(groupId.group_count)} groups`;
-  const tokenLength =
-    groupId.token_length === null || groupId.token_length === undefined ? "" : `${formatInteger(groupId.token_length)} chars`;
-  const detail = [groupCount, tokenLength].filter(Boolean).join(", ");
-  return detail ? `${groupId.column} (${detail})` : groupId.column;
+  const fields = Array.isArray(identity.source_fields) && identity.source_fields.length ? identity.source_fields.join("+") : "";
+  const generatedType = identity.generated_id_type ? String(identity.generated_id_type) : "";
+  const detail = [fields, generatedType].filter(Boolean).join(", ");
+  return detail ? `${identity.strategy} (${detail})` : identity.strategy;
 }
 
 function formatCandidateStatus(status) {
@@ -1021,19 +1019,15 @@ function searchableSearchFields(fields) {
     .join(" ");
 }
 
-function searchableGeneratedGroupId(groupId) {
-  if (!groupId || typeof groupId !== "object") {
+function searchableFeatureIdentity(identity) {
+  if (!identity || typeof identity !== "object") {
     return "";
   }
   return [
-    groupId.column,
-    groupId.algorithm,
-    Array.isArray(groupId.grouping_fields) ? groupId.grouping_fields.join(" ") : "",
-    groupId.token_length,
-    groupId.group_count,
-    groupId.blank_group_count,
-    groupId.stability,
-    groupId.notes,
+    identity.strategy,
+    Array.isArray(identity.source_fields) ? identity.source_fields.join(" ") : "",
+    identity.generated_id_type,
+    Array.isArray(identity.assignment_key) ? identity.assignment_key.join(" ") : "",
   ]
     .filter((value) => value !== null && value !== undefined && value !== "")
     .join(" ");
@@ -1420,17 +1414,14 @@ function parseFeatureMetadataSidecar(text) {
       throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
     }
     const properties = record.properties && typeof record.properties === "object" ? record.properties : {};
-    const extId = String(record?.ext_id || properties.ext_id || "").trim();
     const item = {
       feature_id: featureId,
       found: true,
-      feature_hash: record.feature_hash || "",
+      geometry_hash: record.geometry_hash || "",
+      properties_hash: record.properties_hash || "",
       properties,
       provenance: record.provenance && typeof record.provenance === "object" ? record.provenance : {},
     };
-    if (extId) {
-      item.ext_id = extId;
-    }
     lookup.set(featureId, item);
   }
   return lookup;
@@ -1575,11 +1566,11 @@ function enrichFeature(feature, item) {
   const featureId = featureIdFor(feature);
   return {
     ...feature,
-    featureHash: item.feature_hash || feature.featureHash || "",
+    geometryHash: item.geometry_hash || feature.geometryHash || "",
+    propertiesHash: item.properties_hash || feature.propertiesHash || "",
     provenance: item.provenance || feature.provenance || null,
     properties: {
       feature_id: featureId,
-      ...(item.ext_id ? { ext_id: item.ext_id } : {}),
       ...(item.properties || {}),
     },
   };

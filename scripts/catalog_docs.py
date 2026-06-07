@@ -40,8 +40,7 @@ CATALOG_COLUMNS = [
     "canonical_format",
     "available_formats",
     "metadata_paths",
-    "localized_name_locales",
-    "localized_name_review_states",
+    "feature_identity",
     "has_pmtiles",
     "has_geojson",
     "has_csv",
@@ -81,10 +80,8 @@ FRONTMATTER_KEYS = [
     "row_count",
     "data_profile",
     "search_fields",
-    "localized_names",
+    "feature_identity",
     "feature_metadata",
-    "generated_group_id",
-    "generated_row_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -101,10 +98,8 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "row_count",
     "data_profile",
     "search_fields",
-    "localized_names",
+    "feature_identity",
     "feature_metadata",
-    "generated_group_id",
-    "generated_row_id",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -122,21 +117,10 @@ LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS = ["lifecycle_reason", "lifecycle_date", "consumer_guidance"]
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
-GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
-GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
-GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
-GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
-LOCALIZED_NAMES_PROPERTY_TEMPLATE = "name_{locale_code}"
-LOCALIZED_NAMES_LOCALE_CODE_FORMAT = "bcp47_field_safe"
-LOCALIZED_NAME_STORAGE = "localization_csv_v1"
-LOCALIZED_NAMES_JOIN_KEY = "ext_id"
-LOCALIZED_NAMES_FALLBACK_FIELD = "name"
-LOCALIZED_NAMES_LOCALIZATION_SUFFIX = "-localizations.csv"
-LOCALIZED_NAME_REVIEW_STATES = {"source_provided", "machine_translated", "human_reviewed", "mixed"}
 FEATURE_METADATA_STORAGE = "metadata_sidecar_v1"
-FEATURE_METADATA_INDEX_BACKEND = "firestore"
 FEATURE_METADATA_FEATURE_ID_COLUMN = "feature_id"
-FEATURE_METADATA_FEATURE_HASH_COLUMN = "feature_hash"
+FEATURE_METADATA_GEOMETRY_HASH_COLUMN = "geometry_hash"
+FEATURE_METADATA_PROPERTIES_HASH_COLUMN = "properties_hash"
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 BODY_LOCALIZED_NAME_FIELD_RE = re.compile(r"`name_[a-z]{2,3}(?:_[a-z0-9]{2,8})*`")
 
@@ -341,14 +325,8 @@ def normalize_metadata(
         metadata["admission"] = raw["admission"]
 
     for key in OPTIONAL_DISCOVERY_FIELDS:
-        if key == "localized_names":
-            continue
         if key in raw:
             metadata[key] = raw[key]
-    if "localized_names" in raw:
-        localized_names = normalize_localized_names(raw["localized_names"], path=path)
-        if localized_names:
-            metadata["localized_names"] = localized_names
 
     available_formats = normalize_list(raw.get("available_formats"))
     metadata["available_formats"] = available_formats
@@ -417,16 +395,6 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
         raise CatalogDocsError(
             f"{path}: available_formats {metadata['available_formats']} must match latest canonical/companion file formats {latest_formats}"
         )
-    localized_names = metadata.get("localized_names")
-    if isinstance(localized_names, dict):
-        localization_file = localized_names.get("localization_file")
-        localization_entries = [entry for entry in metadata["files"] if entry["path"] == localization_file]
-        if len(localization_entries) != 1:
-            raise CatalogDocsError(f"{path}: files must contain exactly one entry for localized_names.localization_file")
-        if localization_entries[0]["role"] != "localization":
-            raise CatalogDocsError(f"{path}: localization file entry must use role 'localization'")
-        if localization_entries[0]["format"] != "csv":
-            raise CatalogDocsError(f"{path}: localization file entry must use format 'csv'")
     feature_metadata = metadata.get("feature_metadata")
     if isinstance(feature_metadata, dict):
         for key in ("sidecar_file", "schema_file", "manifest_file"):
@@ -565,137 +533,38 @@ def validate_search_fields(value: Any, *, path: Path, row_count: int | None) -> 
             raise CatalogDocsError(f"{path}: {context}.notes must be non-empty when provided")
 
 
-def normalize_locale_code(value: Any, *, path: Path, context: str) -> str:
-    locale_code = as_text(value).strip()
-    if not locale_code:
-        raise CatalogDocsError(f"{path}: {context} is required")
-    if locale_code != locale_code.lower() or "-" in locale_code or not FIELD_SAFE_LOCALE_RE.fullmatch(locale_code):
-        raise CatalogDocsError(
-            f"{path}: {context} must be a field-safe BCP 47 locale code such as en, pt_br, or zh_hans"
-        )
-    return locale_code
+def feature_identity_summary(metadata: dict[str, Any]) -> str:
+    identity = metadata.get("feature_identity")
+    if not isinstance(identity, dict):
+        return ""
+    strategy = as_text(identity.get("strategy")).strip()
+    source_fields = identity.get("source_fields")
+    if isinstance(source_fields, list) and source_fields:
+        fields = "+".join(as_text(field).strip() for field in source_fields if as_text(field).strip())
+        return f"{strategy}:{fields}" if fields else strategy
+    return strategy
 
 
-def normalize_localized_names(value: Any, *, path: Path) -> dict[str, Any]:
-    if value in (None, ""):
-        return {}
-    if not isinstance(value, dict):
-        raise CatalogDocsError(f"{path}: localized_names must be a mapping")
-    storage = as_text(value.get("storage")).strip()
-    if storage != LOCALIZED_NAME_STORAGE:
-        raise CatalogDocsError(f"{path}: localized_names.storage must be {LOCALIZED_NAME_STORAGE!r}")
-    join_key = as_text(value.get("join_key")).strip()
-    if join_key != LOCALIZED_NAMES_JOIN_KEY:
-        raise CatalogDocsError(f"{path}: localized_names.join_key must be {LOCALIZED_NAMES_JOIN_KEY!r}")
-    localization_file = as_text(value.get("localization_file")).strip()
-    if not localization_file:
-        raise CatalogDocsError(f"{path}: localized_names.localization_file is required")
-    if not localization_file.startswith("latest/") or not localization_file.endswith(LOCALIZED_NAMES_LOCALIZATION_SUFFIX):
-        raise CatalogDocsError(
-            f"{path}: localized_names.localization_file must be latest/{{asset-slug}}{LOCALIZED_NAMES_LOCALIZATION_SUFFIX}"
-        )
-    property_template = as_text(value.get("property_template")).strip()
-    if property_template != LOCALIZED_NAMES_PROPERTY_TEMPLATE:
-        raise CatalogDocsError(
-            f"{path}: localized_names.property_template must be {LOCALIZED_NAMES_PROPERTY_TEMPLATE!r}"
-        )
-    locale_code_format = as_text(value.get("locale_code_format")).strip()
-    if locale_code_format != LOCALIZED_NAMES_LOCALE_CODE_FORMAT:
-        raise CatalogDocsError(
-            f"{path}: localized_names.locale_code_format must be {LOCALIZED_NAMES_LOCALE_CODE_FORMAT!r}"
-        )
-    fallback_field = as_text(value.get("fallback_field")).strip()
-    if fallback_field != LOCALIZED_NAMES_FALLBACK_FIELD:
-        raise CatalogDocsError(f"{path}: localized_names.fallback_field must be {LOCALIZED_NAMES_FALLBACK_FIELD!r}")
-    raw_translations = value.get("translations", [])
-    if not isinstance(raw_translations, list):
-        raise CatalogDocsError(f"{path}: localized_names.translations must be a list")
-
-    translations: list[dict[str, str]] = []
-    seen_locales: set[str] = set()
-    seen_fields: set[str] = set()
-    seen_review_state_fields: set[str] = set()
-    for index, raw_translation in enumerate(raw_translations, start=1):
-        context = f"localized_names.translations[{index}]"
-        if not isinstance(raw_translation, dict):
-            raise CatalogDocsError(f"{path}: {context} must be a mapping")
-        locale_code = normalize_locale_code(raw_translation.get("locale_code"), path=path, context=f"{context}.locale_code")
-        field = as_text(raw_translation.get("field")).strip()
-        expected_field = f"name_{locale_code}"
-        if field != expected_field:
-            raise CatalogDocsError(f"{path}: {context}.field must be {expected_field!r}")
-        review_state_field = as_text(raw_translation.get("review_state_field")).strip()
-        expected_review_state_field = f"{expected_field}_review_state"
-        if review_state_field != expected_review_state_field:
-            raise CatalogDocsError(f"{path}: {context}.review_state_field must be {expected_review_state_field!r}")
-        if locale_code in seen_locales:
-            raise CatalogDocsError(f"{path}: localized_names locale_code {locale_code!r} is duplicated")
-        if field in seen_fields:
-            raise CatalogDocsError(f"{path}: localized_names field {field!r} is duplicated")
-        if review_state_field in seen_review_state_fields:
-            raise CatalogDocsError(f"{path}: localized_names review_state_field {review_state_field!r} is duplicated")
-        seen_locales.add(locale_code)
-        seen_fields.add(field)
-        seen_review_state_fields.add(review_state_field)
-        translation = {"locale_code": locale_code, "field": field, "review_state_field": review_state_field}
-        if "label" in raw_translation:
-            label = as_text(raw_translation.get("label")).strip()
-            if not label:
-                raise CatalogDocsError(f"{path}: {context}.label must be non-empty when provided")
-            translation["label"] = label
-        review_state = as_text(raw_translation.get("review_state")).strip()
-        if not review_state:
-            raise CatalogDocsError(f"{path}: {context}.review_state is required")
-        if review_state not in LOCALIZED_NAME_REVIEW_STATES:
-            allowed = ", ".join(sorted(LOCALIZED_NAME_REVIEW_STATES))
-            raise CatalogDocsError(f"{path}: {context}.review_state must be one of: {allowed}")
-        translation["review_state"] = review_state
-        translations.append(translation)
-
-    normalized: dict[str, Any] = {
-        "storage": storage,
-        "join_key": join_key,
-        "localization_file": localization_file,
-        "property_template": property_template,
-        "locale_code_format": locale_code_format,
-        "fallback_field": fallback_field,
-    }
-    fallback_locale = as_text(value.get("fallback_locale")).strip()
-    if fallback_locale:
-        fallback_locale = normalize_locale_code(fallback_locale, path=path, context="localized_names.fallback_locale")
-        normalized["fallback_locale"] = fallback_locale
-    normalized["translations"] = translations
-    return normalized
-
-
-def localized_name_locales(metadata: dict[str, Any]) -> list[str]:
-    localized_names = metadata.get("localized_names")
-    if not isinstance(localized_names, dict):
-        return []
-    translations = localized_names.get("translations")
-    if not isinstance(translations, list):
-        return []
-    return [translation["locale_code"] for translation in translations if isinstance(translation, dict) and translation.get("locale_code")]
-
-
-def localized_name_review_states(metadata: dict[str, Any]) -> list[str]:
-    localized_names = metadata.get("localized_names")
-    if not isinstance(localized_names, dict):
-        return []
-    translations = localized_names.get("translations")
-    if not isinstance(translations, list):
-        return []
-    return [
-        f"{translation['locale_code']}:{translation['review_state']}"
-        for translation in translations
-        if isinstance(translation, dict) and translation.get("locale_code") and translation.get("review_state")
-    ]
-
-
-def validate_localized_names(value: Any, *, path: Path) -> None:
+def validate_feature_identity(value: Any, *, path: Path) -> None:
     if value in (None, ""):
         return
-    normalize_localized_names(value, path=path)
+    if not isinstance(value, dict):
+        raise CatalogDocsError(f"{path}: feature_identity must be a mapping")
+    strategy = as_text(value.get("strategy")).strip()
+    if strategy not in {"source_field", "generated_sequence_source_fields", "generated_sequence_content_hash"}:
+        raise CatalogDocsError(f"{path}: feature_identity.strategy is unsupported")
+    source_fields = value.get("source_fields", [])
+    if not isinstance(source_fields, list):
+        raise CatalogDocsError(f"{path}: feature_identity.source_fields must be a list")
+    if strategy == "source_field" and not [as_text(field).strip() for field in source_fields if as_text(field).strip()]:
+        raise CatalogDocsError(f"{path}: feature_identity.source_fields is required for source_field strategy")
+    if strategy.startswith("generated_sequence"):
+        generated_type = as_text(value.get("generated_id_type")).strip()
+        if generated_type and generated_type != "monotonic_integer_string":
+            raise CatalogDocsError(f"{path}: feature_identity.generated_id_type must be monotonic_integer_string")
+        assignment_key = value.get("assignment_key", [])
+        if not isinstance(assignment_key, list):
+            raise CatalogDocsError(f"{path}: feature_identity.assignment_key must be a list")
 
 
 def validate_feature_metadata(value: Any, *, path: Path, asset_slug: str) -> None:
@@ -705,12 +574,12 @@ def validate_feature_metadata(value: Any, *, path: Path, asset_slug: str) -> Non
         raise CatalogDocsError(f"{path}: feature_metadata must be a mapping")
     if as_text(value.get("storage")).strip() != FEATURE_METADATA_STORAGE:
         raise CatalogDocsError(f"{path}: feature_metadata.storage must be {FEATURE_METADATA_STORAGE!r}")
-    if as_text(value.get("index_backend")).strip() != FEATURE_METADATA_INDEX_BACKEND:
-        raise CatalogDocsError(f"{path}: feature_metadata.index_backend must be {FEATURE_METADATA_INDEX_BACKEND!r}")
     if as_text(value.get("feature_id_column")).strip() != FEATURE_METADATA_FEATURE_ID_COLUMN:
         raise CatalogDocsError(f"{path}: feature_metadata.feature_id_column must be {FEATURE_METADATA_FEATURE_ID_COLUMN!r}")
-    if as_text(value.get("feature_hash_column")).strip() != FEATURE_METADATA_FEATURE_HASH_COLUMN:
-        raise CatalogDocsError(f"{path}: feature_metadata.feature_hash_column must be {FEATURE_METADATA_FEATURE_HASH_COLUMN!r}")
+    if as_text(value.get("geometry_hash_column")).strip() != FEATURE_METADATA_GEOMETRY_HASH_COLUMN:
+        raise CatalogDocsError(f"{path}: feature_metadata.geometry_hash_column must be {FEATURE_METADATA_GEOMETRY_HASH_COLUMN!r}")
+    if as_text(value.get("properties_hash_column")).strip() != FEATURE_METADATA_PROPERTIES_HASH_COLUMN:
+        raise CatalogDocsError(f"{path}: feature_metadata.properties_hash_column must be {FEATURE_METADATA_PROPERTIES_HASH_COLUMN!r}")
     expected_files = {
         "sidecar_file": f"latest/{asset_slug}.metadata.ndjson.gz",
         "schema_file": f"latest/{asset_slug}.schema.json",
@@ -721,89 +590,6 @@ def validate_feature_metadata(value: Any, *, path: Path, asset_slug: str) -> Non
             raise CatalogDocsError(f"{path}: feature_metadata.{key} must be {expected!r}")
     if value.get("provenance_default") is not True:
         raise CatalogDocsError(f"{path}: feature_metadata.provenance_default must be true")
-
-
-def validate_generated_group_id(value: Any, *, path: Path, row_count: int | None) -> None:
-    if value in (None, ""):
-        return
-    if not isinstance(value, dict):
-        raise CatalogDocsError(f"{path}: generated_group_id must be a mapping")
-    column = as_text(value.get("column")).strip()
-    if column != GENERATED_GROUP_ID_COLUMN:
-        raise CatalogDocsError(f"{path}: generated_group_id.column must be {GENERATED_GROUP_ID_COLUMN}")
-    algorithm = as_text(value.get("algorithm")).strip()
-    if algorithm != GENERATED_GROUP_ID_ALGORITHM:
-        raise CatalogDocsError(f"{path}: generated_group_id.algorithm must be {GENERATED_GROUP_ID_ALGORITHM}")
-    grouping_fields = value.get("grouping_fields")
-    if not isinstance(grouping_fields, list) or not [as_text(field).strip() for field in grouping_fields if as_text(field).strip()]:
-        raise CatalogDocsError(f"{path}: generated_group_id.grouping_fields must be a non-empty list")
-    token_length = profile_int(
-        value.get("token_length"),
-        label="generated_group_id.token_length",
-        path=path,
-        required=True,
-    )
-    if token_length is not None and token_length < 8:
-        raise CatalogDocsError(f"{path}: generated_group_id.token_length must be at least 8")
-    profile_int(
-        value.get("group_count"),
-        label="generated_group_id.group_count",
-        path=path,
-        required=True,
-        row_count=row_count,
-    )
-    profile_int(
-        value.get("blank_group_count"),
-        label="generated_group_id.blank_group_count",
-        path=path,
-        row_count=row_count,
-    )
-    if not as_text(value.get("stability")).strip():
-        raise CatalogDocsError(f"{path}: generated_group_id.stability is required")
-
-
-def validate_generated_row_id(value: Any, *, path: Path, row_count: int | None) -> None:
-    if value in (None, ""):
-        return
-    if not isinstance(value, dict):
-        raise CatalogDocsError(f"{path}: generated_row_id must be a mapping")
-    column = as_text(value.get("column")).strip()
-    if column != GENERATED_ROW_ID_COLUMN:
-        raise CatalogDocsError(f"{path}: generated_row_id.column must be {GENERATED_ROW_ID_COLUMN}")
-    algorithm = as_text(value.get("algorithm")).strip()
-    if algorithm != GENERATED_ROW_ID_ALGORITHM:
-        raise CatalogDocsError(f"{path}: generated_row_id.algorithm must be {GENERATED_ROW_ID_ALGORITHM}")
-    token_length = profile_int(
-        value.get("token_length"),
-        label="generated_row_id.token_length",
-        path=path,
-        required=True,
-    )
-    if token_length is not None and token_length < 8:
-        raise CatalogDocsError(f"{path}: generated_row_id.token_length must be at least 8")
-    profile_int(
-        value.get("row_count"),
-        label="generated_row_id.row_count",
-        path=path,
-        required=True,
-        row_count=row_count,
-    )
-    profile_int(
-        value.get("duplicate_geometry_row_count"),
-        label="generated_row_id.duplicate_geometry_row_count",
-        path=path,
-        row_count=row_count,
-    )
-    profile_int(
-        value.get("duplicate_geometry_digest_count"),
-        label="generated_row_id.duplicate_geometry_digest_count",
-        path=path,
-        row_count=row_count,
-    )
-    if not as_text(value.get("stability")).strip():
-        raise CatalogDocsError(f"{path}: generated_row_id.stability is required")
-    if not as_text(value.get("warning")).strip():
-        raise CatalogDocsError(f"{path}: generated_row_id.warning is required")
 
 
 def validate_data_profile(path: Path, metadata: dict[str, Any], *, row_count: int | None) -> None:
@@ -848,19 +634,8 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
     validate_data_profile(path, metadata, row_count=row_count)
     validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
-    validate_localized_names(metadata.get("localized_names"), path=path)
+    validate_feature_identity(metadata.get("feature_identity"), path=path)
     validate_feature_metadata(metadata.get("feature_metadata"), path=path, asset_slug=metadata["asset_slug"])
-    localized_names = metadata.get("localized_names")
-    if isinstance(localized_names, dict):
-        expected_localization_file = f"latest/{metadata['asset_slug']}{LOCALIZED_NAMES_LOCALIZATION_SUFFIX}"
-        if localized_names.get("localization_file") != expected_localization_file:
-            raise CatalogDocsError(
-                f"{path}: localized_names.localization_file must be {expected_localization_file!r}"
-            )
-    if metadata.get("generated_group_id") not in (None, "") and metadata.get("generated_row_id") not in (None, ""):
-        raise CatalogDocsError(f"{path}: generated_group_id and generated_row_id are mutually exclusive")
-    validate_generated_group_id(metadata.get("generated_group_id"), path=path, row_count=row_count)
-    validate_generated_row_id(metadata.get("generated_row_id"), path=path, row_count=row_count)
     if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):
         try:
             resolution = float(metadata["source_resolution_meters"])
@@ -896,8 +671,6 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
 
 
 def validate_body(path: Path, metadata: dict[str, Any], body: str) -> None:
-    if BODY_LOCALIZED_NAME_FIELD_RE.search(body) and not metadata.get("localized_names"):
-        raise CatalogDocsError(f"{path}: localized_names is required when translated name_* fields are documented")
     if metadata.get("status") != "active":
         return
     missing = [section for section in REQUIRED_SECTIONS if section not in body]
@@ -968,8 +741,7 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "canonical_format": metadata["canonical_format"],
         "available_formats": ";".join(formats),
         "metadata_paths": ";".join(metadata["metadata_paths"]),
-        "localized_name_locales": ";".join(localized_name_locales(metadata)),
-        "localized_name_review_states": ";".join(localized_name_review_states(metadata)),
+        "feature_identity": feature_identity_summary(metadata),
         "has_pmtiles": str("pmtiles" in formats).lower(),
         "has_geojson": str("geojson" in formats).lower(),
         "has_csv": str("csv" in formats).lower(),

@@ -76,11 +76,14 @@ class GcsPublisher:
             )
         )
         try:
-            release_feature_model.ext_id_mapping_from_records(records)
+            validation = release_feature_model.validate_sidecar_records(records)
+            if not validation.valid:
+                raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
+            release_feature_model.previous_feature_id_mapping(records)
         except release_feature_model.ReleaseFeatureModelError as exc:
             self.logger.warning(
-                "%s latest metadata sidecar has incompatible ext_id mappings; "
-                "generated sequence ext_id values will start fresh: %s",
+                "%s latest metadata sidecar has incompatible feature identity mappings; "
+                "generated sequence feature_id values will start fresh: %s",
                 asset.slug,
                 exc,
             )

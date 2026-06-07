@@ -378,12 +378,12 @@ class GcsPublisherTests(unittest.TestCase):
         )
 
         release = json.loads(bucket.blob("_catalog/releases/test-asset.json").text)["latest_release"]
-        self.assertEqual(release["index_load_status"], "tracked in index-loads/")
+        self.assertEqual(release["index_load_status"], "Firestore metadata serving is inactive")
         self.assertEqual(
             release["index_status_policy"],
             {
-                "mode": "external_index_load_records",
-                "path": "gs://test-bucket/asset/index-loads/2026-05-01/",
+                "mode": "inactive_firestore_serving",
+                "path": None,
             },
         )
 
@@ -831,7 +831,7 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(files["pmtiles"]["sha256"], "b" * 64)
         self.assertEqual(
             release["index_status_policy"]["path"],
-            "gs://test-bucket/asset/index-loads/2026-06-03/",
+            None,
         )
 
 

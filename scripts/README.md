@@ -104,7 +104,7 @@ The build sequence is standardized as:
 3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
 4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe using explicit
    min/max zoom metadata and any compact property filters such as `feature_id`
-   and `ext_id`.
+   and `feature_id`.
 5. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
 6. Local validation with `ogrinfo`, PMTiles v3 magic-byte checks,
    `pmtiles verify`, `pmtiles show`, and a decoded PMTiles property sample when
@@ -140,42 +140,19 @@ Run the helper through `uv run python` so repo Python dependencies come from the
 project environment. GDAL and PMTiles are external command-line tools resolved
 from `PATH`; the helper records their versions in the build plan.
 
-Generated group IDs are opt-in. Do not pick a grouping field inside the build
-step. First run the publishing concierge or another attribute profile and show
-the curator the standard decision table: likely provider `ext_id` candidates and
-likely grouping/search/filter candidates, plus the generated numeric sequence
-fallback for `ext_id`, with row/column counts, datatype, distinction,
-emptiness, domination, skew ratio, top examples, and concerns. Provider or group
-fields may be used as `ext_id` only when every value is unique, nonblank, and
+Generated IDs are opt-in. First run the publishing concierge or another
+attribute profile and show the curator the standard decision table: likely
+source-field `feature_id` candidates, generated numeric sequence fallback, and
+likely search/filter fields, with row/column counts, datatype, distinction,
+emptiness, domination, skew ratio, top examples, and concerns. A source field
+may be used as `feature_id` only when every value is unique, nonblank, and
 matches `^[A-Za-z0-9]{1,64}$`.
-Distinction is role-dependent: provider IDs should be close to row-unique,
-while grouping fields are often useful at middle cardinality; very
-low-cardinality fields are usually filters and near-row-unique fields are
-usually search-only. The concierge profiles all local rows when practical and
-uses a deterministic random sample of about 10,000 rows when exact profiling is
-too expensive; do not use first-N-row samples for this decision. Only after the
-curator chooses group-level addressing for an asset that lacks a useful provider
-row ID should you pass one or more `--group-id-field FIELD` flags:
 
-```bash
-uv run python scripts/vector_asset.py build ./source.shp \
-  --asset-slug example-asset \
-  --group-id-field NAME
-```
-
-The helper writes `shared_datasets_group_id` before FGB creation and validates
-that the property is present in the FGB schema and decoded PMTiles features.
-Use `--group-id-fail-on-ambiguous-geometry` when identical collective geometry
-should fail the build instead of being reported for curator review.
-
-If the curator rejects both provider IDs and grouping fields but still needs
-row-level addresses, pass `--generate-row-id` instead. This writes
-`shared_datasets_row_id` using `shared-datasets-row-id:v1`: per-feature
-canonical OGR EPSG:4326 geometry hashes, duplicate geometries disambiguated by
-source feature order, and the same base62 collision policy used for group IDs.
-This column is a last-resort row address, not a provider/entity/group ID, and is
-stable only while geometry and duplicate-geometry source order remain unchanged.
-Do not combine `--generate-row-id` with `--group-id-field`.
+If no source field is suitable, release metadata helpers assign monotonic
+decimal `feature_id` values from an approved assignment key or the pair of
+stored `geometry_hash` and `properties_hash` values. The manifest `identity`
+block records the strategy, source fields or assignment key, hash algorithm,
+canonicalization version, previous release, and next generated ID.
 
 PMTiles generation exports a WGS84 GeoJSONSeq tile source with GDAL, writes the
 temporary MBTiles with Tippecanoe, and converts that archive with
@@ -192,11 +169,11 @@ scripts/feature_metadata_index.py
 ```
 
 Use `release_feature_model.py` from publishing or ingestion code to construct
-stable `feature_id` values, compute separate `feature_hash` values, serialize
+stable `feature_id` values, compute separate `geometry_hash` and `properties_hash` values, serialize
 `{asset-slug}.metadata.ndjson.gz`, validate sidecar rows, and build release
 manifests. Use `feature_metadata_index.py --dry-run` to validate a sidecar
-without writing Firestore, and without `--dry-run` only from an approved runtime
-that is meant to refresh the rebuildable serving index.
+without writing Firestore. Do not run non-dry-run index loads while Firestore
+metadata serving is inactive.
 
 Use `feature_metadata_localization.py` to materialize generated locale-specific
 metadata views from the canonical sidecar plus an editable translation source:
@@ -248,34 +225,11 @@ generation preconditions from the approved publisher environment. Manual
 dispatch can run the same pipeline for an explicit canonical translation-source
 URI.
 
-## Localized display-name sidecars
+## Localized metadata sidecars
 
-Localized display names use a same-asset CSV sidecar rather than localized
-columns in the canonical FGB or PMTiles. The FGB and PMTiles must have a unique
-nonblank URL-safe `ext_id` matching `^[A-Za-z0-9]{1,64}$`; PMTiles also carry
-`feature_id` for metadata lookup. The localization CSV must have `ext_id`,
-fallback `name`, `name_review_state`, and optional `name_{locale_code}` /
-`name_{locale_code}_review_state` pairs.
-
-Seed missing rows from a freshly built FGB without overwriting existing
-translations:
-
-```bash
-uv run python scripts/localized_vector_asset.py seed-localizations \
-  --fgb "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.fgb" \
-  --ext-id-field ext_id \
-  --fallback-name-field source_name \
-  --localizations "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset-localizations.csv"
-```
-
-Validate the sidecar against the asset doc and FGB coverage:
-
-```bash
-uv run python scripts/localized_vector_asset.py validate-localizations \
-  --fgb ./example-asset.fgb \
-  --localizations ./example-asset-localizations.csv \
-  --asset-doc docs/assets/example-asset.md
-```
+Localized metadata uses `metadata-translations.csv` plus generated locale
+sidecars, not localized columns in the canonical FGB or PMTiles. Translation
+rows are keyed by `feature_id`, `field`, `locale`, and `source_value_hash`.
 
 Build release-oriented PMTiles from the unchanged FGB geometry plus metadata
 lookup IDs:
@@ -287,7 +241,7 @@ uv run python scripts/vector_asset.py build \
   --pmtiles-feature-id-property feature_id
 ```
 
-The vector helper projects PMTiles properties to `feature_id` and `ext_id`.
+The vector helper projects PMTiles properties to `feature_id`.
 Display labels for release-oriented catalog preview maps are resolved through
 the metadata API or one materialized locale-specific metadata sidecar, not by
 fetching a translation overlay in the browser. Review-state fields stay in the

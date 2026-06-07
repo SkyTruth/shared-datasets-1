@@ -55,7 +55,7 @@ ASSET_PARENT = "100-geographic-reference/130-protected-areas"
 RUN_RECORD_VERSION = 1
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
-PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN, feature_metadata.EXT_ID_COLUMN)
+PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
 
 
 class SourceNotAvailableError(FileNotFoundError):
@@ -719,14 +719,18 @@ def build_asset_outputs(
         remove_if_exists(path)
 
     convert_gpkg_to_geojsonseq(gpkg, asset, geojsonseq)
-    enriched_features, sidecar_records = feature_metadata.enrich_features_with_provider_ids(
+    enriched_features, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
         feature_metadata.iter_geojsonseq(geojsonseq),
         asset_slug=asset.slug,
         release=run_date.isoformat(),
-        id_field="SITE_PID",
-        provenance={"source": source, "where": where},
+        source_fields=["SITE_PID"],
+        provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
         previous_records=previous_records,
     )
+    if ambiguities:
+        raise RuntimeError(
+            f"{asset.slug} has {len(ambiguities)} partial identity hash match(es) requiring maintainer review"
+        )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
     schema_payload = feature_metadata.schema_from_records(
@@ -750,7 +754,8 @@ def build_asset_outputs(
     output_field_names = {field.name for field in output_fields}
     required_field_names = {field.name for field in source_fields} | {
         feature_metadata.FEATURE_ID_COLUMN,
-        feature_metadata.FEATURE_HASH_COLUMN,
+        feature_metadata.GEOMETRY_HASH_COLUMN,
+        feature_metadata.PROPERTIES_HASH_COLUMN,
     }
     if not required_field_names.issubset(output_field_names):
         missing = sorted(required_field_names - output_field_names)
@@ -851,7 +856,11 @@ def publish_asset(
             sha256_by_role=outputs.sha256,
             schema=outputs.schema_payload,
             source_inputs=[{"uri": source_url}],
-            id_strategy={"strategy": "provider", "field": "SITE_PID"},
+            identity=feature_metadata.release_feature_model.build_identity_metadata(
+                strategy="generated_sequence_source_fields",
+                source_fields=["SITE_PID"],
+                next_generated_feature_id_after_release=feature_metadata.next_generated_feature_id(outputs.sidecar_records),
+            ),
             feature_count=outputs.row_count,
             release_blob_info_by_role={
                 "fgb": release_fgb,

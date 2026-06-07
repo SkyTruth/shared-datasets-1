@@ -22,11 +22,11 @@ citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Pr
   Other Effective Area-based Conservation Measures (WD-OECM) [Online], June 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available
   at: www.protectedplanet.net.'
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release
-  adds provider feature_id values from SITE_PID, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest
+  adds source-field feature_id values from SITE_PID, geometry_hash values, properties_hash values, canonical metadata/schema/manifest
   artifacts, and an initial Spanish NAME_ENG metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight
-  metadata-lookup tiles with feature_id and ext_id only. The release preserves 2,661 upstream invalid geometries from the
-  current FGB; no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded
-  in the bucket release index and per-run records.
+  metadata-lookup tiles with feature_id only. The release preserves 2,661 upstream invalid geometries from the current FGB;
+  no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in the bucket
+  release index and per-run records.
 row_count: 304572
 data_profile:
   field_count: 33
@@ -47,7 +47,8 @@ feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/wdpa-terrestrial.metadata.ndjson.gz
   schema_file: latest/wdpa-terrestrial.schema.json
   manifest_file: latest/wdpa-terrestrial.manifest.json
@@ -173,7 +174,7 @@ field definitions.
 Definitions are inherited from the Protected Planet WDPA/WDOECM source and need
 source confirmation for each monthly release. The job verifies that all selected
 source layers have identical fields before publishing. Metadata-contract
-releases add `ext_id`, `feature_hash`, and `feature_id` fields.
+releases add `feature_id`, `geometry_hash`, and `properties_hash` fields.
 
 | Name | Type | Description |
 |---|---|---|
@@ -210,9 +211,9 @@ releases add `ext_id`, `feature_hash`, and `feature_id` fields.
 | `OECM_ASMT` | string | OECM assessment status. |
 | `GIS_M_AREA` | real | GIS-calculated marine area in square kilometers; null for point rows where not supplied. |
 | `GIS_AREA` | real | GIS-calculated total area in square kilometers; null for point rows where not supplied. |
-| `ext_id` | string | Public lookup handle. The 2026-06-05 values are legacy non-URL-safe handles; future releases use URL-safe `SITE_PID` only when every value is unique, nonblank, and alphanumeric, otherwise generated decimal sequence handles. |
-| `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
-| `feature_id` | string | Provider-backed feature ID derived from `SITE_PID`, formatted as `src:SITE_PID:{SITE_PID}`. |
+| `feature_id` | string | Public URL-safe lookup handle. Releases use URL-safe `SITE_PID` values only when every value is unique, nonblank, and alphanumeric; otherwise they use generated decimal sequence handles. |
+| `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
+| `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
 
 ## Update notes
 
@@ -221,11 +222,11 @@ Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
 
 A 2026-06-05 metadata-contract release was staged from the unchanged June 2026
 latest FGB so consumers can use feature metadata sidecars and Firestore index
-loads. The release adds SITE_PID-backed `feature_id` values, `feature_hash`
+loads. The release adds SITE_PID-backed `feature_id` values, `properties_hash`
 checksums, a canonical metadata sidecar, release schema, manifest,
 metadata-translations CSV, and generated Spanish localized sidecar for
 `NAME_ENG`. The PMTiles release is a lightweight lookup archive with only
-`feature_id` and `ext_id` properties.
+`feature_id` properties.
 
 ## Known caveats
 
@@ -236,4 +237,4 @@ single-geometry layers.
 The 2026-06-05 metadata-contract release preserves 2,661 invalid geometries
 already present in the June 2026 source FGB. Geometry repair was intentionally
 out of scope for this contract repair because it would change canonical feature
-geometry and feature hashes.
+geometry, geometry hashes, and properties hashes.

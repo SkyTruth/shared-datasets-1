@@ -65,7 +65,7 @@ const catalogFixture = {
       latest_release: { date: '2026-01-15' },
       localized_names: {
         storage: 'localization_csv_v1',
-        join_key: 'ext_id',
+        join_key: 'feature_id',
         localization_file: 'latest/example-public-layer-localizations.csv',
         property_template: 'name_{locale_code}',
         locale_code_format: 'bcp47_field_safe',
@@ -673,7 +673,7 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
     license: 'Example license',
     localizedNames: {
       storage: 'localization_csv_v1',
-      join_key: 'ext_id',
+      join_key: 'feature_id',
       localization_file: 'latest/example-public-layer-localizations.csv',
       property_template: 'name_{locale_code}',
       locale_code_format: 'bcp47_field_safe',

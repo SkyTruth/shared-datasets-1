@@ -31,8 +31,8 @@ DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
 WORKFLOW_SCHEMA_VERSION = 1
 WORKFLOW_COMMANDS = {"start", "next", "confirm", "status", "render-pr", "render-report", "validate"}
-GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
-GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
+GENERATED_FEATURE_ID_COLUMN = "feature_id"
+GENERATED_FEATURE_ID_ALGORITHM = "shared-datasets-generated-feature-id:v1"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 PREVIEW_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
@@ -165,15 +165,15 @@ class FieldRecommendation:
 
 
 @dataclass(frozen=True)
-class GeneratedRowIdOption:
+class GeneratedFeatureIdOption:
     available: bool
-    column: str = GENERATED_ROW_ID_COLUMN
-    algorithm: str = GENERATED_ROW_ID_ALGORITHM
+    column: str = GENERATED_FEATURE_ID_COLUMN
+    algorithm: str = GENERATED_FEATURE_ID_ALGORITHM
     reason: str = (
-        "Last-resort per-row geometry-address fallback when no provider ext_id and no curator-approved grouping field is suitable."
+        "Generated decimal feature_id fallback when no URL-safe source field candidate is suitable."
     )
     warning: str = (
-        "Not a provider or entity ID; stable only while canonical geometry and duplicate-geometry source order remain unchanged."
+        "Generated IDs are assigned by the release feature model and carried forward by the configured identity key."
     )
 
 
@@ -182,7 +182,7 @@ class CuratorFieldOptions:
     id_field_candidates: list[FieldRecommendation]
     group_field_candidates: list[FieldRecommendation]
     notes: list[str]
-    generated_row_id_option: GeneratedRowIdOption = dataclass_field(default_factory=lambda: GeneratedRowIdOption(False))
+    generated_feature_id_option: GeneratedFeatureIdOption = dataclass_field(default_factory=lambda: GeneratedFeatureIdOption(False))
     total_rows: int | None = None
     total_columns: int | None = None
     profiled_row_count: int | None = None
@@ -565,13 +565,13 @@ def profile_row_iter(
     return sample, total_rows, profile_scope
 
 
-def recommendation_concerns(profile: FieldProfile, *, provider: bool) -> list[str]:
+def recommendation_concerns(profile: FieldProfile, *, source_id: bool) -> list[str]:
     concerns: list[str] = []
     if profile.empty_values:
         concerns.append(f"{profile.empty_values:,} empty value(s)")
     if profile.sentinel_value_count:
         concerns.append(f"{profile.sentinel_value_count:,} sentinel-like value(s)")
-    if profile.duplicate_value_count and provider:
+    if profile.duplicate_value_count and source_id:
         concerns.append(
             f"{profile.duplicate_value_count:,} duplicate value(s) across {profile.duplicate_row_count:,} row(s)"
         )
@@ -581,23 +581,23 @@ def recommendation_concerns(profile: FieldProfile, *, provider: bool) -> list[st
             concerns.append(f"top value {top.value!r} has {top.count:,} row(s)")
     if profile.skew_ratio is not None and profile.skew_ratio >= 50:
         concerns.append(f"high skew ratio {profile.skew_ratio:g}")
-    if not provider and profile.distinction_percent > 95:
+    if not source_id and profile.distinction_percent > 95:
         concerns.append("near-row-unique; usually search-only, not grouping")
-    if not provider and (profile.distinction_percent <= 1 or profile.distinct_values <= 5):
-        concerns.append("very low distinction; treat as filter/facet, not generated group ID")
+    if not source_id and (profile.distinction_percent <= 1 or profile.distinct_values <= 5):
+        concerns.append("very low distinction; treat as filter/facet")
     return concerns
 
 
-def provider_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
+def source_id_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
     if profile.distinct_values <= 1 or field_is_measurement(profile.name):
         return None
     id_like = field_is_id_like(profile.name)
     if not id_like:
         return None
-    concerns = recommendation_concerns(profile, provider=True)
+    concerns = recommendation_concerns(profile, source_id=True)
     if profile.emptiness_percent >= 10:
         confidence = "low"
-        reason = "ID-like field name, but too many rows are empty for a provider row ID."
+        reason = "ID-like field name, but too many rows are empty for a source feature ID."
     elif profile.distinction_percent >= 95:
         confidence = "high"
         if profile.duplicate_value_count:
@@ -609,10 +609,10 @@ def provider_recommendation(profile: FieldProfile) -> FieldRecommendation | None
         reason = "ID-like field with high distinction, but not row-unique."
     else:
         confidence = "low"
-        reason = "ID-like field name, but values are not unique enough for a provider row ID."
+        reason = "ID-like field name, but values are not unique enough for a source feature ID."
     return FieldRecommendation(
         field=profile.name,
-        role="provider ext_id candidate",
+        role="source feature_id candidate",
         reason=reason,
         datatype=profile.datatype,
         distinct_values=profile.distinct_values,
@@ -667,7 +667,7 @@ def group_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
     role = grouping_role(profile)
     if not role:
         return None
-    concerns = recommendation_concerns(profile, provider=False)
+    concerns = recommendation_concerns(profile, source_id=False)
     if profile.domination_percent >= 50:
         confidence = "low"
         reason = "Candidate field, but the top value dominates the rows."
@@ -679,7 +679,7 @@ def group_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
         reason = "High-cardinality field that may be useful for search; use grouping only with curator approval."
     elif role == "row-like search field":
         confidence = "low"
-        reason = "Near-row-unique field; likely search-only rather than a generated group ID."
+        reason = "Near-row-unique field; likely search-only rather than a generated identity key."
     else:
         confidence = "high" if field_is_group_like(profile.name) else "medium"
         reason = "Human-readable grouping/search field with repeated values."
@@ -706,8 +706,8 @@ def group_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
 
 
 def classify_field_profile(profile: FieldProfile) -> tuple[str, str | None]:
-    if provider_recommendation(profile):
-        return "provider ext_id candidate", None
+    if source_id_recommendation(profile):
+        return "source feature_id candidate", None
     role = grouping_role(profile)
     if role:
         return role, None
@@ -721,7 +721,7 @@ def classify_field_profile(profile: FieldProfile) -> tuple[str, str | None]:
         return "unlikely", "sentinel-dominated field"
     if field_is_id_like(profile.name) and profile.distinction_percent < 80:
         return "unlikely", "ID-like name but low distinction"
-    return "unlikely", "does not match provider ID or grouping/search heuristics"
+    return "unlikely", "does not match source field ID or grouping/search heuristics"
 
 
 def profile_rows(
@@ -729,7 +729,7 @@ def profile_rows(
     *,
     total_rows: int | None = None,
     profile_scope: str = "full",
-    generated_row_id_available: bool = False,
+    generated_feature_id_available: bool = False,
 ) -> CuratorFieldOptions:
     if not rows:
         return CuratorFieldOptions(
@@ -743,7 +743,7 @@ def profile_rows(
         )
     total = total_rows if total_rows is not None else len(rows)
     profiles = build_field_profiles(rows)
-    id_candidates = [candidate for profile in profiles if (candidate := provider_recommendation(profile))]
+    id_candidates = [candidate for profile in profiles if (candidate := source_id_recommendation(profile))]
     group_candidates = [candidate for profile in profiles if (candidate := group_recommendation(profile))]
 
     id_candidates.sort(key=lambda candidate: (candidate.confidence != "high", -(candidate.distinct_values or 0), candidate.field.lower()))
@@ -769,18 +769,18 @@ def profile_rows(
         f"{len(profiles):,} column(s) scanned; {hidden_unlikely_count:,} hidden as unlikely in the default decision table."
     )
     if not id_candidates:
-        notes.append("No high-likelihood provider row ID field was found.")
+        notes.append("No high-likelihood source feature ID field was found.")
     if not group_candidates:
         notes.append("No high-likelihood grouping/search field was found.")
-    if generated_row_id_available:
+    if generated_feature_id_available:
         notes.append(
-            f"Fallback {GENERATED_ROW_ID_COLUMN} is available only after the curator rejects provider IDs and generated group IDs."
+            f"Fallback {GENERATED_FEATURE_ID_COLUMN} is available when no URL-safe source field ID is suitable."
         )
     return CuratorFieldOptions(
         id_candidates[:8],
         group_candidates[:8],
         notes,
-        generated_row_id_option=GeneratedRowIdOption(generated_row_id_available),
+        generated_feature_id_option=GeneratedFeatureIdOption(generated_feature_id_available),
         total_rows=total,
         total_columns=len(profiles),
         profiled_row_count=profiled_row_count,
@@ -870,14 +870,14 @@ def read_ogr_rows(source: Path, *, limit: int | None = None) -> list[dict[str, A
 def profile_iterable_rows(
     rows: Iterable[dict[str, Any]],
     *,
-    generated_row_id_available: bool = False,
+    generated_feature_id_available: bool = False,
 ) -> CuratorFieldOptions:
     sampled_rows, total_rows, profile_scope = profile_row_iter(rows)
     return profile_rows(
         sampled_rows,
         total_rows=total_rows,
         profile_scope=profile_scope,
-        generated_row_id_available=generated_row_id_available,
+        generated_feature_id_available=generated_feature_id_available,
     )
 
 
@@ -917,7 +917,7 @@ def profile_ogr_rows(source: Path, *, timeout_seconds: int = OGR_PROFILE_TIMEOUT
         return CuratorFieldOptions([], [], ["Could not profile source attributes with ogr2ogr: no CSV rows were emitted."])
     reader = csv.DictReader(io.StringIO(completed.stdout))
     rows = ({str(key): value for key, value in row.items() if key is not None} for row in reader)
-    options = profile_iterable_rows(rows, generated_row_id_available=True)
+    options = profile_iterable_rows(rows, generated_feature_id_available=True)
     return CuratorFieldOptions(
         options.id_field_candidates,
         options.group_field_candidates,
@@ -926,7 +926,7 @@ def profile_ogr_rows(source: Path, *, timeout_seconds: int = OGR_PROFILE_TIMEOUT
             "OGR attribute profiling uses all rows when at or below the sample threshold; larger sources use a deterministic random sample.",
             "Curator must choose grouping fields before generated IDs are built.",
         ],
-        generated_row_id_option=options.generated_row_id_option,
+        generated_feature_id_option=options.generated_feature_id_option,
         total_rows=options.total_rows,
         total_columns=options.total_columns,
         profiled_row_count=options.profiled_row_count,
@@ -972,14 +972,14 @@ def recommend_schema_fields(field_names: Sequence[str]) -> CuratorFieldOptions:
     ]
     notes = ["Inspected source schema only; distinct and duplicate counts must be populated after canonical conversion."]
     if not id_candidates:
-        notes.append("No high-likelihood provider row ID field name was found.")
+        notes.append("No high-likelihood source feature ID field name was found.")
     if not group_candidates:
         notes.append("No high-likelihood grouping/search field name was found.")
     return CuratorFieldOptions(
         id_candidates[:8],
         group_candidates[:8],
         notes,
-        generated_row_id_option=GeneratedRowIdOption(True),
+        generated_feature_id_option=GeneratedFeatureIdOption(True),
         total_columns=len(field_names),
         profile_scope="schema_only",
         hidden_unlikely_count=max(0, len(field_names) - len({candidate.field for candidate in [*id_candidates, *group_candidates]})),
@@ -990,9 +990,9 @@ def recommend_curator_field_options(source: Path, canonical_format: str) -> Cura
     is_vector_fgb = canonical_format == "fgb"
     try:
         if source.suffix.lower() == ".csv":
-            return profile_iterable_rows(iter_csv_rows(source), generated_row_id_available=is_vector_fgb)
+            return profile_iterable_rows(iter_csv_rows(source), generated_feature_id_available=is_vector_fgb)
         if source.suffix.lower() == ".ndgeojson":
-            return profile_iterable_rows(iter_ndgeojson_rows(source), generated_row_id_available=is_vector_fgb)
+            return profile_iterable_rows(iter_ndgeojson_rows(source), generated_feature_id_available=is_vector_fgb)
         if source.suffix.lower() in {".geojson", ".json"}:
             if source.stat().st_size > MAX_IN_MEMORY_GEOJSON_BYTES:
                 return CuratorFieldOptions(
@@ -1003,7 +1003,7 @@ def recommend_curator_field_options(source: Path, canonical_format: str) -> Cura
                         "profile the canonical artifact after conversion.",
                     ],
                 )
-            return profile_rows(read_geojson_rows(source, limit=None), generated_row_id_available=is_vector_fgb)
+            return profile_rows(read_geojson_rows(source, limit=None), generated_feature_id_available=is_vector_fgb)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, csv.Error) as exc:
         return CuratorFieldOptions([], [], [f"Could not profile source attributes: {exc}"])
 
@@ -1023,7 +1023,7 @@ def recommend_curator_field_options(source: Path, canonical_format: str) -> Cura
                 f"Vector source schema was not profiled with GDAL during planning; set {PROFILE_WITH_GDAL_ENV}=1 "
                 "or profile the canonical artifact after conversion.",
             ],
-            generated_row_id_option=GeneratedRowIdOption(True),
+            generated_feature_id_option=GeneratedFeatureIdOption(True),
         )
     return CuratorFieldOptions(
         [],
@@ -1158,17 +1158,13 @@ def build_plan(
     notes = [
         "This concierge plan does not write to Cloud Storage.",
         "Review generated docs/catalog diffs before any remote upload.",
-        "Curator must choose provider ID candidates and grouping/search fields before publishing generated group IDs.",
+        "Curator must choose source field ID candidates or approve generated monotonic feature IDs before publishing.",
     ]
     if resolved_format == "csv":
         notes.append("CSV must remain geometry-free under shared-datasets standards.")
     if include_pmtiles:
         notes.append("FGB vector assets require a PMTiles companion for catalog map preview.")
-        notes.append(
-            "If the curator chooses a generated group ID, run vector_asset.py build with "
-            "--group-id-field FIELD; the helper will write shared_datasets_group_id into the FGB "
-            "and require it in PMTiles feature properties."
-        )
+        notes.append("PMTiles feature properties must contain feature_id only for metadata lookup.")
         notes.append(
             "PMTiles maxzoom is resolved after the canonical FGB is generated and profiled; "
             "the concierge does not assume a fallback zoom."
@@ -1671,7 +1667,7 @@ def commands_for_settle_contract(state: dict[str, Any]) -> list[str]:
 def commands_for_profile_fields(state: dict[str, Any]) -> list[str]:
     return [
         "Review `plan.curator_field_options` in `status --json` output.",
-        "Choose whether ext_id comes from a URL-safe provider ID, URL-safe group ID, or generated numeric sequence.",
+        "Choose whether feature_id comes from a URL-safe source field or a generated numeric sequence.",
         "If planning-time profile was unavailable, profile the canonical artifact after conversion before confirming.",
     ]
 
@@ -1900,41 +1896,35 @@ def validate_settle_contract(state: dict[str, Any], evidence: dict[str, Any]) ->
 def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     require_bool(evidence, "decision_table_present", expected=True)
     profile_scope = require_non_empty_string(evidence, "profile_scope")
-    provider = require_non_empty_string(evidence, "provider_id_decision")
-    if provider not in {"use-provider-id", "none-suitable"}:
-        raise WorkflowError("evidence.provider_id_decision must be use-provider-id or none-suitable")
-    group = require_non_empty_string(evidence, "generated_group_id_decision")
-    if group not in {"not-needed", "approved"}:
-        raise WorkflowError("evidence.generated_group_id_decision must be not-needed or approved")
-    row = require_non_empty_string(evidence, "generated_row_id_decision")
-    if row not in {"not-needed", "approved", "rejected"}:
-        raise WorkflowError("evidence.generated_row_id_decision must be not-needed, approved, or rejected")
-    ext_id_decision = require_non_empty_string(evidence, "ext_id_decision")
-    if ext_id_decision not in {"provider-id", "group-id", "generated-sequence"}:
-        raise WorkflowError("evidence.ext_id_decision must be provider-id, group-id, or generated-sequence")
+    source = require_non_empty_string(evidence, "source_field_id_decision")
+    if source not in {"use-source-field", "none-suitable"}:
+        raise WorkflowError("evidence.source_field_id_decision must be use-source-field or none-suitable")
+    generated = require_non_empty_string(evidence, "generated_feature_id_decision")
+    if generated not in {"not-needed", "approved"}:
+        raise WorkflowError("evidence.generated_feature_id_decision must be not-needed or approved")
+    feature_id_decision = require_non_empty_string(evidence, "feature_id_decision")
+    if feature_id_decision not in {"source-field", "generated-sequence"}:
+        raise WorkflowError("evidence.feature_id_decision must be source-field or generated-sequence")
     normalized = {
         "decision_table_present": True,
         "profile_scope": profile_scope,
-        "provider_id_decision": provider,
-        "provider_id_fields": require_string_list(evidence, "provider_id_fields", allow_empty=provider != "use-provider-id"),
-        "generated_group_id_decision": group,
-        "group_id_fields": require_string_list(evidence, "group_id_fields", allow_empty=group != "approved"),
-        "generated_row_id_decision": row,
-        "ext_id_decision": ext_id_decision,
-        "ext_id_fields": require_string_list(evidence, "ext_id_fields", allow_empty=ext_id_decision == "generated-sequence"),
+        "source_field_id_decision": source,
+        "source_field_id_fields": require_string_list(evidence, "source_field_id_fields", allow_empty=source != "use-source-field"),
+        "generated_feature_id_decision": generated,
+        "assignment_key_fields": require_string_list(evidence, "assignment_key_fields", allow_empty=generated != "approved"),
+        "feature_id_decision": feature_id_decision,
+        "feature_id_fields": require_string_list(evidence, "feature_id_fields", allow_empty=feature_id_decision == "generated-sequence"),
         "search_fields": require_string_list(evidence, "search_fields", allow_empty=True),
         "notes": str(evidence.get("notes", "")).strip(),
     }
-    if group == "approved" and row == "approved":
-        raise WorkflowError("generated group ID and generated row ID cannot both be approved")
-    if provider == "use-provider-id" and (group == "approved" or row == "approved"):
-        raise WorkflowError("do not approve generated IDs when a provider ID is selected")
-    if ext_id_decision == "provider-id" and provider != "use-provider-id":
-        raise WorkflowError("evidence.ext_id_decision=provider-id requires provider_id_decision=use-provider-id")
-    if ext_id_decision == "group-id" and group != "approved":
-        raise WorkflowError("evidence.ext_id_decision=group-id requires generated_group_id_decision=approved")
-    if ext_id_decision == "generated-sequence" and normalized["ext_id_fields"]:
-        raise WorkflowError("evidence.ext_id_fields must be empty when ext_id_decision=generated-sequence")
+    if source == "use-source-field" and generated == "approved":
+        raise WorkflowError("do not approve generated IDs when a source field ID is selected")
+    if feature_id_decision == "source-field" and source != "use-source-field":
+        raise WorkflowError("evidence.feature_id_decision=source-field requires source_field_id_decision=use-source-field")
+    if feature_id_decision == "generated-sequence" and generated != "approved":
+        raise WorkflowError("evidence.feature_id_decision=generated-sequence requires generated_feature_id_decision=approved")
+    if feature_id_decision == "generated-sequence" and normalized["feature_id_fields"]:
+        raise WorkflowError("evidence.feature_id_fields must be empty when feature_id_decision=generated-sequence")
     return normalized
 
 
@@ -2656,18 +2646,17 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
     ),
     StepDefinition(
         "profile-fields",
-        "Profile provider IDs and grouping/search fields",
+        "Profile source field IDs and grouping/search fields",
         "Record the decision table and explicit generated-ID decisions before any generated IDs are added.",
         {
             "decision_table_present": True,
             "profile_scope": "full|random_sample|schema_only|canonical-artifact|other",
-            "provider_id_decision": "use-provider-id|none-suitable",
-            "provider_id_fields": ["string"],
-            "generated_group_id_decision": "not-needed|approved",
-            "group_id_fields": ["string"],
-            "generated_row_id_decision": "not-needed|approved|rejected",
-            "ext_id_decision": "provider-id|group-id|generated-sequence",
-            "ext_id_fields": ["string"],
+            "source_field_id_decision": "use-source-field|none-suitable",
+            "source_field_id_fields": ["string"],
+            "generated_feature_id_decision": "not-needed|approved",
+            "assignment_key_fields": ["string"],
+            "feature_id_decision": "source-field|generated-sequence",
+            "feature_id_fields": ["string"],
             "search_fields": ["string"],
         },
         commands_for_profile_fields,

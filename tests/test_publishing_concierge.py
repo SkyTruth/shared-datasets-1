@@ -137,13 +137,12 @@ class PublishingConciergeTests(unittest.TestCase):
                 {
                     "decision_table_present": True,
                     "profile_scope": "full",
-                    "provider_id_decision": "use-provider-id",
-                    "provider_id_fields": ["source_id"],
-                    "generated_group_id_decision": "not-needed",
-                    "group_id_fields": [],
-                    "generated_row_id_decision": "not-needed",
-                    "ext_id_decision": "provider-id",
-                    "ext_id_fields": ["source_id"],
+                    "source_field_id_decision": "use-source-field",
+                    "source_field_id_fields": ["source_id"],
+                    "generated_feature_id_decision": "not-needed",
+                    "assignment_key_fields": [],
+                    "feature_id_decision": "source-field",
+                    "feature_id_fields": ["source_id"],
                     "search_fields": ["NAME"],
                 },
             ),
@@ -232,13 +231,12 @@ class PublishingConciergeTests(unittest.TestCase):
                 {
                     "decision_table_present": True,
                     "profile_scope": "full",
-                    "provider_id_decision": "none-suitable",
-                    "provider_id_fields": [],
-                    "generated_group_id_decision": "not-needed",
-                    "group_id_fields": [],
-                    "generated_row_id_decision": "approved",
-                    "ext_id_decision": "generated-sequence",
-                    "ext_id_fields": [],
+                    "source_field_id_decision": "none-suitable",
+                    "source_field_id_fields": [],
+                    "generated_feature_id_decision": "approved",
+                    "assignment_key_fields": ["NAME"],
+                    "feature_id_decision": "generated-sequence",
+                    "feature_id_fields": [],
                     "search_fields": ["NAME"],
                 },
             ),
@@ -643,13 +641,12 @@ class PublishingConciergeTests(unittest.TestCase):
                 {
                     "decision_table_present": True,
                     "profile_scope": "full",
-                    "provider_id_decision": "use-provider-id",
-                    "provider_id_fields": ["source_id"],
-                    "generated_group_id_decision": "not-needed",
-                    "group_id_fields": [],
-                    "generated_row_id_decision": "not-needed",
-                    "ext_id_decision": "provider-id",
-                    "ext_id_fields": ["source_id"],
+                    "source_field_id_decision": "use-source-field",
+                    "source_field_id_fields": ["source_id"],
+                    "generated_feature_id_decision": "not-needed",
+                    "assignment_key_fields": [],
+                    "feature_id_decision": "source-field",
+                    "feature_id_fields": ["source_id"],
                     "search_fields": ["NAME"],
                 },
             ),
@@ -840,7 +837,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertFalse(any("PMTiles is automatic" in note for note in plan.notes))
         self.assertTrue(any("require a PMTiles companion" in note for note in plan.notes))
         self.assertTrue(any("resolved after the canonical FGB" in note for note in plan.notes))
-        self.assertTrue(any("shared_datasets_group_id" in note for note in plan.notes))
+        self.assertTrue(any("feature_id" in note for note in plan.notes))
 
     def test_generated_temp_workspace_commands_are_copy_paste_safe(self):
         catalog_web_command = publishing_concierge.render_catalog_web_command()
@@ -989,7 +986,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].confidence, "high")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].distinct_values, 2)
-        self.assertFalse(plan.curator_field_options.generated_row_id_option.available)
+        self.assertFalse(plan.curator_field_options.generated_feature_id_option.available)
         self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
 
     def test_field_profile_reports_decision_table_statistics(self):
@@ -1024,7 +1021,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(disc_profile.empty_values, 1)
         self.assertEqual(disc_profile.sentinel_value_count, 1)
 
-    def test_profile_field_evidence_accepts_generated_sequence_ext_id_fallback(self):
+    def test_profile_field_evidence_accepts_generated_sequence_feature_id_fallback(self):
         state = {}
 
         normalized = publishing_concierge.validate_profile_fields(
@@ -1032,38 +1029,35 @@ class PublishingConciergeTests(unittest.TestCase):
             {
                 "decision_table_present": True,
                 "profile_scope": "full",
-                "provider_id_decision": "none-suitable",
-                "provider_id_fields": [],
-                "generated_group_id_decision": "not-needed",
-                "group_id_fields": [],
-                "generated_row_id_decision": "approved",
-                "ext_id_decision": "generated-sequence",
-                "ext_id_fields": [],
+                "source_field_id_decision": "none-suitable",
+                "source_field_id_fields": [],
+                "generated_feature_id_decision": "approved",
+                "assignment_key_fields": ["NAME"],
+                "feature_id_decision": "generated-sequence",
+                "feature_id_fields": [],
                 "search_fields": ["NAME"],
             },
         )
 
-        self.assertEqual(normalized["ext_id_decision"], "generated-sequence")
-        self.assertEqual(normalized["ext_id_fields"], [])
+        self.assertEqual(normalized["feature_id_decision"], "generated-sequence")
+        self.assertEqual(normalized["feature_id_fields"], [])
 
     def test_profile_field_evidence_rejects_deferred_decisions(self):
         base_evidence = {
             "decision_table_present": True,
             "profile_scope": "full",
-            "provider_id_decision": "none-suitable",
-            "provider_id_fields": [],
-            "generated_group_id_decision": "not-needed",
-            "group_id_fields": [],
-            "generated_row_id_decision": "rejected",
-            "ext_id_decision": "generated-sequence",
-            "ext_id_fields": [],
+            "source_field_id_decision": "none-suitable",
+            "source_field_id_fields": [],
+            "generated_feature_id_decision": "approved",
+            "assignment_key_fields": ["NAME"],
+            "feature_id_decision": "generated-sequence",
+            "feature_id_fields": [],
             "search_fields": [],
         }
 
         for field_name, message in (
-            ("provider_id_decision", "use-provider-id or none-suitable"),
-            ("generated_group_id_decision", "not-needed or approved"),
-            ("generated_row_id_decision", "not-needed, approved, or rejected"),
+            ("source_field_id_decision", "use-source-field or none-suitable"),
+            ("generated_feature_id_decision", "not-needed or approved"),
         ):
             evidence = {**base_evidence, field_name: "deferred"}
             with self.subTest(field_name=field_name), self.assertRaisesRegex(
@@ -1073,9 +1067,8 @@ class PublishingConciergeTests(unittest.TestCase):
                 publishing_concierge.validate_profile_fields({}, evidence)
 
         step = next(step for step in publishing_concierge.STEP_DEFINITIONS if step.step_id == "profile-fields")
-        self.assertEqual(step.evidence_schema["provider_id_decision"], "use-provider-id|none-suitable")
-        self.assertEqual(step.evidence_schema["generated_group_id_decision"], "not-needed|approved")
-        self.assertEqual(step.evidence_schema["generated_row_id_decision"], "not-needed|approved|rejected")
+        self.assertEqual(step.evidence_schema["source_field_id_decision"], "use-source-field|none-suitable")
+        self.assertEqual(step.evidence_schema["generated_feature_id_decision"], "not-needed|approved")
 
     def test_petrodata_like_recommendations_keep_table_compact(self):
         rows = []
@@ -1166,7 +1159,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertEqual(len(sample), 10)
         self.assertNotEqual([row["source_id"] for row in sample], [f"A{index}" for index in range(10)])
 
-    def test_curator_field_options_profile_ogr_vector_source_before_group_ids(self):
+    def test_curator_field_options_profile_ogr_vector_source_before_assignment_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             categories = root / "categories.yaml"
@@ -1210,7 +1203,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertNotIn("-limit", run.call_args.args[0])
         self.assertEqual(run.call_args.kwargs["timeout"], publishing_concierge.OGR_PROFILE_TIMEOUT_SECONDS)
         self.assertEqual(plan.curator_field_options.profile_scope, "full")
-        self.assertTrue(plan.curator_field_options.generated_row_id_option.available)
+        self.assertTrue(plan.curator_field_options.generated_feature_id_option.available)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
         self.assertEqual(plan.curator_field_options.group_field_candidates[0].field, "NAME")
         self.assertTrue(any("Curator must choose grouping fields" in note for note in plan.curator_field_options.notes))
@@ -1248,7 +1241,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
         run.assert_not_called()
         self.assertEqual(plan.curator_field_options.profile_scope, "unavailable")
-        self.assertTrue(plan.curator_field_options.generated_row_id_option.available)
+        self.assertTrue(plan.curator_field_options.generated_feature_id_option.available)
         self.assertTrue(any("not profiled with GDAL" in note for note in plan.curator_field_options.notes))
 
     def test_curator_field_options_skip_large_geojson_feature_collection_profile(self):
@@ -1607,13 +1600,12 @@ class PublishingConciergeTests(unittest.TestCase):
                 {
                     "decision_table_present": True,
                     "profile_scope": "full",
-                    "provider_id_decision": "use-provider-id",
-                    "provider_id_fields": ["source_id"],
-                    "generated_group_id_decision": "approved",
-                    "group_id_fields": ["NAME"],
-                    "generated_row_id_decision": "not-needed",
-                    "ext_id_decision": "provider-id",
-                    "ext_id_fields": ["source_id"],
+                    "source_field_id_decision": "use-source-field",
+                    "source_field_id_fields": ["source_id"],
+                    "generated_feature_id_decision": "approved",
+                    "assignment_key_fields": ["NAME"],
+                    "feature_id_decision": "source-field",
+                    "feature_id_fields": ["source_id"],
                     "search_fields": ["NAME"],
                 },
             )
@@ -1740,13 +1732,12 @@ class PublishingConciergeTests(unittest.TestCase):
                     {
                         "decision_table_present": True,
                         "profile_scope": "full",
-                        "provider_id_decision": "use-provider-id",
-                        "provider_id_fields": ["source_id"],
-                        "generated_group_id_decision": "not-needed",
-                        "group_id_fields": [],
-                        "generated_row_id_decision": "not-needed",
-                        "ext_id_decision": "provider-id",
-                        "ext_id_fields": ["source_id"],
+                        "source_field_id_decision": "use-source-field",
+                        "source_field_id_fields": ["source_id"],
+                        "generated_feature_id_decision": "not-needed",
+                        "assignment_key_fields": [],
+                        "feature_id_decision": "source-field",
+                        "feature_id_fields": ["source_id"],
                         "search_fields": ["NAME"],
                     },
                 ),

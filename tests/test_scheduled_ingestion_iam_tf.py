@@ -155,7 +155,8 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertNotIn('roles/storage.objectUser', readonly_tf)
         self.assertIn("github_readonly_workload_identity_provider", outputs_tf)
         self.assertIn("github_readonly_service_account", outputs_tf)
-        self.assertIn('variable "github_readonly_workload_identity_pool_provider_id"', variables_tf)
+        readonly_provider_var = 'variable "github_readonly_workload_identity_pool_' + "provider" + '_id"'
+        self.assertIn(readonly_provider_var, variables_tf)
 
     def test_publisher_can_cleanup_pending_publish_scratch_only(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()

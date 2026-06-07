@@ -89,8 +89,6 @@ class FirestoreFeatureMetadataWriter:
         for document in documents:
             feature_id = str(document["feature_id"])
             properties = document.get("properties") or {}
-            ext_id = release_feature_model.ext_id_from_record(document)
-            release_feature_model.validate_ext_id(ext_id)
             ref = self._features_collection(asset_slug=asset_slug, release=release, load_id=load_id).document(feature_id)
             batch.set(
                 ref,
@@ -99,29 +97,10 @@ class FirestoreFeatureMetadataWriter:
                     "release": release,
                     "index_load_id": load_id,
                     "feature_id": feature_id,
-                    "feature_hash": document.get("feature_hash"),
+                    "geometry_hash": document.get("geometry_hash"),
+                    "properties_hash": document.get("properties_hash"),
                     "properties": properties,
                     "provenance": document.get("provenance") or {},
-                },
-            )
-            ext_ref = (
-                self.client.collection(self.collection_root)
-                .document(asset_slug)
-                .collection("releases")
-                .document(release)
-                .collection("loads")
-                .document(load_id)
-                .collection("ext_ids")
-                .document(ext_id)
-            )
-            batch.set(
-                ext_ref,
-                {
-                    "asset_slug": asset_slug,
-                    "release": release,
-                    "index_load_id": load_id,
-                    "ext_id": ext_id,
-                    "feature_id": feature_id,
                 },
             )
         batch.commit()

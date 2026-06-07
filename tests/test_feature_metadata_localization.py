@@ -21,15 +21,16 @@ def write_translation_source(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def sidecar_record(feature_id: str, feature_hash: str, properties: dict[str, object]) -> dict[str, object]:
+def sidecar_record(feature_id: str, properties_hash: str, properties: dict[str, object]) -> dict[str, object]:
     sidecar_properties = dict(properties)
-    sidecar_properties.setdefault("ext_id", feature_id.rsplit(":", 1)[-1])
+    sidecar_properties.setdefault("feature_id", feature_id.rsplit(":", 1)[-1])
     return {
         "schema_version": release_feature_model.METADATA_SIDECAR_SCHEMA_VERSION,
         "asset_slug": "example-asset",
         "release": "2026-05-01",
         "feature_id": feature_id,
-        "feature_hash": feature_hash,
+        "geometry_hash": "sha256:" + "0" * 64,
+        "properties_hash": properties_hash,
         "properties": sidecar_properties,
         "provenance": {"source": "fixture"},
     }
@@ -44,8 +45,8 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
             translations = root / "example-asset.metadata-translations.csv"
             release_feature_model.write_metadata_sidecar(
                 [
-                    sidecar_record("src:id:1", VALID_HASH_A, {"name": "Alpha", "kind": "one"}),
-                    sidecar_record("src:id:2", VALID_HASH_B, {"name": "Beta", "kind": "two"}),
+                    sidecar_record("1", VALID_HASH_A, {"name": "Alpha", "kind": "one"}),
+                    sidecar_record("2", VALID_HASH_B, {"name": "Beta", "kind": "two"}),
                 ],
                 canonical,
             )
@@ -53,7 +54,7 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
                 translations,
                 [
                     {
-                        "feature_id": "src:id:1",
+                        "feature_id": "1",
                         "field": "name",
                         "locale": "es",
                         "source_value_hash": feature_metadata_localization.source_value_hash("Alpha"),
@@ -61,7 +62,7 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
                         "review_state": "human_reviewed",
                     },
                     {
-                        "feature_id": "src:id:2",
+                        "feature_id": "2",
                         "field": "name",
                         "locale": "es",
                         "source_value_hash": feature_metadata_localization.source_value_hash("Old Beta"),
@@ -87,8 +88,8 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
         self.assertEqual(report.stale_translation_count, 1)
         self.assertEqual(report.untranslated_feature_count, 1)
         self.assertEqual(len(rows), 2)
-        self.assertEqual([row["feature_id"] for row in rows], ["src:id:1", "src:id:2"])
-        self.assertEqual([row["feature_hash"] for row in rows], [VALID_HASH_A, VALID_HASH_B])
+        self.assertEqual([row["feature_id"] for row in rows], ["1", "2"])
+        self.assertEqual([row["properties_hash"] for row in rows], [VALID_HASH_A, VALID_HASH_B])
         self.assertEqual(rows[0]["properties"]["name"], "Alfa")
         self.assertEqual(rows[0]["properties"]["kind"], "one")
         self.assertEqual(rows[1]["properties"]["name"], "Beta")
@@ -100,7 +101,7 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
             translations = root / "example-asset.metadata-translations.csv"
             digest = feature_metadata_localization.source_value_hash("Alpha")
             duplicate = {
-                "feature_id": "src:id:1",
+                "feature_id": "1",
                 "field": "name",
                 "locale": "es",
                 "source_value_hash": digest,
@@ -120,14 +121,14 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
             report_dir = root / "reports"
             translations = root / "example-asset.metadata-translations.csv"
             release_feature_model.write_metadata_sidecar(
-                [sidecar_record("src:id:1", VALID_HASH_A, {"name": "Alpha", "kind": "one"})],
+                [sidecar_record("1", VALID_HASH_A, {"name": "Alpha", "kind": "one"})],
                 canonical,
             )
             write_translation_source(
                 translations,
                 [
                     {
-                        "feature_id": "src:id:1",
+                        "feature_id": "1",
                         "field": "name",
                         "locale": "es",
                         "source_value_hash": feature_metadata_localization.source_value_hash("Alpha"),
@@ -135,7 +136,7 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
                         "review_state": "human_reviewed",
                     },
                     {
-                        "feature_id": "src:id:1",
+                        "feature_id": "1",
                         "field": "name",
                         "locale": "fr",
                         "source_value_hash": feature_metadata_localization.source_value_hash("Alpha"),
@@ -161,8 +162,8 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
             fr_report_exists = (report_dir / "example-asset.metadata.fr.ndjson.gz.report.json").exists()
 
         self.assertEqual([report.locale for report in reports], ["es", "fr"])
-        self.assertEqual(es_rows[0]["feature_id"], "src:id:1")
-        self.assertEqual(es_rows[0]["feature_hash"], VALID_HASH_A)
+        self.assertEqual(es_rows[0]["feature_id"], "1")
+        self.assertEqual(es_rows[0]["properties_hash"], VALID_HASH_A)
         self.assertEqual(es_rows[0]["properties"]["name"], "Alfa")
         self.assertEqual(fr_rows[0]["properties"]["name"], "Alpha FR")
         self.assertTrue(es_report_exists)
@@ -176,7 +177,7 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
                 translations,
                 [
                     {
-                        "feature_id": "src:id:1",
+                        "feature_id": "1",
                         "field": "internal_note",
                         "locale": "es",
                         "source_value_hash": feature_metadata_localization.source_value_hash("Alpha"),

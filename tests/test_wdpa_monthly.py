@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -140,11 +141,11 @@ def fake_asset_outputs(
         (fgb, b"fgb"),
         (pmtiles, b"pmtiles"),
         (metadata, b"metadata"),
-        (schema, b'{"schema_version":1}\n'),
+        (schema, b'{"schema_version":2}\n'),
     ):
         path.write_bytes(data)
     schema_payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "asset_slug": asset.slug,
         "release": release,
         "fields": [{"name": "SITE_PID", "type": "String", "nullable": False, "projectable": True}],
@@ -462,6 +463,9 @@ class WdpaMonthlyTests(unittest.TestCase):
             self.assertEqual(artifacts[role]["generation"], release_by_role[role]["generation"])
             self.assertEqual(artifacts[role]["latest_path"], latest_by_role[role]["path"])
             self.assertEqual(artifacts[role]["latest_generation"], latest_by_role[role]["generation"])
+        self.assertEqual(manifest["identity"]["strategy"], "generated_sequence_source_fields")
+        self.assertEqual(manifest["identity"]["source_fields"], ["SITE_PID"])
+        self.assertEqual(manifest["identity"]["assignment_key"], ["SITE_PID"])
         self.assertNotIn("generation", artifacts["manifest"])
         self.assertNotIn("latest_generation", artifacts["manifest"])
         manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
@@ -470,7 +474,8 @@ class WdpaMonthlyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    all(
+    os.environ.get("RUN_GDAL_INTEGRATION_TESTS") == "1"
+    and all(
         runnable_command(command)
         for command in (
             ["ogrinfo", "--version"],

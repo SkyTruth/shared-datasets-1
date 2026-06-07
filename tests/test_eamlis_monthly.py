@@ -204,11 +204,11 @@ def fake_asset_output(
         (fgb, b"fgb"),
         (pmtiles, b"pmtiles"),
         (metadata, b"metadata"),
-        (schema, b'{"schema_version":1}\n'),
+        (schema, b'{"schema_version":2}\n'),
     ):
         path.write_bytes(data)
     schema_payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "asset_slug": eamlis.ASSET.slug,
         "release": "2026-05-02",
         "fields": [{"name": "OBJECTID", "type": "Integer", "nullable": False, "projectable": True}],

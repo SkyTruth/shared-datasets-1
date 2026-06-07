@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,325 +7,157 @@ from pathlib import Path
 from ingestion.common import feature_metadata
 from scripts import release_feature_model as model
 
-VALID_HASH = "sha256:" + "a" * 64
-VALID_HEX_HASH = "a" * 64
+
+VALID_HASH_A = "sha256:" + "a" * 64
+VALID_HASH_B = "sha256:" + "b" * 64
 
 
 class ReleaseFeatureModelTests(unittest.TestCase):
-    def test_provider_id_and_feature_hash_are_separate(self):
-        feature_id = model.provider_feature_id(source_field="SITE_PID", source_value=" WDPA 123 ")
-        feature_hash = model.content_feature_hash(
-            geometry={"type": "Point", "coordinates": [1, 2]},
-            properties={"SITE_PID": "WDPA 123", "name": "Example"},
-        )
+    def test_source_field_feature_id_uses_valid_source_value_directly(self):
+        self.assertEqual(model.source_field_feature_id(source_field="WDPAID", source_value="123"), "123")
+        for value in ("", "abc-def", "abc_def", "abc.def", "a" * 65):
+            with self.subTest(value=value), self.assertRaisesRegex(model.ReleaseFeatureModelError, "alphanumeric"):
+                model.source_field_feature_id(source_field="WDPAID", source_value=value)
 
-        self.assertEqual(feature_id, "src:SITE_PID:WDPA-123")
-        self.assertTrue(feature_hash.startswith("sha256:"))
-        self.assertNotEqual(feature_id, feature_hash)
-
-    def test_common_provider_id_rejects_null_and_blank_values(self):
-        for value in (None, "", " \t"):
-            with self.assertRaisesRegex(RuntimeError, "feature ID token"):
-                feature_metadata.provider_feature_id("SITE_PID", value)
-
-    def test_common_provider_id_rejects_oversized_final_feature_id(self):
-        with self.assertRaisesRegex(RuntimeError, "feature_id must be 1-256 chars"):
-            feature_metadata.provider_feature_id("F" * 256, "V" * 256)
-
-    def test_common_final_manifest_records_generations_without_manifest_self_generation(self):
-        asset_slug = "example"
-        release = "2026-05-01"
-        asset_root = "100/reference/example"
-        release_base = f"gs://bucket/{asset_root}/releases/{release}/{asset_slug}"
-        latest_base = f"gs://bucket/{asset_root}/latest/{asset_slug}"
-        release_info = {
-            "fgb": {"path": f"{release_base}.fgb", "generation": 10, "size": 3},
-            "pmtiles": {"path": f"{release_base}.pmtiles", "generation": 11, "size": 4},
-            "metadata": {"path": f"{release_base}.metadata.ndjson.gz", "generation": 12, "size": 5},
-            "schema": {"path": f"{release_base}.schema.json", "generation": 13, "size": 6},
-        }
-        latest_info = {
-            "fgb": {"path": f"{latest_base}.fgb", "generation": 20},
-            "pmtiles": {"path": f"{latest_base}.pmtiles", "generation": 21},
-            "metadata": {"path": f"{latest_base}.metadata.ndjson.gz", "generation": 22},
-            "schema": {"path": f"{latest_base}.schema.json", "generation": 23},
-        }
-
-        manifest = feature_metadata.final_manifest_payload(
-            asset_slug=asset_slug,
-            release=release,
-            bucket_name="bucket",
-            asset_root=asset_root,
-            sha256_by_role={
-                "fgb": VALID_HEX_HASH,
-                "pmtiles": "b" * 64,
-                "metadata": "c" * 64,
-                "schema": "d" * 64,
-            },
-            schema={
-                "schema_version": 1,
-                "asset_slug": asset_slug,
-                "release": release,
-                "fields": [],
-            },
-            source_inputs=[{"uri": "https://example.test/source"}],
-            id_strategy={"strategy": "provider", "field": "SITE_PID"},
-            feature_count=1,
-            release_blob_info_by_role=release_info,
-            latest_blob_info_by_role=latest_info,
-            manifest_release_path=f"{release_base}.manifest.json",
-            manifest_latest_path=f"{latest_base}.manifest.json",
-        )
-
-        artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
-        for role in ("fgb", "pmtiles", "metadata", "schema"):
-            self.assertEqual(artifacts[role]["generation"], release_info[role]["generation"])
-            self.assertEqual(artifacts[role]["latest_generation"], latest_info[role]["generation"])
-        self.assertNotIn("generation", artifacts["manifest"])
-        self.assertNotIn("latest_generation", artifacts["manifest"])
-
-    def test_generated_feature_id_requires_curated_preimage(self):
-        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "preimage"):
-            model.generated_feature_id(asset_slug="example", preimage={})
-
-        feature_id = model.generated_feature_id(
-            asset_slug="example",
-            preimage={"source_fields": {"name": "A"}, "geometry_digest": "abc"},
-        )
-
-        self.assertTrue(feature_id.startswith("gen:"))
-
-    def test_common_generated_ids_are_geometry_stable_across_releases(self):
-        feature = {
-            "type": "Feature",
-            "properties": {"DN": 3},
-            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
-        }
-
-        first, _first_sidecar = feature_metadata.enrich_features_with_generated_ids(
-            [feature],
-            asset_slug="ims-sea-ice-extent",
-            release="2026-05-01",
-            provenance={},
-        )
-        second, _second_sidecar = feature_metadata.enrich_features_with_generated_ids(
-            [feature],
-            asset_slug="ims-sea-ice-extent",
-            release="2026-05-02",
-            provenance={},
-        )
-
-        self.assertEqual(first[0]["properties"]["feature_id"], second[0]["properties"]["feature_id"])
-
-    def test_common_generated_ids_default_ext_id_to_sequence(self):
-        feature = {
-            "type": "Feature",
-            "properties": {"DN": 3},
-            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]},
-        }
-
-        enriched, sidecar = feature_metadata.enrich_features_with_generated_ids(
-            [feature],
-            asset_slug="ims-sea-ice-extent",
-            release="2026-05-01",
-            provenance={},
-        )
-
-        self.assertEqual(enriched[0]["properties"]["ext_id"], "1")
-        self.assertEqual(sidecar[0]["properties"]["ext_id"], "1")
-        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "generated_sequence")
-
-    def test_common_provider_ids_can_use_selected_ext_id_field(self):
-        feature = {
-            "type": "Feature",
-            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider123"},
-            "geometry": {"type": "Point", "coordinates": [0, 0]},
-        }
-
-        enriched, sidecar = feature_metadata.enrich_features_with_provider_ids(
-            [feature],
-            asset_slug="wdpa-polygons",
-            release="2026-05-01",
-            id_field="SITE_PID",
-            ext_id_field="stable_key",
-            provenance={},
-        )
-
-        self.assertEqual(enriched[0]["properties"]["feature_id"], "src:SITE_PID:WDPA-123")
-        self.assertEqual(enriched[0]["properties"]["ext_id"], "provider123")
-        self.assertEqual(sidecar[0]["properties"]["ext_id"], "provider123")
-        self.assertEqual(sidecar[0]["provenance"]["ext_id_field"], "stable_key")
-
-    def test_common_provider_ids_reject_unsafe_ext_id_field_values(self):
-        feature = {
-            "type": "Feature",
-            "properties": {"SITE_PID": "WDPA 123", "stable_key": "provider-123"},
-            "geometry": {"type": "Point", "coordinates": [0, 0]},
-        }
-
-        with self.assertRaisesRegex(RuntimeError, "URL-safe alphanumeric"):
-            feature_metadata.enrich_features_with_provider_ids(
-                [feature],
-                asset_slug="wdpa-polygons",
-                release="2026-05-01",
-                id_field="SITE_PID",
-                ext_id_field="stable_key",
-                provenance={},
-            )
-
-    def test_sequence_ext_ids_preserve_previous_and_never_reuse_retired_ids(self):
-        previous_records = [
-            {"feature_id": "src:id:a", "properties": {"ext_id": "7"}},
-            {"feature_id": "src:id:retired", "properties": {"ext_id": "9"}},
+    def test_generated_decimal_ids_reuse_previous_and_skip_retired_ids(self):
+        previous = [
+            {"feature_id": "7", "identity_key": ["a"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
+            {"feature_id": "9", "identity_key": ["retired"], "geometry_hash": VALID_HASH_B, "properties_hash": VALID_HASH_B},
         ]
 
-        assigned = model.assign_sequence_ext_ids(
-            ["src:id:b", "src:id:a", "src:id:c"],
-            previous_records=previous_records,
+        assigned = model.assign_generated_feature_ids((["b"], ["a"], ["c"]), previous_records=previous)
+
+        self.assertEqual(assigned[("a",)], "7")
+        self.assertEqual(assigned[("b",)], "10")
+        self.assertEqual(assigned[("c",)], "11")
+
+    def test_generated_sequence_source_fields_accepts_one_or_two_fields(self):
+        one_field = model.build_identity_metadata(
+            strategy="generated_sequence_source_fields",
+            source_fields=["SITE_PID"],
+        )
+        two_fields = model.build_identity_metadata(
+            strategy="generated_sequence_source_fields",
+            source_fields=["source_layer", "PRIMKEY"],
         )
 
-        self.assertEqual(assigned, {"src:id:b": "10", "src:id:a": "7", "src:id:c": "11"})
+        self.assertEqual(one_field["source_fields"], ["SITE_PID"])
+        self.assertEqual(one_field["assignment_key"], ["SITE_PID"])
+        self.assertEqual(two_fields["source_fields"], ["source_layer", "PRIMKEY"])
+        self.assertEqual(two_fields["assignment_key"], ["source_layer", "PRIMKEY"])
 
-    def test_validate_ext_id_rejects_url_unfriendly_values(self):
-        for ext_id in ("", "src:SITE_PID:123", "abc_def", "abc.def", "abc/def", "abc def", "a" * 65, "abc-def"):
-            with self.subTest(ext_id=ext_id), self.assertRaisesRegex(
-                model.ReleaseFeatureModelError,
-                "URL-safe alphanumeric",
-            ):
-                model.validate_ext_id(ext_id)
+    def test_generated_sequence_source_fields_rejects_three_fields(self):
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "one or two source fields"):
+            model.build_identity_metadata(
+                strategy="generated_sequence_source_fields",
+                source_fields=["week", "region", "country"],
+            )
 
-    def test_common_generated_ids_reject_duplicate_geometry(self):
+    def test_generated_sequence_uses_single_url_unfriendly_source_field_as_identity_key(self):
+        feature = {
+            "type": "Feature",
+            "properties": {"SITE_PID": "WDPA-123"},
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+        }
+
+        enriched, sidecar, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+            [feature],
+            asset_slug="wdpa-marine",
+            release="2026-05-01",
+            provenance={},
+            source_fields=["SITE_PID"],
+        )
+
+        self.assertEqual(ambiguities, ())
+        self.assertEqual(enriched[0]["properties"]["feature_id"], "1")
+        self.assertEqual(sidecar[0]["identity_key"], ["WDPA-123"])
+
+    def test_generated_ids_collapse_exact_duplicate_rows_with_provenance(self):
         feature = {
             "type": "Feature",
             "properties": {"DN": 3},
             "geometry": {"type": "Point", "coordinates": [0, 0]},
         }
 
-        with self.assertRaisesRegex(RuntimeError, "duplicate generated feature_id"):
-            feature_metadata.enrich_features_with_generated_ids(
-                [feature, feature],
-                asset_slug="ims-sea-ice-extent",
-                release="2026-05-01",
-                provenance={},
-            )
-
-    def test_sidecar_validation_rejects_duplicates_and_oversized_records(self):
-        feature = model.FeatureRecord(
-            feature_id="src:id:1",
-            feature_hash=VALID_HASH,
-            geometry={"type": "Point", "coordinates": [0, 0]},
-            properties={"ext_id": "1", "name": "A"},
-            provenance={"source": "fixture"},
+        enriched, sidecar, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+            [feature, feature],
+            asset_slug="ims-sea-ice-extent",
+            release="2026-05-01",
+            provenance={},
         )
-        record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
 
-        result = model.validate_sidecar_records([record, record], max_record_bytes=100)
+        self.assertEqual(len(enriched), 1)
+        self.assertEqual(len(sidecar), 1)
+        self.assertEqual(ambiguities, ())
+        self.assertEqual(sidecar[0]["feature_id"], "1")
+        self.assertEqual(sidecar[0]["provenance"]["duplicate_source_row_numbers"], [2])
 
-        self.assertFalse(result.valid)
-        self.assertEqual(result.duplicate_feature_ids, ("src:id:1",))
-        self.assertIn("duplicate feature_id", " ".join(result.errors))
+    def test_partial_hash_matches_report_ambiguities(self):
+        new = {
+            "feature_id": "2",
+            "identity_key": ["new"],
+            "geometry_hash": VALID_HASH_A,
+            "properties_hash": VALID_HASH_B,
+            "properties": {},
+        }
+        previous = [
+            {"feature_id": "1", "identity_key": ["old"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
+        ]
 
-    def test_sidecar_round_trip_uses_gzip_ndjson(self):
+        ambiguities = model.find_identity_ambiguities([new], previous_records=previous)
+
+        self.assertEqual(len(ambiguities), 1)
+        self.assertEqual(ambiguities[0].matching_geometry_feature_ids, ("1",))
+        self.assertEqual(ambiguities[0].matching_properties_feature_ids, ())
+
+    def test_sidecar_round_trip_uses_split_hashes(self):
         feature = model.FeatureRecord(
-            feature_id="src:id:1",
-            feature_hash=VALID_HASH,
+            feature_id="1",
+            geometry_hash=VALID_HASH_A,
+            properties_hash=VALID_HASH_B,
             geometry=None,
-            properties={"ext_id": "1", "name": "A"},
+            properties={"name": "A"},
             provenance={"source": "fixture"},
         )
-        record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
+        record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature, identity_key=("A",))
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "example.metadata.ndjson.gz"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "example.metadata.ndjson.gz"
             model.write_metadata_sidecar([record], path)
             rows = list(model.read_metadata_sidecar(path))
 
-        self.assertEqual(rows[0]["feature_id"], "src:id:1")
-        self.assertEqual(rows[0]["properties"], {"ext_id": "1", "name": "A"})
+        self.assertEqual(rows[0]["feature_id"], "1")
+        self.assertEqual(rows[0]["geometry_hash"], VALID_HASH_A)
+        self.assertEqual(rows[0]["properties_hash"], VALID_HASH_B)
+        self.assertEqual(rows[0]["properties"], {"name": "A"})
 
-    def test_sidecar_writers_are_deterministic(self):
-        feature = model.FeatureRecord(
-            feature_id="src:id:1",
-            feature_hash=VALID_HASH,
-            geometry=None,
-            properties={"ext_id": "1", "name": "A"},
-            provenance={"source": "fixture"},
-        )
-        record = model.sidecar_record(asset_slug="example", release="2026-05-01", feature=feature)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            first = tmp_path / "first.metadata.ndjson.gz"
-            second = tmp_path / "second.metadata.ndjson.gz"
-            common_first = tmp_path / "common-first.metadata.ndjson.gz"
-            common_second = tmp_path / "common-second.metadata.ndjson.gz"
-
-            model.write_metadata_sidecar([record], first)
-            model.write_metadata_sidecar([record], second)
-            feature_metadata.write_sidecar([record], common_first)
-            feature_metadata.write_sidecar([record], common_second)
-
-            self.assertEqual(first.read_bytes(), second.read_bytes())
-            self.assertEqual(common_first.read_bytes(), common_second.read_bytes())
-
-    def test_sidecar_validation_rejects_wrong_asset_release_and_bad_hash(self):
-        record = {
-            "schema_version": model.METADATA_SIDECAR_SCHEMA_VERSION,
-            "asset_slug": "wrong-asset",
-            "release": "2026-05-02",
-            "feature_id": "src:id:1",
-            "feature_hash": "sha256:abc",
-            "properties": {"ext_id": "1", "name": "A"},
-            "provenance": {},
-        }
-
-        result = model.validate_sidecar_records(
-            [record],
-            expected_asset_slug="example",
-            expected_release="2026-05-01",
-        )
-
-        self.assertFalse(result.valid)
-        self.assertIn("invalid feature_hash", " ".join(result.errors))
-        self.assertIn("asset_slug does not match", " ".join(result.errors))
-        self.assertIn("release does not match", " ".join(result.errors))
-
-    def test_release_schema_validates_projectable_allowlist(self):
-        schema = model.build_release_schema(
+    def test_manifest_records_feature_identity(self):
+        schema = feature_metadata.schema_from_records(
             asset_slug="example",
             release="2026-05-01",
-            fields=[
-                model.ReleaseSchemaField("name", "String"),
-                {"name": "internal", "type": "String", "projectable": False},
-            ],
+            records=[],
         )
-
-        fields = model.validate_release_schema(schema, expected_asset_slug="example", expected_release="2026-05-01")
-
-        self.assertEqual(tuple(fields), ("name",))
-
-    def test_release_manifest_points_index_status_to_index_loads(self):
+        identity = model.build_identity_metadata(strategy="source_field", source_fields=["WDPAID"])
         manifest = model.build_release_manifest(
             asset_slug="example",
             release="2026-05-01",
             source_inputs=[{"uri": "gs://bucket/source"}],
-            artifacts=[{"role": "metadata", "path": "gs://bucket/example.metadata.ndjson.gz"}],
-            schema={"fields": []},
-            id_strategy={"strategy": "provider", "field": "id"},
+            artifacts=[
+                {"role": "fgb", "path": "gs://bucket/example.fgb", "sha256": "a" * 64},
+                {"role": "pmtiles", "path": "gs://bucket/example.pmtiles", "sha256": "b" * 64},
+                {"role": "metadata", "path": "gs://bucket/example.metadata.ndjson.gz", "sha256": "c" * 64},
+                {"role": "schema", "path": "gs://bucket/example.schema.json", "sha256": "d" * 64},
+                {"role": "manifest", "path": "gs://bucket/example.manifest.json"},
+            ],
+            schema=schema,
+            identity=identity,
             validation={"valid": True},
         )
 
-        self.assertEqual(manifest["schema_version"], 1)
-        self.assertEqual(manifest["index_load_status"], "tracked in index-loads/")
-        self.assertEqual(manifest["index_status_policy"]["mode"], "external_index_load_records")
-        json.dumps(manifest)
-
-    def test_artifact_and_index_load_names(self):
-        self.assertEqual(model.release_artifact_name("example", "metadata"), "example.metadata.ndjson.gz")
-        self.assertEqual(
-            model.index_load_record_name("100/ref/example", "2026-05-01", "load 1"),
-            "100/ref/example/index-loads/2026-05-01/load-1.json",
-        )
+        self.assertEqual(manifest["schema_version"], model.RELEASE_MANIFEST_SCHEMA_VERSION)
+        self.assertEqual(manifest["identity"]["strategy"], "source_field")
+        self.assertEqual(manifest["identity"]["source_fields"], ["WDPAID"])
+        self.assertEqual(manifest["index_status_policy"]["mode"], "inactive_firestore_serving")
 
 
 if __name__ == "__main__":

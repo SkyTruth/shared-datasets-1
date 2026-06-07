@@ -150,11 +150,11 @@ class FakeFeatureIndex:
     def __init__(self) -> None:
         self.calls = []
         self.documents = {
-            "src:MRGID:48943": {
-                "feature_id": "src:MRGID:48943",
-                "feature_hash": "hash-48943",
+            "48943": {
+                "feature_id": "48943",
+                "properties_hash": "hash-48943",
                 "properties": {
-                    "ext_id": "48943",
+                    "feature_id": "48943",
                     "GEONAME": "Overlapping claim: Canada / United States",
                     "MRGID": 48943,
                     "SOVEREIGN1": "Canada",
@@ -704,7 +704,7 @@ class CatalogViewerTests(unittest.TestCase):
             decode_cdn_signing_key("c2hvcnQ=")
 
     def test_feature_metadata_lookup_requires_authenticated_iap_identity(self):
-        response, resolver, index = feature_lookup_request({"ids": ["src:MRGID:48943"]})
+        response, resolver, index = feature_lookup_request({"ids": ["48943"]})
 
         self.assertEqual(response.status, 401)
         self.assertEqual(resolver.calls, [])
@@ -712,7 +712,7 @@ class CatalogViewerTests(unittest.TestCase):
 
     def test_feature_metadata_lookup_rejects_forwarded_email_without_iap_header(self):
         response, resolver, index = feature_lookup_request(
-            {"ids": ["src:MRGID:48943"]},
+            {"ids": ["48943"]},
             {"X-Forwarded-Email": "jona@skytruth.org"},
         )
 
@@ -722,7 +722,7 @@ class CatalogViewerTests(unittest.TestCase):
 
     def test_feature_metadata_lookup_delegates_to_preview_sidecar_index(self):
         response, resolver, index = feature_lookup_request(
-            {"ids": ["src:MRGID:48943"], "include_provenance": True},
+            {"ids": ["48943"], "include_provenance": True},
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
         )
 
@@ -739,16 +739,16 @@ class CatalogViewerTests(unittest.TestCase):
                 (
                     "wdpa-marine",
                     "2026-05-01",
-                    ["src:MRGID:48943"],
+                    ["48943"],
                     "gs://skytruth-shared-datasets-1-preview/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
                     1001,
                 )
             ],
         )
-        self.assertEqual(payload["items"][0]["feature_id"], "src:MRGID:48943")
+        self.assertEqual(payload["items"][0]["feature_id"], "48943")
         self.assertTrue(payload["items"][0]["found"])
-        self.assertEqual(payload["items"][0]["ext_id"], "48943")
-        self.assertEqual(payload["items"][0]["feature_hash"], "hash-48943")
+        self.assertEqual(payload["items"][0]["feature_id"], "48943")
+        self.assertEqual(payload["items"][0]["properties_hash"], "hash-48943")
         self.assertEqual(payload["items"][0]["properties"]["GEONAME"], "Overlapping claim: Canada / United States")
         self.assertEqual(payload["items"][0]["properties"]["MRGID"], 48943)
         self.assertEqual(payload["items"][0]["provenance"]["source"], "preview sidecar")

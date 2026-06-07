@@ -21,7 +21,7 @@ license: Public U.S. government work; cite NSIDC G02156
 citation: 'U.S. National Ice Center (2008). IMS Daily Northern Hemisphere Snow and Ice Analysis at 1 km, 4 km, and 24 km Resolutions,
   Version 1. Boulder, Colorado USA: National Snow and Ice Data Center. https://doi.org/10.7265/N52R3PMC. Accessed 2026-05-07.'
 notes: Daily job publishes raw IMS class 3 as FGB plus PMTiles. The 2026-06-05 metadata-contract refresh release was built
-  from the unchanged 2026-06-03 latest FGB and adds generated feature_id/feature_hash fields, a metadata sidecar, release
+  from the unchanged 2026-06-03 latest FGB and adds generated feature_id/properties_hash fields, a metadata sidecar, release
   schema, manifest, and lightweight lookup PMTiles. Release history, source versions, row counts, and file hashes are recorded
   in the bucket release index and per-run records.
 row_count: 1755
@@ -33,7 +33,8 @@ feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/ims-sea-ice-extent.metadata.ndjson.gz
   schema_file: latest/ims-sea-ice-extent.schema.json
   manifest_file: latest/ims-sea-ice-extent.manifest.json
@@ -138,8 +139,9 @@ record preserves that documented valid date.
 
 The job derives a minimal schema from the source raster class and filename date.
 
-Metadata-contract releases add generated geometry-digest `feature_id` values and `feature_hash` checksums because the
-source IMS polygons do not include a provider feature ID. The lookup PMTiles contain only `feature_id` and `ext_id`.
+Metadata-contract releases add generated `feature_id`, `geometry_hash`, and
+`properties_hash` values because the source IMS polygons do not include a source
+feature ID. The lookup PMTiles contain only `feature_id`.
 IMS has no schema-projectable name/title field, so the 2026-06-05 release does not include Spanish localized metadata.
 
 The PMTiles artifact is generated from the same vectorized output. Auto maxzoom selection uses the stable `source_resolution_meters: 4000` hint, resolving to zooms 0 through 8.
@@ -149,10 +151,10 @@ The PMTiles artifact is generated from the same vectorized output. Auto maxzoom 
 | Name | Type | Description |
 |---|---|---|
 | `DN` | integer | IMS raster value. Published features are class `3`, described by NSIDC as sea/lake ice. |
-| `ext_id` | string | Public lookup handle. Releases without a URL-safe provider ID use generated decimal sequence handles. |
-| `feature_hash` | string | SHA-256 content hash for the feature geometry and projected metadata properties. |
-| `feature_id` | string | Generated stable feature ID derived from the feature geometry digest. |
-| `id` | string | OGR-preserved feature identifier mirroring the generated feature ID in metadata-contract FGB releases. |
+| `feature_id` | string | Public lookup handle. Releases without a URL-safe source field ID use generated decimal sequence handles. |
+| `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
+| `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
+| `id` | string | OGR-preserved feature identifier retained from vectorization output. |
 | `ice_date` | string | Date encoded in the source GeoTIFF filename, formatted as `YYYY-MM-DD`. |
 
 ## Update notes

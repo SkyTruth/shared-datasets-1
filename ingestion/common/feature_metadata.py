@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 import gzip
-import hashlib
 import io
 import json
 import re
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from scripts import release_feature_model
 
 FEATURE_ID_COLUMN = "feature_id"
-EXT_ID_COLUMN = "ext_id"
-FEATURE_HASH_COLUMN = "feature_hash"
-EXT_ID_RE = release_feature_model.EXT_ID_RE
-FEATURE_ID_ALGORITHM = "shared-datasets-feature-id:v1"
-FEATURE_HASH_ALGORITHM = "sha256:canonical-feature-content:v1"
-RELEASE_SCHEMA_VERSION = 1
-SIDECAR_SCHEMA_VERSION = 1
-MANIFEST_SCHEMA_VERSION = 1
-RELEASE_FEATURE_MODEL_SCHEMA_VERSION = 1
+GEOMETRY_HASH_COLUMN = "geometry_hash"
+PROPERTIES_HASH_COLUMN = "properties_hash"
+FEATURE_IDENTITY_ALGORITHM = release_feature_model.FEATURE_ID_ALGORITHM
+HASH_ALGORITHM = release_feature_model.HASH_ALGORITHM
+RELEASE_SCHEMA_VERSION = release_feature_model.RELEASE_SCHEMA_SCHEMA_VERSION
+SIDECAR_SCHEMA_VERSION = release_feature_model.METADATA_SIDECAR_SCHEMA_VERSION
+MANIFEST_SCHEMA_VERSION = release_feature_model.RELEASE_MANIFEST_SCHEMA_VERSION
+RELEASE_FEATURE_MODEL_SCHEMA_VERSION = release_feature_model.RELEASE_FEATURE_MODEL_SCHEMA_VERSION
 VECTOR_BUNDLE_SUFFIXES = (
     ".fgb",
     ".pmtiles",
@@ -42,78 +40,40 @@ ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
 
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return release_feature_model.canonical_json(value)
 
 
 def sha256_hex(value: bytes | str) -> str:
-    payload = value.encode("utf-8") if isinstance(value, str) else value
-    return hashlib.sha256(payload).hexdigest()
+    return release_feature_model.sha256_hex(value)
 
 
-def normalize_token(value: Any) -> str:
-    if value is None:
-        raise RuntimeError("feature ID token must be non-empty")
+def validate_feature_id(feature_id: str) -> None:
     try:
-        return release_feature_model.normalize_feature_id_token(value)
+        release_feature_model.validate_feature_id(feature_id)
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
 
 
-def provider_feature_id(field_name: str, value: Any) -> str:
-    normalize_token(field_name)
-    normalize_token(value)
+def source_field_feature_id(field_name: str, value: Any) -> str:
     try:
-        return release_feature_model.provider_feature_id(source_field=field_name, source_value=value)
+        return release_feature_model.source_field_feature_id(source_field=field_name, source_value=value)
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
 
 
-def generated_feature_id(asset_slug: str, preimage: Mapping[str, Any]) -> str:
-    try:
-        return release_feature_model.generated_feature_id(asset_slug=asset_slug, preimage=preimage)
-    except release_feature_model.ReleaseFeatureModelError as exc:
-        raise RuntimeError(str(exc)) from exc
+def content_hashes(*, geometry: Mapping[str, Any] | None, properties: Mapping[str, Any]) -> tuple[str, str]:
+    return release_feature_model.content_hashes(geometry=geometry, properties=properties)
 
 
-def validate_ext_id(ext_id: str) -> None:
-    try:
-        release_feature_model.validate_ext_id(ext_id)
-    except release_feature_model.ReleaseFeatureModelError as exc:
-        raise RuntimeError(str(exc)) from exc
-
-
-def assign_sequence_ext_ids(
-    feature_ids: Iterable[str],
+def assign_generated_feature_ids(
+    identity_keys: Iterable[Sequence[str]],
     *,
     previous_records: Iterable[Mapping[str, Any]] | None = None,
-) -> dict[str, str]:
+) -> dict[tuple[str, ...], str]:
     try:
-        return release_feature_model.assign_sequence_ext_ids(feature_ids, previous_records=previous_records)
+        return release_feature_model.assign_generated_feature_ids(identity_keys, previous_records=previous_records)
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
-
-
-def content_feature_hash(*, geometry: Mapping[str, Any] | None, properties: Mapping[str, Any]) -> str:
-    return "sha256:" + sha256_hex(canonical_json({"geometry": geometry, "properties": dict(sorted(properties.items()))}))
-
-
-def resolve_ext_id(
-    properties: Mapping[str, Any],
-    *,
-    feature_id: str,
-    ext_id_field: str | None = None,
-    generated_ext_id: str | None = None,
-) -> str:
-    if ext_id_field:
-        value = str(properties.get(ext_id_field) or "").strip()
-        if not value:
-            raise RuntimeError(f"selected ext_id field {ext_id_field!r} is blank")
-        validate_ext_id(value)
-        return value
-    if generated_ext_id:
-        validate_ext_id(generated_ext_id)
-        return generated_ext_id
-    raise RuntimeError("ext_id requires a selected URL-safe field or generated sequence value")
 
 
 def iter_geojsonseq(path: Path):
@@ -150,69 +110,75 @@ def write_geojsonseq(features: Iterable[Mapping[str, Any]], path: Path) -> None:
             file_obj.write(canonical_json(dict(feature)) + "\n")
 
 
-def enrich_features_with_provider_ids(
+def write_manifest(payload: Mapping[str, Any], path: Path) -> None:
+    path.write_text(json.dumps(dict(payload), sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _feature_record(
+    *,
+    asset_slug: str,
+    release: str,
+    feature_id: str,
+    geometry: Mapping[str, Any] | None,
+    source_properties: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    identity_key: Sequence[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    geometry_hash, properties_hash = content_hashes(geometry=geometry, properties=source_properties)
+    metadata_properties = dict(source_properties)
+    published_properties = {
+        **metadata_properties,
+        FEATURE_ID_COLUMN: feature_id,
+        GEOMETRY_HASH_COLUMN: geometry_hash,
+        PROPERTIES_HASH_COLUMN: properties_hash,
+    }
+    enriched_feature = {
+        "type": "Feature",
+        "id": feature_id,
+        "properties": published_properties,
+        "geometry": geometry,
+    }
+    sidecar = sidecar_record(
+        asset_slug=asset_slug,
+        release=release,
+        feature_id=feature_id,
+        geometry_hash=geometry_hash,
+        properties_hash=properties_hash,
+        properties=metadata_properties,
+        provenance=provenance,
+        identity_key=identity_key,
+    )
+    return enriched_feature, sidecar
+
+
+def enrich_features_with_source_field_ids(
     features: Iterable[Mapping[str, Any]],
     *,
     asset_slug: str,
     release: str,
     id_field: str,
     provenance: Mapping[str, Any],
-    ext_id_field: str | None = None,
-    previous_records: Iterable[Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    prepared: list[tuple[int, Mapping[str, Any], dict[str, Any], str]] = []
+    enriched: list[dict[str, Any]] = []
+    sidecar_records: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, feature in enumerate(features, start=1):
         source_properties = dict(feature.get("properties") or {})
-        raw_id = source_properties.get(id_field)
-        feature_id = provider_feature_id(id_field, raw_id)
+        feature_id = source_field_feature_id(id_field, source_properties.get(id_field))
         if feature_id in seen:
-            raise RuntimeError(f"duplicate {id_field} feature ID in {asset_slug}: {raw_id}")
+            raise RuntimeError(f"duplicate {id_field} feature_id in {asset_slug}: {feature_id}")
         seen.add(feature_id)
-        prepared.append((index, feature, source_properties, feature_id))
-    generated_ext_ids = {} if ext_id_field else assign_sequence_ext_ids((item[3] for item in prepared), previous_records=previous_records)
-    enriched: list[dict[str, Any]] = []
-    sidecar_records: list[dict[str, Any]] = []
-    seen_ext_ids: set[str] = set()
-    for index, feature, source_properties, feature_id in prepared:
-        ext_id = resolve_ext_id(
-            source_properties,
+        next_feature, sidecar = _feature_record(
+            asset_slug=asset_slug,
+            release=release,
             feature_id=feature_id,
-            ext_id_field=ext_id_field,
-            generated_ext_id=generated_ext_ids.get(feature_id),
+            geometry=feature.get("geometry"),
+            source_properties=source_properties,
+            provenance={**dict(provenance), "source_row_number": index, "source_id_field": id_field},
+            identity_key=(feature_id,),
         )
-        if ext_id in seen_ext_ids:
-            raise RuntimeError(f"duplicate ext_id in {asset_slug}: {ext_id}")
-        seen_ext_ids.add(ext_id)
-        metadata_properties = {**source_properties, EXT_ID_COLUMN: ext_id}
-        feature_hash = content_feature_hash(geometry=feature.get("geometry"), properties=metadata_properties)
-        published_properties = {
-            **metadata_properties,
-            FEATURE_ID_COLUMN: feature_id,
-            FEATURE_HASH_COLUMN: feature_hash,
-        }
-        enriched_feature = {
-            "type": "Feature",
-            "id": feature_id,
-            "properties": published_properties,
-            "geometry": feature.get("geometry"),
-        }
-        enriched.append(enriched_feature)
-        sidecar_records.append(
-            sidecar_record(
-                asset_slug=asset_slug,
-                release=release,
-                feature_id=feature_id,
-                feature_hash=feature_hash,
-                properties=metadata_properties,
-                provenance={
-                    **dict(provenance),
-                    "source_row_number": index,
-                    "id_field": id_field,
-                    "ext_id_field": ext_id_field or "generated_sequence",
-                },
-            )
-        )
+        enriched.append(next_feature)
+        sidecar_records.append(sidecar)
     if not sidecar_records:
         raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
     return enriched, sidecar_records
@@ -224,70 +190,81 @@ def enrich_features_with_generated_ids(
     asset_slug: str,
     release: str,
     provenance: Mapping[str, Any],
-    ext_id_field: str | None = None,
+    source_fields: Sequence[str] = (),
     previous_records: Iterable[Mapping[str, Any]] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    prepared: list[tuple[int, Mapping[str, Any], dict[str, Any], str, Mapping[str, Any] | None, str]] = []
-    seen: set[str] = set()
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[release_feature_model.IdentityAmbiguity, ...]]:
+    prepared: list[dict[str, Any]] = []
+    seen_identity_keys: dict[tuple[str, ...], dict[str, Any]] = {}
     for ordinal, feature in enumerate(features, start=1):
         source_properties = dict(feature.get("properties") or {})
         geometry = feature.get("geometry")
-        geometry_digest = sha256_hex(canonical_json(geometry))
-        feature_id = generated_feature_id(
-            asset_slug,
-            {"geometry_digest": geometry_digest},
-        )
-        if feature_id in seen:
-            raise RuntimeError(f"duplicate generated feature_id in {asset_slug}: geometry_digest {geometry_digest}")
-        seen.add(feature_id)
-        prepared.append((ordinal, feature, source_properties, feature_id, geometry, geometry_digest))
-    generated_ext_ids = {} if ext_id_field else assign_sequence_ext_ids((item[3] for item in prepared), previous_records=previous_records)
+        geometry_hash, properties_hash = content_hashes(geometry=geometry, properties=source_properties)
+        if source_fields:
+            identity_key = release_feature_model.source_fields_identity_key(source_properties, source_fields)
+        else:
+            identity_key = release_feature_model.content_identity_key(
+                geometry_hash_value=geometry_hash,
+                properties_hash_value=properties_hash,
+            )
+        if identity_key in seen_identity_keys:
+            first = seen_identity_keys[identity_key]
+            if first["geometry_hash"] == geometry_hash and first["properties_hash"] == properties_hash:
+                first["duplicate_source_row_numbers"].append(ordinal)
+                continue
+            previous_index = first["ordinal"]
+            raise RuntimeError(f"duplicate generated identity key with different content in {asset_slug}: rows {previous_index} and {ordinal}")
+        prepared_item = {
+            "ordinal": ordinal,
+            "feature": feature,
+            "source_properties": source_properties,
+            "geometry": geometry,
+            "identity_key": identity_key,
+            "geometry_hash": geometry_hash,
+            "properties_hash": properties_hash,
+            "duplicate_source_row_numbers": [],
+        }
+        seen_identity_keys[identity_key] = prepared_item
+        prepared.append(prepared_item)
+
+    ids_by_key = assign_generated_feature_ids((item["identity_key"] for item in prepared), previous_records=previous_records)
+    provisional_records = [
+        {
+            "feature_id": ids_by_key[item["identity_key"]],
+            "geometry_hash": item["geometry_hash"],
+            "properties_hash": item["properties_hash"],
+            "identity_key": item["identity_key"],
+            "properties": item["source_properties"],
+        }
+        for item in prepared
+    ]
+    ambiguities = release_feature_model.find_identity_ambiguities(
+        provisional_records,
+        previous_records=previous_records or (),
+    )
     enriched: list[dict[str, Any]] = []
     sidecar_records: list[dict[str, Any]] = []
-    seen_ext_ids: set[str] = set()
-    for ordinal, feature, source_properties, feature_id, geometry, geometry_digest in prepared:
-        ext_id = resolve_ext_id(
-            source_properties,
+    for item in prepared:
+        ordinal = int(item["ordinal"])
+        identity_key = item["identity_key"]
+        feature_id = ids_by_key[identity_key]
+        provenance_payload = {**dict(provenance), "source_row_number": ordinal, "identity_key": list(identity_key)}
+        duplicate_source_row_numbers = item["duplicate_source_row_numbers"]
+        if duplicate_source_row_numbers:
+            provenance_payload["duplicate_source_row_numbers"] = list(duplicate_source_row_numbers)
+        next_feature, sidecar = _feature_record(
+            asset_slug=asset_slug,
+            release=release,
             feature_id=feature_id,
-            ext_id_field=ext_id_field,
-            generated_ext_id=generated_ext_ids.get(feature_id),
+            geometry=item["geometry"],
+            source_properties=item["source_properties"],
+            provenance=provenance_payload,
+            identity_key=identity_key,
         )
-        if ext_id in seen_ext_ids:
-            raise RuntimeError(f"duplicate ext_id in {asset_slug}: {ext_id}")
-        seen_ext_ids.add(ext_id)
-        metadata_properties = {**source_properties, EXT_ID_COLUMN: ext_id}
-        feature_hash = content_feature_hash(geometry=geometry, properties=metadata_properties)
-        published_properties = {
-            **metadata_properties,
-            FEATURE_ID_COLUMN: feature_id,
-            FEATURE_HASH_COLUMN: feature_hash,
-        }
-        enriched.append(
-            {
-                "type": "Feature",
-                "id": feature_id,
-                "properties": published_properties,
-                "geometry": geometry,
-            }
-        )
-        sidecar_records.append(
-            sidecar_record(
-                asset_slug=asset_slug,
-                release=release,
-                feature_id=feature_id,
-                feature_hash=feature_hash,
-                properties=metadata_properties,
-                provenance={
-                    **dict(provenance),
-                    "geometry_digest": geometry_digest,
-                    "source_row_number": ordinal,
-                    "ext_id_field": ext_id_field or "generated_sequence",
-                },
-            )
-        )
+        enriched.append(next_feature)
+        sidecar_records.append(sidecar)
     if not sidecar_records:
         raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
-    return enriched, sidecar_records
+    return enriched, sidecar_records, ambiguities
 
 
 def sidecar_record(
@@ -295,16 +272,20 @@ def sidecar_record(
     asset_slug: str,
     release: str,
     feature_id: str,
-    feature_hash: str,
+    geometry_hash: str,
+    properties_hash: str,
     properties: Mapping[str, Any],
     provenance: Mapping[str, Any],
+    identity_key: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": SIDECAR_SCHEMA_VERSION,
         "asset_slug": asset_slug,
         "release": release,
         "feature_id": feature_id,
-        "feature_hash": feature_hash,
+        "geometry_hash": geometry_hash,
+        "properties_hash": properties_hash,
+        "identity_key": list(identity_key or ()),
         "properties": dict(properties),
         "provenance": dict(provenance),
     }
@@ -365,6 +346,15 @@ def write_schema(schema: Mapping[str, Any], path: Path) -> None:
     path.write_text(json.dumps(dict(schema), indent=2, sort_keys=True) + "\n")
 
 
+def next_generated_feature_id(records: Sequence[Mapping[str, Any]]) -> int:
+    numeric_ids = [
+        int(str(record.get("feature_id") or ""))
+        for record in records
+        if str(record.get("feature_id") or "").isdigit()
+    ]
+    return max(numeric_ids, default=0) + 1
+
+
 def manifest_payload(
     *,
     asset_slug: str,
@@ -374,7 +364,7 @@ def manifest_payload(
     sha256_by_role: Mapping[str, str],
     schema: Mapping[str, Any],
     source_inputs: Sequence[Mapping[str, Any]],
-    id_strategy: Mapping[str, Any],
+    identity: Mapping[str, Any],
     feature_count: int,
 ) -> dict[str, Any]:
     release_base = f"gs://{bucket_name}/{asset_root}/releases/{release}/{asset_slug}"
@@ -388,23 +378,15 @@ def manifest_payload(
         if role != "manifest":
             entry["sha256"] = sha256_by_role[role]
         artifacts.append(entry)
-    return {
-        "schema_version": MANIFEST_SCHEMA_VERSION,
-        "asset_slug": asset_slug,
-        "release": release,
-        "release_feature_model_schema_version": RELEASE_FEATURE_MODEL_SCHEMA_VERSION,
-        "source_inputs": list(source_inputs),
-        "artifacts": artifacts,
-        "schema": dict(schema),
-        "id_strategy": dict(id_strategy),
-        "feature_hash_algorithm": FEATURE_HASH_ALGORITHM,
-        "validation": {"valid": True, "feature_count": feature_count},
-        "index_load_status": "tracked in index-loads/",
-        "index_status_policy": {
-            "mode": "external_index_load_records",
-            "path": f"gs://{bucket_name}/{asset_root}/index-loads/{release}/",
-        },
-    }
+    return release_feature_model.build_release_manifest(
+        asset_slug=asset_slug,
+        release=release,
+        source_inputs=source_inputs,
+        artifacts=artifacts,
+        schema=schema,
+        identity=identity,
+        validation={"valid": True, "feature_count": feature_count},
+    )
 
 
 def _generation_from_blob_info(info: Mapping[str, Any], *, label: str) -> int:
@@ -427,67 +409,15 @@ def validate_final_manifest_payload(
     expected_asset_slug: str,
     expected_release: str,
 ) -> None:
-    errors: list[str] = []
-    if payload.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        errors.append("manifest has unsupported schema_version")
-    if payload.get("asset_slug") != expected_asset_slug:
-        errors.append(f"manifest asset_slug does not match {expected_asset_slug!r}")
-    if payload.get("release") != expected_release:
-        errors.append(f"manifest release does not match {expected_release!r}")
-    if payload.get("release_feature_model_schema_version") != RELEASE_FEATURE_MODEL_SCHEMA_VERSION:
-        errors.append("manifest release_feature_model_schema_version is unsupported")
-    if payload.get("feature_hash_algorithm") != FEATURE_HASH_ALGORITHM:
-        errors.append("manifest feature_hash_algorithm is unsupported")
-    policy = payload.get("index_status_policy")
-    if not isinstance(policy, Mapping) or policy.get("mode") != "external_index_load_records":
-        errors.append("manifest index_status_policy must point to external index-load records")
-    schema = payload.get("schema")
-    if not isinstance(schema, Mapping):
-        errors.append("manifest schema must be an object")
-    else:
-        if schema.get("asset_slug") != expected_asset_slug:
-            errors.append("manifest schema asset_slug does not match release")
-        if schema.get("release") != expected_release:
-            errors.append("manifest schema release does not match release")
-        if not isinstance(schema.get("fields"), list):
-            errors.append("manifest schema fields must be an array")
-
-    artifacts = payload.get("artifacts")
-    if not isinstance(artifacts, list):
-        errors.append("manifest artifacts must be an array")
-        artifacts = []
-    artifacts_by_role: dict[str, Mapping[str, Any]] = {}
-    for index, artifact in enumerate(artifacts, start=1):
-        if not isinstance(artifact, Mapping):
-            errors.append(f"manifest artifacts[{index}] must be an object")
-            continue
-        role = str(artifact.get("role") or artifact.get("format") or "")
-        if not role:
-            errors.append(f"manifest artifacts[{index}] is missing role")
-            continue
-        if role in artifacts_by_role:
-            errors.append(f"manifest has duplicate artifact role: {role}")
-            continue
-        artifacts_by_role[role] = artifact
-        path = artifact.get("path")
-        if not isinstance(path, str) or not path.startswith("gs://"):
-            errors.append(f"manifest artifact {role!r} path must be a gs:// URI")
-        if role == "manifest":
-            if artifact.get("generation") is not None:
-                errors.append("manifest artifact must not embed its own object generation")
-        else:
-            if not isinstance(artifact.get("generation"), int):
-                errors.append(f"manifest artifact {role!r} must include destination generation")
-            sha = artifact.get("sha256")
-            if not isinstance(sha, str) or not ARTIFACT_HASH_RE.fullmatch(sha):
-                errors.append(
-                    f"manifest artifact {role!r} sha256 must be 64 lowercase hex characters, optionally prefixed by sha256:"
-                )
-    missing = [role for role in ROLE_SUFFIXES if role not in artifacts_by_role]
-    if missing:
-        errors.append("manifest is missing required vector artifact role(s): " + ", ".join(missing))
-    if errors:
-        raise RuntimeError("; ".join(errors))
+    try:
+        release_feature_model.validate_release_manifest(
+            payload,
+            expected_asset_slug=expected_asset_slug,
+            expected_release=expected_release,
+            require_generations=True,
+        )
+    except release_feature_model.ReleaseFeatureModelError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def final_manifest_payload(
@@ -499,7 +429,7 @@ def final_manifest_payload(
     sha256_by_role: Mapping[str, str],
     schema: Mapping[str, Any],
     source_inputs: Sequence[Mapping[str, Any]],
-    id_strategy: Mapping[str, Any],
+    identity: Mapping[str, Any],
     feature_count: int,
     release_blob_info_by_role: Mapping[str, Mapping[str, Any]],
     latest_blob_info_by_role: Mapping[str, Mapping[str, Any]] | None,
@@ -514,7 +444,7 @@ def final_manifest_payload(
         sha256_by_role=sha256_by_role,
         schema=schema,
         source_inputs=source_inputs,
-        id_strategy=id_strategy,
+        identity=identity,
         feature_count=feature_count,
     )
     latest_blob_info_by_role = latest_blob_info_by_role or {}
@@ -550,13 +480,5 @@ def final_manifest_payload(
     manifest_artifact.pop("generation", None)
     manifest_artifact.pop("latest_generation", None)
     payload["artifacts"] = [artifacts_by_role[role] for role in ROLE_SUFFIXES]
-    validate_final_manifest_payload(
-        payload,
-        expected_asset_slug=asset_slug,
-        expected_release=release,
-    )
+    validate_final_manifest_payload(payload, expected_asset_slug=asset_slug, expected_release=release)
     return payload
-
-
-def write_manifest(payload: Mapping[str, Any], path: Path) -> None:
-    path.write_text(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n")
