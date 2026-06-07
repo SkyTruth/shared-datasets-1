@@ -65,15 +65,15 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         )
         self.assertIn('path_prefix_rewrite = "/"', pmtiles_cdn_tf)
         self.assertIn(
-            'path                = "/artifacts/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            'path                = "/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"',
             pmtiles_cdn_tf,
         )
         self.assertIn(
-            'path                = "/private/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            'path                = "/private/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"',
             pmtiles_cdn_tf,
         )
         self.assertIn(
-            'expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-05-16/marine-regions-eez.metadata.es.ndjson.gz"',
+            'expected_output_url = "https://${var.pmtiles_cdn_host}/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"',
             pmtiles_cdn_tf,
         )
         self.assertIn(
