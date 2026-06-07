@@ -160,7 +160,12 @@ def path_from_info(value: Any) -> str:
     return ""
 
 
-def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = None) -> dict[str, Any] | None:
+def blob_file_entry(
+    value: Any,
+    *,
+    sha256_by_format: dict[str, str] | None = None,
+    sha256_by_path: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
     if isinstance(value, str):
         value = {"path": value}
     if not isinstance(value, dict):
@@ -180,7 +185,11 @@ def blob_file_entry(value: Any, *, sha256_by_format: dict[str, str] | None = Non
     for key in ("generation", "size", "content_type", "sha256"):
         if value.get(key) is not None:
             entry[key] = value[key]
-    sha = (sha256_by_format or {}).get(format_name)
+    sha = (sha256_by_path or {}).get(path)
+    if not sha and locale:
+        sha = (sha256_by_format or {}).get(f"metadata_{locale}")
+    if not sha:
+        sha = (sha256_by_format or {}).get(format_name)
     if sha and "sha256" not in entry:
         entry["sha256"] = sha
     return entry
@@ -201,14 +210,27 @@ def sha256_by_format(record: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
+def sha256_by_path(record: dict[str, Any]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for artifact in record.get("artifacts") or []:
+        if not isinstance(artifact, dict):
+            continue
+        path = str(artifact.get("path") or "")
+        sha = artifact.get("sha256")
+        if path and sha:
+            mapping[path] = str(sha)
+    return mapping
+
+
 def files_from_run_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     by_format = sha256_by_format(record)
+    by_path = sha256_by_path(record)
     files: list[dict[str, Any]] = []
     release_paths = record.get("release_paths")
     if not isinstance(release_paths, list):
         raise ReleaseIndexError("successful run record is missing release_paths")
     for value in release_paths:
-        entry = blob_file_entry(value, sha256_by_format=by_format)
+        entry = blob_file_entry(value, sha256_by_format=by_format, sha256_by_path=by_path)
         if entry:
             files.append(entry)
     if not files:

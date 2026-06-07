@@ -586,6 +586,80 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["role"], "metadata")
         self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["locale"], "es")
 
+    def test_rebuild_index_uses_artifact_path_hashes_for_localized_metadata(self):
+        bucket = FakeBucket()
+        for name, generation, size in (
+            ("asset/releases/2026-05-01/asset.fgb", 8, 13),
+            ("asset/releases/2026-05-01/asset.metadata.ndjson.gz", 9, 21),
+            ("asset/releases/2026-05-01/asset.metadata-translations.csv", 10, 55),
+            ("asset/releases/2026-05-01/asset.metadata.es.ndjson.gz", 11, 34),
+        ):
+            blob = bucket.blob(name)
+            blob.exists = True
+            blob.generation = generation
+            blob.size = size
+        run_record = bucket.blob("asset/runs/2026-05-01.json")
+        run_record.exists = True
+        run_record.text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": "test-asset",
+                "run_date": "2026-05-01",
+                "release_date": "2026-05-01",
+                "status": "success",
+                "release_path": "gs://test-bucket/asset/releases/2026-05-01/",
+                "release_paths": [
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.fgb",
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz",
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.metadata-translations.csv",
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz",
+                ],
+                "row_count": 10,
+                "sha256": {
+                    "fgb": "f" * 64,
+                    "metadata": "c" * 64,
+                    "metadata_es": "e" * 64,
+                },
+                "artifacts": [
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz",
+                        "sha256": "c" * 64,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-05-01/asset.metadata-translations.csv",
+                        "sha256": "a" * 64,
+                    },
+                    {
+                        "path": "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz",
+                        "sha256": "e" * 64,
+                    },
+                ],
+            }
+        )
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_format": "fgb",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        files = {item["path"]: item for item in index["latest_release"]["files"]}
+        self.assertEqual(
+            files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz"]["sha256"],
+            "c" * 64,
+        )
+        self.assertEqual(
+            files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata-translations.csv"]["sha256"],
+            "a" * 64,
+        )
+        self.assertEqual(
+            files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["sha256"],
+            "e" * 64,
+        )
+
     def test_rebuild_index_ignores_display_only_release_blobs_without_canonical_format(self):
         bucket = FakeBucket()
         canonical = bucket.blob("asset/releases/2026-05-01/asset.fgb")
