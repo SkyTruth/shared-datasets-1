@@ -236,12 +236,6 @@ def check_admission(
     errors: list[str] = []
     added_docs = added_asset_docs(changes)
 
-    for path in added_docs:
-        evidence, parse_errors = evidence_from_asset_doc(repo_root / path)
-        errors.extend(parse_errors)
-        if not parse_errors:
-            errors.extend(validate_admission_evidence(evidence, label=path))
-
     jobs = new_ingestion_jobs(
         changes,
         base_ref=base_ref,

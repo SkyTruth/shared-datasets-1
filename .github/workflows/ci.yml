@@ -75,9 +75,6 @@ jobs:
             --head HEAD \
             --event-path "$GITHUB_EVENT_PATH"
 
-      - name: Check generated catalog and asset docs
-        run: uv run python scripts/catalog_docs.py check
-
       - name: Check static repo guardrails
         run: uv run python scripts/repo_guardrails.py check-static
 

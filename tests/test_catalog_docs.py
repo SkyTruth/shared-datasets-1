@@ -557,6 +557,28 @@ files:\n""",
         self.assertEqual(warnings, [])
         self.assertTrue(any("generated content is stale" in error for error in errors))
 
+    def test_check_ignores_asset_doc_serialization_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir, catalog_path, categories_path, index_path = write_fixture_tree(Path(tmp))
+            categories = catalog_docs.load_categories(categories_path)
+            docs = catalog_docs.read_asset_docs(
+                docs_dir=docs_dir,
+                categories=categories,
+            )
+            catalog_docs.generate_outputs(docs=docs, catalog_path=catalog_path, index_path=index_path, bucket="skytruth-shared-datasets-1")
+            doc_path = docs_dir / "example-asset.md"
+            doc_path.write_text(doc_path.read_text().replace("Legacy summary.", "Locally edited summary."))
+
+            errors, warnings = catalog_docs.check_outputs(
+                docs=docs,
+                catalog_path=catalog_path,
+                index_path=index_path,
+                bucket="skytruth-shared-datasets-1",
+            )
+
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
     def test_invalid_taxonomy_fails(self):
         bad_doc = STRICT_DOC.replace("subcategory: 110-boundaries", "subcategory: 999-missing")
         with tempfile.TemporaryDirectory() as tmp:

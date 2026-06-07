@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|
 | [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | `latest/natural-earth-10m-land.fgb` |
 | [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/iho-world-seas.fgb` |
+| [Marine Regions EEZs and High Seas](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/marine-regions-eez.fgb` |
 | [WDPA Marine Protected and Conserved Areas](wdpa-marine.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-marine.fgb` |
 | [WDPA Terrestrial Protected and Conserved Areas](wdpa-terrestrial.md) | 130-protected-areas | active | public | `fgb;pmtiles` | `latest/wdpa-terrestrial.fgb` |
 
