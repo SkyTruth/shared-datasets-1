@@ -25,17 +25,12 @@ DEFAULT_RELEASE_CACHE_TTL_SECONDS = 60.0
 NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
-FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-EXT_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
+FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-INDEX_STATUS_MODE = "external_index_load_records"
+INDEX_STATUS_MODE = "inactive_firestore_serving"
 LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
     r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
-)
-LOOKUP_BY_EXT_ID_RE = re.compile(
-    r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
-    r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookupByExtId$"
 )
 
 
@@ -73,16 +68,6 @@ class FeatureIndex(Protocol):
         release: str,
         index_load_id: str,
         feature_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
-        ...
-
-    def lookup_by_ext_ids(
-        self,
-        *,
-        asset_slug: str,
-        release: str,
-        index_load_id: str,
-        ext_ids: list[str],
     ) -> dict[str, dict[str, Any]]:
         ...
 
@@ -210,26 +195,14 @@ class CatalogReleaseResolver:
             schema_entry=schema_entry,
             manifest_entry=manifest_entry,
         )
-        index_load = self._successful_index_load(
-            asset_slug=asset_slug,
-            release=resolved_release,
-            release_entry=release_entry,
-            metadata_entry=metadata_entry,
-            schema_entry=schema_entry,
-            manifest_entry=manifest_entry,
-        )
-        if index_load is None:
-            raise IndexNotReady(f"{asset_slug} release {resolved_release} metadata index is not ready")
-        index_load_id = str(index_load.get("load_id") or "")
-        if not LOAD_ID_RE.fullmatch(index_load_id):
-            raise IndexNotReady(f"{asset_slug} release {resolved_release} metadata index load ID is invalid")
+        validate_inactive_index_policy(release_entry)
         return ResolvedRelease(
             requested_release=requested_release,
             resolved_release=resolved_release,
             release_index_generation=release_index_generation,
             schema_generation=as_int(schema_entry.get("generation")),
             manifest_generation=as_int(manifest_entry.get("generation")),
-            index_load_id=index_load_id,
+            index_load_id="inactive",
             schema_fields=tuple(schema_fields),
             schema_path=schema_path,
             manifest_path=manifest_path,
@@ -370,56 +343,6 @@ class FirestoreFeatureIndex:
                 found[feature_id] = payload
         return found
 
-    def lookup_by_ext_ids(
-        self,
-        *,
-        asset_slug: str,
-        release: str,
-        index_load_id: str,
-        ext_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
-        refs = [
-            self.client.collection(self._collection_root)
-            .document(asset_slug)
-            .collection("releases")
-            .document(release)
-            .collection("loads")
-            .document(index_load_id)
-            .collection("ext_ids")
-            .document(ext_id)
-            for ext_id in ext_ids
-        ]
-        try:
-            snapshots = self.client.get_all(refs)
-        except Exception as exc:
-            raise ApiError(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                "index_unavailable",
-                "feature metadata ext_id lookup failed",
-            ) from exc
-        feature_ids: list[str] = []
-        ext_id_to_feature_id: dict[str, str] = {}
-        for snapshot in snapshots:
-            if not getattr(snapshot, "exists", False):
-                continue
-            payload = snapshot.to_dict() or {}
-            ext_id = str(payload.get("ext_id") or getattr(snapshot.reference, "id", ""))
-            feature_id = str(payload.get("feature_id") or "")
-            if ext_id and feature_id:
-                ext_id_to_feature_id[ext_id] = feature_id
-                feature_ids.append(feature_id)
-        documents = self.lookup(
-            asset_slug=asset_slug,
-            release=release,
-            index_load_id=index_load_id,
-            feature_ids=list(dict.fromkeys(feature_ids)),
-        )
-        return {
-            ext_id: documents[feature_id]
-            for ext_id, feature_id in ext_id_to_feature_id.items()
-            if feature_id in documents
-        }
-
 
 def handle_request(
     method: str,
@@ -441,17 +364,16 @@ def handle_request(
         return json_response(HTTPStatus.OK, {"status": "ok"}, {"Cache-Control": NO_STORE})
     try:
         match = LOOKUP_RE.fullmatch(request_path)
-        ext_id_match = LOOKUP_BY_EXT_ID_RE.fullmatch(request_path)
-        if (match or ext_id_match) and method == "OPTIONS":
+        if match and method == "OPTIONS":
             return Response(HTTPStatus.NO_CONTENT, api_headers())
         if require_iap:
             require_authenticated_user(headers, allowed_email_domains=allowed_email_domains)
-        if match or ext_id_match:
+        if match:
             if method != "POST":
                 raise ApiError(HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", "use POST for lookup")
             return handle_lookup(
-                asset_slug=(match or ext_id_match).group("asset_slug"),
-                release=(match or ext_id_match).group("release"),
+                asset_slug=match.group("asset_slug"),
+                release=match.group("release"),
                 headers=headers,
                 body=body,
                 release_resolver=release_resolver,
@@ -459,7 +381,6 @@ def handle_request(
                 max_ids=max_ids,
                 max_fields=max_fields,
                 max_response_bytes=max_response_bytes,
-                lookup_by_ext_id=ext_id_match is not None,
             )
         raise ApiError(HTTPStatus.NOT_FOUND, "not_found", "unknown endpoint")
     except ApiError as exc:
@@ -482,51 +403,28 @@ def handle_lookup(
     max_ids: int,
     max_fields: int,
     max_response_bytes: int,
-    lookup_by_ext_id: bool = False,
 ) -> Response:
-    request = (
-        parse_ext_id_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
-        if lookup_by_ext_id
-        else parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
-    )
+    request = parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
     resolved = release_resolver.resolve(asset_slug, release)
     if not resolved.index_load_id or not LOAD_ID_RE.fullmatch(resolved.index_load_id):
         raise IndexNotReady(f"{asset_slug} release {resolved.resolved_release} metadata index load ID is invalid")
     validate_requested_fields(request["fields"], resolved.schema_fields)
-    if lookup_by_ext_id:
-        unique_ids = list(dict.fromkeys(request["ext_ids"]))
-        documents = feature_index.lookup_by_ext_ids(
-            asset_slug=asset_slug,
-            release=resolved.resolved_release,
-            index_load_id=resolved.index_load_id,
-            ext_ids=unique_ids,
+    unique_ids = list(dict.fromkeys(request["ids"]))
+    documents = feature_index.lookup(
+        asset_slug=asset_slug,
+        release=resolved.resolved_release,
+        index_load_id=resolved.index_load_id,
+        feature_ids=unique_ids,
+    )
+    items = [
+        response_item(
+            feature_id=feature_id,
+            document=documents.get(feature_id),
+            fields=request["fields"],
+            include_provenance=request["include_provenance"],
         )
-        items = [
-            response_item_for_ext_id(
-                ext_id=ext_id,
-                document=documents.get(ext_id),
-                fields=request["fields"],
-                include_provenance=request["include_provenance"],
-            )
-            for ext_id in request["ext_ids"]
-        ]
-    else:
-        unique_ids = list(dict.fromkeys(request["ids"]))
-        documents = feature_index.lookup(
-            asset_slug=asset_slug,
-            release=resolved.resolved_release,
-            index_load_id=resolved.index_load_id,
-            feature_ids=unique_ids,
-        )
-        items = [
-            response_item(
-                feature_id=feature_id,
-                document=documents.get(feature_id),
-                fields=request["fields"],
-                include_provenance=request["include_provenance"],
-            )
-            for feature_id in request["ids"]
-        ]
+        for feature_id in request["ids"]
+    ]
     payload = {
         "asset_slug": asset_slug,
         "requested_release": resolved.requested_release,
@@ -563,18 +461,10 @@ def handle_lookup(
 
 def parse_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[str, Any]:
     payload = parse_json_body(body)
-    ids = payload.get("ids")
+    ids = payload.get("ids", payload.get("feature_ids"))
     normalized_ids = normalize_id_list(ids, key="ids", max_ids=max_ids, regex=FEATURE_ID_RE, label="feature_id")
     normalized_fields, include_provenance = parse_lookup_options(payload, max_fields=max_fields)
     return {"ids": normalized_ids, "fields": normalized_fields, "include_provenance": include_provenance}
-
-
-def parse_ext_id_lookup_request(body: bytes, *, max_ids: int, max_fields: int) -> dict[str, Any]:
-    payload = parse_json_body(body)
-    ext_ids = payload.get("ext_ids")
-    normalized_ext_ids = normalize_id_list(ext_ids, key="ext_ids", max_ids=max_ids, regex=EXT_ID_RE, label="ext_id")
-    normalized_fields, include_provenance = parse_lookup_options(payload, max_fields=max_fields)
-    return {"ext_ids": normalized_ext_ids, "fields": normalized_fields, "include_provenance": include_provenance}
 
 
 def parse_json_body(body: bytes) -> dict[str, Any]:
@@ -634,7 +524,6 @@ def response_item(
     if document is None:
         return {"feature_id": feature_id, "found": False}
     properties = document.get("properties") if isinstance(document.get("properties"), Mapping) else {}
-    ext_id = str(document.get("ext_id") or properties.get("ext_id") or "").strip()
     if fields is None:
         projected = dict(properties)
     else:
@@ -642,33 +531,12 @@ def response_item(
     item = {
         "feature_id": feature_id,
         "found": True,
-        "feature_hash": document.get("feature_hash"),
+        "geometry_hash": document.get("geometry_hash"),
+        "properties_hash": document.get("properties_hash"),
         "properties": projected,
     }
-    if ext_id:
-        item["ext_id"] = ext_id
     if include_provenance:
         item["provenance"] = document.get("provenance") or {}
-    return item
-
-
-def response_item_for_ext_id(
-    *,
-    ext_id: str,
-    document: Mapping[str, Any] | None,
-    fields: list[str] | None,
-    include_provenance: bool,
-) -> dict[str, Any]:
-    if document is None:
-        return {"ext_id": ext_id, "found": False}
-    feature_id = str(document.get("feature_id") or "").strip()
-    item = response_item(
-        feature_id=feature_id,
-        document=document,
-        fields=fields,
-        include_provenance=include_provenance,
-    )
-    item["ext_id"] = ext_id
     return item
 
 
@@ -791,12 +659,17 @@ def index_load_prefix_from_release_entry(
         return None
     if not isinstance(policy, Mapping) or policy.get("mode") != INDEX_STATUS_MODE:
         raise IndexNotReady("release index index_status_policy is invalid")
-    policy_bucket, object_name = split_gs_uri(str(policy.get("path") or ""))
-    if policy_bucket != bucket_name:
-        raise IndexNotReady("release index index_status_policy is outside configured bucket")
-    if not object_name.endswith(f"/index-loads/{release}/"):
+    if policy.get("path") is not None:
         raise IndexNotReady("release index index_status_policy path is invalid")
-    return object_name
+    return None
+
+
+def validate_inactive_index_policy(release_entry: Mapping[str, Any]) -> None:
+    if release_entry.get("index_load_status") != "Firestore metadata serving is inactive":
+        raise IndexNotReady("release index marks Firestore metadata serving active or unknown")
+    policy = release_entry.get("index_status_policy")
+    if not isinstance(policy, Mapping) or policy.get("mode") != INDEX_STATUS_MODE or policy.get("path") is not None:
+        raise IndexNotReady("release index index_status_policy is invalid")
 
 
 def as_int(value: Any) -> int | None:

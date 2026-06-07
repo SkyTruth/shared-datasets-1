@@ -26,7 +26,10 @@ def manifest_payload() -> dict:
         release=RELEASE,
         source_inputs=[{"uri": "https://example.test/source"}],
         schema=schema,
-        id_strategy={"strategy": "provider", "field": "OBJECTID"},
+        identity=release_feature_model.build_identity_metadata(
+            strategy="source_field",
+            source_fields=["OBJECTID"],
+        ),
         validation={"valid": True, "feature_count": 2},
         artifacts=[
             {"role": "fgb", "format": "fgb", "path": uri(".fgb"), "sha256": "a" * 64},

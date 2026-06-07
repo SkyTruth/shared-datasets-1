@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -120,11 +121,11 @@ def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ic
         (fgb, b"fgb"),
         (pmtiles, b"pmtiles"),
         (metadata, b"metadata"),
-        (schema, b'{"schema_version":1}\n'),
+        (schema, b'{"schema_version":2}\n'),
     ):
         path.write_bytes(data)
     schema_payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "asset_slug": sea_ice.ASSET.slug,
         "release": release,
         "fields": [{"name": "ice_date", "type": "String", "nullable": False, "projectable": True}],
@@ -470,7 +471,8 @@ ice_date: String (0.0)
         self.assertEqual(len(json.loads(run_record.text)["release_paths"]), 5)
         manifest_blob = bucket.blob(asset.release_object(run_date, ".manifest.json"))
         manifest = json.loads(manifest_blob.text)
-        self.assertEqual(manifest["id_strategy"], {"strategy": "generated", "preimage": ["geometry_digest"]})
+        self.assertEqual(manifest["identity"]["strategy"], "generated_sequence_content_hash")
+        self.assertEqual(manifest["identity"]["assignment_key"], ["geometry_hash", "properties_hash"])
         artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
         release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
         latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))
@@ -512,7 +514,8 @@ ice_date: String (0.0)
 
 
 @unittest.skipUnless(
-    all(
+    os.environ.get("RUN_GDAL_INTEGRATION_TESTS") == "1"
+    and all(
         runnable_command(command)
         for command in (
             ["gdal_create", "--help-general"],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -214,7 +215,10 @@ class RasterStandardsTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    shutil.which("gdal_create") and shutil.which("gdal_translate") and shutil.which("gdalinfo"),
+    os.environ.get("RUN_GDAL_INTEGRATION_TESTS") == "1"
+    and shutil.which("gdal_create")
+    and shutil.which("gdal_translate")
+    and shutil.which("gdalinfo"),
     "requires GDAL binaries",
 )
 class RasterCogIntegrationTests(unittest.TestCase):

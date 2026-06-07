@@ -311,7 +311,7 @@ should also preserve catalog `localized_names` metadata when present so browser
 labels, popups, and feature inspectors can resolve display labels through the
 metadata API or same-asset localization CSV instead of hardcoding source-native
 fields. Localized canonical data lives in the localization CSV sidecar keyed by
-`ext_id`; PMTiles carry `feature_id` and `ext_id`, not `name` or `name_*`
+`feature_id`; PMTiles carry `feature_id`, not `name` or `name_*`
 fields. Use each translation entry's aggregate `review_state` to distinguish
 source-provided names, machine translations, human-reviewed translations, and
 mixed review state in user-facing confidence cues.

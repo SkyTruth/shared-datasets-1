@@ -47,14 +47,14 @@ data_profile:
       status: "{unique | non_unique | unknown | not_applicable}"
       notes: "{short uniqueness note}"
   # If no credible identifier exists, use identity_candidates: [] and notes.
-  notes: "{optional profile note such as No documented ext_id candidate}"
+  notes: "{optional profile note such as No documented feature_id candidate}"
 search_fields:
   - field: "{curated search/filter field such as NAME}"
     distinct_values: "{optional integer distinct non-empty values}"
     notes: "{optional reason this is useful for search/filtering}"
 localized_names:
   storage: "localization_csv_v1"
-  join_key: "ext_id"
+  join_key: "feature_id"
   localization_file: "latest/{asset-slug}-localizations.csv"
   property_template: "name_{locale_code}"
   locale_code_format: "bcp47_field_safe"
@@ -69,29 +69,26 @@ feature_metadata:
   storage: "metadata_sidecar_v1"
   index_backend: "firestore"
   feature_id_column: "feature_id"
-  feature_hash_column: "feature_hash"
+  geometry_hash_column: "geometry_hash"
+  properties_hash_column: "properties_hash"
   sidecar_file: "latest/{asset-slug}.metadata.ndjson.gz"
   schema_file: "latest/{asset-slug}.schema.json"
   manifest_file: "latest/{asset-slug}.manifest.json"
   provenance_default: true
-generated_group_id:
-  column: "shared_datasets_group_id"
-  algorithm: "shared-datasets-group-id:v1"
-  grouping_fields:
-    - "{curator-selected grouping field}"
-  token_length: "{base62 token length, minimum 8}"
-  group_count: "{integer generated group count}"
-  blank_group_count: "{optional integer blank/null groups assigned per feature}"
-  stability: "{geometry-addressed stability note, including any identical-geometry ambiguity review}"
-generated_row_id:
-  column: "shared_datasets_row_id"
-  algorithm: "shared-datasets-row-id:v1"
-  token_length: "{base62 token length, minimum 8}"
-  row_count: "{integer generated row ID count}"
-  duplicate_geometry_digest_count: "{optional count of repeated geometry digests}"
-  duplicate_geometry_row_count: "{optional rows carrying repeated geometry digests}"
-  stability: "{row-address stability note; stable while canonical geometry and duplicate-geometry source order stay unchanged}"
-  warning: "{required warning that this is not a provider/entity/group ID}"
+feature_identity:
+  column: "feature_id"
+  strategy: "{source_field | generated_sequence_source_fields | generated_sequence_content_hash}"
+  source_fields:
+    - "{source field used directly when strategy is source_field}"
+  hash_algorithm: "sha256"
+  canonicalization_version: "release-feature-model-v1"
+  generated_id_type: "monotonic_integer_string"
+  assignment_key:
+    - "{source field name, or geometry_hash}"
+    - "{optional second source field name, or properties_hash}"
+  previous_release: "{optional YYYY-MM-DD release used for ID carry-forward}"
+  next_generated_id: "{next unused generated decimal ID}"
+  ambiguity_report: "{optional path to generated partial-hash match report}"
 source_resolution_meters: "{optional source resolution for PMTiles auto maxzoom}"
 source_scale_denominator: "{optional source scale denominator for PMTiles auto maxzoom}"
 pmtiles_maxzoom: "{optional explicit PMTiles maxzoom}"
@@ -105,7 +102,7 @@ files:
 - path: "latest/{asset-slug}-localizations.csv"
   format: "csv"
   role: "localization"
-  purpose: "Feature display-name localizations keyed by ext_id for metadata/API use"
+  purpose: "Feature display-name localizations keyed by feature_id for metadata/API use"
   - path: "latest/{asset-slug}.metadata.ndjson.gz"
     format: "ndjson_gzip"
     role: "metadata"
@@ -142,20 +139,18 @@ Short notes on fields or usage.
 Populate `row_count` and `data_profile` in frontmatter from the canonical
 artifact after conversion. For identifier candidates, count distinct and
 duplicate values over non-empty values in the canonical artifact.
-If `generated_group_id` is present, `shared_datasets_group_id` must be a native
+If `feature_identity` is present, `feature_id` must be a native
 property/column in the canonical file and metadata sidecar.
-If `generated_row_id` is present, `shared_datasets_row_id` must be a native
-property/column in the canonical file and metadata sidecar, and must be
-documented as a last-resort row address rather than a provider/entity/group ID.
-If the asset publishes localized display names, keep the consumer-facing
-localization source in `latest/{asset-slug}-localizations.csv`, keyed by
-`ext_id`, and declare it in `localized_names`. Resolve display labels through
-the metadata API or localization sidecar; do not put `name` or declared
+If the asset publishes localized display metadata, keep the editable translation
+source in `latest/{asset-slug}.metadata-translations.csv`, keyed by
+`feature_id`, `field`, `locale`, and `source_value_hash`, and declare it in
+`feature_metadata.translations_csv`. Resolve display labels through the
+metadata API or locale sidecar; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
-must keep unique nonblank URL-safe `ext_id` values matching
-`^[A-Za-z0-9]{1,64}$` but does not need native localized name columns.
-For vector assets, keep `feature_id` and `feature_hash` in the canonical FGB,
-keep `feature_id` and `ext_id` in PMTiles, publish the metadata
+must keep unique nonblank URL-safe `feature_id` values matching
+`^[A-Za-z0-9]{1,64}$`.
+For vector assets, keep `feature_id`, `geometry_hash`, and `properties_hash` in
+the canonical FGB, keep only `feature_id` in PMTiles, publish the metadata
 sidecar/schema/manifest files, and declare them in `feature_metadata`.
 
 ## Raster metadata

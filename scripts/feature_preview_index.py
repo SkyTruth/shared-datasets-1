@@ -19,7 +19,7 @@ from scripts import release_feature_model
 
 DEFAULT_COLLECTION_ROOT = "feature_preview_index"
 DEFAULT_BATCH_SIZE = 450
-FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 
 
 class FeaturePreviewIndexError(RuntimeError):
@@ -66,31 +66,16 @@ class FirestoreFeaturePreviewWriter:
         for document in documents:
             feature_id = str(document["feature_id"])
             properties = dict(document.get("properties") or {})
-            ext_id = release_feature_model.ext_id_from_record(document)
-            release_feature_model.validate_ext_id(ext_id)
             batch.set(
                 features.document(feature_id),
                 {
                     "asset_slug": asset_slug,
                     "release": release,
                     "feature_id": feature_id,
-                    "feature_hash": document.get("feature_hash"),
+                    "geometry_hash": document.get("geometry_hash"),
+                    "properties_hash": document.get("properties_hash"),
                     "properties": properties,
                     "provenance": dict(document.get("provenance") or {}),
-                },
-            )
-            batch.set(
-                self.client.collection(self.collection_root)
-                .document(asset_slug)
-                .collection("releases")
-                .document(release)
-                .collection("ext_ids")
-                .document(ext_id),
-                {
-                    "asset_slug": asset_slug,
-                    "release": release,
-                    "ext_id": ext_id,
-                    "feature_id": feature_id,
                 },
             )
         batch.commit()
@@ -116,7 +101,6 @@ def read_sidecar(path: Path) -> list[dict[str, Any]]:
 
 def validate_records(records: Sequence[Mapping[str, Any]], *, asset_slug: str, release: str) -> None:
     seen: set[str] = set()
-    seen_ext_ids: set[str] = set()
     errors: list[str] = []
     for index, record in enumerate(records, start=1):
         if record.get("asset_slug") not in (None, asset_slug):
@@ -131,14 +115,10 @@ def validate_records(records: Sequence[Mapping[str, Any]], *, asset_slug: str, r
         seen.add(feature_id)
         if not isinstance(record.get("properties"), Mapping):
             errors.append(f"record {index} properties must be an object")
-        else:
-            ext_id = release_feature_model.ext_id_from_record(record)
-            if not release_feature_model.EXT_ID_RE.fullmatch(ext_id):
-                errors.append(f"record {index} has invalid ext_id")
-            elif ext_id in seen_ext_ids:
-                errors.append(f"duplicate ext_id: {ext_id}")
-            else:
-                seen_ext_ids.add(ext_id)
+        if not isinstance(record.get("geometry_hash"), str):
+            errors.append(f"record {index} geometry_hash is required")
+        if not isinstance(record.get("properties_hash"), str):
+            errors.append(f"record {index} properties_hash is required")
         if not isinstance(record.get("provenance", {}), Mapping):
             errors.append(f"record {index} provenance must be an object")
     if errors:

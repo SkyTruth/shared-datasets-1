@@ -15,7 +15,7 @@ browser PMTiles session handshakes and Cloud CDN signed-cookie helpers.
 | Backend code needs a durable object identity but not bytes | `resolve_dataset(slug, format)` |
 | Service code needs to list or search assets | `Catalog.load_gcs()` plus `catalog.search(...)` |
 | CI or diagnostics need quick checks | `skytruth-datasets` CLI |
-| Service code needs feature metadata by PMTiles `feature_id` or URL-safe `ext_id` | Feature metadata HTTP API, not this SDK |
+| Service code needs feature metadata by PMTiles `feature_id` | Feature metadata HTTP API, not this SDK |
 | Browser map code needs PMTiles | TypeScript helpers or direct tiered CDN URLs, not this SDK |
 | Backend route signs private PMTiles cookies | TypeScript server helpers, not this SDK |
 
@@ -67,19 +67,18 @@ route that issues browser PMTiles cookies needs separate Secret Manager access
 and should use the TypeScript server helpers.
 
 Feature metadata lookup is also a separate service. Release-oriented vector
-PMTiles carry geometry plus internal `feature_id` values; callers that need full
+PMTiles carry geometry plus `feature_id` values; callers that need full
 attributes should call the IAP-protected metadata API:
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
-For user-visible URLs, use the public `ext_id` handle instead of `feature_id`.
-`ext_id` values are unique URL-safe alphanumeric strings, usually generated
+`feature_id` values are unique URL-safe alphanumeric strings, usually generated
 decimal sequence values:
 
 ```http
-POST /v1/assets/{slug}/releases/{release}:lookupByExtId
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 Use `release=latest` only for convenience and persist the response

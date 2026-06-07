@@ -12,7 +12,7 @@ CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 
 
 NATIVE_TOOL_TESTS = {
-    "tests/test_localized_vector_asset.py",
+    "tests/test_feature_metadata_localization.py",
     "tests/test_raster_standards.py",
     "tests/test_wdpa_monthly.py",
     "tests/test_sea_ice_daily.py",
@@ -48,7 +48,7 @@ class GeospatialCiTests(unittest.TestCase):
             ".github/workflows/ci.yml",
             "ingestion/wdpa_monthly/run.py",
             "scripts/vector_asset.py",
-            "scripts/localized_vector_asset.py",
+            "scripts/feature_metadata_localization.py",
             "scripts/raster_asset.py",
             "scripts/dataset_alerts.py",
             *NATIVE_TOOL_TESTS,

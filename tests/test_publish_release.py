@@ -121,10 +121,11 @@ def write_vector_bundle(
         "pmtiles": write_artifact(tmp_path, f"{asset_slug}.pmtiles", b"pmtiles bytes"),
     }
     feature = release_feature_model.FeatureRecord(
-        feature_id="src:id:1",
-        feature_hash="sha256:" + "a" * 64,
+        feature_id="1",
+        geometry_hash="sha256:" + "b" * 64,
+        properties_hash="sha256:" + "a" * 64,
         geometry=None,
-        properties={"ext_id": "1", "name": "A"},
+        properties={"feature_id": "1", "name": "A"},
         provenance={"source": "fixture"},
     )
     sidecar = tmp_path / f"{asset_slug}.metadata.ndjson.gz"
@@ -136,7 +137,7 @@ def write_vector_bundle(
         asset_slug=asset_slug,
         release=release,
         fields=[
-            release_feature_model.ReleaseSchemaField("ext_id", "String"),
+            release_feature_model.ReleaseSchemaField("feature_id", "String"),
             release_feature_model.ReleaseSchemaField("name", "String"),
         ],
     )
@@ -162,7 +163,7 @@ def write_vector_bundle(
                 source_inputs=[],
                 artifacts=artifacts,
                 schema=schema_payload,
-                id_strategy={"strategy": "provider", "field": "id"},
+                identity=release_feature_model.build_identity_metadata(strategy="source_field", source_fields=["id"]),
                 validation={"valid": True, "feature_count": 1},
             ),
             sort_keys=True,

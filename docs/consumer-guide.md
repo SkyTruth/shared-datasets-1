@@ -36,7 +36,7 @@ Maintainer-only publishing and infrastructure procedures live in
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
 | Browser needs public feature attributes | TypeScript metadata artifact helpers | Resolve the release-index sidecar and fetch `tiles.skytruth.org/artifacts/...` directly. |
 | Browser needs private feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
-| Backend has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id` and `ext_id`; full metadata is served by asset/release/ID lookup. |
+| Backend has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is served by asset/release/ID lookup. |
 
 Do not build browser integrations on anonymous
 `https://storage.googleapis.com/skytruth-shared-datasets-1/...` reads. Direct
@@ -82,14 +82,14 @@ or a materialized locale-specific metadata sidecar such as
 accepts one active locale and returns either that localized sidecar or the
 canonical `{asset-slug}.metadata.ndjson.gz` fallback. Browser apps should not
 fetch a separate translation overlay or merge translations over canonical
-metadata client-side. Canonical FGB consumers should rely on `ext_id` for joins
+metadata client-side. Canonical FGB consumers should rely on `feature_id` for joins
 and should not expect localized name columns in the FGB.
 Public sidecars should be fetched from
 `https://tiles.skytruth.org/artifacts/{bucket-object-path}`. Private sidecars
 should be returned by a consumer backend as one short-lived signed artifact URL
 only after slug, release, locale, tier, and user entitlement checks pass.
 
-Release-oriented vector PMTiles carry geometry plus `feature_id` and `ext_id`
+Release-oriented vector PMTiles carry geometry plus `feature_id`
 only. Use the metadata API for full attributes, display labels, and provenance
 instead of expecting source columns in PMTiles.
 

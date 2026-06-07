@@ -27,12 +27,12 @@ license_flags:
 - source-authorization-confirmed-2026-05-08
 notes: Manual private snapshot from ACLED weekly aggregated Europe and Central Asia XLSX export; release 2026-04-25; 120245
   point features. The 2026-06-05 same-release metadata-contract repair reused the current release FGB as the authoritative
-  source, added composite provider feature_id values, legacy non-URL-safe ext_id values, feature_hash values, canonical metadata/schema/manifest
-  artifacts, and metadata-lookup PMTiles with only ext_id and feature_id properties. No shared_datasets_group_id, shared_datasets_row_id,
-  or localized metadata sidecars are generated for this private repair. FGB sha256 678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400;
-  PMTiles sha256 e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed; metadata sidecar sha256 f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1;
-  schema sha256 9a5c85f2eadc61d86379bf8bbc06a209bb6176ecfd36a4969cb50fa044178438; manifest sha256 1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec.
-  PMTiles maxzoom 12 with all-point retention verified at zoom 0.
+  source, added composite source-field feature_id values, geometry_hash values, properties_hash values, canonical metadata/schema/manifest
+  artifacts, and metadata-lookup PMTiles with only feature_id properties. No localized metadata sidecars are generated for
+  this private repair. FGB sha256 678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400; PMTiles sha256 e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed;
+  metadata sidecar sha256 f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1; schema sha256 9a5c85f2eadc61d86379bf8bbc06a209bb6176ecfd36a4969cb50fa044178438;
+  manifest sha256 1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec. PMTiles maxzoom 12 with all-point retention
+  verified at zoom 0.
 admission:
   intended_consumers:
   - SkyTruth internal regional conflict, risk, and exposure analyses
@@ -55,15 +55,16 @@ row_count: 120245
 data_profile:
   field_count: 20
   identity_candidates: []
-  notes: No single source/provider field is row-unique. admin1_id has 1023 distinct non-empty values across 120214 non-empty
-    rows, 31 missing rows, and 120112 duplicate rows. The release feature_id is a curator-approved composite provider key
-    over week, region, country, admin1_id, admin1, disorder_type, event_type, sub_event_type, centroid_latitude, and centroid_longitude
+  notes: No single source field is row-unique. admin1_id has 1023 distinct non-empty values across 120214 non-empty rows,
+    31 missing rows, and 120112 duplicate rows. The release feature_id is a curator-approved composite source-field key over
+    week, region, country, admin1_id, admin1, disorder_type, event_type, sub_event_type, centroid_latitude, and centroid_longitude
     with __NULL__ used for missing preimage values; this produced 120245 distinct feature_id values for 120245 rows.
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.metadata.ndjson.gz
   schema_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.schema.json
   manifest_file: latest/acled-europe-central-asia-aggregated-weekly-admin1.manifest.json
@@ -170,9 +171,17 @@ The source workbook had one visible sheet with 120,245 data rows and 13 source c
 
 `population_exposure` is ACLED's best estimate of population exposed to events based on proximity. ACLED's aggregated data guidance says this value should not be summed for analysis.
 
-The repaired release adds a release feature model. `feature_id` is generated with `release_feature_model.composite_provider_feature_id(...)` from `week`, `region`, `country`, `admin1_id`, `admin1`, `disorder_type`, `event_type`, `sub_event_type`, `centroid_latitude`, and `centroid_longitude`; missing preimage values use the `__NULL__` sentinel. Its published `ext_id` values are legacy non-URL-safe public handles and require a corrective release with generated decimal sequence handles. `feature_hash` is computed from canonical GeoJSON geometry plus published non-ID source properties, excluding `feature_id`, `ext_id`, and `feature_hash`.
+The repaired release adds a release feature model. `feature_id` is generated
+from a composite source-field identity key built from `week`, `region`,
+`country`, `admin1_id`, `admin1`, `disorder_type`, `event_type`,
+`sub_event_type`, `centroid_latitude`, and `centroid_longitude`; missing
+preimage values use the `__NULL__` sentinel. Its published `feature_id` values
+are generated decimal sequence handles. `geometry_hash` is computed from
+canonical GeoJSON geometry, and `properties_hash` is computed from published
+non-geometry source properties, excluding `feature_id`, `geometry_hash`, and
+`properties_hash`.
 
-The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. PMTiles features intentionally include only `feature_id` and `ext_id` so clients resolve full source properties through the feature metadata sidecar. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles with no feature or tile-size dropping for z0 point retention, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
+The PMTiles artifact is derived from the same point features, with zooms 0 through 12 and zoom 0 retention verified against the published point count. PMTiles features intentionally include only `feature_id` so clients resolve full source properties through the feature metadata sidecar. Future rebuilds must export WGS84 GeoJSONSeq from the FGB, build Tippecanoe MBTiles with no feature or tile-size dropping for z0 point retention, and convert with `pmtiles convert`. The canonical FGB remains the analytical source.
 
 ## Properties / columns
 
@@ -195,9 +204,9 @@ The PMTiles artifact is derived from the same point features, with zooms 0 throu
 | `source_url` | string | ACLED source export URL used for this snapshot. |
 | `source_accessed_date` | datetime | Date this source export was supplied and processed for shared-datasets. |
 | `source_version` | string | Source freshness note from the file name: up to week of 2026-04-25. |
-| `feature_id` | string | Stable release feature identifier generated from the approved composite provider key. |
-| `ext_id` | string | Public lookup handle. The repaired release values are legacy non-URL-safe handles and must be replaced by generated sequence IDs in a corrective release. |
-| `feature_hash` | string | SHA-256 hash of canonical geometry plus published non-ID source properties. |
+| `feature_id` | string | Public URL-safe lookup handle generated from the approved composite source-field identity key. |
+| `geometry_hash` | string | SHA-256 hash of canonical feature geometry. |
+| `properties_hash` | string | SHA-256 hash of published non-geometry source properties. |
 
 ## Update notes
 
@@ -220,7 +229,7 @@ Output summary:
 - Release manifest SHA-256: `1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec` (8,428 bytes before protected finalization)
 - Composite feature IDs: 120,245 distinct values for 120,245 rows; 39 rows contain at least one `__NULL__` preimage sentinel.
 - PMTiles zoom 0 decoded point features: 120,245
-- PMTiles decoded properties: exactly `ext_id` and `feature_id`
+- PMTiles decoded properties: exactly `feature_id`
 - Metadata validation: sidecar row count 120,245; duplicate feature IDs 0; `feature_metadata_index.py --dry-run` succeeds with a local placeholder-generation manifest before protected promotion assigns canonical object generations.
 
 ## Known caveats

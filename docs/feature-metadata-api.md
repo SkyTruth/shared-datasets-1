@@ -16,7 +16,7 @@ serving index loaded from that sidecar.
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
-POST /v1/assets/{slug}/releases/{release}:lookupByExtId
+POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 `release` is either `latest` or `YYYY-MM-DD`. The service resolves the release
@@ -27,9 +27,9 @@ The service is IAP-protected for all assets at launch. Consuming browser apps
 should call their own backend, and that backend should call the metadata
 service.
 
-`lookup` is keyed by internal `feature_id` values emitted in PMTiles. Use
-`lookupByExtId` for browser/user URL workflows that carry public handles.
-`ext_id` values must be unique, nonblank, and match `^[A-Za-z0-9]{1,64}$`.
+`lookup` is keyed by the `feature_id` values emitted in PMTiles. Use `lookup`
+for browser/user URL workflows that carry those public handles.
+`feature_id` values must be unique, nonblank, and match `^[A-Za-z0-9]{1,64}$`.
 
 ## Feature ID Request
 
@@ -53,7 +53,7 @@ Rules:
 
 ```json
 {
-  "ext_ids": ["1", "2"],
+  "feature_ids": ["1", "2"],
   "fields": ["name", "source_id"],
   "include_provenance": true
 }
@@ -61,8 +61,8 @@ Rules:
 
 Rules:
 
-- `ext_ids` is required and accepts up to 500 public ext IDs.
-- Every `ext_id` must match `^[A-Za-z0-9]{1,64}$`.
+- `feature_ids` is required and accepts up to 500 public ext IDs.
+- Every `feature_id` must match `^[A-Za-z0-9]{1,64}$`.
 - `fields`, `include_provenance`, and projection limits match `lookup`.
 
 ## Response
@@ -79,11 +79,11 @@ Rules:
   "items": [
     {
       "feature_id": "src:id:1",
-      "ext_id": "123",
+      "feature_id": "123",
       "found": true,
-      "feature_hash": "sha256:...",
+      "properties_hash": "sha256:...",
       "properties": {
-        "ext_id": "123",
+        "feature_id": "123",
         "name": "Example"
       },
       "provenance": {
@@ -91,7 +91,7 @@ Rules:
       }
     },
     {
-      "ext_id": "missing",
+      "feature_id": "missing",
       "found": false
     }
   ],
@@ -104,16 +104,13 @@ Rules:
 }
 ```
 
-Duplicate IDs or ext IDs preserve request order in `items`; the backend lookup is
+Duplicate IDs preserve request order in `items`; the backend lookup is
 deduplicated. Missing IDs are item-level `"found": false` results in a `200`
-response after the index is confirmed ready. Lookup requests are keyed by
-`feature_id`; lookup-by-ext-ID requests resolve the public `ext_id` to the
-current internal `feature_id` and return both values on found items. When a
-found feature-ID lookup document has an `ext_id` property, the response also
-mirrors it as top-level `ext_id` for PMTiles clients. Unknown fields are
-rejected against the release schema before Firestore lookup, even if every
-requested ID is missing. Explicit valid fields that are absent from a particular
-document return `null`.
+response after the index is confirmed ready. Lookup requests are keyed only by
+`feature_id`; found items return that value as the top-level `feature_id`.
+Unknown fields are rejected against the release schema before index lookup, even
+if every requested ID is missing. Explicit valid fields that are absent from a
+particular document return `null`.
 
 ## Errors
 
@@ -190,56 +187,34 @@ sidecars with generation preconditions from the approved publisher environment.
 
 ## Operations
 
-Index load status is written only under:
+Firestore metadata serving is inactive for this refactor. Release manifests and
+release indexes should record:
 
-```text
-{asset-root}/index-loads/YYYY-MM-DD/{load-id}.json
+```json
+{
+  "index_load_status": "Firestore metadata serving is inactive",
+  "index_status_policy": {
+    "mode": "inactive_firestore_serving",
+    "path": null
+  }
+}
 ```
 
-Do not rewrite release manifests to update index load status. To rebuild an
-index, read the canonical sidecar for the release, write a new immutable
-Firestore load under
-`feature_metadata/{asset_slug}/releases/{release}/loads/{load_id}/features/`,
-validate counts and sample lookups, write the `ext_id -> feature_id` mapping
-for public-handle lookup, then write a new index-load record through the
-protected `Feature metadata index load` workflow. The service reads only the
-`load_id` selected from the newest successful matching index-load record.
+Do not dispatch `.github/workflows/feature-metadata-index-load.yml`, rebuild a
+Firestore database, or load production/preview indexes as part of this contract
+change. `scripts/feature_metadata_index.py` and the workflow files remain as
+dormant implementation plumbing only. Local dry-run validation may still inspect
+sidecar/schema/manifest bundles, but it must not write Firestore or publish
+serving index records.
 
-Dispatch `.github/workflows/feature-metadata-index-load.yml` in the
-`shared-datasets-production` environment with:
+Operational checks while serving is inactive:
 
-- Exact `asset_slug`.
-- Concrete `release` date in `YYYY-MM-DD` form.
-- Canonical release `sidecar_uri`, `schema_uri`, and `manifest_uri`.
-- Exact object generations for those three objects.
-- Optional `load_id`; when omitted the workflow uses
-  `github-{run_id}-{run_attempt}`.
-
-The workflow authenticates as `metadata-index-loader`, downloads each canonical
-object with the supplied generation precondition, runs
-`scripts/feature_metadata_index.py` without `--dry-run`, writes a local
-index-load record, and uploads that record no-clobber to:
-
-```text
-{asset-root}/index-loads/{release}/{load-id}.json
-```
-
-For local preflight only, maintainers may run
-`scripts/feature_metadata_index.py --dry-run` against downloaded artifacts to
-validate the sidecar/schema/manifest bundle and count the sidecar without
-writing Firestore or publishing an index-load record.
-
-Operational checks:
-
-- Sidecar row count equals Firestore document count for the selected load.
-- Sample feature IDs from PMTiles exist in Firestore.
-- Sample public `ext_id` values resolve through `lookupByExtId` to the expected
-  feature IDs.
-- Firestore documents preserve `feature_id`, `feature_hash`, `properties`, and
-  provenance.
-- The latest release index resolves to the same release used during index load.
-- Cloud Run metadata service error logs and Firestore lookup failures are
-  monitored.
+- Sidecar row count matches the release schema and manifest.
+- PMTiles lookup properties contain `feature_id` only.
+- Canonical metadata sidecars preserve `feature_id`, `geometry_hash`,
+  `properties_hash`, `properties`, and provenance.
+- Release manifests and release indexes both carry the inactive Firestore
+  serving policy.
 
 The production `Feature metadata service deploy` workflow is deferred by
 default while Firestore serving remains disabled. It exits green after a

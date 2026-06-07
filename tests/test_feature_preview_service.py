@@ -103,29 +103,31 @@ class FakeIndex:
     ):
         self.last_lookup = (asset_slug, release, feature_ids, sidecar_uri, sidecar_generation)
         return {
-            "src:id:1": {
-                "feature_id": "src:id:1",
-                "feature_hash": "sha256:a",
-                "properties": {"ext_id": "1", "name": "A", "status": "active"},
+            "1": {
+                "feature_id": "1",
+                "geometry_hash": "sha256:g",
+                "properties_hash": "sha256:a",
+                "properties": {"feature_id": "1", "name": "A", "status": "active"},
                 "provenance": {"source": "test"},
             }
         }
 
-    def lookup_by_ext_ids(
+    def lookup_by_feature_ids(
         self,
         asset_slug: str,
         release: str,
-        ext_ids: list[str],
+        feature_ids: list[str],
         *,
         sidecar_uri: str,
         sidecar_generation: int | None,
     ):
-        self.last_ext_lookup = (asset_slug, release, ext_ids, sidecar_uri, sidecar_generation)
+        self.last_ext_lookup = (asset_slug, release, feature_ids, sidecar_uri, sidecar_generation)
         return {
             "1": {
-                "feature_id": "src:id:1",
-                "feature_hash": "sha256:a",
-                "properties": {"ext_id": "1", "name": "A", "status": "active"},
+                "feature_id": "1",
+                "geometry_hash": "sha256:g",
+                "properties_hash": "sha256:a",
+                "properties": {"feature_id": "1", "name": "A", "status": "active"},
                 "provenance": {"source": "test"},
             }
         }
@@ -181,13 +183,14 @@ def sidecar_bytes(records: list[dict]) -> bytes:
     return gzip.compress(("\n".join(lines) + "\n").encode("utf-8"))
 
 
-def sidecar_record(feature_id: str = "src:id:1", *, name: str = "A") -> dict:
+def sidecar_record(feature_id: str = "1", *, name: str = "A") -> dict:
     return {
         "asset_slug": "wdpa-marine",
         "release": "2026-06-01",
         "feature_id": feature_id,
-        "feature_hash": "sha256:a",
-        "properties": {"ext_id": feature_id.removeprefix("src:id:"), "name": name, "status": "active"},
+        "geometry_hash": "sha256:g",
+                "properties_hash": "sha256:a",
+        "properties": {"feature_id": feature_id.removeprefix("src:id:"), "name": name, "status": "active"},
         "provenance": {"source": "test"},
     }
 
@@ -239,7 +242,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {},
-            b'{"ids":["src:id:1"]}',
+            b'{"ids":["1"]}',
             release_resolver=FakeResolver(),
             feature_index=FakeIndex(),
         )
@@ -251,7 +254,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Forwarded-Email": "jona@skytruth.org"},
-            b'{"ids":["src:id:1"]}',
+            b'{"ids":["1"]}',
             release_resolver=FakeResolver(),
             feature_index=FakeIndex(),
         )
@@ -259,48 +262,48 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(response.status, 401)
 
     def test_lookup_resolves_latest_filters_fields_and_marks_missing_ids(self):
-        response, index = lookup({"ids": ["src:id:1", "src:id:2"], "fields": ["name"], "include_provenance": True})
+        response, index = lookup({"ids": ["1", "2"], "fields": ["name"], "include_provenance": True})
 
         self.assertEqual(response.status, 200)
-        self.assertEqual(index.last_lookup, ("wdpa-marine", "2026-06-01", ["src:id:1", "src:id:2"], SIDECAR_URI, 1001))
+        self.assertEqual(index.last_lookup, ("wdpa-marine", "2026-06-01", ["1", "2"], SIDECAR_URI, 1001))
         payload = json.loads(response.body)
         self.assertEqual(payload["resolved_release"], "2026-06-01")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
-        self.assertEqual(payload["items"][0]["ext_id"], "1")
-        self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
+        self.assertEqual(payload["items"][1], {"feature_id": "2", "found": False})
         self.assertIn("ETag", response.headers)
 
-    def test_lookup_by_ext_id_resolves_latest_filters_fields_and_marks_missing_ids(self):
+    def test_lookup_by_feature_id_resolves_latest_filters_fields_and_marks_missing_ids(self):
         response, index = lookup(
-            {"ext_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": False},
-            path="/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+            {"feature_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": False},
+            path="/v1/assets/wdpa-marine/releases/latest:lookup",
         )
 
         self.assertEqual(response.status, 200)
-        self.assertEqual(index.last_ext_lookup, ("wdpa-marine", "2026-06-01", ["1", "2"], SIDECAR_URI, 1001))
+        self.assertEqual(index.last_lookup, ("wdpa-marine", "2026-06-01", ["1", "2"], SIDECAR_URI, 1001))
         payload = json.loads(response.body)
         self.assertEqual(payload["resolved_release"], "2026-06-01")
-        self.assertEqual(payload["items"][0]["feature_id"], "src:id:1")
-        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertNotIn("provenance", payload["items"][0])
-        self.assertEqual(payload["items"][1], {"ext_id": "2", "found": False})
-        self.assertEqual(payload["items"][2]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][1], {"feature_id": "2", "found": False})
+        self.assertEqual(payload["items"][2]["feature_id"], "1")
         self.assertIn("ETag", response.headers)
 
-    def test_lookup_by_ext_id_rejects_invalid_public_ids(self):
+    def test_lookup_by_feature_id_rejects_invalid_public_ids(self):
         response, _index = lookup(
-            {"ext_ids": ["src:id:1"]},
-            path="/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+            {"feature_ids": ["bad-id"]},
+            path="/v1/assets/wdpa-marine/releases/latest:lookup",
         )
 
         self.assertEqual(response.status, 400)
         self.assertEqual(json.loads(response.body)["error"]["code"], "invalid_request")
 
     def test_lookup_supports_etag_not_modified(self):
-        response, _index = lookup({"ids": ["src:id:1"]})
-        cached, _index = lookup({"ids": ["src:id:1"]}, headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org", "If-None-Match": response.headers["ETag"]})
+        response, _index = lookup({"ids": ["1"]})
+        cached, _index = lookup({"ids": ["1"]}, headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org", "If-None-Match": response.headers["ETag"]})
 
         self.assertEqual(cached.status, 304)
         self.assertEqual(cached.body, b"")
@@ -316,7 +319,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-            json.dumps({"ids": ["src:id:1", "src:id:2"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
+            json.dumps({"ids": ["1", "2"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
             release_resolver=FakeResolver(),
             feature_index=index,
         )
@@ -325,11 +328,11 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
-        self.assertEqual(payload["items"][0]["ext_id"], "1")
-        self.assertEqual(payload["items"][1], {"feature_id": "src:id:2", "found": False})
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
+        self.assertEqual(payload["items"][1], {"feature_id": "2", "found": False})
         self.assertEqual(sidecar_blob.download_count, 1)
 
-    def test_sidecar_cache_supports_lookup_by_ext_id(self):
+    def test_sidecar_cache_supports_lookup_by_feature_id(self):
         sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record()]), generation=1001)
         index = run.GcsSidecarFeatureIndex(
             bucket_name=PREVIEW_BUCKET,
@@ -338,21 +341,21 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
         response = run.handle_request(
             "POST",
-            "/v1/assets/wdpa-marine/releases/latest:lookupByExtId",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-            json.dumps({"ext_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
+            json.dumps({"feature_ids": ["1", "2", "1"], "fields": ["name"], "include_provenance": True}).encode("utf-8"),
             release_resolver=FakeResolver(),
             feature_index=index,
         )
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["items"][0]["feature_id"], "src:id:1")
-        self.assertEqual(payload["items"][0]["ext_id"], "1")
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
+        self.assertEqual(payload["items"][0]["feature_id"], "1")
         self.assertEqual(payload["items"][0]["properties"], {"name": "A"})
         self.assertEqual(payload["items"][0]["provenance"], {"source": "test"})
-        self.assertEqual(payload["items"][1], {"ext_id": "2", "found": False})
-        self.assertEqual(payload["items"][2]["feature_id"], "src:id:1")
+        self.assertEqual(payload["items"][1], {"feature_id": "2", "found": False})
+        self.assertEqual(payload["items"][2]["feature_id"], "1")
         self.assertEqual(sidecar_blob.download_count, 1)
 
     def test_sidecar_cache_reuses_loaded_release(self):
@@ -367,7 +370,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
                 "POST",
                 "/v1/assets/wdpa-marine/releases/latest:lookup",
                 {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-                json.dumps({"ids": ["src:id:1"]}).encode("utf-8"),
+                json.dumps({"ids": ["1"]}).encode("utf-8"),
                 release_resolver=FakeResolver(),
                 feature_index=index,
             )
@@ -376,19 +379,19 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(sidecar_blob.download_count, 1)
 
     def test_sidecar_cache_key_includes_generation(self):
-        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("src:id:1", name="A")]), generation=1001)
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1", name="A")]), generation=1001)
         index = run.GcsSidecarFeatureIndex(
             bucket_name=PREVIEW_BUCKET,
             client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
         )
 
-        first = index.lookup("wdpa-marine", "2026-06-01", ["src:id:1"], sidecar_uri=SIDECAR_URI, sidecar_generation=1001)
-        sidecar_blob.payload = sidecar_bytes([sidecar_record("src:id:2", name="B")])
+        first = index.lookup("wdpa-marine", "2026-06-01", ["1"], sidecar_uri=SIDECAR_URI, sidecar_generation=1001)
+        sidecar_blob.payload = sidecar_bytes([sidecar_record("2", name="B")])
         sidecar_blob.generation = 1002
-        second = index.lookup("wdpa-marine", "2026-06-01", ["src:id:2"], sidecar_uri=SIDECAR_URI, sidecar_generation=1002)
+        second = index.lookup("wdpa-marine", "2026-06-01", ["2"], sidecar_uri=SIDECAR_URI, sidecar_generation=1002)
 
-        self.assertEqual(first["src:id:1"]["properties"]["name"], "A")
-        self.assertEqual(second["src:id:2"]["properties"]["name"], "B")
+        self.assertEqual(first["1"]["properties"]["name"], "A")
+        self.assertEqual(second["2"]["properties"]["name"], "B")
         self.assertEqual(sidecar_blob.download_count, 2)
 
     def test_missing_metadata_sidecar_file_returns_not_ready(self):
@@ -402,7 +405,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-            b'{"ids":["src:id:1"]}',
+            b'{"ids":["1"]}',
             release_resolver=resolver,
             feature_index=FakeIndex(),
         )
@@ -417,7 +420,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-            b'{"ids":["src:id:1"]}',
+            b'{"ids":["1"]}',
             release_resolver=FakeResolver(),
             feature_index=index,
         )
@@ -436,7 +439,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "POST",
             "/v1/assets/wdpa-marine/releases/latest:lookup",
             {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-            b'{"ids":["src:id:1"]}',
+            b'{"ids":["1"]}',
             release_resolver=FakeResolver(),
             feature_index=index,
         )
@@ -445,17 +448,16 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(json.loads(response.body)["error"]["code"], "index_unavailable")
 
     def test_bad_sidecar_contents_return_not_ready(self):
-        duplicate = sidecar_record("src:id:1")
-        unsafe_ext_id = sidecar_record("src:id:3")
-        unsafe_ext_id["properties"]["ext_id"] = "bad-id"
-        duplicate_ext_id = sidecar_record("src:id:2")
-        duplicate_ext_id["properties"]["ext_id"] = "1"
+        duplicate = sidecar_record("1")
+        unsafe_feature_id = sidecar_record("badid")
+        unsafe_feature_id["feature_id"] = "bad-id"
+        duplicate_feature_id = sidecar_record("1")
         cases = {
             "bad gzip": b"not gzip",
             "bad ndjson": gzip.compress(b"{bad\n"),
             "duplicate feature_id": sidecar_bytes([duplicate, duplicate]),
-            "invalid ext_id": sidecar_bytes([unsafe_ext_id]),
-            "duplicate ext_id": sidecar_bytes([sidecar_record("src:id:1"), duplicate_ext_id]),
+            "invalid feature_id": sidecar_bytes([unsafe_feature_id]),
+            "duplicate feature_id": sidecar_bytes([sidecar_record("1"), duplicate_feature_id]),
         }
 
         for label, payload in cases.items():
@@ -470,7 +472,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
                     "POST",
                     "/v1/assets/wdpa-marine/releases/latest:lookup",
                     {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-                    b'{"ids":["src:id:1"]}',
+                    b'{"ids":["1"]}',
                     release_resolver=FakeResolver(),
                     feature_index=index,
                 )

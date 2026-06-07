@@ -16,8 +16,8 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 SCHEMA_VERSION = 1
 RELEASE_INDEX_PREFIX = "_catalog/releases"
 RELEASE_INDEX_CONTENT_TYPE = "application/json"
-INDEX_LOAD_STATUS = "tracked in index-loads/"
-INDEX_STATUS_MODE = "external_index_load_records"
+INDEX_LOAD_STATUS = "Firestore metadata serving is inactive"
+INDEX_STATUS_MODE = "inactive_firestore_serving"
 
 FORMAT_EXTENSIONS = {
     ".metadata.ndjson.gz": "metadata",
@@ -256,22 +256,13 @@ def release_file_for_format(files: list[dict[str, Any]], format_name: str) -> di
     return None
 
 
-def index_status_policy_for_release(files: list[dict[str, Any]], release: str) -> dict[str, str] | None:
+def index_status_policy_for_release(files: list[dict[str, Any]], release: str) -> dict[str, Any] | None:
     metadata_entry = canonical_metadata_file(files)
     if not metadata_entry or not release_file_for_format(files, "schema") or not release_file_for_format(files, "manifest"):
         return None
-    path = str(metadata_entry.get("path") or "")
-    try:
-        bucket_name, object_name = split_gs_uri(path)
-    except ReleaseIndexError:
-        return None
-    marker = f"/releases/{release}/"
-    if marker not in object_name:
-        return None
-    asset_root = object_name.split(marker, 1)[0]
     return {
         "mode": INDEX_STATUS_MODE,
-        "path": f"gs://{bucket_name}/{asset_root}/index-loads/{release}/",
+        "path": None,
     }
 
 

@@ -109,7 +109,7 @@ The standard vector build is:
 3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
 4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe, using explicit
    tileset name, description, min/max zoom metadata, and compact property
-   filters such as `feature_id` and `ext_id` when metadata lookup is enabled.
+   filters such as `feature_id` when metadata lookup is enabled.
 5. Convert the MBTiles archive to `.pmtiles` with `pmtiles convert`. Lower than
    zoom 8 requires source/profile evidence or a documented override.
 6. Validate the FGB with `ogrinfo`, confirm PMTiles v3 magic bytes, run
@@ -119,7 +119,7 @@ The standard vector build is:
 
 Release-oriented vector assets add a feature metadata layer before publication.
 Normalize the source into a release feature model with `feature_id`,
-`feature_hash`, full properties, provenance, and validation. From that model,
+`properties_hash`, full properties, provenance, and validation. From that model,
 publish the FGB, PMTiles, metadata sidecar, schema, and manifest together:
 
 ```text
@@ -133,20 +133,18 @@ releases/YYYY-MM-DD/{asset-slug}.pmtiles
 releases/YYYY-MM-DD/{asset-slug}.metadata.ndjson.gz
 releases/YYYY-MM-DD/{asset-slug}.schema.json
 releases/YYYY-MM-DD/{asset-slug}.manifest.json
-index-loads/YYYY-MM-DD/{load-id}.json
 ```
 
 Use `scripts/release_feature_model.py` helpers for stable JSON hashing,
-provider/composite/generated `feature_id` construction, `feature_hash`
-calculation, sidecar serialization, sidecar validation, manifest creation, and
-index-load record naming. Sidecars and manifests are canonical GCS artifacts;
-the Firestore index is a rebuildable serving copy loaded from the sidecar.
-Every release-oriented row has a `feature_id`. If the maintainer chooses
-neither a provider ID nor a group ID for `ext_id`, publish `ext_id` as the same
-value as `feature_id`.
+source-field or generated `feature_id` construction, geometry/properties hash
+calculation, sidecar serialization, sidecar validation, and manifest creation.
+Sidecars and manifests are canonical GCS artifacts. Firestore serving and
+index-load records are inactive dormant plumbing for now. Every
+release-oriented row has a `feature_id`; if no valid source field exists, use a
+generated monotonic decimal `feature_id`.
 
 To build PMTiles for metadata lookup, filter tile properties down to only the
-stable feature ID and lookup key:
+stable feature ID:
 
 ```bash
 uv run python scripts/vector_asset.py build ./source.fgb \
@@ -154,32 +152,23 @@ uv run python scripts/vector_asset.py build ./source.fgb \
   --pmtiles-feature-id-property feature_id
 ```
 
-This keeps PMTiles lightweight with `feature_id` and `ext_id` properties while
-preserving click-to-metadata joins through the Cloud Run metadata service.
+This keeps PMTiles lightweight with `feature_id` only while preserving
+click-to-metadata joins through the metadata sidecar contract.
 
-Generated group IDs are opt-in. Present provider ID candidates and
-grouping/search field candidates before adding `--group-id-field`. Use the
-standard concierge decision table: row/column counts plus likely provider
-`ext_id` options, the generated numeric sequence fallback, and likely
-grouping/search/filter options, each with datatype, distinction, emptiness,
-domination, skew ratio, top examples, and concerns. Provider or group fields may
-be used as `ext_id` only when every value is unique, nonblank, and matches
-`^[A-Za-z0-9]{1,64}$`. Run
-exact stats on all local rows when practical; if that is too expensive, use a
-deterministic random sample of about 10,000 rows, not a first-N-row sample. When
-a curator chooses group-level addressing for an asset that lacks a useful
-provider row ID, pass `--group-id-field FIELD` to `scripts/vector_asset.py
-build`, repeating the flag for composite grouping fields. The helper writes
-`shared_datasets_group_id` before FGB creation and validates that the property
-survives into decoded PMTiles features.
+Present source field candidates before choosing identity. Use the standard
+concierge decision table: row/column counts plus likely source fields, the
+generated numeric sequence fallback, and likely search/filter fields, each with
+datatype, distinction, emptiness, domination, skew ratio, top examples, and
+concerns. A source field may be used as `feature_id` only when every value is
+unique, nonblank, and matches `^[A-Za-z0-9]{1,64}$`. Run exact stats on all local
+rows when practical; if that is too expensive, use a deterministic random sample
+of about 10,000 rows, not a first-N-row sample.
 
-If no provider ID or grouping field is suitable and the curator explicitly
-requires row-level addresses, pass `--generate-row-id` instead. This writes
-`shared_datasets_row_id` using `shared-datasets-row-id:v1`: canonical OGR
-EPSG:4326 geometry hashes per feature, duplicate geometries disambiguated by
-source feature order, and the same base62 collision policy as group IDs. This is
-a last-resort row address, not a provider/entity/group ID, and must not be
-combined with `--group-id-field`.
+If no source field is suitable, generate monotonic decimal `feature_id` values
+from an approved assignment key or from the pair of stored `geometry_hash` and
+`properties_hash` values. The generated ID assignment must be recorded in the
+manifest `identity` block, including hash algorithm, canonicalization version,
+assignment key, previous release, and next generated ID when applicable.
 
 For corrective PMTiles-only rebuilds on a versioned asset, replace the
 `latest/*.pmtiles` object and the PMTiles object under the matching canonical
@@ -188,32 +177,10 @@ new dated release directory that contains only PMTiles unless PMTiles is the
 canonical format; release-index dates should correspond to releases that include
 the canonical asset file.
 
-For localized display names, the canonical FGB remains the geometry and
-analytical source and must contain unique nonblank `ext_id` values. PMTiles
-carry `feature_id` and `ext_id` only; store fallback and translated display
-names in a same-asset CSV sidecar named
-`{asset-slug}-localizations.csv` with required columns `ext_id`, `name`, and
-`name_review_state`, plus optional `name_{locale_code}` /
-`name_{locale_code}_review_state` pairs. Use:
-
-```bash
-uv run python scripts/localized_vector_asset.py seed-localizations \
-  --fgb ./example-asset.fgb \
-  --ext-id-field ext_id \
-  --fallback-name-field source_name \
-  --localizations ./example-asset-localizations.csv
-
-uv run python scripts/localized_vector_asset.py validate-localizations \
-  --fgb ./example-asset.fgb \
-  --localizations ./example-asset-localizations.csv \
-  --asset-doc docs/assets/example-asset.md
-```
-
-A translation-only release should stage a byte-identical current FGB copy for
-`releases/YYYY-MM-DD/`, the updated localization CSV for release and `latest/`,
-and a byte-identical current PMTiles copy for release and `latest/`. Reload or
-refresh the metadata index so display-label lookups see the updated CSV-derived
-metadata. Do not update `latest/{asset-slug}.fgb` for translation-only changes.
+For localized metadata, keep the canonical FGB as the geometry and analytical
+source and store translations in `metadata-translations.csv` plus generated
+locale sidecars. Translation rows are keyed by `feature_id`, `field`, `locale`,
+and `source_value_hash`. Do not use the retired localized-name CSV workflow.
 
 `--tile-simplify` is for dense display tiles only. It is applied in the streamed
 PMTiles conversion and does not simplify the canonical FGB.
@@ -237,7 +204,7 @@ uv run python scripts/vector_asset.py build ./source.fgb \
 The helper exports a WGS84 GeoJSONSeq tile source with GDAL, builds temporary
 MBTiles with Tippecanoe, and converts that archive with `pmtiles convert`. Do
 not use the old GDAL-based projection path; metadata-lookup SQL that selected
-`feature_id` and `ext_id` failed to carry geometry through and produced empty
+`feature_id` failed to carry geometry through and produced empty
 or bad MBTiles output.
 
 Use this for point catalogs because shared point PMTiles should keep all point

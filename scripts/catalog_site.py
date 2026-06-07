@@ -50,22 +50,10 @@ MARKDOWN_TABLE_RE = re.compile(r"^\s*\|.*\|\s*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 REFERENTIAL_TERMS_RE = re.compile(r"\bsee\b.{0,80}\bterms\b")
 IDENTITY_CANDIDATE_STATUSES = {"unique", "non_unique", "unknown", "not_applicable"}
-GENERATED_GROUP_ID_ALGORITHM = "shared-datasets-group-id:v1"
-GENERATED_GROUP_ID_COLUMN = "shared_datasets_group_id"
-GENERATED_ROW_ID_ALGORITHM = "shared-datasets-row-id:v1"
-GENERATED_ROW_ID_COLUMN = "shared_datasets_row_id"
 FEATURE_METADATA_STORAGE = "metadata_sidecar_v1"
-FEATURE_METADATA_INDEX_BACKEND = "firestore"
 FEATURE_METADATA_FEATURE_ID_COLUMN = "feature_id"
-FEATURE_METADATA_FEATURE_HASH_COLUMN = "feature_hash"
-LOCALIZED_NAMES_PROPERTY_TEMPLATE = "name_{locale_code}"
-LOCALIZED_NAMES_LOCALE_CODE_FORMAT = "bcp47_field_safe"
-LOCALIZED_NAME_STORAGE = "localization_csv_v1"
-LOCALIZED_NAMES_JOIN_KEY = "ext_id"
-LOCALIZED_NAMES_FALLBACK_FIELD = "name"
-LOCALIZED_NAMES_LOCALIZATION_SUFFIX = "-localizations.csv"
-LOCALIZED_NAME_REVIEW_STATES = {"source_provided", "machine_translated", "human_reviewed", "mixed"}
-FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
+FEATURE_METADATA_GEOMETRY_HASH_COLUMN = "geometry_hash"
+FEATURE_METADATA_PROPERTIES_HASH_COLUMN = "properties_hash"
 
 
 class CatalogSiteError(ValueError):
@@ -107,8 +95,7 @@ class CatalogAsset:
     canonical_format: str
     available_formats: list[str]
     metadata_paths: list[str]
-    localized_name_locales: list[str]
-    localized_name_review_states: list[str]
+    feature_identity: dict[str, Any] | None
     has_pmtiles: bool
     has_geojson: bool
     has_csv: bool
@@ -125,10 +112,7 @@ class CatalogAsset:
     row_count: int | None
     data_profile: dict[str, Any] | None
     search_fields: list[dict[str, Any]]
-    localized_names: dict[str, Any] | None
     feature_metadata: dict[str, Any] | None
-    generated_group_id: dict[str, Any] | None
-    generated_row_id: dict[str, Any] | None
     source_url: str | None
     public_url: str
     pmtiles_path: str | None
@@ -428,97 +412,34 @@ def normalize_locale_code(value: Any, *, context: str, doc_path: Path) -> str:
     return locale_code
 
 
-def optional_localized_names(metadata: dict[str, Any], *, doc_path: Path) -> dict[str, Any] | None:
-    raw_names = metadata.get("localized_names")
-    if raw_names in (None, ""):
+def optional_feature_identity(metadata: dict[str, Any], *, doc_path: Path) -> dict[str, Any] | None:
+    value = metadata.get("feature_identity")
+    if value in (None, ""):
         return None
-    if not isinstance(raw_names, dict):
-        raise CatalogSiteError(f"{doc_path}: localized_names must be a mapping")
-    storage = str(raw_names.get("storage") or "").strip()
-    if storage != LOCALIZED_NAME_STORAGE:
-        raise CatalogSiteError(f"{doc_path}: localized_names.storage must be {LOCALIZED_NAME_STORAGE!r}")
-    join_key = str(raw_names.get("join_key") or "").strip()
-    if join_key != LOCALIZED_NAMES_JOIN_KEY:
-        raise CatalogSiteError(f"{doc_path}: localized_names.join_key must be {LOCALIZED_NAMES_JOIN_KEY!r}")
-    localization_file = str(raw_names.get("localization_file") or "").strip()
-    if not localization_file:
-        raise CatalogSiteError(f"{doc_path}: localized_names.localization_file is required")
-    if not localization_file.startswith("latest/") or not localization_file.endswith(LOCALIZED_NAMES_LOCALIZATION_SUFFIX):
-        raise CatalogSiteError(
-            f"{doc_path}: localized_names.localization_file must be latest/{{asset-slug}}{LOCALIZED_NAMES_LOCALIZATION_SUFFIX}"
-        )
-    property_template = str(raw_names.get("property_template") or "").strip()
-    if property_template != LOCALIZED_NAMES_PROPERTY_TEMPLATE:
-        raise CatalogSiteError(
-            f"{doc_path}: localized_names.property_template must be {LOCALIZED_NAMES_PROPERTY_TEMPLATE!r}"
-        )
-    locale_code_format = str(raw_names.get("locale_code_format") or "").strip()
-    if locale_code_format != LOCALIZED_NAMES_LOCALE_CODE_FORMAT:
-        raise CatalogSiteError(
-            f"{doc_path}: localized_names.locale_code_format must be {LOCALIZED_NAMES_LOCALE_CODE_FORMAT!r}"
-        )
-    fallback_field = str(raw_names.get("fallback_field") or "").strip()
-    if fallback_field != LOCALIZED_NAMES_FALLBACK_FIELD:
-        raise CatalogSiteError(f"{doc_path}: localized_names.fallback_field must be {LOCALIZED_NAMES_FALLBACK_FIELD!r}")
-    raw_translations = raw_names.get("translations", [])
-    if not isinstance(raw_translations, list):
-        raise CatalogSiteError(f"{doc_path}: localized_names.translations must be a list")
-
-    translations: list[dict[str, str]] = []
-    seen_locales: set[str] = set()
-    seen_fields: set[str] = set()
-    seen_review_state_fields: set[str] = set()
-    for index, raw_translation in enumerate(raw_translations, start=1):
-        context = f"localized_names.translations[{index}]"
-        if not isinstance(raw_translation, dict):
-            raise CatalogSiteError(f"{doc_path}: {context} must be a mapping")
-        locale_code = normalize_locale_code(raw_translation.get("locale_code"), context=f"{context}.locale_code", doc_path=doc_path)
-        field = str(raw_translation.get("field") or "").strip()
-        expected_field = f"name_{locale_code}"
-        if field != expected_field:
-            raise CatalogSiteError(f"{doc_path}: {context}.field must be {expected_field!r}")
-        review_state_field = str(raw_translation.get("review_state_field") or "").strip()
-        expected_review_state_field = f"{expected_field}_review_state"
-        if review_state_field != expected_review_state_field:
-            raise CatalogSiteError(f"{doc_path}: {context}.review_state_field must be {expected_review_state_field!r}")
-        if locale_code in seen_locales:
-            raise CatalogSiteError(f"{doc_path}: localized_names locale_code {locale_code!r} is duplicated")
-        if field in seen_fields:
-            raise CatalogSiteError(f"{doc_path}: localized_names field {field!r} is duplicated")
-        if review_state_field in seen_review_state_fields:
-            raise CatalogSiteError(f"{doc_path}: localized_names review_state_field {review_state_field!r} is duplicated")
-        seen_locales.add(locale_code)
-        seen_fields.add(field)
-        seen_review_state_fields.add(review_state_field)
-        translation = {"locale_code": locale_code, "field": field, "review_state_field": review_state_field}
-        label = str(raw_translation.get("label") or "").strip()
-        if label:
-            translation["label"] = label
-        elif "label" in raw_translation:
-            raise CatalogSiteError(f"{doc_path}: {context}.label must be non-empty when provided")
-        review_state = str(raw_translation.get("review_state") or "").strip()
-        if not review_state:
-            raise CatalogSiteError(f"{doc_path}: {context}.review_state is required")
-        if review_state not in LOCALIZED_NAME_REVIEW_STATES:
-            allowed = ", ".join(sorted(LOCALIZED_NAME_REVIEW_STATES))
-            raise CatalogSiteError(f"{doc_path}: {context}.review_state must be one of: {allowed}")
-        translation["review_state"] = review_state
-        translations.append(translation)
-
+    if not isinstance(value, dict):
+        raise CatalogSiteError(f"{doc_path}: feature_identity must be a mapping")
+    strategy = str(value.get("strategy") or "").strip()
+    if strategy not in {"source_field", "generated_sequence_source_fields", "generated_sequence_content_hash"}:
+        raise CatalogSiteError(f"{doc_path}: feature_identity.strategy is unsupported")
+    source_fields = value.get("source_fields", [])
+    if not isinstance(source_fields, list):
+        raise CatalogSiteError(f"{doc_path}: feature_identity.source_fields must be a list")
     normalized: dict[str, Any] = {
-        "storage": storage,
-        "join_key": join_key,
-        "localization_file": localization_file,
-        "property_template": property_template,
-        "locale_code_format": locale_code_format,
-        "fallback_field": fallback_field,
+        "strategy": strategy,
+        "source_fields": [str(field).strip() for field in source_fields if str(field).strip()],
     }
-    fallback_locale = str(raw_names.get("fallback_locale") or "").strip()
-    if fallback_locale:
-        fallback_locale = normalize_locale_code(fallback_locale, context="localized_names.fallback_locale", doc_path=doc_path)
-        normalized["fallback_locale"] = fallback_locale
-    normalized["available_locales"] = [translation["locale_code"] for translation in translations]
-    normalized["translations"] = translations
+    if strategy == "source_field" and not normalized["source_fields"]:
+        raise CatalogSiteError(f"{doc_path}: feature_identity.source_fields is required for source_field strategy")
+    if strategy.startswith("generated_sequence"):
+        generated_type = str(value.get("generated_id_type") or "").strip()
+        if generated_type:
+            if generated_type != "monotonic_integer_string":
+                raise CatalogSiteError(f"{doc_path}: feature_identity.generated_id_type must be monotonic_integer_string")
+            normalized["generated_id_type"] = generated_type
+        assignment_key = value.get("assignment_key", [])
+        if not isinstance(assignment_key, list):
+            raise CatalogSiteError(f"{doc_path}: feature_identity.assignment_key must be a list")
+        normalized["assignment_key"] = [str(part).strip() for part in assignment_key if str(part).strip()]
     return normalized
 
 
@@ -530,9 +451,9 @@ def optional_feature_metadata(metadata: dict[str, Any], *, asset_slug: str, doc_
         raise CatalogSiteError(f"{doc_path}: feature_metadata must be a mapping")
     expected = {
         "storage": FEATURE_METADATA_STORAGE,
-        "index_backend": FEATURE_METADATA_INDEX_BACKEND,
         "feature_id_column": FEATURE_METADATA_FEATURE_ID_COLUMN,
-        "feature_hash_column": FEATURE_METADATA_FEATURE_HASH_COLUMN,
+        "geometry_hash_column": FEATURE_METADATA_GEOMETRY_HASH_COLUMN,
+        "properties_hash_column": FEATURE_METADATA_PROPERTIES_HASH_COLUMN,
         "sidecar_file": f"latest/{asset_slug}.metadata.ndjson.gz",
         "schema_file": f"latest/{asset_slug}.schema.json",
         "manifest_file": f"latest/{asset_slug}.manifest.json",
@@ -546,142 +467,6 @@ def optional_feature_metadata(metadata: dict[str, Any], *, asset_slug: str, doc_
     if value.get("provenance_default") is not True:
         raise CatalogSiteError(f"{doc_path}: feature_metadata.provenance_default must be true")
     normalized["provenance_default"] = True
-    return normalized
-
-
-def localized_name_review_states(localized_names: dict[str, Any] | None) -> list[str]:
-    if not localized_names:
-        return []
-    translations = localized_names.get("translations")
-    if not isinstance(translations, list):
-        return []
-    return [
-        f"{translation['locale_code']}:{translation['review_state']}"
-        for translation in translations
-        if isinstance(translation, dict) and translation.get("locale_code") and translation.get("review_state")
-    ]
-
-
-def optional_generated_group_id(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
-    raw_group_id = metadata.get("generated_group_id")
-    if raw_group_id in (None, ""):
-        return None
-    if not isinstance(raw_group_id, dict):
-        raise CatalogSiteError(f"{doc_path}: generated_group_id must be a mapping")
-    column = str(raw_group_id.get("column") or "").strip()
-    if column != GENERATED_GROUP_ID_COLUMN:
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.column must be {GENERATED_GROUP_ID_COLUMN}")
-    algorithm = str(raw_group_id.get("algorithm") or "").strip()
-    if algorithm != GENERATED_GROUP_ID_ALGORITHM:
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.algorithm must be {GENERATED_GROUP_ID_ALGORITHM}")
-    raw_fields = raw_group_id.get("grouping_fields")
-    if not isinstance(raw_fields, list):
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.grouping_fields must be a non-empty list")
-    grouping_fields = [str(field).strip() for field in raw_fields if str(field).strip()]
-    if not grouping_fields:
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.grouping_fields must be a non-empty list")
-    token_length = profile_int(
-        raw_group_id.get("token_length"),
-        label="generated_group_id.token_length",
-        doc_path=doc_path,
-        required=True,
-    )
-    if token_length is not None and token_length < 8:
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.token_length must be at least 8")
-    group_count = profile_int(
-        raw_group_id.get("group_count"),
-        label="generated_group_id.group_count",
-        doc_path=doc_path,
-        required=True,
-        row_count=row_count,
-    )
-    blank_group_count = profile_int(
-        raw_group_id.get("blank_group_count"),
-        label="generated_group_id.blank_group_count",
-        doc_path=doc_path,
-        row_count=row_count,
-    )
-    stability = str(raw_group_id.get("stability") or "").strip()
-    if not stability:
-        raise CatalogSiteError(f"{doc_path}: generated_group_id.stability is required")
-    normalized: dict[str, Any] = {
-        "column": column,
-        "algorithm": algorithm,
-        "grouping_fields": grouping_fields,
-        "token_length": token_length,
-        "group_count": group_count,
-        "stability": stability,
-    }
-    if blank_group_count is not None:
-        normalized["blank_group_count"] = blank_group_count
-    notes = str(raw_group_id.get("notes") or "").strip()
-    if notes:
-        normalized["notes"] = notes
-    return normalized
-
-
-def optional_generated_row_id(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
-    raw_row_id = metadata.get("generated_row_id")
-    if raw_row_id in (None, ""):
-        return None
-    if metadata.get("generated_group_id") not in (None, ""):
-        raise CatalogSiteError(f"{doc_path}: generated_group_id and generated_row_id are mutually exclusive")
-    if not isinstance(raw_row_id, dict):
-        raise CatalogSiteError(f"{doc_path}: generated_row_id must be a mapping")
-    column = str(raw_row_id.get("column") or "").strip()
-    if column != GENERATED_ROW_ID_COLUMN:
-        raise CatalogSiteError(f"{doc_path}: generated_row_id.column must be {GENERATED_ROW_ID_COLUMN}")
-    algorithm = str(raw_row_id.get("algorithm") or "").strip()
-    if algorithm != GENERATED_ROW_ID_ALGORITHM:
-        raise CatalogSiteError(f"{doc_path}: generated_row_id.algorithm must be {GENERATED_ROW_ID_ALGORITHM}")
-    token_length = profile_int(
-        raw_row_id.get("token_length"),
-        label="generated_row_id.token_length",
-        doc_path=doc_path,
-        required=True,
-    )
-    if token_length is not None and token_length < 8:
-        raise CatalogSiteError(f"{doc_path}: generated_row_id.token_length must be at least 8")
-    generated_row_count = profile_int(
-        raw_row_id.get("row_count"),
-        label="generated_row_id.row_count",
-        doc_path=doc_path,
-        required=True,
-        row_count=row_count,
-    )
-    duplicate_geometry_row_count = profile_int(
-        raw_row_id.get("duplicate_geometry_row_count"),
-        label="generated_row_id.duplicate_geometry_row_count",
-        doc_path=doc_path,
-        row_count=row_count,
-    )
-    duplicate_geometry_digest_count = profile_int(
-        raw_row_id.get("duplicate_geometry_digest_count"),
-        label="generated_row_id.duplicate_geometry_digest_count",
-        doc_path=doc_path,
-        row_count=row_count,
-    )
-    stability = str(raw_row_id.get("stability") or "").strip()
-    if not stability:
-        raise CatalogSiteError(f"{doc_path}: generated_row_id.stability is required")
-    warning = str(raw_row_id.get("warning") or "").strip()
-    if not warning:
-        raise CatalogSiteError(f"{doc_path}: generated_row_id.warning is required")
-    normalized: dict[str, Any] = {
-        "column": column,
-        "algorithm": algorithm,
-        "token_length": token_length,
-        "row_count": generated_row_count,
-        "stability": stability,
-        "warning": warning,
-    }
-    if duplicate_geometry_row_count is not None:
-        normalized["duplicate_geometry_row_count"] = duplicate_geometry_row_count
-    if duplicate_geometry_digest_count is not None:
-        normalized["duplicate_geometry_digest_count"] = duplicate_geometry_digest_count
-    notes = str(raw_row_id.get("notes") or "").strip()
-    if notes:
-        normalized["notes"] = notes
     return normalized
 
 
@@ -1031,21 +816,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
                 f"{slug}: release index latest_release.date {latest_release_date!r} does not match a release entry"
             )
     row_count = optional_int(doc_metadata, "row_count", doc_path=doc_path)
-    localized_names = optional_localized_names(doc_metadata, doc_path=doc_path)
-    if localized_names:
-        expected_localization_file = f"latest/{slug}{LOCALIZED_NAMES_LOCALIZATION_SUFFIX}"
-        if localized_names.get("localization_file") != expected_localization_file:
-            raise CatalogSiteError(
-                f"{doc_path}: localized_names.localization_file must be {expected_localization_file!r}"
-            )
-    localized_name_locales = localized_names["available_locales"] if localized_names else []
-    localized_name_review_state_values = localized_name_review_states(localized_names)
-    catalog_localized_name_locales = split_semicolon(row.get("localized_name_locales", ""))
-    if localized_name_locales != catalog_localized_name_locales:
-        raise CatalogSiteError(f"{doc_path}: localized_name_locales must match localized_names translations")
-    catalog_localized_name_review_states = split_semicolon(row.get("localized_name_review_states", ""))
-    if localized_name_review_state_values != catalog_localized_name_review_states:
-        raise CatalogSiteError(f"{doc_path}: localized_name_review_states must match localized_names translations")
+    feature_identity = optional_feature_identity(doc_metadata, doc_path=doc_path)
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -1063,8 +834,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         canonical_format=canonical_format,
         available_formats=formats,
         metadata_paths=metadata_paths,
-        localized_name_locales=localized_name_locales,
-        localized_name_review_states=localized_name_review_state_values,
+        feature_identity=feature_identity,
         has_pmtiles="pmtiles" in formats,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,
@@ -1081,10 +851,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         row_count=row_count,
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
-        localized_names=localized_names,
         feature_metadata=optional_feature_metadata(doc_metadata, asset_slug=slug, doc_path=doc_path),
-        generated_group_id=optional_generated_group_id(doc_metadata, row_count=row_count, doc_path=doc_path),
-        generated_row_id=optional_generated_row_id(doc_metadata, row_count=row_count, doc_path=doc_path),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,

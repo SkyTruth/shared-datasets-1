@@ -23,10 +23,10 @@ citation: Flanders Marine Institute (2023). Maritime Boundaries Geodatabase, Mar
   (2024). Maritime Boundaries Geodatabase, High Seas, version 2. Available online at https://www.marineregions.org/. https://doi.org/10.14284/696.
 notes: Initial reviewed shared-datasets release from the supplied FlatGeobuf World_EEZ_v12_20231025-World_High_Seas_v2_20241010.fgb;
   release 2026-06-06; source sha256 15a039d989c7fd8ad41231f041ca428101d6bb5202c8039f6ef00c21a85413fc. The release preserves
-  source geometry and attributes, adds provider feature_id values from MRGID, URL-safe ext_id values from MRGID, feature_hash
+  source geometry and attributes, adds source-field feature_id values from MRGID, feature_id values from MRGID, properties_hash
   values, canonical metadata/schema/manifest artifacts, and localized GEONAME metadata sidecars for es, fr, id, pt, pt_br,
-  and sw generated from Cerulean AOI translations. PMTiles are lightweight metadata-lookup tiles with feature_id and ext_id
-  only. Release history, source generations, row counts, and hashes are recorded in the bucket release index and per-run record.
+  and sw generated from Cerulean AOI translations. PMTiles are lightweight metadata-lookup tiles with feature_id only. Release
+  history, source generations, row counts, and hashes are recorded in the bucket release index and per-run record.
 admission:
   intended_consumers:
   - SkyTruth and Global Fishing Watch analysis workflows
@@ -56,7 +56,7 @@ data_profile:
     duplicate_value_count: 0
     duplicate_row_count: 0
     status: unique
-    notes: Unique and nonblank in all 286 rows; selected provider ID for feature_id and ext_id.
+    notes: Unique and nonblank in all 286 rows; selected source field ID for feature_id.
   - field: MRGID_EEZ
     distinct_values: 285
     duplicate_value_count: 0
@@ -67,7 +67,8 @@ feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/marine-regions-eez.metadata.ndjson.gz
   schema_file: latest/marine-regions-eez.schema.json
   manifest_file: latest/marine-regions-eez.manifest.json
@@ -76,11 +77,11 @@ files:
 - path: latest/marine-regions-eez.fgb
   format: fgb
   role: canonical
-  purpose: Canonical EEZ and high seas polygon dataset with source fields plus feature_id, ext_id, and feature_hash
+  purpose: Canonical EEZ and high seas polygon dataset with source fields plus feature_id, geometry_hash, and properties_hash
 - path: latest/marine-regions-eez.pmtiles
   format: pmtiles
   role: companion
-  purpose: Web map metadata-lookup tiles with feature_id and ext_id
+  purpose: Web map metadata-lookup tiles with feature_id
 - path: latest/marine-regions-eez.metadata.ndjson.gz
   format: ndjson_gzip
   role: metadata
@@ -206,7 +207,7 @@ map lookup use.
 
 - Use this for reusable global marine-boundary lookups, spatial joins, and map previews.
 - Use `feature_id` for stable shared-datasets feature addressing.
-- Use `ext_id` or `MRGID` when joining back to Marine Regions records.
+- Use `feature_id` or `MRGID` when joining back to Marine Regions records.
 - Use localized metadata sidecars when an application needs translated display names for `GEONAME`.
 
 ## Files
@@ -214,8 +215,8 @@ map lookup use.
 <!-- BEGIN GENERATED files-table -->
 | File | Format | Role | Purpose |
 |---|---|---|---|
-| `latest/marine-regions-eez.fgb` | `fgb` | `canonical` | Canonical EEZ and high seas polygon dataset with source fields plus feature_id, ext_id, and feature_hash |
-| `latest/marine-regions-eez.pmtiles` | `pmtiles` | `companion` | Web map metadata-lookup tiles with feature_id and ext_id |
+| `latest/marine-regions-eez.fgb` | `fgb` | `canonical` | Canonical EEZ and high seas polygon dataset with source fields plus feature_id, geometry_hash, and properties_hash |
+| `latest/marine-regions-eez.pmtiles` | `pmtiles` | `companion` | Web map metadata-lookup tiles with feature_id |
 | `latest/marine-regions-eez.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
 | `latest/marine-regions-eez.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from GEONAME translations |
 | `latest/marine-regions-eez.metadata.fr.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated French metadata sidecar materialized from GEONAME translations |
@@ -244,9 +245,9 @@ map lookup use.
 ## Schema notes
 
 The canonical FlatGeobuf has 286 MultiPolygon features in EPSG:4326. It includes
-the source fields plus generated `feature_id`, `ext_id`, and `feature_hash`
+the source fields plus generated `feature_id`, `geometry_hash`, and `properties_hash`
 columns. The PMTiles are metadata-lookup tiles and intentionally carry only
-`feature_id` and `ext_id`; applications should resolve labels and attributes
+`feature_id`; applications should resolve labels and attributes
 through the metadata sidecar or metadata index.
 
 ## Properties / columns
@@ -254,7 +255,7 @@ through the metadata sidecar or metadata index.
 | Field | Notes |
 |---|---|
 | `id` | Internal vector-helper identifier; use `feature_id` or `MRGID` for stable joins |
-| `MRGID` | Marine Regions identifier; selected provider ID and source for `feature_id` and `ext_id` |
+| `MRGID` | Marine Regions identifier; selected source field ID and source for `feature_id` |
 | `GEONAME` | Source boundary display name; translatable field in localized metadata sidecars |
 | `MRGID_TER1`, `MRGID_TER2`, `MRGID_TER3` | Marine Regions territory identifiers for claimant territories |
 | `POL_TYPE` | Source polygon type such as `200NM`, `Overlapping claim`, or `Joint regime` |
@@ -272,15 +273,15 @@ through the metadata sidecar or metadata index.
 | `source` | Source component label |
 | `layer` | Source layer label |
 | `path` | Source path label |
-| `feature_id` | Shared-datasets feature key, `src:MRGID:{MRGID}` |
-| `ext_id` | URL-safe external handle copied from `MRGID` |
-| `feature_hash` | Stable hash of normalized geometry and published nonvolatile properties |
+| `feature_id` | URL-safe lookup handle copied from `MRGID` |
+| `geometry_hash` | Stable hash of canonical feature geometry |
+| `properties_hash` | Stable hash of published non-geometry properties |
 
-## Provider ID and Search Decisions
+## Feature Identity Decisions
 
 | Field | Type | Rows | Nonblank | Distinct | Top value count | Domination | Skew | Decision | Concerns |
 |---|---:|---:|---:|---:|---:|---:|---:|---|---|
-| `MRGID` | Integer | 286 | 286 | 286 | 1 | 0.35% | 1.00 | Selected provider ID | None |
+| `MRGID` | Integer | 286 | 286 | 286 | 1 | 0.35% | 1.00 | Selected source field ID | None |
 | `MRGID_EEZ` | Integer | 286 | 285 | 285 | 1 | 0.35% | 1.00 | Rejected ID candidate | One blank value |
 | `GEONAME` | String | 286 | 285 | 285 | 1 | 0.35% | 1.00 | Search field | One blank value; display/search field |
 | `TERRITORY1` | String | 286 | 285 | 254 | 3 | 1.05% | 1.00 | Search field | One blank value; not unique |
@@ -288,9 +289,8 @@ through the metadata sidecar or metadata index.
 | `ISO_SOV1` | String | 286 | 285 | 157 | 23 | 8.04% | 1.35 | Search field | One blank value; not unique |
 | `POL_TYPE` | String | 286 | 285 | 3 | 229 | 80.07% | 6.54 | Search/filter field | One blank value; not unique |
 
-No shared-datasets-generated group ID or row ID is published for this first
-release. `MRGID` is unique, nonblank, and provider-maintained in the supplied
-source, so generated fallbacks are not needed.
+`MRGID` is unique, nonblank, and source-maintained in the supplied source, so
+the release uses the string form of `MRGID` directly as `feature_id`.
 
 ## Localized Metadata
 
@@ -303,7 +303,7 @@ The Cerulean source contains 282 EEZ translation rows. The supplied feature set
 matched 280 of those MRGIDs. Two Cerulean MRGIDs, `8489` and `33176`, were not
 present in the supplied FGB, and six supplied feature MRGIDs, `64430`, `64431`,
 `64440`, `64446`, `64459`, and `64460`, had no Cerulean translation row. The
-High Seas feature, `src:MRGID:63203`, has localized `name` values in all six
+High Seas feature, `63203`, has localized `name` values in all six
 locales because the canonical metadata record stores its display label in
 `name` rather than `GEONAME`. Each localized sidecar still preserves all 286
 feature records and falls back to canonical names where no localized value is

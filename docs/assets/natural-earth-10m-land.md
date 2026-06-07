@@ -24,22 +24,21 @@ notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1
   PMTiles rebuilt 2026-05-04 with zooms 0-8, no pre-tiling simplification, no line simplification, and no tiny-polygon reduction
   at maximum zoom for higher-zoom display fidelity; future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles
   to PMTiles conversion path; canonical FGB preserves source geometry and fields; metadata-contract release 2026-06-05 was
-  built from the unchanged 2026-04-30 release FGB and adds generated geometry-digest feature_id values, legacy non-URL-safe
-  ext_id values, feature_hash values, canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with only
-  feature_id and ext_id; fgb sha256 fba2554abe0e0d55eb79095538782b6691200950400ad258f418b84286461032; pmtiles sha256 45bc4178050c3704efe75381477ab2b829c389488e2573685b72c087d6c5e28b;
-  metadata sha256 2111661d1b0b43247e8d47771a79b3d49541f1f1c4d40f269fe14ef31dd4f030; schema sha256 05c1c4ab87d2fef7195fe140ece38371acb41340dee2779360b221dadb816a48;
-  manifest sha256 1c0bb60bba5c5432274f0c68d54ed5bb374e95518488b5559267444c636f6ce4
+  built from the unchanged 2026-04-30 release FGB and adds generated feature_id values, geometry_hash values, properties_hash
+  values, canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with only feature_id; fgb sha256 fba2554abe0e0d55eb79095538782b6691200950400ad258f418b84286461032;
+  pmtiles sha256 45bc4178050c3704efe75381477ab2b829c389488e2573685b72c087d6c5e28b; metadata sha256 2111661d1b0b43247e8d47771a79b3d49541f1f1c4d40f269fe14ef31dd4f030;
+  schema sha256 05c1c4ab87d2fef7195fe140ece38371acb41340dee2779360b221dadb816a48; manifest sha256 1c0bb60bba5c5432274f0c68d54ed5bb374e95518488b5559267444c636f6ce4
 row_count: 11
 data_profile:
   field_count: 6
   identity_candidates: []
-  notes: No documented source feature ID candidate; the 2026-06-05 metadata-contract release used legacy non-URL-safe ext_id
-    values and needs a corrective release with generated sequence handles.
+  notes: No documented source feature ID candidate; the metadata-contract release uses generated feature_id sequence handles.
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore
   feature_id_column: feature_id
-  feature_hash_column: feature_hash
+  geometry_hash_column: geometry_hash
+  properties_hash_column: properties_hash
   sidecar_file: latest/natural-earth-10m-land.metadata.ndjson.gz
   schema_file: latest/natural-earth-10m-land.schema.json
   manifest_file: latest/natural-earth-10m-land.manifest.json
@@ -53,7 +52,7 @@ files:
 - path: latest/natural-earth-10m-land.pmtiles
   format: pmtiles
   role: companion
-  purpose: Metadata-lookup tiles generated from the same source layer with only feature_id and ext_id properties
+  purpose: Metadata-lookup tiles generated from the same source layer with only feature_id properties
 - path: latest/natural-earth-10m-land.metadata.ndjson.gz
   format: ndjson_gzip
   role: metadata
@@ -137,7 +136,7 @@ web-map display only.
 | File | Format | Role | Purpose |
 |---|---|---|---|
 | `latest/natural-earth-10m-land.fgb` | `fgb` | `canonical` | Canonical WGS84 multipolygon dataset |
-| `latest/natural-earth-10m-land.pmtiles` | `pmtiles` | `companion` | Metadata-lookup tiles generated from the same source layer with only feature_id and ext_id properties |
+| `latest/natural-earth-10m-land.pmtiles` | `pmtiles` | `companion` | Metadata-lookup tiles generated from the same source layer with only feature_id properties |
 | `latest/natural-earth-10m-land.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
 | `latest/natural-earth-10m-land.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/natural-earth-10m-land.manifest.json` | `json` | `metadata` | Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
@@ -158,11 +157,9 @@ metadata fields.
 
 The reviewed 2026-06-05 metadata-contract release was built from the unchanged
 2026-04-30 release FGB. It adds generated per-feature `feature_id` values because
-the source has no provider feature ID. Its published `ext_id` values are legacy
-non-URL-safe public handles and require a corrective release with generated
-decimal sequence handles; no `shared_datasets_group_id` or
-`shared_datasets_row_id` is published.
-`feature_hash` is computed from normalized geometry plus projected metadata
+the source has no source feature ID. It also publishes `geometry_hash` and
+`properties_hash` values for generated-ID assignment and duplicate detection.
+`properties_hash` is computed from normalized geometry plus projected metadata
 properties. Natural Earth 10m Land has no schema-projectable display-name field,
 so this release does not include localized metadata.
 
@@ -173,16 +170,15 @@ build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical
 FlatGeobuf remains the analytical source and preserves the original source
 geometry. The maxzoom comes from the stable `source_scale_denominator: 10000000`
 hint, not from a meter-resolution interpretation of the Natural Earth `10m`
-label. PMTiles feature properties are intentionally limited to `feature_id` and
-`ext_id`.
+label. PMTiles feature properties are intentionally limited to `feature_id`.
 
 ## Properties / columns
 
 | Name | Type | Description |
 |---|---|---|
-| `ext_id` | string | Public lookup handle. The 2026-06-05 values are legacy non-URL-safe handles and must be replaced by generated sequence IDs in a corrective release. |
-| `feature_hash` | string | SHA-256 content hash computed from normalized geometry plus projected metadata properties. |
-| `feature_id` | string | Generated stable feature ID derived from the feature geometry digest. |
+| `feature_id` | string | Public URL-safe lookup handle generated from the release identity policy. |
+| `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
+| `properties_hash` | string | SHA-256 content hash computed from published non-geometry properties. |
 | `featurecla` | string | Natural Earth feature class. Values in this source include `Land`, `Null island`, and one null source value. |
 | `scalerank` | integer | Natural Earth display rank for scale-dependent cartography; lower values are generally more prominent. |
 | `min_zoom` | real | Natural Earth minimum zoom guidance for display. |
@@ -204,12 +200,11 @@ Output summary:
 The 2026-06-05 metadata-contract release starts from the 2026-04-30 release FGB
 generation `1777593092853652` and SHA-256
 `5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`. It
-generates unique geometry-digest `feature_id` values and publishes legacy
-non-URL-safe `ext_id` values that need replacement by generated sequence IDs in
-a corrective release. It also publishes `feature_hash` values plus canonical
-metadata, schema, and manifest artifacts. The rebuilt FGB has 11 features, six
+generates unique URL-safe `feature_id` values and publishes `geometry_hash` and
+`properties_hash` values plus canonical metadata, schema, and manifest
+artifacts. The rebuilt FGB has 11 features, six
 non-geometry fields, and zero invalid geometries. The rebuilt PMTiles archive
-keeps maxzoom 8 and decodes to exactly `feature_id` and `ext_id` properties.
+keeps maxzoom 8 and decodes to exactly `feature_id` properties.
 Older releases remain readable legacy pre-metadata-contract history and are not
 backfilled.
 

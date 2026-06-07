@@ -25,10 +25,11 @@ def write_sidecar(path: Path, count: int = 3) -> None:
     records = []
     for index in range(count):
         feature = release_feature_model.FeatureRecord(
-            feature_id=f"src:id:{index}",
-            feature_hash="sha256:" + f"{index:064x}",
+            feature_id=str(index + 1),
+            geometry_hash="sha256:" + f"{index + 1:064x}",
+            properties_hash="sha256:" + f"{index:064x}",
             geometry=None,
-            properties={"ext_id": str(index + 1), "name": f"Feature {index}"},
+            properties={"name": f"Feature {index}"},
             provenance={"source": "fixture"},
         )
         records.append(
@@ -54,7 +55,7 @@ def write_bundle(tmp_path: Path, *, count: int = 3):
         asset_slug="example-asset",
         release="2026-05-01",
         fields=[
-            release_feature_model.ReleaseSchemaField("ext_id", "String"),
+            release_feature_model.ReleaseSchemaField("feature_id", "String"),
             release_feature_model.ReleaseSchemaField("name", "String"),
         ],
     )
@@ -95,7 +96,7 @@ def write_bundle(tmp_path: Path, *, count: int = 3):
         source_inputs=[],
         artifacts=artifacts,
         schema=schema_payload,
-        id_strategy={"strategy": "provider", "field": "id"},
+        identity=release_feature_model.build_identity_metadata(strategy="source_field", source_fields=["id"]),
         validation={"valid": True, "feature_count": count},
     )
     manifest.write_text(json.dumps(manifest_payload, sort_keys=True) + "\n")
@@ -129,7 +130,7 @@ class FeatureMetadataIndexTests(unittest.TestCase):
         self.assertEqual(result.deleted_document_count, 0)
         self.assertEqual(len(writer.batches), 2)
         self.assertEqual(writer.batches[0][2], "load-1")
-        self.assertEqual(writer.batches[0][3][0]["feature_id"], "src:id:0")
+        self.assertEqual(writer.batches[0][3][0]["feature_id"], "1")
 
     def test_non_dry_run_requires_load_id(self):
         with tempfile.TemporaryDirectory() as tmp:

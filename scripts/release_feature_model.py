@@ -1,9 +1,9 @@
 """Release-oriented vector feature model helpers.
 
-These helpers keep feature identity, content hashes, metadata sidecars, and
-release manifests explicit before any artifact is published to Cloud Storage.
-They are intentionally local/serialization primitives; callers remain
-responsible for source-specific normalization and GDAL artifact generation.
+The release feature model has one addressable feature identity:
+``feature_id``. Source-backed IDs are used directly when a source field is
+unique, nonblank, index-like, and URL-friendly. Otherwise shared-datasets
+assigns monotonic decimal-string IDs from a persisted release mapping.
 """
 
 from __future__ import annotations
@@ -18,19 +18,33 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
-RELEASE_FEATURE_MODEL_SCHEMA_VERSION = 1
-RELEASE_MANIFEST_SCHEMA_VERSION = 1
-METADATA_SIDECAR_SCHEMA_VERSION = 1
-RELEASE_SCHEMA_SCHEMA_VERSION = 1
-FEATURE_ID_ALGORITHM = "shared-datasets-feature-id:v1"
-FEATURE_HASH_ALGORITHM = "sha256:canonical-feature-content:v1"
+RELEASE_FEATURE_MODEL_SCHEMA_VERSION = 2
+RELEASE_MANIFEST_SCHEMA_VERSION = 2
+METADATA_SIDECAR_SCHEMA_VERSION = 2
+RELEASE_SCHEMA_SCHEMA_VERSION = 2
+FEATURE_IDENTITY_SCHEMA_VERSION = 1
+FEATURE_ID_ALGORITHM = "shared-datasets-feature-identity:v2"
+HASH_ALGORITHM = "sha256"
+GEOMETRY_HASH_ALGORITHM = "sha256:canonical-geometry:v1"
+PROPERTIES_HASH_ALGORITHM = "sha256:canonical-feature-properties:v1"
+FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
+SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
 MAX_FIRESTORE_DOCUMENT_BYTES = 1_048_576
 DEFAULT_MAX_SIDECAR_RECORD_BYTES = 900 * 1024
-FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-EXT_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
-FEATURE_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
-ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+HASH_EXCLUDED_PROPERTIES = frozenset(
+    {
+        "feature_id",
+        "geometry_hash",
+        "properties_hash",
+        "provenance",
+        "run_id",
+        "run_timestamp",
+        "updated_at",
+        "created_at",
+    }
+)
 
 
 class ReleaseFeatureModelError(ValueError):
@@ -40,7 +54,8 @@ class ReleaseFeatureModelError(ValueError):
 @dataclass(frozen=True)
 class FeatureRecord:
     feature_id: str
-    feature_hash: str
+    geometry_hash: str
+    properties_hash: str
     geometry: Mapping[str, Any] | None
     properties: Mapping[str, Any]
     provenance: Mapping[str, Any]
@@ -52,9 +67,20 @@ class SidecarRecord:
     asset_slug: str
     release: str
     feature_id: str
-    feature_hash: str
+    geometry_hash: str
+    properties_hash: str
     properties: Mapping[str, Any]
     provenance: Mapping[str, Any]
+    identity_key: Sequence[str] | None = None
+
+
+@dataclass(frozen=True)
+class IdentityAmbiguity:
+    identity_key: tuple[str, ...]
+    geometry_hash: str
+    properties_hash: str
+    matching_geometry_feature_ids: tuple[str, ...]
+    matching_properties_feature_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -62,6 +88,7 @@ class ValidationResult:
     valid: bool
     feature_count: int
     duplicate_feature_ids: tuple[str, ...]
+    duplicate_identity_keys: tuple[tuple[str, ...], ...]
     oversized_feature_ids: tuple[str, ...]
     errors: tuple[str, ...]
 
@@ -84,142 +111,188 @@ def sha256_hex(value: bytes | str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def normalize_feature_id_token(value: Any) -> str:
-    """Normalize a provider/composite token into an API-safe feature-id fragment."""
-    token = str(value).strip()
-    if not token:
-        raise ReleaseFeatureModelError("feature ID token must be non-empty")
-    token = re.sub(r"\s+", "-", token)
-    token = re.sub(r"[^A-Za-z0-9._:-]+", "-", token).strip("-")
-    if not token:
-        raise ReleaseFeatureModelError("feature ID token contains no usable characters")
-    return token[:256]
+def normalize_number(value: int | float) -> int | float:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value == 0:
+        return 0
+    return float(format(value, ".15g"))
 
 
-def provider_feature_id(*, source_field: str, source_value: Any) -> str:
-    """Build a stable feature_id from a verified provider/source identifier."""
-    field = normalize_feature_id_token(source_field)
-    value = normalize_feature_id_token(source_value)
-    feature_id = f"src:{field}:{value}"
-    validate_feature_id(feature_id)
-    return feature_id
+def normalize_geometry(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): normalize_geometry(value[key]) for key in sorted(value)}
+    if isinstance(value, (list, tuple)):
+        return [normalize_geometry(item) for item in value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return normalize_number(value)
+    return value
 
 
-def composite_provider_feature_id(source_values: Mapping[str, Any]) -> str:
-    """Build a stable feature_id from a curator-approved composite provider key."""
-    if not source_values:
-        raise ReleaseFeatureModelError("composite provider feature ID requires at least one field")
-    normalized = {str(key): str(value).strip() for key, value in sorted(source_values.items())}
-    if any(not key or not value for key, value in normalized.items()):
-        raise ReleaseFeatureModelError("composite provider feature ID fields and values must be non-empty")
-    digest = sha256_hex(canonical_json(normalized))[:24]
-    feature_id = f"src:composite:{digest}"
-    validate_feature_id(feature_id)
-    return feature_id
+def geometry_hash(geometry: Mapping[str, Any] | None) -> str:
+    return "sha256:" + sha256_hex(canonical_json(normalize_geometry(geometry)))
 
 
-def generated_feature_id(*, asset_slug: str, preimage: Mapping[str, Any], token_length: int = 24) -> str:
-    """Build a curator-approved generated per-feature ID.
-
-    The caller chooses the preimage after the provider-ID decision point. This
-    function deliberately does not infer fields.
-    """
-    if token_length < 16:
-        raise ReleaseFeatureModelError("generated feature ID token length must be at least 16")
-    if not preimage:
-        raise ReleaseFeatureModelError("generated feature ID preimage must be non-empty")
-    digest = sha256_hex(canonical_json({"asset_slug": asset_slug, "preimage": preimage}))[:token_length]
-    feature_id = f"gen:{digest}"
-    validate_feature_id(feature_id)
-    return feature_id
-
-
-def content_feature_hash(
-    *,
-    geometry: Mapping[str, Any] | None,
-    properties: Mapping[str, Any],
-    exclude_properties: Sequence[str] = (),
-) -> str:
-    """Hash normalized geometry and nonvolatile published properties."""
-    excluded = set(exclude_properties)
-    content = {
-        "geometry": geometry,
-        "properties": {key: properties[key] for key in sorted(properties) if key not in excluded},
-    }
-    return "sha256:" + sha256_hex(canonical_json(content))
+def properties_hash(properties: Mapping[str, Any], *, exclude_properties: Sequence[str] = ()) -> str:
+    excluded = HASH_EXCLUDED_PROPERTIES | set(exclude_properties)
+    payload = {key: properties[key] for key in sorted(properties) if key not in excluded}
+    return "sha256:" + sha256_hex(canonical_json(payload))
 
 
 def validate_feature_id(feature_id: str) -> None:
     if not FEATURE_ID_RE.fullmatch(feature_id):
-        raise ReleaseFeatureModelError(
-            "feature_id must be 1-256 chars and contain only letters, numbers, dot, underscore, colon, or dash"
+        raise ReleaseFeatureModelError("feature_id must be 1-64 alphanumeric characters")
+
+
+def validate_hash(value: str, *, label: str) -> None:
+    if not SHA256_HASH_RE.fullmatch(value):
+        raise ReleaseFeatureModelError(f"{label} must be sha256: followed by 64 lowercase hex characters")
+
+
+def source_field_feature_id(*, source_field: str, source_value: Any) -> str:
+    """Return a feature ID copied directly from a source field value."""
+    if not str(source_field or "").strip():
+        raise ReleaseFeatureModelError("source field must be non-empty")
+    feature_id = str(source_value or "").strip()
+    validate_feature_id(feature_id)
+    return feature_id
+
+
+def source_fields_identity_key(properties: Mapping[str, Any], source_fields: Sequence[str]) -> tuple[str, ...]:
+    fields = tuple(str(field).strip() for field in source_fields if str(field).strip())
+    if not fields:
+        raise ReleaseFeatureModelError("source-field identity requires at least one source field")
+    if len(fields) > 2:
+        raise ReleaseFeatureModelError("source-field identity accepts at most two source fields")
+    values: list[str] = []
+    for field in fields:
+        value = str(properties.get(field) or "").strip()
+        if not value:
+            raise ReleaseFeatureModelError(f"source identity field {field!r} is blank")
+        values.append(value)
+    return tuple(values)
+
+
+def content_identity_key(*, geometry_hash_value: str, properties_hash_value: str) -> tuple[str, str]:
+    validate_hash(geometry_hash_value, label="geometry_hash")
+    validate_hash(properties_hash_value, label="properties_hash")
+    return (geometry_hash_value, properties_hash_value)
+
+
+def identity_key_from_record(record: Mapping[str, Any]) -> tuple[str, ...]:
+    raw_key = record.get("identity_key")
+    if isinstance(raw_key, Sequence) and not isinstance(raw_key, (str, bytes, bytearray)):
+        key = tuple(str(part) for part in raw_key)
+        if key:
+            return key
+    geometry_hash_value = str(record.get("geometry_hash") or "")
+    properties_hash_value = str(record.get("properties_hash") or "")
+    if geometry_hash_value and properties_hash_value:
+        return content_identity_key(
+            geometry_hash_value=geometry_hash_value,
+            properties_hash_value=properties_hash_value,
         )
+    feature_id = str(record.get("feature_id") or "")
+    if feature_id:
+        return (feature_id,)
+    raise ReleaseFeatureModelError("record does not contain an identity key")
 
 
-def validate_ext_id(ext_id: str) -> None:
-    if not EXT_ID_RE.fullmatch(ext_id):
-        raise ReleaseFeatureModelError("ext_id must be 1-64 URL-safe alphanumeric characters")
-
-
-def validate_feature_hash(feature_hash: str) -> None:
-    if not FEATURE_HASH_RE.fullmatch(feature_hash):
-        raise ReleaseFeatureModelError("feature_hash must be sha256: followed by 64 lowercase hex characters")
-
-
-def ext_id_from_record(record: Mapping[str, Any]) -> str:
-    properties = record.get("properties") if isinstance(record.get("properties"), Mapping) else {}
-    return str(record.get("ext_id") or properties.get("ext_id") or "").strip()
-
-
-def ext_id_mapping_from_records(records: Iterable[SidecarRecord | Mapping[str, Any]]) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-    seen_ext_ids: dict[str, str] = {}
+def previous_feature_id_mapping(records: Iterable[SidecarRecord | Mapping[str, Any]]) -> dict[tuple[str, ...], str]:
+    mapping: dict[tuple[str, ...], str] = {}
     for index, record in enumerate(records, start=1):
         payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
         feature_id = str(payload.get("feature_id") or "").strip()
-        ext_id = ext_id_from_record(payload)
-        try:
-            validate_feature_id(feature_id)
-            validate_ext_id(ext_id)
-        except ReleaseFeatureModelError as exc:
-            raise ReleaseFeatureModelError(f"invalid ext_id mapping at record {index}: {exc}") from exc
-        if feature_id in mapping:
-            raise ReleaseFeatureModelError(f"duplicate feature_id in ext_id mapping: {feature_id}")
-        if ext_id in seen_ext_ids:
-            raise ReleaseFeatureModelError(
-                f"duplicate ext_id in ext_id mapping: {ext_id} for {seen_ext_ids[ext_id]} and {feature_id}"
-            )
-        mapping[feature_id] = ext_id
-        seen_ext_ids[ext_id] = feature_id
+        validate_feature_id(feature_id)
+        key = identity_key_from_record(payload)
+        if key in mapping and mapping[key] != feature_id:
+            raise ReleaseFeatureModelError(f"duplicate previous identity key at record {index}: {key}")
+        mapping[key] = feature_id
     return mapping
 
 
-def assign_sequence_ext_ids(
-    feature_ids: Iterable[str],
+def assign_generated_feature_ids(
+    identity_keys: Iterable[Sequence[str]],
     *,
     previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
-) -> dict[str, str]:
-    previous = ext_id_mapping_from_records(previous_records or ())
-    assigned: dict[str, str] = {}
-    used_ext_ids = set(previous.values())
-    numeric_ext_ids = [int(ext_id) for ext_id in used_ext_ids if ext_id.isdigit()]
-    next_sequence = max(numeric_ext_ids, default=0) + 1
-    for feature_id in feature_ids:
-        feature_id = str(feature_id).strip()
-        validate_feature_id(feature_id)
-        if feature_id in assigned:
-            raise ReleaseFeatureModelError(f"duplicate feature_id while assigning ext_id: {feature_id}")
-        if feature_id in previous:
-            assigned[feature_id] = previous[feature_id]
+) -> dict[tuple[str, ...], str]:
+    """Assign monotonic decimal feature IDs while preserving prior mappings."""
+    previous = previous_feature_id_mapping(previous_records or ())
+    assigned: dict[tuple[str, ...], str] = {}
+    used_feature_ids = set(previous.values())
+    numeric_feature_ids = [int(feature_id) for feature_id in used_feature_ids if feature_id.isdigit()]
+    next_sequence = max(numeric_feature_ids, default=0) + 1
+    for raw_key in identity_keys:
+        key = tuple(str(part) for part in raw_key)
+        if not key:
+            raise ReleaseFeatureModelError("generated feature ID requires a non-empty identity key")
+        if key in assigned:
+            raise ReleaseFeatureModelError(f"duplicate identity key while assigning feature_id: {key}")
+        if key in previous:
+            assigned[key] = previous[key]
             continue
-        while str(next_sequence) in used_ext_ids:
+        while str(next_sequence) in used_feature_ids:
             next_sequence += 1
-        ext_id = str(next_sequence)
-        validate_ext_id(ext_id)
-        assigned[feature_id] = ext_id
-        used_ext_ids.add(ext_id)
+        feature_id = str(next_sequence)
+        validate_feature_id(feature_id)
+        assigned[key] = feature_id
+        used_feature_ids.add(feature_id)
         next_sequence += 1
     return assigned
+
+
+def find_identity_ambiguities(
+    new_records: Iterable[Mapping[str, Any]],
+    *,
+    previous_records: Iterable[SidecarRecord | Mapping[str, Any]],
+) -> tuple[IdentityAmbiguity, ...]:
+    """Find partial hash matches that require maintainer resolution."""
+    by_geometry: dict[str, list[str]] = {}
+    by_properties: dict[str, list[str]] = {}
+    for record in previous_records:
+        payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
+        feature_id = str(payload.get("feature_id") or "").strip()
+        geometry_hash_value = str(payload.get("geometry_hash") or "").strip()
+        properties_hash_value = str(payload.get("properties_hash") or "").strip()
+        if feature_id and geometry_hash_value:
+            by_geometry.setdefault(geometry_hash_value, []).append(feature_id)
+        if feature_id and properties_hash_value:
+            by_properties.setdefault(properties_hash_value, []).append(feature_id)
+
+    ambiguities: list[IdentityAmbiguity] = []
+    for record in new_records:
+        geometry_hash_value = str(record.get("geometry_hash") or "").strip()
+        properties_hash_value = str(record.get("properties_hash") or "").strip()
+        geometry_matches = tuple(sorted(set(by_geometry.get(geometry_hash_value, ()))))
+        properties_matches = tuple(sorted(set(by_properties.get(properties_hash_value, ()))))
+        if not geometry_matches and not properties_matches:
+            continue
+        if geometry_matches == properties_matches and len(geometry_matches) == 1:
+            continue
+        ambiguities.append(
+            IdentityAmbiguity(
+                identity_key=identity_key_from_record(record),
+                geometry_hash=geometry_hash_value,
+                properties_hash=properties_hash_value,
+                matching_geometry_feature_ids=geometry_matches,
+                matching_properties_feature_ids=properties_matches,
+            )
+        )
+    return tuple(ambiguities)
+
+
+def content_hashes(
+    *,
+    geometry: Mapping[str, Any] | None,
+    properties: Mapping[str, Any],
+    exclude_properties: Sequence[str] = (),
+) -> tuple[str, str]:
+    return (
+        geometry_hash(geometry),
+        properties_hash(properties, exclude_properties=exclude_properties),
+    )
 
 
 def sidecar_record(
@@ -227,18 +300,21 @@ def sidecar_record(
     asset_slug: str,
     release: str,
     feature: FeatureRecord,
+    identity_key: Sequence[str] | None = None,
 ) -> SidecarRecord:
     validate_feature_id(feature.feature_id)
-    validate_feature_hash(feature.feature_hash)
-    validate_ext_id(ext_id_from_record({"properties": feature.properties}))
+    validate_hash(feature.geometry_hash, label="geometry_hash")
+    validate_hash(feature.properties_hash, label="properties_hash")
     return SidecarRecord(
         schema_version=METADATA_SIDECAR_SCHEMA_VERSION,
         asset_slug=asset_slug,
         release=release,
         feature_id=feature.feature_id,
-        feature_hash=feature.feature_hash,
+        geometry_hash=feature.geometry_hash,
+        properties_hash=feature.properties_hash,
         properties=dict(feature.properties),
         provenance=dict(feature.provenance),
+        identity_key=tuple(identity_key) if identity_key else None,
     )
 
 
@@ -256,8 +332,8 @@ def validate_sidecar_records(
 ) -> ValidationResult:
     seen: set[str] = set()
     duplicates: set[str] = set()
-    seen_ext_ids: dict[str, str] = {}
-    duplicate_ext_ids: set[str] = set()
+    identity_keys: dict[tuple[str, ...], str] = {}
+    duplicate_identity_keys: set[tuple[str, ...]] = set()
     oversized: list[str] = []
     errors: list[str] = []
     count = 0
@@ -265,27 +341,31 @@ def validate_sidecar_records(
         payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
         count += 1
         feature_id = str(payload.get("feature_id") or "")
-        feature_hash = str(payload.get("feature_hash") or "")
-        ext_id = ext_id_from_record(payload)
+        geometry_hash_value = str(payload.get("geometry_hash") or "")
+        properties_hash_value = str(payload.get("properties_hash") or "")
         try:
             validate_feature_id(feature_id)
         except ReleaseFeatureModelError as exc:
             errors.append(f"invalid feature_id at record {count}: {exc}")
         try:
-            validate_feature_hash(feature_hash)
+            validate_hash(geometry_hash_value, label="geometry_hash")
         except ReleaseFeatureModelError as exc:
-            errors.append(f"invalid feature_hash at record {count}: {exc}")
+            errors.append(f"invalid geometry_hash at record {count}: {exc}")
         try:
-            validate_ext_id(ext_id)
+            validate_hash(properties_hash_value, label="properties_hash")
         except ReleaseFeatureModelError as exc:
-            errors.append(f"invalid ext_id at record {count}: {exc}")
+            errors.append(f"invalid properties_hash at record {count}: {exc}")
         if feature_id in seen:
             duplicates.add(feature_id)
         seen.add(feature_id)
-        if ext_id in seen_ext_ids:
-            duplicate_ext_ids.add(ext_id)
-        elif ext_id:
-            seen_ext_ids[ext_id] = feature_id
+        try:
+            identity_key = identity_key_from_record(payload)
+            if identity_key in identity_keys and identity_keys[identity_key] != feature_id:
+                duplicate_identity_keys.add(identity_key)
+            else:
+                identity_keys[identity_key] = feature_id
+        except ReleaseFeatureModelError as exc:
+            errors.append(f"invalid identity key at record {count}: {exc}")
         if len(sidecar_record_bytes(payload)) > max_record_bytes:
             oversized.append(feature_id or f"record-{count}")
         if payload.get("schema_version") != METADATA_SIDECAR_SCHEMA_VERSION:
@@ -300,8 +380,8 @@ def validate_sidecar_records(
             errors.append(f"record {count} provenance must be an object")
     if duplicates:
         errors.append("duplicate feature_id values: " + ", ".join(sorted(duplicates)))
-    if duplicate_ext_ids:
-        errors.append("duplicate ext_id values: " + ", ".join(sorted(duplicate_ext_ids)))
+    if duplicate_identity_keys:
+        errors.append("duplicate identity keys: " + ", ".join(str(key) for key in sorted(duplicate_identity_keys)))
     if oversized:
         errors.append(
             "metadata sidecar record(s) exceed the configured serving document size: "
@@ -311,6 +391,7 @@ def validate_sidecar_records(
         valid=not errors,
         feature_count=count,
         duplicate_feature_ids=tuple(sorted(duplicates)),
+        duplicate_identity_keys=tuple(sorted(duplicate_identity_keys)),
         oversized_feature_ids=tuple(sorted(oversized)),
         errors=tuple(errors),
     )
@@ -340,19 +421,21 @@ def read_metadata_sidecar(path: Path) -> Iterator[dict[str, Any]]:
             yield payload
 
 
-def read_metadata_sidecar_bytes(payload: bytes, *, label: str = "metadata sidecar") -> Iterator[dict[str, Any]]:
-    with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as gzip_file:
-        with io.TextIOWrapper(gzip_file, encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ReleaseFeatureModelError(f"{label}:{line_number}: invalid JSON") from exc
-                if not isinstance(row, dict):
-                    raise ReleaseFeatureModelError(f"{label}:{line_number}: sidecar row must be a JSON object")
-                yield row
+def read_metadata_sidecar_bytes(payload: bytes, *, label: str = "<sidecar>") -> Iterator[dict[str, Any]]:
+    try:
+        text = gzip.decompress(payload).decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReleaseFeatureModelError(f"{label}: sidecar is not valid gzip NDJSON") from exc
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ReleaseFeatureModelError(f"{label}:{line_number}: invalid JSON") from exc
+        if not isinstance(record, dict):
+            raise ReleaseFeatureModelError(f"{label}:{line_number}: sidecar row must be a JSON object")
+        yield record
 
 
 def release_artifact_name(asset_slug: str, role: str) -> str:
@@ -375,15 +458,11 @@ def build_release_schema(
     release: str,
     fields: Sequence[ReleaseSchemaField | Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Build the metadata sidecar projection schema used by the serving API."""
     return {
         "schema_version": RELEASE_SCHEMA_SCHEMA_VERSION,
         "asset_slug": asset_slug,
         "release": release,
-        "fields": [
-            asdict(field) if isinstance(field, ReleaseSchemaField) else dict(field)
-            for field in fields
-        ],
+        "fields": [asdict(field) if isinstance(field, ReleaseSchemaField) else dict(field) for field in fields],
     }
 
 
@@ -393,7 +472,6 @@ def validate_release_schema(
     expected_asset_slug: str | None = None,
     expected_release: str | None = None,
 ) -> dict[str, ReleaseSchemaField]:
-    """Validate a release schema and return projectable fields by name."""
     errors: list[str] = []
     if schema.get("schema_version") != RELEASE_SCHEMA_SCHEMA_VERSION:
         errors.append("schema has unsupported schema_version")
@@ -423,19 +501,11 @@ def validate_release_schema(
             continue
         nullable = raw_field.get("nullable", True)
         projectable = raw_field.get("projectable", True)
-        if not isinstance(nullable, bool):
-            errors.append(f"schema field {name!r} nullable must be boolean")
-            continue
-        if not isinstance(projectable, bool):
-            errors.append(f"schema field {name!r} projectable must be boolean")
+        if not isinstance(nullable, bool) or not isinstance(projectable, bool):
+            errors.append(f"schema field {name!r} nullable/projectable must be boolean")
             continue
         if projectable:
-            fields[name] = ReleaseSchemaField(
-                name=name,
-                type=field_type,
-                nullable=nullable,
-                projectable=projectable,
-            )
+            fields[name] = ReleaseSchemaField(name=name, type=field_type, nullable=nullable, projectable=projectable)
     if errors:
         raise ReleaseFeatureModelError("; ".join(errors))
     return fields
@@ -447,6 +517,76 @@ def validate_artifact_hash(value: Any, *, label: str) -> str:
     return value.split(":", 1)[1] if value.startswith("sha256:") else value
 
 
+def build_identity_metadata(
+    *,
+    strategy: str,
+    source_fields: Sequence[str] = (),
+    assignment_key: Sequence[str] = (),
+    previous_release: str | None = None,
+    next_generated_feature_id_after_release: int | None = None,
+) -> dict[str, Any]:
+    clean_source_fields = [str(field) for field in source_fields]
+    clean_assignment_key = [str(part) for part in assignment_key]
+    if strategy == "generated_sequence_source_fields" and clean_source_fields and not clean_assignment_key:
+        clean_assignment_key = list(clean_source_fields)
+    if strategy == "generated_sequence_content_hash" and not clean_assignment_key:
+        clean_assignment_key = ["geometry_hash", "properties_hash"]
+    identity: dict[str, Any] = {
+        "schema_version": FEATURE_IDENTITY_SCHEMA_VERSION,
+        "strategy": strategy,
+        "source_fields": clean_source_fields,
+        "feature_id_regex": FEATURE_ID_RE.pattern,
+        "hash_algorithm": HASH_ALGORITHM,
+        "canonicalization": FEATURE_ID_ALGORITHM,
+    }
+    if strategy.startswith("generated_sequence"):
+        identity["generated_id_type"] = "monotonic_integer_string"
+        identity["assignment_key"] = clean_assignment_key
+        identity["previous_release"] = previous_release
+        identity["next_generated_feature_id_after_release"] = next_generated_feature_id_after_release
+    validate_identity_metadata(identity)
+    return identity
+
+
+def validate_identity_metadata(identity: Any) -> None:
+    if not isinstance(identity, Mapping):
+        raise ReleaseFeatureModelError("manifest identity must be an object")
+    if identity.get("schema_version") != FEATURE_IDENTITY_SCHEMA_VERSION:
+        raise ReleaseFeatureModelError("manifest identity has unsupported schema_version")
+    strategy = identity.get("strategy")
+    if strategy not in {"source_field", "generated_sequence_source_fields", "generated_sequence_content_hash"}:
+        raise ReleaseFeatureModelError("manifest identity strategy is unsupported")
+    source_fields = identity.get("source_fields")
+    if not isinstance(source_fields, Sequence) or isinstance(source_fields, (str, bytes, bytearray)):
+        raise ReleaseFeatureModelError("manifest identity source_fields must be an array")
+    clean_source_fields = [str(field).strip() for field in source_fields if str(field).strip()]
+    if clean_source_fields != list(source_fields):
+        raise ReleaseFeatureModelError("manifest identity source_fields must be non-empty strings")
+    if strategy == "source_field" and len(clean_source_fields) != 1:
+        raise ReleaseFeatureModelError("source_field identity requires exactly one source field")
+    if strategy == "generated_sequence_source_fields" and not (1 <= len(clean_source_fields) <= 2):
+        raise ReleaseFeatureModelError("generated_sequence_source_fields identity requires one or two source fields")
+    if strategy == "generated_sequence_content_hash" and clean_source_fields:
+        raise ReleaseFeatureModelError("generated_sequence_content_hash identity must not include source fields")
+    assignment_key = identity.get("assignment_key", [])
+    if strategy.startswith("generated_sequence"):
+        if not isinstance(assignment_key, Sequence) or isinstance(assignment_key, (str, bytes, bytearray)):
+            raise ReleaseFeatureModelError("manifest identity assignment_key must be an array")
+        clean_assignment_key = [str(part).strip() for part in assignment_key if str(part).strip()]
+        if clean_assignment_key != list(assignment_key):
+            raise ReleaseFeatureModelError("manifest identity assignment_key must contain non-empty strings")
+        if strategy == "generated_sequence_source_fields" and clean_assignment_key != clean_source_fields:
+            raise ReleaseFeatureModelError("generated_sequence_source_fields assignment_key must match source_fields")
+        if strategy == "generated_sequence_content_hash" and clean_assignment_key != ["geometry_hash", "properties_hash"]:
+            raise ReleaseFeatureModelError("generated_sequence_content_hash assignment_key must be geometry_hash and properties_hash")
+    if identity.get("feature_id_regex") != FEATURE_ID_RE.pattern:
+        raise ReleaseFeatureModelError("manifest identity feature_id_regex is unsupported")
+    if identity.get("hash_algorithm") != HASH_ALGORITHM:
+        raise ReleaseFeatureModelError("manifest identity hash_algorithm is unsupported")
+    if identity.get("canonicalization") != FEATURE_ID_ALGORITHM:
+        raise ReleaseFeatureModelError("manifest identity canonicalization is unsupported")
+
+
 def validate_release_manifest(
     manifest: Mapping[str, Any],
     *,
@@ -454,7 +594,6 @@ def validate_release_manifest(
     expected_release: str | None = None,
     require_generations: bool = False,
 ) -> dict[str, Mapping[str, Any]]:
-    """Validate the durable release manifest and return artifact entries by role."""
     errors: list[str] = []
     if manifest.get("schema_version") != RELEASE_MANIFEST_SCHEMA_VERSION:
         errors.append("manifest has unsupported schema_version")
@@ -464,8 +603,10 @@ def validate_release_manifest(
         errors.append(f"manifest release does not match {expected_release!r}")
     if manifest.get("release_feature_model_schema_version") != RELEASE_FEATURE_MODEL_SCHEMA_VERSION:
         errors.append("manifest release_feature_model_schema_version is unsupported")
-    if manifest.get("feature_hash_algorithm") != FEATURE_HASH_ALGORITHM:
-        errors.append("manifest feature_hash_algorithm is unsupported")
+    try:
+        validate_identity_metadata(manifest.get("identity"))
+    except ReleaseFeatureModelError as exc:
+        errors.append(str(exc))
     raw_artifacts = manifest.get("artifacts")
     if not isinstance(raw_artifacts, Sequence) or isinstance(raw_artifacts, (str, bytes, bytearray)):
         errors.append("manifest artifacts must be an array")
@@ -500,8 +641,8 @@ def validate_release_manifest(
     if missing:
         errors.append("manifest is missing required vector artifact role(s): " + ", ".join(missing))
     policy = manifest.get("index_status_policy")
-    if not isinstance(policy, Mapping) or policy.get("mode") != "external_index_load_records":
-        errors.append("manifest index_status_policy must point to external index-load records")
+    if not isinstance(policy, Mapping) or policy.get("mode") != "inactive_firestore_serving":
+        errors.append("manifest index_status_policy must mark Firestore serving inactive")
     try:
         validate_release_schema(
             manifest.get("schema") if isinstance(manifest.get("schema"), Mapping) else {},
@@ -522,7 +663,7 @@ def build_release_manifest(
     source_inputs: Sequence[Mapping[str, Any]],
     artifacts: Sequence[Mapping[str, Any]],
     schema: Mapping[str, Any],
-    id_strategy: Mapping[str, Any],
+    identity: Mapping[str, Any],
     validation: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -533,17 +674,22 @@ def build_release_manifest(
         "source_inputs": list(source_inputs),
         "artifacts": list(artifacts),
         "schema": dict(schema),
-        "id_strategy": dict(id_strategy),
-        "feature_hash_algorithm": FEATURE_HASH_ALGORITHM,
+        "identity": dict(identity),
+        "hashes": {
+            "geometry_hash_algorithm": GEOMETRY_HASH_ALGORITHM,
+            "properties_hash_algorithm": PROPERTIES_HASH_ALGORITHM,
+        },
         "validation": dict(validation),
-        "index_load_status": "tracked in index-loads/",
+        "index_load_status": "Firestore metadata serving is inactive",
         "index_status_policy": {
-            "mode": "external_index_load_records",
-            "path": f"index-loads/{release}/",
+            "mode": "inactive_firestore_serving",
+            "path": None,
         },
     }
 
 
 def index_load_record_name(asset_root: str, release: str, load_id: str) -> str:
-    safe_load_id = normalize_feature_id_token(load_id)
+    safe_load_id = re.sub(r"[^A-Za-z0-9]+", "", str(load_id))
+    if not safe_load_id:
+        raise ReleaseFeatureModelError("load_id contains no usable alphanumeric characters")
     return f"{asset_root.rstrip('/')}/index-loads/{release}/{safe_load_id}.json"

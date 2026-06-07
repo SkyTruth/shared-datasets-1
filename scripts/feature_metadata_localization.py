@@ -256,7 +256,6 @@ def iter_localized_records(
     for record in canonical_records:
         payload = dict(record)
         feature_id = str(payload.get("feature_id") or "").strip()
-        feature_hash = str(payload.get("feature_hash") or "").strip()
         properties = payload.get("properties")
         if not isinstance(properties, Mapping):
             raise FeatureMetadataLocalizationError(f"record {report.feature_count + 1}: properties must be an object")
@@ -280,7 +279,6 @@ def iter_localized_records(
         if not applied_fields:
             report.untranslated_feature_count += 1
         payload["feature_id"] = feature_id
-        payload["feature_hash"] = feature_hash
         payload["properties"] = localized_properties
         yield payload
 
