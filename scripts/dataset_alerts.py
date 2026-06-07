@@ -114,6 +114,14 @@ def row_count_from_asset_doc(asset_slug: str, docs_dir: Path = Path("docs/assets
     return row_count
 
 
+def upload_summary_title(*, new_dataset: bool) -> str:
+    return "New dataset added!" if new_dataset else "Dataset updated"
+
+
+def upload_summary_status(*, new_dataset: bool) -> str:
+    return "new" if new_dataset else "success"
+
+
 def build_upload_summary(
     *,
     asset_slug: str,
@@ -122,8 +130,9 @@ def build_upload_summary(
     release_path: str | None = None,
     row_count: int | None = None,
     sample_columns: list[str] | None = None,
+    new_dataset: bool = False,
 ) -> tuple[str, str, dict[str, str]]:
-    title = "New dataset added!"
+    title = upload_summary_title(new_dataset=new_dataset)
     canonical_path = row.get("canonical_path", "") if row else ""
     asset_root = asset_root_from_canonical(canonical_path) if canonical_path else "unknown"
     body_lines = [
@@ -484,10 +493,16 @@ def upload_summary(
         "--sample-column",
         help="Sample column name to include in the Slack summary.",
     ),
+    new_dataset: bool = typer.Option(
+        False,
+        "--new-dataset/--updated-dataset",
+        help="Use the new-dataset alert title only when the latest canonical object did not previously exist.",
+    ),
     dry_run: bool = typer.Option(False, help="Print Slack payload instead of posting."),
 ) -> None:
     """Post a lightweight dataset upload summary."""
 
+    resolved_new_dataset = new_dataset if isinstance(new_dataset, bool) else False
     row = load_catalog().get(asset_slug)
     resolved_row_count = row_count if row_count is not None else row_count_from_asset_doc(asset_slug)
     sample_columns = sample_column or (
@@ -500,8 +515,15 @@ def upload_summary(
         release_path=release_path,
         row_count=resolved_row_count,
         sample_columns=sample_columns,
+        new_dataset=resolved_new_dataset,
     )
-    notify(title=title, body=body, status="new", fields=fields, dry_run=dry_run)
+    notify(
+        title=title,
+        body=body,
+        status=upload_summary_status(new_dataset=resolved_new_dataset),
+        fields=fields,
+        dry_run=dry_run,
+    )
 
 
 @app.command("check-schema")

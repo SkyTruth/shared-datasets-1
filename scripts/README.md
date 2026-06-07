@@ -414,6 +414,11 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./example-asset.fgb
 ```
 
+This command defaults to a `Dataset updated` alert. Add `--new-dataset` only
+when the canonical `latest/` object did not exist before the publish; the
+approved promotion workflow determines that from the publish plan
+`destination_generation`.
+
 For canonical vector/table assets, run schema validation before publish:
 
 ```bash

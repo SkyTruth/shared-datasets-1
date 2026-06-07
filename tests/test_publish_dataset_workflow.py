@@ -120,6 +120,9 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/dataset_alerts.py", summary_run)
         self.assertIn("upload-summary", summary_run)
         self.assertIn("not a catalog asset", summary_run)
+        self.assertIn("canonical_promotion", summary_run)
+        self.assertIn('canonical_promotion.get("destination_generation", "")', summary_run)
+        self.assertIn('"--new-dataset"', summary_run)
         self.assertLess(
             summary_run.index("not a catalog asset"),
             summary_run.index("scripts/dataset_alerts.py"),

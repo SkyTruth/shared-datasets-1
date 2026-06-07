@@ -498,13 +498,13 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --dataset-path ./gfw-fixed-infrastructure.fgb
 ```
 
-The repo commit that updates catalog metadata for a new asset slug or meaningful
-dataset release is the state marker for this announcement. If that commit does
-not exist yet, assume the announcement has not been sent. When creating the
-catalog-update commit, send the upload summary first. Once that commit exists,
-treat the release as announced and do not send duplicate summaries for
-same-release cache refreshes, README wording fixes, PMTiles repairs, or other
-corrective follow-ups unless explicitly requested.
+The helper defaults to a `Dataset updated` alert. Add `--new-dataset` only when
+the asset's canonical `latest/` object did not exist before the publish. The
+approved GitHub promotion workflow derives this from the publish plan
+`destination_generation`, so existing asset refreshes cannot be announced as
+new datasets. Do not send duplicate summaries for same-release cache refreshes,
+README wording fixes, PMTiles repairs, or other corrective follow-ups unless
+explicitly requested.
 
 For canonical vector/table assets, `publish-release` and the approved GitHub
 promotion workflow run schema validation before canonical objects are written.

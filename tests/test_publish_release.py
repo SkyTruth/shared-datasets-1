@@ -370,6 +370,52 @@ class PublishReleaseTests(unittest.TestCase):
         manifest_entry = next(item for item in manifest_payload["artifacts"] if item["role"] == "manifest")
         self.assertNotIn("generation", manifest_entry)
 
+    def test_default_notifier_marks_existing_canonical_object_as_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            artifacts = write_vector_bundle(tmp_path)
+            bucket = FakeBucket()
+            latest = bucket.blob("100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb")
+            latest.exists = True
+            latest.generation = 12
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=None,
+                artifact_overrides=artifacts,
+                catalog_path=catalog,
+                client=FakeClient(bucket),
+                schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
+            )
+
+            with mock.patch("scripts.dataset_alerts.upload_summary") as upload_summary:
+                publish_release.default_notifier(plan, 3)
+
+        self.assertIs(upload_summary.call_args.kwargs["new_dataset"], False)
+
+    def test_default_notifier_marks_missing_canonical_object_as_new_dataset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path, available_formats="fgb")
+            artifacts = write_vector_bundle(tmp_path)
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=None,
+                artifact_overrides=artifacts,
+                catalog_path=catalog,
+                client=FakeClient(FakeBucket()),
+                schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
+            )
+
+            with mock.patch("scripts.dataset_alerts.upload_summary") as upload_summary:
+                publish_release.default_notifier(plan, 3)
+
+        self.assertIs(upload_summary.call_args.kwargs["new_dataset"], True)
+
     def test_metadata_generation_mismatch_blocks_success_run_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

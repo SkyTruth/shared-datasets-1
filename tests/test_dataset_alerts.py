@@ -160,7 +160,7 @@ class DatasetAlertsTests(unittest.TestCase):
 
         self.assertEqual(calls, [["ogrinfo", "-ro", "-al", "-so", "-json", "asset.fgb"]])
 
-    def test_upload_summary_uses_catalog_values(self):
+    def test_upload_summary_defaults_to_updated_dataset_title(self):
         title, body, fields = dataset_alerts.build_upload_summary(
             asset_slug="asset",
             row={
@@ -177,12 +177,24 @@ class DatasetAlertsTests(unittest.TestCase):
             sample_columns=["id", "name", "status", "source", "updated", "notes"],
         )
 
-        self.assertEqual(title, "New dataset added!")
+        self.assertEqual(title, "Dataset updated")
         self.assertIn("Source: source.", body)
         self.assertIn("*Rows:* `10`", body)
         self.assertIn("`id`, `name`, `status`, `source`, `updated`, +1 more", body)
         self.assertIn("gs://bucket/100/ref/asset", body)
         self.assertEqual(fields, {})
+
+    def test_upload_summary_new_dataset_title_is_explicit(self):
+        title, _body, _fields = dataset_alerts.build_upload_summary(
+            asset_slug="asset",
+            row={"canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb"},
+            changed_paths=["gs://bucket/100/ref/asset/latest/asset.fgb"],
+            new_dataset=True,
+        )
+
+        self.assertEqual(title, "New dataset added!")
+        self.assertEqual(dataset_alerts.upload_summary_status(new_dataset=True), "new")
+        self.assertEqual(dataset_alerts.upload_summary_status(new_dataset=False), "success")
 
     def test_row_count_from_asset_doc_reads_frontmatter(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,7 +224,33 @@ class DatasetAlertsTests(unittest.TestCase):
             )
 
         self.assertIn("*Rows:* `42`", notify.call_args.kwargs["body"])
+        self.assertEqual(notify.call_args.kwargs["title"], "Dataset updated")
+        self.assertEqual(notify.call_args.kwargs["status"], "success")
         self.assertTrue(notify.call_args.kwargs["dry_run"])
+
+    def test_upload_summary_new_dataset_flag_sets_new_status(self):
+        row = {
+            "canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb",
+            "source": "source",
+        }
+        with (
+            mock.patch.object(dataset_alerts, "load_catalog", return_value={"asset": row}),
+            mock.patch.object(dataset_alerts, "row_count_from_asset_doc", return_value=42),
+            mock.patch.object(dataset_alerts, "notify") as notify,
+        ):
+            dataset_alerts.upload_summary(
+                asset_slug="asset",
+                changed_path=["gs://bucket/100/ref/asset/latest/asset.fgb"],
+                release_path=None,
+                row_count=None,
+                dataset_path=None,
+                sample_column=[],
+                new_dataset=True,
+                dry_run=True,
+            )
+
+        self.assertEqual(notify.call_args.kwargs["title"], "New dataset added!")
+        self.assertEqual(notify.call_args.kwargs["status"], "new")
 
     def test_schema_warning_writes_structured_cloud_log(self):
         calls = []

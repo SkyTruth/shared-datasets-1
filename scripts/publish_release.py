@@ -885,6 +885,9 @@ def default_notifier(plan: PublishPlan, row_count: int | None) -> None:
     from scripts.dataset_alerts import upload_summary
 
     canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
+    canonical_latest_generation = (
+        plan.remote_generations.get(canonical_artifact.latest_uri) if canonical_artifact is not None else None
+    )
     upload_summary(
         asset_slug=plan.asset_slug,
         changed_path=[artifact.release_uri for artifact in plan.artifacts]
@@ -893,5 +896,6 @@ def default_notifier(plan: PublishPlan, row_count: int | None) -> None:
         row_count=row_count,
         dataset_path=Path(canonical_artifact.local_path) if canonical_artifact else None,
         sample_column=[],
+        new_dataset=canonical_latest_generation is None,
         dry_run=False,
     )

@@ -650,11 +650,25 @@ jobs:
 
           plan = json.load(open("publish-plan.json"))
           asset_slug = plan["asset_slug"]
-          if catalog_row(asset_slug) is None:
+          row = catalog_row(asset_slug)
+          if row is None:
               print(f"Skipping dataset upload summary because {asset_slug!r} is not a catalog asset.")
               raise SystemExit(0)
 
           destinations = [promotion["destination_uri"] for promotion in plan["promotions"]]
+          canonical_path = row.get("canonical_path", "")
+          canonical_promotion = next(
+              (
+                  promotion
+                  for promotion in plan["promotions"]
+                  if promotion["destination_uri"] == canonical_path
+              ),
+              None,
+          )
+          new_dataset = bool(
+              canonical_promotion
+              and not str(canonical_promotion.get("destination_generation", "")).strip()
+          )
           args = [
               "uv",
               "run",
@@ -664,6 +678,8 @@ jobs:
               "--asset-slug",
               asset_slug,
           ]
+          if new_dataset:
+              args.append("--new-dataset")
           for destination in destinations:
               args.extend(["--changed-path", destination])
           release_path = release_path_for(destinations)
