@@ -38,8 +38,8 @@ admission:
   estimated_published_size_gb: 0.7
   alternatives_considered: Direct Marine Regions downloads by each consumer, project-local storage, and scratch-only staging.
     Shared-datasets is preferred for reviewed reuse, stable shared paths, documented metadata, and canonical geospatial formats.
-  deprecation_policy: Keep dated releases readable; supersede with newer Marine Regions EEZ or High Seas releases; retire or
-    make private if upstream terms change.
+  deprecation_policy: Keep dated releases readable; supersede with newer Marine Regions EEZ or High Seas releases; retire
+    or make private if upstream terms change.
 row_count: 286
 data_profile:
   field_count: 39

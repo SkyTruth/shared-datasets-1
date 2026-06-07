@@ -405,7 +405,9 @@ uv run python scripts/catalog_docs.py export-readmes --output-dir /tmp/shared-da
 
 `generate` rewrites managed `asset-summary` and `files-table` blocks inside each
 asset doc, refreshes the CSV catalog, and refreshes `docs/assets/index.md`.
-`check` is the CI-safe drift detector. `export-readmes` writes upload-ready
+`check` is the CI-safe drift detector for generated catalog and index outputs;
+it does not fail merely because hand-authored asset-doc YAML was wrapped
+differently. `export-readmes` writes upload-ready
 bucket README files under category/subcategory/asset paths without touching GCS.
 
 Asset docs must include `citation` so CSV and JSON catalog consumers can cite

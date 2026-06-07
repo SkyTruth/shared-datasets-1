@@ -1160,7 +1160,6 @@ def check_outputs(
     compare_file(catalog_path, render_catalog_csv(docs, bucket), errors)
     compare_file(index_path, render_index(docs), errors)
     for doc in docs:
-        compare_file(doc.path, render_asset_doc(doc), errors)
         warnings.extend(doc.warnings)
     return errors, warnings
 

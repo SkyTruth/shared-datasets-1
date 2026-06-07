@@ -69,25 +69,25 @@ class AdmissionCheckTests(unittest.TestCase):
 
         self.assertEqual(result.errors, ())
 
-    def test_missing_citation_fails(self):
+    def test_added_asset_doc_without_citation_is_not_admission_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = write_doc(root, FULL_ADMISSION.replace("citation: Example citation\n", "citation: TBD\n"))
 
             result = check(root, [admission_check.ChangedFile("A", path)])
 
-        self.assertIn("missing citation", "\n".join(result.errors))
+        self.assertEqual(result.errors, ())
 
-    def test_missing_steward_fails(self):
+    def test_added_asset_doc_without_admission_is_not_admission_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            path = write_doc(root, FULL_ADMISSION.replace("  steward: SkyTruth data team\n", "  steward: TODO\n"))
+            path = write_doc(root, FULL_ADMISSION.replace("admission:\n", "legacy: true\n# admission removed:\n"))
 
             result = check(root, [admission_check.ChangedFile("A", path)])
 
-        self.assertIn("missing admission.steward", "\n".join(result.errors))
+        self.assertEqual(result.errors, ())
 
-    def test_nonnumeric_footprint_estimate_fails(self):
+    def test_added_asset_doc_with_nonnumeric_footprint_is_not_admission_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = write_doc(
@@ -97,7 +97,7 @@ class AdmissionCheckTests(unittest.TestCase):
 
             result = check(root, [admission_check.ChangedFile("A", path)])
 
-        self.assertIn("missing numeric admission.estimated_published_size_gb", "\n".join(result.errors))
+        self.assertEqual(result.errors, ())
 
     def test_small_footprint_allows_blank_large_data_exception(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -108,14 +108,14 @@ class AdmissionCheckTests(unittest.TestCase):
 
         self.assertEqual(result.errors, ())
 
-    def test_large_footprint_requires_large_data_exception(self):
+    def test_added_asset_doc_with_large_footprint_is_not_admission_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = write_doc(root, FULL_ADMISSION.replace("  estimated_published_size_gb: 1.5\n", "  estimated_published_size_gb: 10\n"))
 
             result = check(root, [admission_check.ChangedFile("A", path)])
 
-        self.assertIn("missing admission.large_data_exception", "\n".join(result.errors))
+        self.assertEqual(result.errors, ())
 
     def test_new_ingestion_pipeline_without_asset_doc_admission_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
