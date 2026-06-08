@@ -1461,9 +1461,29 @@ def preview_upload_required(state: dict[str, Any]) -> bool:
     return is_preview_workflow(state)
 
 
+def preview_firestore_load_enabled(state: dict[str, Any]) -> bool:
+    plan = plan_from_state(state)
+    for value in (
+        state.get("preview_firestore_load"),
+        state.get("preview_firestore_load_required"),
+        plan.get("preview_firestore_load"),
+        plan.get("preview_firestore_load_required"),
+    ):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "enabled", "required"}:
+            return True
+    return False
+
+
 def preview_load_required(state: dict[str, Any]) -> bool:
     plan = plan_from_state(state)
-    return is_preview_workflow(state) and plan.get("canonical_format") == "fgb" and bool(plan.get("release_date"))
+    return (
+        is_preview_workflow(state)
+        and preview_firestore_load_enabled(state)
+        and plan.get("canonical_format") == "fgb"
+        and bool(plan.get("release_date"))
+    )
 
 
 def preview_catalog_refresh_required(state: dict[str, Any]) -> bool:
@@ -3023,12 +3043,15 @@ def render_completion_report_from_state(state: dict[str, Any]) -> str:
         viewer_verify = step_record(state, "preview-viewer-verify").get("evidence", {})
         remote_paths = [f"- {obj['uri']} (generation {obj['generation']}, role {obj['role']})" for obj in uploaded]
         retained = []
+        preview_load_status = preview_load.get("status", "not recorded")
+        if not preview_load_required(state):
+            preview_load_status = "skipped (Firestore preview serving inactive)"
         followup_state = f"""## Preview Load State
 
 - Workflow: {preview_load.get('workflow_name', 'not recorded')}
 - Workflow run: {preview_load.get('workflow_run_url', 'not recorded')}
 - Dispatch ref: {preview_load.get('dispatched_ref', 'not recorded')}
-- Status: {preview_load.get('status', 'not recorded')}
+- Status: {preview_load_status}
 - Workflow inputs checked against preview ref: {preview_load.get('workflow_inputs_checked_against_preview_ref', False)}
 - Viewer refresh verified: {preview_load.get('viewer_refresh_verified', False)}
 

@@ -556,6 +556,7 @@ jobs:
             --release-index-dir "${RUNNER_TEMP}/preview-release-indexes" \
             --release-index-assets-only \
             --latest-from-release-index \
+            --allow-release-index-only-assets \
             --force-access-tier private \
             --out "${RUNNER_TEMP}/preview-catalog-web"
         working-directory: preview-source

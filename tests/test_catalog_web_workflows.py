@@ -157,6 +157,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertIn("--latest-from-release-index", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--release-index-assets-only", steps["Build catalog web bundle"]["run"])
+        self.assertNotIn("--allow-release-index-only-assets", steps["Build catalog web bundle"]["run"])
         self.assertIn("uv run python scripts/catalog_web_publish.py", steps["Publish catalog web bundle"]["run"])
         self.assertIn(
             '--catalog-source "catalog/shared-datasets-catalog.csv"',
