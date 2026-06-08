@@ -52,6 +52,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             self,
             app,
             (
+                "renderDocsLink(asset)",
+                "elements.docs.hidden = !docsUrl",
+                "elements.docs.removeAttribute(\"href\")",
+                "if (asset && asset.docs_url)",
                 "metadataLanguage.addEventListener(\"change\"",
                 "renderFgbDownload(asset, reference)",
                 "renderMetadataSidecarPath(selectedMetadataLanguageAsset())",
