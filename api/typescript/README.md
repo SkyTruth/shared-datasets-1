@@ -84,19 +84,16 @@ Credentials.
 
 Release-oriented vector PMTiles are intentionally lightweight and should not be
 treated as the source of full feature attributes. Use the PMTiles `feature_id`
-property for internal click-to-metadata joins through an app-owned backend route
-that calls:
+property for internal click-to-metadata joins through a release metadata sidecar
+or an app-owned backend route that calls:
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
-For user-visible URLs, pass the URL-safe public `feature_id` handle through the app
-backend and call:
-
-```http
-POST /v1/assets/{slug}/releases/{release}:lookup
-```
+For user-visible URLs, pass the URL-safe public `feature_id` handle through the
+app backend and resolve metadata with the same release-scoped sidecar/API
+contract.
 
 ## Catalog Helpers
 
@@ -149,6 +146,10 @@ canonical `{asset-slug}.metadata.ndjson.gz` fallback. Do not hardcode
 source-native fields; localized source data is materialized from
 `{asset-slug}.metadata-translations.csv` rows keyed by `feature_id`, `field`,
 `locale`, and `source_value_hash`, while PMTiles expose only `feature_id`.
+Sidecar/API records include `geometry_hash`; use it as the stable
+geometry-equivalence key for grouping or de-duplicating footprints after
+metadata is loaded, not as a URL lookup handle.
+
 Use `review_state` values from metadata records to show or filter confidence
 for source-provided, machine-translated, human-reviewed, and mixed labels.
 

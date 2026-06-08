@@ -761,6 +761,11 @@ def build_asset_outputs(
         missing = sorted(required_field_names - output_field_names)
         raise RuntimeError(f"{asset.slug} FGB schema is missing required fields: {', '.join(missing)}")
     validate_pmtiles(pmtiles)
+    feature_metadata.validate_release_vector_contract(
+        fgb_path=fgb,
+        pmtiles_path=pmtiles,
+        decode_zoom=PMTILES_MINZOOM,
+    )
     remove_if_exists(gpkg)
 
     return AssetOutputs(

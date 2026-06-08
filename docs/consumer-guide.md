@@ -90,8 +90,10 @@ only after slug, release, locale, tier, and user entitlement checks pass.
 
 Release-oriented vector PMTiles carry geometry plus `feature_id` only. Use the
 release metadata sidecar, or the metadata API when Firestore serving is active,
-for full attributes, display labels, and provenance instead of expecting source
-columns in PMTiles.
+for full attributes, display labels, hashes, and provenance instead of
+expecting source columns in PMTiles. After loading the sidecar, use
+`geometry_hash` as the stable geometry-equivalence key for grouping or
+de-duplicating footprints; do not use hashes as URL lookup handles.
 
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display

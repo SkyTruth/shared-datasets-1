@@ -138,6 +138,25 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         self.assertEqual(rows[0]["properties_hash"], VALID_HASH_B)
         self.assertEqual(rows[0]["properties"], {"name": "A"})
 
+    def test_common_sidecar_writer_rejects_missing_hashes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "bad.metadata.ndjson.gz"
+
+            with self.assertRaisesRegex(RuntimeError, "metadata sidecar validation failed"):
+                feature_metadata.write_sidecar(
+                    [
+                        {
+                            "schema_version": model.METADATA_SIDECAR_SCHEMA_VERSION,
+                            "asset_slug": "example",
+                            "release": "2026-05-01",
+                            "feature_id": "1",
+                            "properties": {},
+                            "provenance": {},
+                        }
+                    ],
+                    path,
+                )
+
     def test_manifest_records_feature_identity(self):
         schema = feature_metadata.schema_from_records(
             asset_slug="example",
