@@ -345,7 +345,7 @@ function wireEvents() {
   elements.docs.addEventListener("click", (event) => {
     event.preventDefault();
     const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
-    if (asset) {
+    if (asset && asset.docs_url) {
       openDocs(asset);
     }
   });
@@ -641,7 +641,7 @@ function renderDetail(asset) {
   elements.taxonomy.textContent = `${asset.category} / ${asset.subcategory}`;
   elements.title.textContent = asset.title;
   elements.description.textContent = asset.description || asset.notes || "No description is available yet.";
-  elements.docs.href = asset.docs_url;
+  renderDocsLink(asset);
   elements.updated.textContent = asset.latest_release?.date || asset.last_updated || "Unknown";
   renderLastRun(asset);
   elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
@@ -661,6 +661,16 @@ function renderDetail(asset) {
   renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
   renderPmtiles([reference]);
+}
+
+function renderDocsLink(asset) {
+  const docsUrl = String(asset.docs_url || "").trim();
+  elements.docs.hidden = !docsUrl;
+  if (docsUrl) {
+    elements.docs.href = docsUrl;
+  } else {
+    elements.docs.removeAttribute("href");
+  }
 }
 
 function renderMultiDetail(assets) {
