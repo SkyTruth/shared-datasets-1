@@ -63,6 +63,10 @@ data_profile:
     duplicate_row_count: 0
     status: not_applicable
     notes: One blank value in the supplied FGB; not selected for stable feature identity.
+feature_identity:
+  strategy: source_field
+  source_fields:
+  - MRGID
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

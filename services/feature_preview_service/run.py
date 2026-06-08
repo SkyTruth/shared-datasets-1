@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
+from scripts import release_feature_model
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_COLLECTION_ROOT = "feature_preview_index"
@@ -525,9 +527,11 @@ def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> d
             errors.append(f"line {line_number} provenance must be an object")
             continue
         records[feature_id] = {
-            "asset_slug": asset_slug,
-            "release": release,
+            "schema_version": record.get("schema_version"),
+            "asset_slug": record.get("asset_slug"),
+            "release": record.get("release"),
             "feature_id": feature_id,
+            "identity_key": record.get("identity_key"),
             "geometry_hash": record.get("geometry_hash"),
             "properties_hash": record.get("properties_hash"),
             "properties": dict(properties),
@@ -537,6 +541,13 @@ def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> d
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "; ".join(errors[:10]))
     if not records:
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar contains no records")
+    validation = release_feature_model.validate_sidecar_records(
+        records.values(),
+        expected_asset_slug=asset_slug,
+        expected_release=release,
+    )
+    if not validation.valid:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "; ".join(validation.errors[:10]))
     return records
 
 

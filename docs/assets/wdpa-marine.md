@@ -43,6 +43,13 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique
+feature_identity:
+  strategy: generated_sequence_source_fields
+  source_fields:
+  - SITE_PID
+  generated_id_type: monotonic_integer_string
+  assignment_key:
+  - SITE_PID
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

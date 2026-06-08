@@ -15,9 +15,16 @@ VALID_HASH_B = "sha256:" + "b" * 64
 class ReleaseFeatureModelTests(unittest.TestCase):
     def test_source_field_feature_id_uses_valid_source_value_directly(self):
         self.assertEqual(model.source_field_feature_id(source_field="WDPAID", source_value="123"), "123")
-        for value in ("", "abc-def", "abc_def", "abc.def", "a" * 65):
+        self.assertEqual(model.source_field_feature_id(source_field="OBJECTID", source_value=0), "0")
+        for value in (None, "", "abc-def", "abc_def", "abc.def", "a" * 65):
             with self.subTest(value=value), self.assertRaisesRegex(model.ReleaseFeatureModelError, "alphanumeric"):
                 model.source_field_feature_id(source_field="WDPAID", source_value=value)
+
+    def test_source_fields_identity_key_preserves_zero_values(self):
+        self.assertEqual(model.source_fields_identity_key({"SITE_PID": 0}, ["SITE_PID"]), ("0",))
+        for properties in ({"SITE_PID": None}, {"SITE_PID": ""}, {}):
+            with self.subTest(properties=properties), self.assertRaisesRegex(model.ReleaseFeatureModelError, "blank"):
+                model.source_fields_identity_key(properties, ["SITE_PID"])
 
     def test_generated_decimal_ids_reuse_previous_and_skip_retired_ids(self):
         previous = [
@@ -158,6 +165,34 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         self.assertEqual(manifest["identity"]["strategy"], "source_field")
         self.assertEqual(manifest["identity"]["source_fields"], ["WDPAID"])
         self.assertEqual(manifest["index_status_policy"]["mode"], "inactive_firestore_serving")
+        self.assertIsNone(manifest["index_status_policy"]["path"])
+
+    def test_manifest_rejects_inactive_index_policy_with_path(self):
+        schema = feature_metadata.schema_from_records(
+            asset_slug="example",
+            release="2026-05-01",
+            records=[],
+        )
+        identity = model.build_identity_metadata(strategy="source_field", source_fields=["WDPAID"])
+        manifest = model.build_release_manifest(
+            asset_slug="example",
+            release="2026-05-01",
+            source_inputs=[{"uri": "gs://bucket/source"}],
+            artifacts=[
+                {"role": "fgb", "path": "gs://bucket/example.fgb", "sha256": "a" * 64},
+                {"role": "pmtiles", "path": "gs://bucket/example.pmtiles", "sha256": "b" * 64},
+                {"role": "metadata", "path": "gs://bucket/example.metadata.ndjson.gz", "sha256": "c" * 64},
+                {"role": "schema", "path": "gs://bucket/example.schema.json", "sha256": "d" * 64},
+                {"role": "manifest", "path": "gs://bucket/example.manifest.json"},
+            ],
+            schema=schema,
+            identity=identity,
+            validation={"valid": True},
+        )
+        manifest["index_status_policy"]["path"] = "gs://bucket/example/index-loads/2026-05-01/"
+
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "null path"):
+            model.validate_release_manifest(manifest, expected_asset_slug="example", expected_release="2026-05-01")
 
 
 if __name__ == "__main__":

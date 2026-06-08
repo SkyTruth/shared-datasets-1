@@ -59,6 +59,13 @@ data_profile:
     31 missing rows, and 120112 duplicate rows. The release feature_id is a curator-approved composite source-field key over
     week, region, country, admin1_id, admin1, disorder_type, event_type, sub_event_type, centroid_latitude, and centroid_longitude
     with __NULL__ used for missing preimage values; this produced 120245 distinct feature_id values for 120245 rows.
+feature_identity:
+  strategy: generated_sequence_content_hash
+  source_fields: []
+  generated_id_type: monotonic_integer_string
+  assignment_key:
+  - geometry_hash
+  - properties_hash
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

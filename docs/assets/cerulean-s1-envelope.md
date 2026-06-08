@@ -39,6 +39,13 @@ data_profile:
   identity_candidates: []
   notes: No source attribute fields or source field ID candidate; metadata-contract releases use a generated geometry-digest
     feature_id.
+feature_identity:
+  strategy: generated_sequence_content_hash
+  source_fields: []
+  generated_id_type: monotonic_integer_string
+  assignment_key:
+  - geometry_hash
+  - properties_hash
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

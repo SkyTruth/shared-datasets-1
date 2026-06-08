@@ -23,7 +23,7 @@ class FakeResolver:
                 42,
                 schema_generation=43,
                 manifest_generation=44,
-                index_load_id="inactive",
+                index_load_id="load-1",
                 schema_fields=("feature_id", "name", "source_id", "nullable_field"),
             )
         if release == "2026-05-01":
@@ -33,7 +33,7 @@ class FakeResolver:
                 42,
                 schema_generation=43,
                 manifest_generation=44,
-                index_load_id="inactive",
+                index_load_id="load-1",
                 schema_fields=("feature_id", "name", "source_id", "nullable_field"),
             )
         raise AssertionError("unexpected release")
@@ -42,6 +42,20 @@ class FakeResolver:
 class NotReadyResolver(FakeResolver):
     def resolve(self, asset_slug: str, release: str) -> ResolvedRelease:
         raise IndexNotReady("not loaded")
+
+
+class InactiveResolver(FakeResolver):
+    def resolve(self, asset_slug: str, release: str) -> ResolvedRelease:
+        self.calls.append((asset_slug, release))
+        return ResolvedRelease(
+            release,
+            "2026-05-01",
+            42,
+            schema_generation=43,
+            manifest_generation=44,
+            index_load_id="inactive",
+            schema_fields=("feature_id", "name", "source_id", "nullable_field"),
+        )
 
 
 class FakeIndex:
@@ -247,7 +261,7 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(payload["release_index_generation"], 42)
         self.assertEqual(payload["schema_generation"], 43)
         self.assertEqual(payload["manifest_generation"], 44)
-        self.assertEqual(payload["index_load_id"], "inactive")
+        self.assertEqual(payload["index_load_id"], "load-1")
         self.assertEqual(payload["deduplicated_lookup_count"], 2)
         self.assertEqual([item["feature_id"] for item in payload["items"]], ["1", "1", "missing"])
         self.assertTrue(payload["items"][0]["found"])
@@ -255,7 +269,7 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][0]["provenance"], {"source": "fixture"})
         self.assertEqual(payload["items"][2], {"feature_id": "missing", "found": False})
         self.assertEqual(resolver.calls, [("example-asset", "latest")])
-        self.assertEqual(index.calls, [("example-asset", "2026-05-01", "inactive", ["1", "missing"])])
+        self.assertEqual(index.calls, [("example-asset", "2026-05-01", "load-1", ["1", "missing"])])
 
     def test_lookup_by_feature_id_resolves_latest_and_preserves_duplicate_order(self):
         response, resolver, index = post_lookup(
@@ -275,7 +289,7 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][1]["feature_id"], "1")
         self.assertEqual(payload["items"][2], {"feature_id": "missing", "found": False})
         self.assertEqual(resolver.calls, [("example-asset", "latest")])
-        self.assertEqual(index.calls[-1], ("example-asset", "2026-05-01", "inactive", ["1", "missing"]))
+        self.assertEqual(index.calls[-1], ("example-asset", "2026-05-01", "load-1", ["1", "missing"]))
 
     def test_lookup_by_feature_id_rejects_invalid_public_ids(self):
         response, _resolver, index = post_lookup(
@@ -341,22 +355,32 @@ class MetadataServiceTests(unittest.TestCase):
         self.assertEqual(response.status, 409)
         self.assertEqual(json.loads(response.body)["error"]["code"], "index_not_ready")
 
-    def test_catalog_resolver_accepts_matching_manifest_and_inactive_firestore_policy(self):
+    def test_inactive_resolver_returns_409_before_lookup(self):
+        resolver = InactiveResolver()
+        index = FakeIndex()
+        response = handle_request(
+            "POST",
+            "/v1/assets/example-asset/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            json.dumps({"ids": ["1"]}).encode("utf-8"),
+            release_resolver=resolver,
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 409)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "index_not_ready")
+        self.assertEqual(resolver.calls, [("example-asset", "latest")])
+        self.assertEqual(index.calls, [])
+
+    def test_catalog_resolver_rejects_matching_manifest_and_inactive_firestore_policy(self):
         resolver = CatalogReleaseResolver(
             bucket_name="test-bucket",
             client=FakeGcsClient(ready_release_bucket()),
             ttl_seconds=0,
         )
 
-        resolved = resolver.resolve("example-asset", "latest")
-
-        self.assertEqual(resolved.requested_release, "latest")
-        self.assertEqual(resolved.resolved_release, "2026-05-01")
-        self.assertEqual(resolved.release_index_generation, 42)
-        self.assertEqual(resolved.schema_generation, 13)
-        self.assertEqual(resolved.manifest_generation, 14)
-        self.assertEqual(resolved.index_load_id, "inactive")
-        self.assertEqual(resolved.schema_fields, ("name",))
+        with self.assertRaisesRegex(IndexNotReady, "Firestore metadata serving is inactive"):
+            resolver.resolve("example-asset", "latest")
 
     def test_catalog_resolver_rejects_non_null_inactive_policy_path(self):
         resolver = CatalogReleaseResolver(

@@ -51,6 +51,13 @@ data_profile:
     status: non_unique
     notes: Metadata link, not row-unique
   notes: No documented source feature ID candidate; the metadata-contract release uses generated sequence feature_id values.
+feature_identity:
+  strategy: generated_sequence_content_hash
+  source_fields: []
+  generated_id_type: monotonic_integer_string
+  assignment_key:
+  - geometry_hash
+  - properties_hash
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

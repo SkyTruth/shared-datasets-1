@@ -43,6 +43,10 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique
+feature_identity:
+  strategy: source_field
+  source_fields:
+  - SITE_PID
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

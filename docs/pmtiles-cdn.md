@@ -307,14 +307,16 @@ Do not emit direct
 `https://storage.googleapis.com/skytruth-shared-datasets-1/.../*.pmtiles`
 browser URLs for shared-dataset PMTiles. If the consumer config response is
 cached, bump its cache key as part of the change. PMTiles layer/config responses
-should also preserve catalog `localized_names` metadata when present so browser
-labels, popups, and feature inspectors can resolve display labels through the
-metadata API or same-asset localization CSV instead of hardcoding source-native
-fields. Localized canonical data lives in the localization CSV sidecar keyed by
-`feature_id`; PMTiles carry `feature_id`, not `name` or `name_*`
-fields. Use each translation entry's aggregate `review_state` to distinguish
-source-provided names, machine translations, human-reviewed translations, and
-mixed review state in user-facing confidence cues.
+should also preserve release metadata sidecar references when present so
+browser labels, popups, and feature inspectors can resolve display labels
+through the selected metadata sidecar instead of hardcoding source-native
+fields. Localized canonical views live in generated
+`{asset-slug}.metadata.{locale}.ndjson.gz` sidecars created from
+`{asset-slug}.metadata-translations.csv`; PMTiles carry `feature_id`, not
+`name` or `name_*` fields. Use translation `review_state` values from metadata
+records to distinguish source-provided names, machine translations,
+human-reviewed translations, and mixed review state in user-facing confidence
+cues.
 
 Before mounting a private PMTiles layer, the frontend should call the session
 endpoint, preferably through `ensurePmtilesCdnSession`:
@@ -389,16 +391,14 @@ Apply this recipe to any downstream repo, including 30x30:
 
    const ref = await resolveSharedDatasetPmtilesRef(assetSlug);
    const pmtilesUrl = ref.url;
-   const localizedNames = ref.localizedNames;
-   const reviewStates = localizedNames?.translations?.map(
-     ({ locale_code, review_state }) => `${locale_code}:${review_state}`
-   );
+   const releaseIndexUrl = ref.releaseIndexUrl;
+   const latestRelease = ref.latestRelease;
    ```
 
 3. If the app has a config API, parse catalog `access_tier`, reject missing or
-   unknown tiers, preserve `localizedNames` for PMTiles layer labels when
-   present, preserve per-locale review states for confidence cues, and bump any
-   Redis or process cache key.
+   unknown tiers, preserve release metadata sidecar references for PMTiles
+   layer labels and feature inspectors when present, and bump any Redis or
+   process cache key.
 4. Add a backend session endpoint with the behavior in
    [Consumer Runtime Contract](#consumer-runtime-contract).
 5. Add a backend metadata URL endpoint if the app exposes private metadata

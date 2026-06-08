@@ -153,9 +153,11 @@ def validate_hash(value: str, *, label: str) -> None:
 
 def source_field_feature_id(*, source_field: str, source_value: Any) -> str:
     """Return a feature ID copied directly from a source field value."""
-    if not str(source_field or "").strip():
+    if source_field is None or not str(source_field).strip():
         raise ReleaseFeatureModelError("source field must be non-empty")
-    feature_id = str(source_value or "").strip()
+    if source_value is None:
+        raise ReleaseFeatureModelError("feature_id must be 1-64 alphanumeric characters")
+    feature_id = str(source_value).strip()
     validate_feature_id(feature_id)
     return feature_id
 
@@ -168,7 +170,8 @@ def source_fields_identity_key(properties: Mapping[str, Any], source_fields: Seq
         raise ReleaseFeatureModelError("source-field identity accepts at most two source fields")
     values: list[str] = []
     for field in fields:
-        value = str(properties.get(field) or "").strip()
+        raw_value = properties.get(field)
+        value = "" if raw_value is None else str(raw_value).strip()
         if not value:
             raise ReleaseFeatureModelError(f"source identity field {field!r} is blank")
         values.append(value)
@@ -640,9 +643,15 @@ def validate_release_manifest(
     missing = [role for role in REQUIRED_VECTOR_ARTIFACT_ROLES if role not in artifacts_by_role]
     if missing:
         errors.append("manifest is missing required vector artifact role(s): " + ", ".join(missing))
+    if manifest.get("index_load_status") != "Firestore metadata serving is inactive":
+        errors.append("manifest index_load_status must mark Firestore serving inactive")
     policy = manifest.get("index_status_policy")
-    if not isinstance(policy, Mapping) or policy.get("mode") != "inactive_firestore_serving":
-        errors.append("manifest index_status_policy must mark Firestore serving inactive")
+    if (
+        not isinstance(policy, Mapping)
+        or policy.get("mode") != "inactive_firestore_serving"
+        or policy.get("path") is not None
+    ):
+        errors.append("manifest index_status_policy must mark Firestore serving inactive with a null path")
     try:
         validate_release_schema(
             manifest.get("schema") if isinstance(manifest.get("schema"), Mapping) else {},

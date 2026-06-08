@@ -36,7 +36,7 @@ Maintainer-only publishing and infrastructure procedures live in
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
 | Browser needs public feature attributes | TypeScript metadata artifact helpers | Resolve the release-index sidecar and fetch `tiles.skytruth.org/artifacts/...` directly. |
 | Browser needs private feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
-| Backend has PMTiles feature IDs and needs full attributes | Feature metadata API | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is served by asset/release/ID lookup. |
+| Backend has PMTiles feature IDs and needs full attributes | Release metadata sidecar, or Feature metadata API when serving is enabled | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is release-scoped and keyed by feature ID. |
 
 Do not build browser integrations on anonymous
 `https://storage.googleapis.com/skytruth-shared-datasets-1/...` reads. Direct
@@ -73,11 +73,10 @@ where relevant:
 | `pmtiles_url` | Browser-facing PMTiles URL in the catalog JSON. |
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
-| `localized_names`, `localized_name_locales`, and `localized_name_review_states` | Localization sidecar metadata, available locale codes, and aggregate review confidence when an asset publishes localized display names. |
-| `feature_metadata` | Metadata sidecar, schema, manifest, and Firestore-backed lookup support for assets that publish feature-level metadata. |
+| `feature_metadata` | Metadata sidecar, schema, manifest, and optional localized metadata sidecars for assets that publish feature-level metadata. Firestore-backed lookup is available only when serving is enabled. |
 
-Localized display-name consumers should resolve labels through the metadata API
-or a materialized locale-specific metadata sidecar such as
+Localized display-name consumers should resolve labels through a materialized
+locale-specific metadata sidecar such as
 `{asset-slug}.metadata.es.ndjson.gz`. The browser-facing catalog resolver
 accepts one active locale and returns either that localized sidecar or the
 canonical `{asset-slug}.metadata.ndjson.gz` fallback. Browser apps should not
@@ -89,9 +88,10 @@ Public sidecars should be fetched from
 should be returned by a consumer backend as one short-lived signed artifact URL
 only after slug, release, locale, tier, and user entitlement checks pass.
 
-Release-oriented vector PMTiles carry geometry plus `feature_id`
-only. Use the metadata API for full attributes, display labels, and provenance
-instead of expecting source columns in PMTiles.
+Release-oriented vector PMTiles carry geometry plus `feature_id` only. Use the
+release metadata sidecar, or the metadata API when Firestore serving is active,
+for full attributes, display labels, and provenance instead of expecting source
+columns in PMTiles.
 
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display
@@ -218,6 +218,9 @@ caller-provided bucket object paths.
 
 The metadata API is an IAP-protected Cloud Run service. Initial access is
 SkyTruth-only for all assets, even when the underlying catalog asset is public.
+While Firestore metadata serving is inactive, otherwise valid lookup requests
+return `409 index_not_ready`; use release metadata sidecars for active
+consumer workflows.
 
 Lookup endpoint:
 
@@ -233,7 +236,7 @@ Request:
 
 ```json
 {
-  "ids": ["src:id:1", "src:id:2"],
+  "ids": ["1", "2"],
   "fields": ["name", "source_id"]
 }
 ```

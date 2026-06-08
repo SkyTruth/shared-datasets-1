@@ -47,6 +47,10 @@ data_profile:
     duplicate_row_count: 0
     status: unique
     notes: Unique; selected source field ID for feature_id in the 2026-06-05 metadata-contract release
+feature_identity:
+  strategy: source_field
+  source_fields:
+  - MRGID
 feature_metadata:
   storage: metadata_sidecar_v1
   index_backend: firestore

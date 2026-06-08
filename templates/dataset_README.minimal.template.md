@@ -52,19 +52,6 @@ search_fields:
   - field: "{curated search/filter field such as NAME}"
     distinct_values: "{optional integer distinct non-empty values}"
     notes: "{optional reason this is useful for search/filtering}"
-localized_names:
-  storage: "localization_csv_v1"
-  join_key: "feature_id"
-  localization_file: "latest/{asset-slug}-localizations.csv"
-  property_template: "name_{locale_code}"
-  locale_code_format: "bcp47_field_safe"
-  fallback_field: "name"
-  translations:
-    - locale_code: "{field-safe BCP 47 locale code such as en or pt_br}"
-      field: "name_{locale_code}"
-      review_state_field: "name_{locale_code}_review_state"
-      label: "{optional human-readable language label}"
-      review_state: "{source_provided | machine_translated | human_reviewed | mixed}"
 feature_metadata:
   storage: "metadata_sidecar_v1"
   index_backend: "firestore"
@@ -99,10 +86,6 @@ files:
     format: "{format}"
     role: "canonical"
     purpose: "Canonical file"
-- path: "latest/{asset-slug}-localizations.csv"
-  format: "csv"
-  role: "localization"
-  purpose: "Feature display-name localizations keyed by feature_id for metadata/API use"
   - path: "latest/{asset-slug}.metadata.ndjson.gz"
     format: "ndjson_gzip"
     role: "metadata"
@@ -115,6 +98,14 @@ files:
     format: "json"
     role: "metadata"
     purpose: "Release manifest"
+  - path: "latest/{asset-slug}.metadata-translations.csv"
+    format: "csv"
+    role: "metadata_translation_source"
+    purpose: "Optional editable localized feature metadata keyed by feature_id, field, locale, and source_value_hash"
+  - path: "latest/{asset-slug}.metadata.{locale}.ndjson.gz"
+    format: "ndjson_gzip"
+    role: "metadata_localized"
+    purpose: "Optional generated locale-specific metadata sidecar recorded in release metadata"
 ---
 
 # {Dataset title}
@@ -143,9 +134,10 @@ If `feature_identity` is present, `feature_id` must be a native
 property/column in the canonical file and metadata sidecar.
 If the asset publishes localized display metadata, keep the editable translation
 source in `latest/{asset-slug}.metadata-translations.csv`, keyed by
-`feature_id`, `field`, `locale`, and `source_value_hash`, and declare it in
-`feature_metadata.translations_csv`. Resolve display labels through the
-metadata API or locale sidecar; do not put `name` or declared
+`feature_id`, `field`, `locale`, and `source_value_hash`, and list it with the
+generated locale-specific metadata sidecars in release metadata files. Resolve
+display labels through a locale sidecar, or the metadata API after Firestore
+serving is enabled; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
 must keep unique nonblank URL-safe `feature_id` values matching
 `^[A-Za-z0-9]{1,64}$`.
