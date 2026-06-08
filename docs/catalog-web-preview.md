@@ -84,16 +84,15 @@ The runtime `catalog.json` includes the CSV catalog fields, including
 publication or authoritative dataset release. Optional discovery fields in
 asset-doc frontmatter are emitted when present: `bounds` as
 `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
-`data_profile`, `search_fields`, `localized_names`, `feature_identity`,
-`feature_identity`, `source_url`, and frontmatter `license_flags` merged with
+`data_profile`, `search_fields`, `feature_metadata`, `feature_identity`,
+`source_url`, and frontmatter `license_flags` merged with
 license-text-derived flags.
 `data_profile` carries curated at-a-glance profiling facts such as column count,
 provider identity-field candidates, distinct values, duplicate counts, and short
 profile notes. `search_fields` surfaces curator-selected high-value filter
-fields that are not source field IDs. `localized_names` records the official
-localization CSV sidecar and metadata lookup contract, including `storage`,
-`join_key`, `localization_file`, available locales, declared fields, aggregate
-per-locale review state, and fallback field when present.
+fields that are not source field IDs. `feature_metadata` records the canonical
+metadata sidecar, schema, manifest, and optional localized sidecars recorded in
+release metadata.
 Release-oriented vector assets may also publish canonical and localized feature
 metadata sidecars in the release index. The static public viewer resolves
 public sidecars from the hydrated release index and fetches them directly from
@@ -106,11 +105,9 @@ configured. The browser never fetches a separate translation overlay and does
 not merge translation rows over canonical metadata. Metadata sidecars must be
 `.ndjson.gz`; the browser expects gzip-compressed NDJSON.
 `feature_identity` records the policy and counts for a native
-`feature_id` feature property when an asset needs generated group
-IDs. `feature_identity` records the policy and warning for a native
-`feature_id` feature property when an asset needs a last-resort row
-address. These fields are additive so existing CSV and JSON consumers can ignore
-them.
+`feature_id` feature property when an asset needs generated group IDs or a
+last-resort row address. These fields are additive so existing CSV and JSON
+consumers can ignore them.
 
 ## FGB downloads
 

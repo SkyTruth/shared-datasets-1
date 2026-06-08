@@ -196,17 +196,8 @@ class CatalogReleaseResolver:
             manifest_entry=manifest_entry,
         )
         validate_inactive_index_policy(release_entry)
-        return ResolvedRelease(
-            requested_release=requested_release,
-            resolved_release=resolved_release,
-            release_index_generation=release_index_generation,
-            schema_generation=as_int(schema_entry.get("generation")),
-            manifest_generation=as_int(manifest_entry.get("generation")),
-            index_load_id="inactive",
-            schema_fields=tuple(schema_fields),
-            schema_path=schema_path,
-            manifest_path=manifest_path,
-            metadata_path=metadata_path,
+        raise IndexNotReady(
+            f"{asset_slug} release {resolved_release} Firestore metadata serving is inactive"
         )
 
     def _load_gcs_json(self, uri: str, *, expected_generation: Any = None) -> dict[str, Any]:
@@ -406,6 +397,10 @@ def handle_lookup(
 ) -> Response:
     request = parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
     resolved = release_resolver.resolve(asset_slug, release)
+    if resolved.index_load_id == "inactive":
+        raise IndexNotReady(
+            f"{asset_slug} release {resolved.resolved_release} Firestore metadata serving is inactive"
+        )
     if not resolved.index_load_id or not LOAD_ID_RE.fullmatch(resolved.index_load_id):
         raise IndexNotReady(f"{asset_slug} release {resolved.resolved_release} metadata index load ID is invalid")
     validate_requested_fields(request["fields"], resolved.schema_fields)

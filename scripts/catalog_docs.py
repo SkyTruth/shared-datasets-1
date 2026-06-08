@@ -558,13 +558,22 @@ def validate_feature_identity(value: Any, *, path: Path) -> None:
         raise CatalogDocsError(f"{path}: feature_identity.source_fields must be a list")
     if strategy == "source_field" and not [as_text(field).strip() for field in source_fields if as_text(field).strip()]:
         raise CatalogDocsError(f"{path}: feature_identity.source_fields is required for source_field strategy")
+    if strategy == "generated_sequence_source_fields":
+        clean_source_fields = [as_text(field).strip() for field in source_fields if as_text(field).strip()]
+        if not (1 <= len(clean_source_fields) <= 2):
+            raise CatalogDocsError(f"{path}: feature_identity.source_fields must contain one or two fields for generated_sequence_source_fields")
     if strategy.startswith("generated_sequence"):
         generated_type = as_text(value.get("generated_id_type")).strip()
-        if generated_type and generated_type != "monotonic_integer_string":
+        if generated_type != "monotonic_integer_string":
             raise CatalogDocsError(f"{path}: feature_identity.generated_id_type must be monotonic_integer_string")
         assignment_key = value.get("assignment_key", [])
         if not isinstance(assignment_key, list):
             raise CatalogDocsError(f"{path}: feature_identity.assignment_key must be a list")
+        clean_assignment_key = [as_text(part).strip() for part in assignment_key if as_text(part).strip()]
+        if strategy == "generated_sequence_source_fields" and clean_assignment_key != [as_text(field).strip() for field in source_fields if as_text(field).strip()]:
+            raise CatalogDocsError(f"{path}: feature_identity.assignment_key must match source_fields")
+        if strategy == "generated_sequence_content_hash" and clean_assignment_key != ["geometry_hash", "properties_hash"]:
+            raise CatalogDocsError(f"{path}: feature_identity.assignment_key must be geometry_hash and properties_hash")
 
 
 def validate_feature_metadata(value: Any, *, path: Path, asset_slug: str) -> None:
@@ -634,6 +643,8 @@ def validate_optional_discovery_metadata(path: Path, metadata: dict[str, Any]) -
             raise CatalogDocsError(f"{path}: row_count must be non-negative")
     validate_data_profile(path, metadata, row_count=row_count)
     validate_search_fields(metadata.get("search_fields"), path=path, row_count=row_count)
+    if metadata.get("feature_metadata") not in (None, "") and metadata.get("feature_identity") in (None, ""):
+        raise CatalogDocsError(f"{path}: feature_identity is required when feature_metadata is declared")
     validate_feature_identity(metadata.get("feature_identity"), path=path)
     validate_feature_metadata(metadata.get("feature_metadata"), path=path, asset_slug=metadata["asset_slug"])
     if "source_resolution_meters" in metadata and metadata["source_resolution_meters"] not in (None, ""):

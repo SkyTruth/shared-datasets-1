@@ -430,16 +430,23 @@ def optional_feature_identity(metadata: dict[str, Any], *, doc_path: Path) -> di
     }
     if strategy == "source_field" and not normalized["source_fields"]:
         raise CatalogSiteError(f"{doc_path}: feature_identity.source_fields is required for source_field strategy")
+    if strategy == "generated_sequence_source_fields" and not (1 <= len(normalized["source_fields"]) <= 2):
+        raise CatalogSiteError(
+            f"{doc_path}: feature_identity.source_fields must contain one or two fields for generated_sequence_source_fields"
+        )
     if strategy.startswith("generated_sequence"):
         generated_type = str(value.get("generated_id_type") or "").strip()
-        if generated_type:
-            if generated_type != "monotonic_integer_string":
-                raise CatalogSiteError(f"{doc_path}: feature_identity.generated_id_type must be monotonic_integer_string")
-            normalized["generated_id_type"] = generated_type
+        if generated_type != "monotonic_integer_string":
+            raise CatalogSiteError(f"{doc_path}: feature_identity.generated_id_type must be monotonic_integer_string")
+        normalized["generated_id_type"] = generated_type
         assignment_key = value.get("assignment_key", [])
         if not isinstance(assignment_key, list):
             raise CatalogSiteError(f"{doc_path}: feature_identity.assignment_key must be a list")
         normalized["assignment_key"] = [str(part).strip() for part in assignment_key if str(part).strip()]
+        if strategy == "generated_sequence_source_fields" and normalized["assignment_key"] != normalized["source_fields"]:
+            raise CatalogSiteError(f"{doc_path}: feature_identity.assignment_key must match source_fields")
+        if strategy == "generated_sequence_content_hash" and normalized["assignment_key"] != ["geometry_hash", "properties_hash"]:
+            raise CatalogSiteError(f"{doc_path}: feature_identity.assignment_key must be geometry_hash and properties_hash")
     return normalized
 
 
@@ -816,6 +823,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
                 f"{slug}: release index latest_release.date {latest_release_date!r} does not match a release entry"
             )
     row_count = optional_int(doc_metadata, "row_count", doc_path=doc_path)
+    if doc_metadata.get("feature_metadata") not in (None, "") and doc_metadata.get("feature_identity") in (None, ""):
+        raise CatalogSiteError(f"{doc_path}: feature_identity is required when feature_metadata is declared")
     feature_identity = optional_feature_identity(doc_metadata, doc_path=doc_path)
     return CatalogAsset(
         slug=slug,

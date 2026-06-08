@@ -106,10 +106,10 @@ Rules:
 
 - Use catalog `pmtiles_url` when available; it is already the tiered
   `tiles.skytruth.org` URL.
-- Preserve catalog `localizedNames`/`localized_names` metadata in PMTiles layer
-  config when present; labels and feature inspectors should read `name` or
-  declared `name_${locale_code}` PMTiles properties instead of source-native
-  fields, and should use aggregate `review_state` for confidence cues.
+- Preserve release metadata sidecar references in PMTiles layer config when
+  present; labels and feature inspectors should read the selected metadata
+  sidecar instead of PMTiles source-native fields, and should use
+  `review_state` values for confidence cues.
 - Reject missing or unknown `access_tier`; do not silently default to public.
 - Public PMTiles do not need a cookie.
 - Private PMTiles require the session endpoint before mounting the layer.
@@ -186,8 +186,8 @@ Minimum contract for consumer layer/config code:
 - Use `slug`, `title`, `status`, `access_tier`, `available_formats`,
   `canonical_format`, `has_pmtiles`, `pmtiles_url`, `docs_url`,
   `release_index_url`, `latest_release`, `last_updated`, `citation`, `license`,
-  `bounds`, `geometry_type`, `localized_names`, and
-  `localized_name_review_states` when present.
+  `bounds`, `geometry_type`, `feature_metadata`, and `feature_identity` when
+  present.
 - Use only `status="active"` for default production layer lists.
 - If a UI intentionally shows non-active assets, display `consumer_guidance`.
 - Resolve relative docs and release-index URLs against

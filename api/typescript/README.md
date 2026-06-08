@@ -76,7 +76,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
-| Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and localized-name metadata in consumer-owned config. |
+| Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and release metadata sidecar references in consumer-owned config. |
 
 Use the Python SDK instead when backend code needs to download canonical data
 files or resolve durable `gs://` object identities with Application Default
@@ -142,14 +142,15 @@ const refs = resolveSharedDatasetPmtilesRefsFromCatalogJson(catalogJson, [
 ```
 
 When a PMTiles layer needs localized labels or feature-inspector display names,
-use `ref.localizedNames` to choose the declared `name_${locale_code}` property.
-Prefer the requested locale when present, then `fallback_field` (`name` for the
-sidecar CSV contract), then a consumer-owned generic label fallback. Do not
-hardcode source-native fields; localized source data lives in the same-asset
-metadata translation sources keyed by `feature_id`, `field`, `locale`, and `source_value_hash`, while PMTiles
-features expose `name` and declared nonblank `name_*` properties. Use aggregate
-`review_state` to show or filter confidence for source-provided,
-machine-translated, human-reviewed, and mixed labels.
+resolve the selected release metadata sidecar instead of reading display
+columns from PMTiles. Prefer the requested locale-specific
+`{asset-slug}.metadata.{locale}.ndjson.gz` sidecar when present, then the
+canonical `{asset-slug}.metadata.ndjson.gz` fallback. Do not hardcode
+source-native fields; localized source data is materialized from
+`{asset-slug}.metadata-translations.csv` rows keyed by `feature_id`, `field`,
+`locale`, and `source_value_hash`, while PMTiles expose only `feature_id`.
+Use `review_state` values from metadata records to show or filter confidence
+for source-provided, machine-translated, human-reviewed, and mixed labels.
 
 Each resolved ref includes:
 
@@ -189,21 +190,17 @@ type SharedDatasetCatalogRef = {
 };
 ```
 
-`localizedNames` is `null` when the asset does not declare localized display
-name metadata. When present, `storage`, `join_key`, and `localization_file`
-describe the authoritative localization CSV sidecar. `available_locales` is the
-compact list to expose in layer settings, while `translations[].field` gives the
-PMTiles feature property name to read for labels and popups, and
-`translations[].review_state` gives the current aggregate confidence state for
-that locale.
+`localizedNames` is retained for older catalog JSON and consumers. New
+release-oriented metadata sidecar integrations should prefer the release index
+metadata artifact helpers described below.
 
 Catalog resolution throws `SharedDatasetCatalogResolutionError` when catalog
 data is missing, malformed, or cannot resolve a requested PMTiles asset.
 These helpers return PMTiles-capable assets only. For full catalog screens or
 default production layer lists, use `status === "active"` and preserve the
-license, citation, source, docs, release, and localized-name metadata returned
-with each ref; if your app needs non-PMTiles assets or fields outside this
-type, fetch and parse the catalog JSON directly.
+license, citation, source, docs, release, and metadata sidecar references
+returned with each ref; if your app needs non-PMTiles assets or fields outside
+this type, fetch and parse the catalog JSON directly.
 
 ## Metadata Artifact Helpers
 

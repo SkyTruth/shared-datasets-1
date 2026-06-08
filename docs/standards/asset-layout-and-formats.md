@@ -360,18 +360,21 @@ Release-oriented metadata sidecar assets use the
 `{asset-slug}.metadata.{locale}.ndjson.gz` views described above. Datasets
 without localized display metadata omit this metadata. Release-oriented PMTiles
 do not carry `name` or `name_*` properties; they carry only `feature_id`, and
-feature inspectors or apps resolve display labels through the metadata API or
-one materialized locale-specific metadata sidecar. Any dataset that publishes
-localized display metadata must declare `feature_metadata.translations_csv` in
-the asset-doc frontmatter and must stage a translation CSV at
-`latest/{asset-slug}.metadata-translations.csv`.
+feature inspectors or apps resolve display labels through one materialized
+locale-specific metadata sidecar, or through the metadata API after Firestore
+serving is enabled. Any dataset that publishes localized display metadata must
+stage a translation CSV at
+`latest/{asset-slug}.metadata-translations.csv` and list it with the generated
+locale-specific metadata sidecars in the release metadata files.
 
 ```yaml
-feature_metadata:
-  translations_csv: latest/example-asset.metadata-translations.csv
-  localized_sidecars:
-  - locale: es
-    file: latest/example-asset.metadata.es.ndjson.gz
+files:
+  - path: latest/example-asset.metadata-translations.csv
+    format: csv
+    role: metadata_translation_source
+  - path: latest/example-asset.metadata.es.ndjson.gz
+    format: ndjson_gzip
+    role: metadata_localized
 ```
 
 The metadata translation CSV schema is:

@@ -9,13 +9,12 @@ audience: Shared-datasets maintainers and consuming application backend owners
 
 Release-oriented vector assets publish full feature metadata outside PMTiles.
 The durable source is the release feature model, release manifest, canonical
-FGB, and `.metadata.ndjson.gz` sidecar in GCS. Firestore is a rebuildable
-serving index loaded from that sidecar.
+FGB, and `.metadata.ndjson.gz` sidecar in GCS. When serving is enabled,
+Firestore is a rebuildable serving index loaded from that sidecar.
 
 ## Endpoints
 
 ```http
-POST /v1/assets/{slug}/releases/{release}:lookup
 POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
@@ -35,7 +34,7 @@ for browser/user URL workflows that carry those public handles.
 
 ```json
 {
-  "ids": ["src:id:1", "src:id:2"],
+  "ids": ["1", "2"],
   "fields": ["name", "source_id"],
   "include_provenance": true
 }
@@ -48,22 +47,6 @@ Rules:
 - `fields: []` returns identifiers, hashes, and provenance only.
 - `include_provenance` defaults to `true`.
 - A request may project up to 500 fields.
-
-## Ext ID Request
-
-```json
-{
-  "feature_ids": ["1", "2"],
-  "fields": ["name", "source_id"],
-  "include_provenance": true
-}
-```
-
-Rules:
-
-- `feature_ids` is required and accepts up to 500 public ext IDs.
-- Every `feature_id` must match `^[A-Za-z0-9]{1,64}$`.
-- `fields`, `include_provenance`, and projection limits match `lookup`.
 
 ## Response
 
@@ -78,12 +61,12 @@ Rules:
   "index_load_id": "load-1",
   "items": [
     {
-      "feature_id": "src:id:1",
-      "feature_id": "123",
+      "feature_id": "1",
       "found": true,
+      "geometry_hash": "sha256:...",
       "properties_hash": "sha256:...",
       "properties": {
-        "feature_id": "123",
+        "feature_id": "1",
         "name": "Example"
       },
       "provenance": {
@@ -128,11 +111,12 @@ Errors use:
 
 Status codes:
 
-- `400`: invalid JSON, invalid IDs or ext IDs, invalid fields, or request limit exceeded.
+- `400`: invalid JSON, invalid IDs, invalid fields, or request limit exceeded.
 - `401`: IAP identity missing.
 - `403`: IAP identity is outside the allowed domains.
 - `404`: unknown asset, unknown release, or no latest release.
-- `409`: Firestore serving index is not ready.
+- `409`: Firestore serving index is not ready, including while the release
+  carries the `inactive_firestore_serving` policy.
 - `413`: response would exceed 10 MiB.
 - `503`: transient serving backend failure.
 
@@ -199,6 +183,9 @@ release indexes should record:
   }
 }
 ```
+
+While this policy is present, valid lookup requests return
+`409 index_not_ready` before any Firestore lookup.
 
 Do not dispatch `.github/workflows/feature-metadata-index-load.yml`, rebuild a
 Firestore database, or load production/preview indexes as part of this contract

@@ -69,25 +69,23 @@ class GcsPublisher:
             blob.reload()
         except NotFound:
             return None
-        records = list(
-            release_feature_model.read_metadata_sidecar_bytes(
-                blob.download_as_bytes(),
-                label=f"gs://{self.bucket.name}/{object_name}",
-            )
-        )
         try:
+            records = list(
+                release_feature_model.read_metadata_sidecar_bytes(
+                    blob.download_as_bytes(),
+                    label=f"gs://{self.bucket.name}/{object_name}",
+                )
+            )
             validation = release_feature_model.validate_sidecar_records(records)
             if not validation.valid:
                 raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
             release_feature_model.previous_feature_id_mapping(records)
         except release_feature_model.ReleaseFeatureModelError as exc:
-            self.logger.warning(
-                "%s latest metadata sidecar has incompatible feature identity mappings; "
-                "generated sequence feature_id values will start fresh: %s",
-                asset.slug,
-                exc,
-            )
-            return None
+            raise RuntimeError(
+                f"{asset.slug} latest metadata sidecar has incompatible feature identity mappings; "
+                "refusing to reset generated sequence feature_id values: "
+                f"{exc}"
+            ) from exc
         return records
 
     def load_successful_run_record(

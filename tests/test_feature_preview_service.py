@@ -8,6 +8,8 @@ from services.feature_preview_service import run
 
 
 PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
+VALID_GEOMETRY_HASH = "sha256:" + "a" * 64
+VALID_PROPERTIES_HASH = "sha256:" + "b" * 64
 SIDECAR_URI = (
     f"gs://{PREVIEW_BUCKET}/100-geographic-reference/130-protected-areas/"
     "wdpa-marine/releases/2026-06-01/wdpa-marine.metadata.ndjson.gz"
@@ -105,8 +107,8 @@ class FakeIndex:
         return {
             "1": {
                 "feature_id": "1",
-                "geometry_hash": "sha256:g",
-                "properties_hash": "sha256:a",
+                "geometry_hash": VALID_GEOMETRY_HASH,
+                "properties_hash": VALID_PROPERTIES_HASH,
                 "properties": {"feature_id": "1", "name": "A", "status": "active"},
                 "provenance": {"source": "test"},
             }
@@ -125,8 +127,8 @@ class FakeIndex:
         return {
             "1": {
                 "feature_id": "1",
-                "geometry_hash": "sha256:g",
-                "properties_hash": "sha256:a",
+                "geometry_hash": VALID_GEOMETRY_HASH,
+                "properties_hash": VALID_PROPERTIES_HASH,
                 "properties": {"feature_id": "1", "name": "A", "status": "active"},
                 "provenance": {"source": "test"},
             }
@@ -185,11 +187,12 @@ def sidecar_bytes(records: list[dict]) -> bytes:
 
 def sidecar_record(feature_id: str = "1", *, name: str = "A") -> dict:
     return {
+        "schema_version": run.release_feature_model.METADATA_SIDECAR_SCHEMA_VERSION,
         "asset_slug": "wdpa-marine",
         "release": "2026-06-01",
         "feature_id": feature_id,
-        "geometry_hash": "sha256:g",
-                "properties_hash": "sha256:a",
+        "geometry_hash": VALID_GEOMETRY_HASH,
+        "properties_hash": VALID_PROPERTIES_HASH,
         "properties": {"feature_id": feature_id.removeprefix("src:id:"), "name": name, "status": "active"},
         "provenance": {"source": "test"},
     }
@@ -452,12 +455,26 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         unsafe_feature_id = sidecar_record("badid")
         unsafe_feature_id["feature_id"] = "bad-id"
         duplicate_feature_id = sidecar_record("1")
+        malformed_hash = sidecar_record("2")
+        malformed_hash["geometry_hash"] = "not-a-hash"
+        missing_asset_slug = sidecar_record("2")
+        del missing_asset_slug["asset_slug"]
+        missing_release = sidecar_record("2")
+        del missing_release["release"]
+        duplicate_identity_a = sidecar_record("1")
+        duplicate_identity_a["identity_key"] = ["same-source"]
+        duplicate_identity_b = sidecar_record("2")
+        duplicate_identity_b["identity_key"] = ["same-source"]
         cases = {
             "bad gzip": b"not gzip",
             "bad ndjson": gzip.compress(b"{bad\n"),
             "duplicate feature_id": sidecar_bytes([duplicate, duplicate]),
             "invalid feature_id": sidecar_bytes([unsafe_feature_id]),
-            "duplicate feature_id": sidecar_bytes([sidecar_record("1"), duplicate_feature_id]),
+            "duplicate feature_id second pass": sidecar_bytes([sidecar_record("1"), duplicate_feature_id]),
+            "malformed hash": sidecar_bytes([malformed_hash]),
+            "missing asset_slug": sidecar_bytes([missing_asset_slug]),
+            "missing release": sidecar_bytes([missing_release]),
+            "duplicate identity_key": sidecar_bytes([duplicate_identity_a, duplicate_identity_b]),
         }
 
         for label, payload in cases.items():

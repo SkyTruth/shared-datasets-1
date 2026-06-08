@@ -9,6 +9,10 @@ from pathlib import Path
 from scripts import feature_preview_index
 
 
+VALID_GEOMETRY_HASH = "sha256:" + "a" * 64
+VALID_PROPERTIES_HASH = "sha256:" + "b" * 64
+
+
 def write_sidecar(path: Path, records: list[dict]) -> None:
     with gzip.open(path, "wt", encoding="utf-8") as handle:
         for record in records:
@@ -35,14 +39,16 @@ class FeaturePreviewIndexTests(unittest.TestCase):
                         "asset_slug": "wdpa-marine",
                         "release": "2026-06-01",
                         "feature_id": "1",
-                        "geometry_hash": "sha256:a", "properties_hash": "sha256:a",
+                        "geometry_hash": VALID_GEOMETRY_HASH,
+                        "properties_hash": VALID_PROPERTIES_HASH,
                         "properties": {"feature_id": "1", "name": "A"},
                     },
                     {
                         "asset_slug": "wdpa-marine",
                         "release": "2026-06-01",
                         "feature_id": "2",
-                        "geometry_hash": "sha256:b", "properties_hash": "sha256:b",
+                        "geometry_hash": "sha256:" + "c" * 64,
+                        "properties_hash": "sha256:" + "d" * 64,
                         "properties": {"feature_id": "2", "name": "B"},
                     },
                 ],
@@ -68,8 +74,18 @@ class FeaturePreviewIndexTests(unittest.TestCase):
             write_sidecar(
                 sidecar,
                 [
-                    {"feature_id": "bad-id", "geometry_hash": "sha256:a", "properties_hash": "sha256:a", "properties": {"feature_id": "1"}},
-                    {"feature_id": "1", "geometry_hash": "sha256:b", "properties_hash": "sha256:b", "properties": {"feature_id": "2"}},
+                    {
+                        "feature_id": "bad-id",
+                        "geometry_hash": VALID_GEOMETRY_HASH,
+                        "properties_hash": VALID_PROPERTIES_HASH,
+                        "properties": {"feature_id": "1"},
+                    },
+                    {
+                        "feature_id": "1",
+                        "geometry_hash": "sha256:" + "c" * 64,
+                        "properties_hash": "sha256:" + "d" * 64,
+                        "properties": {"feature_id": "2"},
+                    },
                 ],
             )
 
@@ -87,7 +103,7 @@ class FeaturePreviewIndexTests(unittest.TestCase):
             write_sidecar(
                 sidecar,
                 [
-                    {"feature_id": "1", "properties_hash": "sha256:a", "properties": {"feature_id": "1"}},
+                    {"feature_id": "1", "properties_hash": VALID_PROPERTIES_HASH, "properties": {"feature_id": "1"}},
                 ],
             )
 
@@ -105,12 +121,45 @@ class FeaturePreviewIndexTests(unittest.TestCase):
             write_sidecar(
                 sidecar,
                 [
-                    {"feature_id": "1", "geometry_hash": "sha256:a", "properties_hash": "sha256:a", "properties": {"feature_id": "1"}},
-                    {"feature_id": "1", "geometry_hash": "sha256:b", "properties_hash": "sha256:b", "properties": {"feature_id": "1"}},
+                    {
+                        "feature_id": "1",
+                        "geometry_hash": VALID_GEOMETRY_HASH,
+                        "properties_hash": VALID_PROPERTIES_HASH,
+                        "properties": {"feature_id": "1"},
+                    },
+                    {
+                        "feature_id": "1",
+                        "geometry_hash": "sha256:" + "c" * 64,
+                        "properties_hash": "sha256:" + "d" * 64,
+                        "properties": {"feature_id": "1"},
+                    },
                 ],
             )
 
             with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "duplicate feature_id"):
+                feature_preview_index.load_sidecar_to_index(
+                    sidecar_path=sidecar,
+                    asset_slug="wdpa-marine",
+                    release="2026-06-01",
+                    writer=FakeWriter(),
+                )
+
+    def test_malformed_hash_blocks_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sidecar = Path(tmp) / "asset.metadata.ndjson.gz"
+            write_sidecar(
+                sidecar,
+                [
+                    {
+                        "feature_id": "1",
+                        "geometry_hash": "not-a-hash",
+                        "properties_hash": VALID_PROPERTIES_HASH,
+                        "properties": {"feature_id": "1"},
+                    },
+                ],
+            )
+
+            with self.assertRaisesRegex(feature_preview_index.FeaturePreviewIndexError, "geometry_hash"):
                 feature_preview_index.load_sidecar_to_index(
                     sidecar_path=sidecar,
                     asset_slug="wdpa-marine",

@@ -112,6 +112,44 @@ class CatalogDocsTests(unittest.TestCase):
                     categories={"100-geographic-reference": {"110-boundaries"}},
                 )
 
+    def test_feature_metadata_requires_feature_identity(self):
+        bad = DOC.replace(
+            "feature_identity:\n  strategy: source_field\n  source_fields:\n  - WDPAID\n",
+            "",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp) / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            path = docs_dir / "example-asset.md"
+            path.write_text(bad)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "feature_identity is required"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories={"100-geographic-reference": {"110-boundaries"}},
+                )
+
+    def test_generated_feature_identity_requires_assignment_key(self):
+        bad = DOC.replace(
+            "feature_identity:\n  strategy: source_field\n  source_fields:\n  - WDPAID\n",
+            "feature_identity:\n"
+            "  strategy: generated_sequence_content_hash\n"
+            "  source_fields: []\n"
+            "  generated_id_type: monotonic_integer_string\n"
+            "  assignment_key: []\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp) / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            path = docs_dir / "example-asset.md"
+            path.write_text(bad)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "assignment_key"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories={"100-geographic-reference": {"110-boundaries"}},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

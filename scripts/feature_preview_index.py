@@ -115,10 +115,14 @@ def validate_records(records: Sequence[Mapping[str, Any]], *, asset_slug: str, r
         seen.add(feature_id)
         if not isinstance(record.get("properties"), Mapping):
             errors.append(f"record {index} properties must be an object")
-        if not isinstance(record.get("geometry_hash"), str):
-            errors.append(f"record {index} geometry_hash is required")
-        if not isinstance(record.get("properties_hash"), str):
-            errors.append(f"record {index} properties_hash is required")
+        try:
+            release_feature_model.validate_hash(str(record.get("geometry_hash") or ""), label="geometry_hash")
+        except release_feature_model.ReleaseFeatureModelError as exc:
+            errors.append(f"record {index}: {exc}")
+        try:
+            release_feature_model.validate_hash(str(record.get("properties_hash") or ""), label="properties_hash")
+        except release_feature_model.ReleaseFeatureModelError as exc:
+            errors.append(f"record {index}: {exc}")
         if not isinstance(record.get("provenance", {}), Mapping):
             errors.append(f"record {index} provenance must be an object")
     if errors:
