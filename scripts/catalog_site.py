@@ -21,6 +21,7 @@ DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
+SYNTHETIC_CANONICAL_FORMAT_PREFERENCE = ("fgb", "cog", "zarr", "csv", "geojson", "ndgeojson")
 ACCESS_TIERS = {"public", "private"}
 LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 REQUIRED_FIELDS = [
@@ -560,6 +561,29 @@ def load_release_index(release_index_dir: Path | None, slug: str) -> dict[str, A
     return payload
 
 
+def load_release_index_path(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise CatalogSiteError(f"{path}: invalid release index JSON") from error
+    if not isinstance(payload, dict):
+        raise CatalogSiteError(f"{path}: release index must be a JSON object")
+    if payload.get("schema_version") != 1:
+        raise CatalogSiteError(f"{path}: release index schema_version must be 1")
+    slug = str(payload.get("asset_slug") or "").strip()
+    if not SLUG_RE.fullmatch(slug):
+        raise CatalogSiteError(f"{path}: release index asset_slug must be lowercase kebab-case")
+    if path.stem != slug:
+        raise CatalogSiteError(f"{path}: release index filename must match asset_slug {slug!r}")
+    return payload
+
+
+def load_all_release_indexes(release_index_dir: Path | None) -> list[dict[str, Any]]:
+    if release_index_dir is None or not release_index_dir.exists():
+        return []
+    return [load_release_index_path(path) for path in sorted(release_index_dir.glob("*.json"))]
+
+
 def release_file_path(file_entry: Any) -> str:
     if not isinstance(file_entry, dict):
         return ""
@@ -606,6 +630,44 @@ def release_file_for_format(files: list[Any], format_name: str, preferred_path: 
         if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip() == format_name:
             return file_entry
     return None
+
+
+def release_index_latest_release(release_index: dict[str, Any]) -> dict[str, Any]:
+    latest_release = release_index.get("latest_release")
+    if not isinstance(latest_release, dict):
+        raise CatalogSiteError(f"{release_index.get('asset_slug')}: release index latest_release must be an object")
+    latest_date = str(latest_release.get("date") or "").strip()
+    if not DATE_RE.fullmatch(latest_date):
+        raise CatalogSiteError(f"{release_index.get('asset_slug')}: release index latest_release.date must be YYYY-MM-DD")
+    return latest_release
+
+
+def infer_canonical_format(files: list[Any], *, asset_slug: str) -> str:
+    file_formats = {
+        str(file_entry.get("format") or "").strip()
+        for file_entry in files
+        if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip()
+    }
+    for format_name in SYNTHETIC_CANONICAL_FORMAT_PREFERENCE:
+        if format_name in file_formats:
+            return format_name
+    raise CatalogSiteError(f"{asset_slug}: release index latest release does not include an approved canonical file")
+
+
+def release_index_asset_root(canonical_path: str, release_date: str, asset_slug: str) -> tuple[str, str]:
+    _bucket, object_name = split_gs_uri(canonical_path)
+    marker = f"/{asset_slug}/releases/{release_date}/"
+    if marker not in object_name:
+        raise CatalogSiteError(f"{asset_slug}: canonical preview path must include {marker}")
+    root = object_name.split(marker, 1)[0]
+    parts = root.split("/")
+    if len(parts) != 2:
+        raise CatalogSiteError(f"{asset_slug}: preview release path must start with category/subcategory")
+    return parts[0], parts[1]
+
+
+def humanize_slug(slug: str) -> str:
+    return " ".join(part.upper() if len(part) <= 3 else part.capitalize() for part in slug.split("-"))
 
 
 def release_formats_from_files(available_formats: list[str], files: list[Any]) -> list[str]:
@@ -877,6 +939,101 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
     )
 
 
+def synthetic_asset_from_release_index(release_index: dict[str, Any]) -> CatalogAsset:
+    slug = str(release_index.get("asset_slug") or "").strip()
+    if not SLUG_RE.fullmatch(slug):
+        raise CatalogSiteError("release-index-only asset_slug must be lowercase kebab-case")
+    latest_release = release_index_latest_release(release_index)
+    latest_release_date = str(latest_release.get("date") or "").strip()
+    files = latest_release.get("files") or []
+    if not isinstance(files, list):
+        raise CatalogSiteError(f"{slug}: release index latest_release.files must be a list")
+    canonical_format = infer_canonical_format(files, asset_slug=slug)
+    canonical_file = release_file_for_format(files, canonical_format)
+    canonical_path = release_file_path(canonical_file)
+    if not canonical_path:
+        raise CatalogSiteError(f"{slug}: release index latest release is missing canonical {canonical_format} file")
+    category, subcategory = release_index_asset_root(canonical_path, latest_release_date, slug)
+    available_formats = sorted(
+        {
+            str(file_entry.get("format") or "").strip()
+            for file_entry in files
+            if isinstance(file_entry, dict)
+            and str(file_entry.get("format") or "").strip() in APPROVED_FORMATS
+        }
+    )
+    if canonical_format not in available_formats:
+        available_formats.append(canonical_format)
+    pmtiles_file = release_file_for_format(files, "pmtiles")
+    pmtiles_path = release_file_path(pmtiles_file)
+    versions = release_versions_from_index(
+        release_index=release_index,
+        canonical_path=canonical_path,
+        canonical_format=canonical_format,
+        available_formats=available_formats,
+        pmtiles_path=pmtiles_path or None,
+    )
+    latest_version = next((version for version in versions if version.date == latest_release_date), None)
+    if latest_version is None:
+        raise CatalogSiteError(f"{slug}: release index latest_release.date does not match a release entry")
+    metadata_paths = [
+        release_file_path(file_entry)
+        for file_entry in files
+        if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip() in {"metadata", "schema", "manifest"}
+    ]
+    row_count = latest_version.rows
+    title = humanize_slug(slug)
+    return CatalogAsset(
+        slug=slug,
+        title=title,
+        category=category,
+        subcategory=subcategory,
+        status="active",
+        lifecycle_reason="",
+        lifecycle_date="",
+        successor_asset_slug="",
+        consumer_guidance="",
+        access_tier="private",
+        owner="Preview",
+        update_cadence="manual",
+        canonical_path=latest_version.canonical_path,
+        canonical_format=canonical_format,
+        available_formats=latest_version.available_formats or available_formats,
+        metadata_paths=metadata_paths,
+        feature_identity=None,
+        has_pmtiles=bool(latest_version.pmtiles_path),
+        has_geojson="geojson" in available_formats,
+        has_csv="csv" in available_formats,
+        last_updated=latest_release_date,
+        latest_release=latest_release,
+        latest_run=release_index.get("latest_run") if isinstance(release_index.get("latest_run"), dict) else None,
+        release_index_updated_at=str(release_index.get("updated_at") or ""),
+        source=str(latest_release.get("source_version") or "Preview release index"),
+        license="Preview-only release index metadata",
+        citation="Preview-only release index metadata",
+        notes="Preview-only catalog entry synthesized from a preview release index.",
+        bounds=None,
+        geometry_type=None,
+        row_count=row_count,
+        data_profile=None,
+        search_fields=[],
+        feature_metadata=None,
+        source_url=None,
+        public_url=latest_version.public_url,
+        pmtiles_path=latest_version.pmtiles_path,
+        pmtiles_url=latest_version.pmtiles_url,
+        canonical_sha256=latest_version.canonical_sha256,
+        pmtiles_sha256=latest_version.pmtiles_sha256,
+        docs_path="",
+        docs_url="",
+        release_index_url=f"../releases/{quote(slug)}.json",
+        description="Preview-only catalog entry synthesized from a preview release index.",
+        license_flags=[],
+        versions=versions,
+        sort_key=f"{latest_release_date}|{slug}",
+    )
+
+
 def release_index_exists(release_index_dir: Path | None, slug: str) -> bool:
     return release_index_dir is not None and (release_index_dir / f"{slug}.json").exists()
 
@@ -925,6 +1082,7 @@ def build_catalog_payload(
     release_index_dir: Path | None = Path("_catalog/releases"),
     release_index_assets_only: bool = False,
     latest_from_release_index: bool = False,
+    allow_release_index_only_assets: bool = False,
     force_access_tier: str | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
@@ -951,6 +1109,18 @@ def build_catalog_payload(
         if force_access_tier is not None:
             asset = replace(asset, access_tier=force_access_tier)
         assets.append(asset)
+    if allow_release_index_only_assets:
+        if not release_index_assets_only:
+            raise CatalogSiteError("allow_release_index_only_assets requires release_index_assets_only")
+        for release_index in load_all_release_indexes(effective_release_index_dir):
+            slug = str(release_index.get("asset_slug") or "").strip()
+            if slug in seen:
+                continue
+            asset = synthetic_asset_from_release_index(release_index)
+            if force_access_tier is not None:
+                asset = replace(asset, access_tier=force_access_tier)
+            assets.append(asset)
+            seen.add(slug)
     assets.sort(key=lambda asset: asset.sort_key, reverse=True)
     return {
         "schema_version": 1,
@@ -1000,6 +1170,7 @@ def build_site(
     release_index_dir: Path | None = Path("_catalog/releases"),
     release_index_assets_only: bool = False,
     latest_from_release_index: bool = False,
+    allow_release_index_only_assets: bool = False,
     force_access_tier: str | None = None,
     generated_at: str | None = None,
 ) -> list[Path]:
@@ -1012,6 +1183,7 @@ def build_site(
         release_index_dir=release_index_dir,
         release_index_assets_only=release_index_assets_only,
         latest_from_release_index=latest_from_release_index,
+        allow_release_index_only_assets=allow_release_index_only_assets,
         force_access_tier=force_access_tier,
         generated_at=generated_at,
     )
@@ -1050,6 +1222,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Use the release-index latest release as each asset's top-level latest reference.",
     )
     parser.add_argument(
+        "--allow-release-index-only-assets",
+        action="store_true",
+        help="Preview-only: include assets found only in local release-index JSON files.",
+    )
+    parser.add_argument(
         "--force-access-tier",
         choices=sorted(ACCESS_TIERS),
         help="Override emitted asset access_tier values, for private preview deployments.",
@@ -1071,6 +1248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         release_index_dir=args.release_index_dir,
         release_index_assets_only=args.release_index_assets_only,
         latest_from_release_index=args.latest_from_release_index,
+        allow_release_index_only_assets=args.allow_release_index_only_assets,
         force_access_tier=args.force_access_tier,
         generated_at=args.generated_at,
     )

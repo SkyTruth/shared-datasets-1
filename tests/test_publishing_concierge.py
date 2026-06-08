@@ -1448,7 +1448,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
             self.assertEqual(code, 2)
 
-    def test_preview_release_vector_requires_preview_load_step(self):
+    def test_preview_release_vector_skips_preview_load_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_file = self._start_workflow(
@@ -1462,10 +1462,31 @@ class PublishingConciergeTests(unittest.TestCase):
             by_step = {step["step_id"]: step for step in status["steps"]}
 
             self.assertTrue(by_step["preview-upload"]["required"])
-            self.assertTrue(by_step["preview-load"]["required"])
+            self.assertFalse(by_step["preview-load"]["required"])
             self.assertTrue(by_step["preview-catalog-refresh"]["required"])
             self.assertTrue(by_step["preview-viewer-verify"]["required"])
             self.assertFalse(by_step["catalog-web"]["required"])
+
+    def test_preview_release_vector_can_require_preview_load_when_firestore_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            state = json.loads(state_file.read_text())
+            state["plan"]["preview_firestore_load_required"] = True
+            state_file.write_text(json.dumps(state))
+
+            status = publishing_concierge.render_status(state)
+            by_step = {step["step_id"]: step for step in status["steps"]}
+
+            self.assertTrue(by_step["preview-upload"]["required"])
+            self.assertTrue(by_step["preview-load"]["required"])
+            self.assertTrue(by_step["preview-catalog-refresh"]["required"])
+            self.assertTrue(by_step["preview-viewer-verify"]["required"])
 
     def test_start_blocks_duplicate_first_upload_asset_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2014,6 +2035,9 @@ class PublishingConciergeTests(unittest.TestCase):
                 release_date="2026-05-01",
                 request_classification="preview-only",
             )
+            state = json.loads(state_file.read_text())
+            state["plan"]["preview_firestore_load_required"] = True
+            state_file.write_text(json.dumps(state))
             self._complete_preview_fgb_workflow_through_upload(root, state_file)
 
             self.assertEqual(self._confirm(root, state_file, "preview-load", self._preview_load_payload()), 0)
@@ -2039,6 +2063,42 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertIn("generation 113, role feature-metadata-sidecar", report)
             self.assertIn("Preview data mode: preserve", report)
             self.assertIn("Verified uploaded release artifact URIs: 5", report)
+
+    def test_preview_fgb_workflow_completes_without_preview_load_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(
+                root,
+                canonical_format="fgb",
+                release_date="2026-05-01",
+                request_classification="preview-only",
+            )
+            self._complete_preview_fgb_workflow_through_upload(root, state_file)
+
+            self.assertEqual(self._confirm(root, state_file, "preview-catalog-refresh", self._preview_catalog_refresh_payload()), 0)
+            self.assertEqual(
+                self._confirm(
+                    root,
+                    state_file,
+                    "preview-viewer-verify",
+                    self._preview_catalog_asset_payload(self._preview_fgb_uploaded_objects()),
+                ),
+                0,
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = publishing_concierge.main(["validate", "--state-file", str(state_file)])
+            self.assertEqual(code, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertTrue(result["ready_for_preview"])
+            self.assertFalse(result["ready_for_pr"])
+
+            report_stdout = io.StringIO()
+            with contextlib.redirect_stdout(report_stdout):
+                report_code = publishing_concierge.main(["render-report", "--state-file", str(state_file)])
+            self.assertEqual(report_code, 0)
+            self.assertIn("Status: skipped (Firestore preview serving inactive)", report_stdout.getvalue())
 
     def test_preview_viewer_verify_rejects_catalog_missing_uploaded_uri(self):
         with tempfile.TemporaryDirectory() as tmp:
