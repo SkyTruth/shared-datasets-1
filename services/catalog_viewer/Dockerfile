@@ -10,6 +10,7 @@ RUN python -m pip install --no-cache-dir \
     "google-cloud-storage>=2.19.0,<3"
 
 COPY api/python/src /app/api/python/src
+COPY scripts /app/scripts
 COPY services /app/services
 
 CMD ["python", "-m", "services.catalog_viewer.run"]
