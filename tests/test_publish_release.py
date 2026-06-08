@@ -179,6 +179,16 @@ def skip_schema_compatibility(**_kwargs):
 
 
 class PublishReleaseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._vector_validator = mock.patch(
+            "scripts.publish_release.default_vector_bundle_validator",
+            return_value=SimpleNamespace(valid=True, errors=()),
+        )
+        self._vector_validator.start()
+
+    def tearDown(self) -> None:
+        self._vector_validator.stop()
+
     def test_plan_derives_release_and_latest_paths_from_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -258,6 +268,28 @@ class PublishReleaseTests(unittest.TestCase):
                     client=FakeClient(FakeBucket()),
                     schema_reader=lambda _path: [],
                     schema_compatibility_checker=skip_schema_compatibility,
+                )
+
+    def test_vector_lookup_tile_validation_failure_blocks_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path)
+            artifacts = write_vector_bundle(tmp_path)
+
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "lookup-tile validation failed"):
+                publish_release.build_publish_plan(
+                    asset_slug="example-asset",
+                    release_date="2026-05-01",
+                    publish_dir=None,
+                    artifact_overrides=artifacts,
+                    catalog_path=catalog,
+                    client=FakeClient(FakeBucket()),
+                    schema_reader=lambda _path: [],
+                    schema_compatibility_checker=skip_schema_compatibility,
+                    vector_bundle_validator=lambda _fgb, _pmtiles: SimpleNamespace(
+                        valid=False,
+                        errors=("PMTiles decoded feature properties must be exactly: feature_id",),
+                    ),
                 )
 
     def test_artifact_override_format_must_be_canonical_id(self):

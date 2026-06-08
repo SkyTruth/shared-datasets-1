@@ -292,12 +292,34 @@ def sidecar_record(
 
 
 def write_sidecar(records: Sequence[Mapping[str, Any]], path: Path) -> None:
+    validation = release_feature_model.validate_sidecar_records(records)
+    if not validation.valid:
+        raise RuntimeError("metadata sidecar validation failed: " + "; ".join(validation.errors))
     with path.open("wb") as raw_file:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_file, mtime=0) as gzip_file:
             with io.TextIOWrapper(gzip_file, encoding="utf-8", newline="\n") as file_obj:
                 for record in records:
                     payload = asdict(record) if is_dataclass(record) else dict(record)
                     file_obj.write(canonical_json(payload) + "\n")
+
+
+def validate_release_vector_contract(
+    *,
+    fgb_path: Path,
+    pmtiles_path: Path,
+    pmtiles_bin: str = "pmtiles",
+    decode_zoom: int = 0,
+) -> None:
+    from scripts import vector_asset
+
+    result = vector_asset.validate_metadata_lookup_bundle(
+        fgb_path,
+        pmtiles_path,
+        pmtiles_bin=pmtiles_bin,
+        decode_zoom=decode_zoom,
+    )
+    if not result.valid:
+        raise RuntimeError("release vector metadata contract validation failed: " + "; ".join(result.errors))
 
 
 def schema_type(value: Any) -> str:

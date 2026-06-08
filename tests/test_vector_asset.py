@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import vector_asset
 
@@ -37,6 +38,23 @@ class VectorAssetTests(unittest.TestCase):
         self.assertIn(vector_asset.PROPERTIES_HASH_COLUMN, plan.required_fgb_properties)
         self.assertTrue(all("shared_dataset" not in " ".join(command.argv) for command in plan.commands))
 
+    def test_metadata_lookup_flag_enables_release_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.geojson"
+            source.write_text('{"type":"FeatureCollection","features":[]}')
+
+            plan = vector_asset.build_plan(
+                source=source,
+                asset_slug="example-asset",
+                metadata_lookup=True,
+                allow_repo_output=True,
+            )
+
+        self.assertEqual(plan.pmtiles_feature_id_property, vector_asset.FEATURE_ID_COLUMN)
+        self.assertEqual(plan.required_fgb_properties, vector_asset.RELEASE_VECTOR_FGB_PROPERTIES)
+        self.assertEqual(plan.required_pmtiles_properties, vector_asset.PMTILES_METADATA_COLUMNS)
+        self.assertEqual(plan.exact_pmtiles_properties, vector_asset.PMTILES_METADATA_COLUMNS)
+
     def test_metadata_lookup_requires_feature_id_property_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source.geojson"
@@ -62,6 +80,26 @@ class VectorAssetTests(unittest.TestCase):
             )
 
         self.assertEqual(vector_asset.pmtiles_include_properties(plan), (vector_asset.FEATURE_ID_COLUMN,))
+
+    def test_validate_metadata_lookup_bundle_uses_exact_pmtiles_properties(self):
+        with mock.patch("scripts.vector_asset.validate_outputs") as validate_outputs:
+            validate_outputs.return_value = vector_asset.VectorValidationResult(
+                fgb_path="example.fgb",
+                pmtiles_path="example.pmtiles",
+                valid=True,
+                errors=(),
+            )
+
+            result = vector_asset.validate_metadata_lookup_bundle(
+                Path("example.fgb"),
+                Path("example.pmtiles"),
+            )
+
+        self.assertTrue(result.valid)
+        self.assertEqual(validate_outputs.call_args.kwargs["required_fgb_properties"], vector_asset.RELEASE_VECTOR_FGB_PROPERTIES)
+        self.assertEqual(validate_outputs.call_args.kwargs["required_pmtiles_properties"], vector_asset.PMTILES_METADATA_COLUMNS)
+        self.assertEqual(validate_outputs.call_args.kwargs["exact_pmtiles_properties"], vector_asset.PMTILES_METADATA_COLUMNS)
+        self.assertFalse(validate_outputs.call_args.kwargs["validate_geometry"])
 
 
 if __name__ == "__main__":

@@ -31,6 +31,12 @@ FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
+REQUIRED_VECTOR_FGB_PROPERTIES = (
+    "feature_id",
+    "geometry_hash",
+    "properties_hash",
+)
+EXACT_VECTOR_PMTILES_PROPERTIES = ("feature_id",)
 MAX_FIRESTORE_DOCUMENT_BYTES = 1_048_576
 DEFAULT_MAX_SIDECAR_RECORD_BYTES = 900 * 1024
 HASH_EXCLUDED_PROPERTIES = frozenset(

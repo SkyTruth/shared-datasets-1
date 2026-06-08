@@ -130,8 +130,11 @@ Short notes on fields or usage.
 Populate `row_count` and `data_profile` in frontmatter from the canonical
 artifact after conversion. For identifier candidates, count distinct and
 duplicate values over non-empty values in the canonical artifact.
-If `feature_identity` is present, `feature_id` must be a native
-property/column in the canonical file and metadata sidecar.
+If `feature_identity` is present, `feature_id`, `geometry_hash`, and
+`properties_hash` must be native properties/columns in the canonical FGB and
+top-level fields in the canonical metadata sidecar. `geometry_hash` is the
+stable geometry-equivalence key consumers may use after loading the sidecar to
+group or de-duplicate footprints.
 If the asset publishes localized display metadata, keep the editable translation
 source in `latest/{asset-slug}.metadata-translations.csv`, keyed by
 `feature_id`, `field`, `locale`, and `source_value_hash`, and list it with the
@@ -141,9 +144,10 @@ serving is enabled; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
 must keep unique nonblank URL-safe `feature_id` values matching
 `^[A-Za-z0-9]{1,64}$`.
-For vector assets, keep `feature_id`, `geometry_hash`, and `properties_hash` in
-the canonical FGB, keep only `feature_id` in PMTiles, publish the metadata
-sidecar/schema/manifest files, and declare them in `feature_metadata`.
+For release-oriented vector assets, keep `feature_id`, `geometry_hash`, and
+`properties_hash` in the canonical FGB and metadata sidecar, keep only
+`feature_id` in PMTiles, publish the metadata sidecar/schema/manifest files,
+and declare them in `feature_metadata`.
 
 ## Raster metadata
 

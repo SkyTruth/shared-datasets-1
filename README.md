@@ -179,9 +179,12 @@ See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README
 
 Release-oriented vector assets use a normalized release feature model as the
 source of truth. FGB remains the canonical vector artifact for consumers,
-PMTiles are intentionally lightweight geometry-plus-`feature_id` tiles, and the
-full feature metadata lives in a durable GCS sidecar loaded into a rebuildable
-Firestore serving index.
+PMTiles are intentionally lightweight geometry-plus-`feature_id` lookup tiles,
+and the full feature metadata lives in a durable GCS sidecar loaded into a
+rebuildable Firestore serving index. Canonical FGBs and metadata sidecars must
+carry `feature_id`, `geometry_hash`, and `properties_hash`; consumers may use
+`geometry_hash` from the sidecar as the stable geometry-equivalence key for
+grouping or de-duplicating footprints.
 
 ## Quick start for contributors
 
@@ -239,9 +242,11 @@ breaking existing paths.
    feature metadata, keep PMTiles lightweight with `feature_id` only, maintain
    editable rows in `{asset-slug}.metadata-translations.csv`, and materialize
    generated `{asset-slug}.metadata.{locale}.ndjson.gz` sidecar views from the
-   canonical `{asset-slug}.metadata.ndjson.gz`.
+   canonical `{asset-slug}.metadata.ndjson.gz`. Treat `geometry_hash` as the
+   sidecar key for geometry-equivalent footprint grouping/de-duplication, not
+   as a URL lookup handle.
 6. Create or edit `docs/assets/{asset_slug}.md`; this asset doc is the local source of truth for catalog metadata and bucket README content.
-7. For generated vector assets, use `uv run python scripts/vector_asset.py build ...` so FGB and PMTiles are created outside the repo under the standard temp work directory. Ensure the canonical FGB contains `feature_id`, `geometry_hash`, and `properties_hash`, and that PMTiles expose only `feature_id` for metadata lookup.
+7. For generated vector assets, use `uv run python scripts/vector_asset.py build ... --metadata-lookup` so FGB and PMTiles are created outside the repo under the standard temp work directory. Ensure the canonical FGB and canonical metadata sidecar contain `feature_id`, `geometry_hash`, and `properties_hash`, and that PMTiles expose only `feature_id` for metadata lookup.
    For localized feature metadata, generate locale views with
    `scripts/feature_metadata_localization.py` after the canonical metadata
    sidecar and schema are ready. Do not put translated full metadata back into
@@ -718,6 +723,7 @@ uv run python scripts/vector_asset.py build ./source.shp \
   --layer-name example_asset \
   --title "Example Asset" \
   --description "Example vector tiles" \
+  --metadata-lookup \
   --tile-simplify 0.001
 ```
 
@@ -739,7 +745,9 @@ canonicalization version, previous release, and next generated ID.
 
 For localized feature metadata, keep the canonical FGB faithful to the source
 geometry and stable identifier fields, with `feature_id`, `geometry_hash`, and
-`properties_hash` preserved in the release metadata sidecar. Store editable translations in
+`properties_hash` preserved in both the FGB and release metadata sidecar.
+`geometry_hash` is the stable geometry-equivalence key consumers can use after
+loading the sidecar to group or de-duplicate footprints. Store editable translations in
 `{asset-slug}.metadata-translations.csv` keyed by `feature_id`, field, locale,
 and source-value hash, then materialize one sidecar per locale:
 

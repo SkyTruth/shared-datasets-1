@@ -618,6 +618,11 @@ def build_outputs(
     final_row_count = feature_count(fgb)
     build_pmtiles(enriched_geojsonseq, pmtiles)
     validate_pmtiles(pmtiles)
+    feature_metadata.validate_release_vector_contract(
+        fgb_path=fgb,
+        pmtiles_path=pmtiles,
+        decode_zoom=PMTILES_MINZOOM,
+    )
     remove_if_exists(normalized_fgb)
     remove_if_exists(geojsonseq)
     remove_if_exists(enriched_geojsonseq)

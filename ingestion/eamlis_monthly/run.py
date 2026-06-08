@@ -550,6 +550,11 @@ def build_asset_output(
         raise RuntimeError("FGB output is missing source fields: " + ", ".join(missing_fields))
 
     convert_geojson_to_pmtiles(enriched_geojsonseq, pmtiles)
+    feature_metadata.validate_release_vector_contract(
+        fgb_path=fgb,
+        pmtiles_path=pmtiles,
+        decode_zoom=PMTILES_MINZOOM,
+    )
     remove_if_exists(enriched_geojsonseq)
 
     return AssetOutput(

@@ -16,6 +16,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
 from scripts import release_feature_model
+from scripts import vector_asset
 from scripts.raster_asset import validate_cog
 
 
@@ -147,6 +148,7 @@ def build_publish_plan(
     compatibility_waiver_path: Path | None = None,
     compatibility_waiver: dict[str, Any] | None = None,
     cog_validator: Callable[[Path], Any] | None = None,
+    vector_bundle_validator: Callable[[Path, Path], Any] | None = None,
 ) -> PublishPlan:
     release = parse_release_date(release_date)
     catalog = load_catalog(catalog_path)
@@ -281,6 +283,7 @@ def build_publish_plan(
             asset_slug=asset_slug,
             release=release.isoformat(),
             artifacts=artifacts,
+            vector_bundle_validator=vector_bundle_validator,
         )
 
     assert_object_missing(bucket, object_name_from_uri(run_record_uri), label="run record")
@@ -621,6 +624,7 @@ def validate_vector_release_bundle(
     asset_slug: str,
     release: str,
     artifacts: Iterable[PublishArtifact],
+    vector_bundle_validator: Callable[[Path, Path], Any] | None = None,
 ) -> None:
     by_format = artifact_by_format(artifacts)
     missing = [format_name for format_name in REQUIRED_VECTOR_BUNDLE_FORMATS if format_name not in by_format]
@@ -656,6 +660,20 @@ def validate_vector_release_bundle(
             manifest_sha = str(manifest_artifact.get("sha256") or "").split(":", 1)[-1]
             if manifest_sha != artifact.sha256:
                 raise PublishReleaseError(f"manifest {format_name} artifact sha256 does not match local file")
+    validator = vector_bundle_validator or default_vector_bundle_validator
+    try:
+        result = validator(Path(by_format["fgb"].local_path), Path(by_format["pmtiles"].local_path))
+    except PublishReleaseError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - normalize validator failures for CLI callers
+        raise PublishReleaseError(f"vector release lookup-tile validation failed: {exc}") from exc
+    if result is not None and getattr(result, "valid", True) is False:
+        errors = ", ".join(getattr(result, "errors", ()) or ("unknown validation error",))
+        raise PublishReleaseError(f"vector release lookup-tile validation failed: {errors}")
+
+
+def default_vector_bundle_validator(fgb_path: Path, pmtiles_path: Path) -> vector_asset.VectorValidationResult:
+    return vector_asset.validate_metadata_lookup_bundle(fgb_path, pmtiles_path)
 
 
 def final_manifest_payload(

@@ -35,6 +35,7 @@ from scripts.pmtiles_zoom import (  # noqa: E402
     recommend_maxzoom,
     validate_detail_hint,
 )
+from scripts import release_feature_model  # noqa: E402
 
 WORK_ROOT_ENV = "SHARED_DATASETS_WORKDIR"
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -42,7 +43,8 @@ SYNTHETIC_PMTILES_PROPERTY = "source_layer"
 FEATURE_ID_COLUMN = "feature_id"
 GEOMETRY_HASH_COLUMN = "geometry_hash"
 PROPERTIES_HASH_COLUMN = "properties_hash"
-PMTILES_METADATA_COLUMNS = (FEATURE_ID_COLUMN,)
+PMTILES_METADATA_COLUMNS = release_feature_model.EXACT_VECTOR_PMTILES_PROPERTIES
+RELEASE_VECTOR_FGB_PROPERTIES = release_feature_model.REQUIRED_VECTOR_FGB_PROPERTIES
 PMTILES_MAGIC = b"PMTiles"
 PMTILES_V3_VERSION = 3
 SQLITE_HEADER = b"SQLite format 3"
@@ -293,6 +295,7 @@ def build_plan(
     pmtiles_bin: str = "pmtiles",
     required_properties: Sequence[str] = (),
     pmtiles_feature_id_property: str | None = None,
+    metadata_lookup: bool = False,
     allow_repo_output: bool = False,
     allow_low_maxzoom: bool = False,
     allow_high_maxzoom: bool = False,
@@ -325,6 +328,8 @@ def build_plan(
     if not source.exists():
         raise FileNotFoundError(f"Source vector file does not exist: {source}")
     pmtiles_feature_id_property = (pmtiles_feature_id_property or "").strip() or None
+    if metadata_lookup:
+        pmtiles_feature_id_property = FEATURE_ID_COLUMN
     if pmtiles_feature_id_property and pmtiles_feature_id_property != FEATURE_ID_COLUMN:
         raise ValueError("--pmtiles-feature-id-property must be feature_id for release metadata PMTiles")
     base_required_property_tuple = tuple(
@@ -337,7 +342,7 @@ def build_plan(
     )
     if pmtiles_feature_id_property:
         required_fgb_property_tuple = tuple(
-            dict.fromkeys((*base_required_property_tuple, *PMTILES_METADATA_COLUMNS, GEOMETRY_HASH_COLUMN, PROPERTIES_HASH_COLUMN))
+            dict.fromkeys((*base_required_property_tuple, *RELEASE_VECTOR_FGB_PROPERTIES))
         )
         required_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
         exact_pmtiles_property_tuple = PMTILES_METADATA_COLUMNS
@@ -688,6 +693,7 @@ def validate_outputs(
     required_pmtiles_properties: Sequence[str] | None = None,
     exact_pmtiles_properties: Sequence[str] = (),
     decode_zoom: int = 0,
+    validate_geometry: bool = True,
 ) -> VectorValidationResult:
     errors: list[str] = []
     required_property_tuple = tuple(dict.fromkeys(property_name for property_name in required_properties if property_name))
@@ -756,7 +762,7 @@ def validate_outputs(
                     fgb_layer_name = layers[0].get("name")
                     fgb_property_keys = ogrinfo_property_keys(layers[0])
 
-        if fgb_layer_name:
+        if fgb_layer_name and validate_geometry:
             geometry_result = validate_fgb_geometry_validity(fgb_path, fgb_layer_name)
             if geometry_result.returncode != 0:
                 errors.append(
@@ -878,6 +884,32 @@ def validate_outputs(
         required_fgb_properties=required_fgb_property_tuple,
         required_pmtiles_properties=required_pmtiles_property_tuple,
         exact_pmtiles_properties=exact_pmtiles_property_tuple,
+    )
+
+
+def validate_metadata_lookup_bundle(
+    fgb_path: Path,
+    pmtiles_path: Path,
+    *,
+    pmtiles_bin: str = "pmtiles",
+    decode_zoom: int = 0,
+) -> VectorValidationResult:
+    """Validate the release-oriented vector lookup contract.
+
+    This checks the FGB/hash/lookup-tile metadata contract only. It intentionally
+    does not apply the stricter geometry-validity policy used for fresh
+    vector_asset builds because some curated upstream releases preserve known
+    invalid geometries by documented exception.
+    """
+    return validate_outputs(
+        fgb_path,
+        pmtiles_path,
+        pmtiles_bin=pmtiles_bin,
+        required_fgb_properties=RELEASE_VECTOR_FGB_PROPERTIES,
+        required_pmtiles_properties=PMTILES_METADATA_COLUMNS,
+        exact_pmtiles_properties=PMTILES_METADATA_COLUMNS,
+        decode_zoom=decode_zoom,
+        validate_geometry=False,
     )
 
 
@@ -1021,6 +1053,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
         pmtiles_bin=args.pmtiles_bin,
         required_properties=args.required_property,
         pmtiles_feature_id_property=args.pmtiles_feature_id_property,
+        metadata_lookup=args.metadata_lookup,
         allow_repo_output=args.allow_repo_output,
         allow_low_maxzoom=args.allow_low_maxzoom,
         allow_high_maxzoom=args.allow_high_maxzoom,
@@ -1034,13 +1067,21 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    result = validate_outputs(
-        Path(args.fgb),
-        Path(args.pmtiles),
-        pmtiles_bin=args.pmtiles_bin,
-        required_properties=args.required_property,
-        decode_zoom=args.decode_zoom,
-    )
+    if args.metadata_lookup:
+        result = validate_metadata_lookup_bundle(
+            Path(args.fgb),
+            Path(args.pmtiles),
+            pmtiles_bin=args.pmtiles_bin,
+            decode_zoom=args.decode_zoom,
+        )
+    else:
+        result = validate_outputs(
+            Path(args.fgb),
+            Path(args.pmtiles),
+            pmtiles_bin=args.pmtiles_bin,
+            required_properties=args.required_property,
+            decode_zoom=args.decode_zoom,
+        )
     print(json.dumps(asdict(result), indent=2, sort_keys=True))
     return 0 if result.valid else 1
 
@@ -1121,6 +1162,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"Use {FEATURE_ID_COLUMN} for release metadata sidecar lookup tiles."
         ),
     )
+    build_parser.add_argument(
+        "--metadata-lookup",
+        action="store_true",
+        help=(
+            "Build release-oriented lookup PMTiles with feature_id only and "
+            "require feature_id, geometry_hash, and properties_hash in FGB."
+        ),
+    )
     build_parser.add_argument("--overwrite", action="store_true", help="Replace existing generated local outputs.")
     build_parser.add_argument("--keep-mbtiles", action="store_true", help="Keep the intermediate MBTiles file.")
     build_parser.add_argument("--allow-repo-output", action="store_true", help="Allow generated outputs under repo root.")
@@ -1155,6 +1204,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         help="Property that must be present in both the FGB schema and decoded PMTiles properties.",
+    )
+    validate_parser.add_argument(
+        "--metadata-lookup",
+        action="store_true",
+        help="Validate the release-oriented FGB/PMTiles metadata lookup contract.",
     )
     validate_parser.set_defaults(func=_cmd_validate)
 

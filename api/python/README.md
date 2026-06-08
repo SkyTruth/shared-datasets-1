@@ -68,18 +68,17 @@ and should use the TypeScript server helpers.
 
 Feature metadata lookup is also a separate service. Release-oriented vector
 PMTiles carry geometry plus `feature_id` values; callers that need full
-attributes should call the IAP-protected metadata API:
+attributes and hashes should load the release metadata sidecar or call the
+IAP-protected metadata API:
 
 ```http
 POST /v1/assets/{slug}/releases/{release}:lookup
 ```
 
 `feature_id` values are unique URL-safe alphanumeric strings, usually generated
-decimal sequence values:
-
-```http
-POST /v1/assets/{slug}/releases/{release}:lookup
-```
+decimal sequence values. `geometry_hash` is returned with sidecar/API records
+as the stable geometry-equivalence key for grouping or de-duplicating footprints
+after metadata is loaded; do not use hashes as lookup handles.
 
 Use `release=latest` only for convenience and persist the response
 `resolved_release` when lineage matters.

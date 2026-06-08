@@ -11,6 +11,9 @@ Release-oriented vector assets publish full feature metadata outside PMTiles.
 The durable source is the release feature model, release manifest, canonical
 FGB, and `.metadata.ndjson.gz` sidecar in GCS. When serving is enabled,
 Firestore is a rebuildable serving index loaded from that sidecar.
+Canonical FGB artifacts and canonical metadata sidecar records always include
+`feature_id`, `geometry_hash`, and `properties_hash`. PMTiles are lightweight
+lookup tiles and expose only `feature_id` as a feature property.
 
 ## Endpoints
 
@@ -29,6 +32,10 @@ service.
 `lookup` is keyed by the `feature_id` values emitted in PMTiles. Use `lookup`
 for browser/user URL workflows that carry those public handles.
 `feature_id` values must be unique, nonblank, and match `^[A-Za-z0-9]{1,64}$`.
+Use `geometry_hash` from found sidecar/API records as the stable
+geometry-equivalence key when an application needs to group or de-duplicate
+footprints after loading metadata. Do not use `geometry_hash` or
+`properties_hash` as URL lookup handles.
 
 ## Feature ID Request
 
@@ -91,6 +98,9 @@ Duplicate IDs preserve request order in `items`; the backend lookup is
 deduplicated. Missing IDs are item-level `"found": false` results in a `200`
 response after the index is confirmed ready. Lookup requests are keyed only by
 `feature_id`; found items return that value as the top-level `feature_id`.
+Found items also return top-level `geometry_hash` and `properties_hash`.
+`geometry_hash` is stable for geometry-equivalent footprints and can be used by
+consumers to group or de-duplicate loaded sidecar/API records.
 Unknown fields are rejected against the release schema before index lookup, even
 if every requested ID is missing. Explicit valid fields that are absent from a
 particular document return `null`.
@@ -198,8 +208,8 @@ Operational checks while serving is inactive:
 
 - Sidecar row count matches the release schema and manifest.
 - PMTiles lookup properties contain `feature_id` only.
-- Canonical metadata sidecars preserve `feature_id`, `geometry_hash`,
-  `properties_hash`, `properties`, and provenance.
+- Canonical FGBs and metadata sidecars preserve `feature_id`, `geometry_hash`,
+  `properties_hash`, full metadata properties, and provenance.
 - Release manifests and release indexes both carry the inactive Firestore
   serving policy.
 
