@@ -1,14 +1,28 @@
-name: Preview Terraform IAM sync readiness
+name: Protected Terraform readiness
 
 on:
   pull_request:
     branches:
       - main
     paths:
-      - ".github/workflows/preview-terraform-iam-sync-readiness.yml"
+      - ".github/workflows/protected-terraform-readiness.yml"
+      - ".github/workflows/artifact-registry-iam-sync.yml"
+      - ".github/workflows/metadata-service-deploy.yml"
+      - ".github/workflows/pmtiles-cdn-sync.yml"
       - ".github/workflows/preview-terraform-iam-sync.yml"
+      - ".github/workflows/scratch-cleanup-iam-sync.yml"
+      - "catalog/shared-datasets-catalog.csv"
+      - "docs/assets/**"
+      - "services/metadata_service/**"
+      - "terraform/envs/prod/artifact_registry_iam.tf"
+      - "terraform/envs/prod/canonical_mutation_iam.tf"
       - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/metadata_service.tf"
+      - "terraform/envs/prod/monitoring.tf"
+      - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/preview_terraform_iam.tf"
+      - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
+      - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
 
@@ -21,7 +35,7 @@ env:
 
 jobs:
   readiness:
-    name: Check preview Terraform IAM sync readiness
+    name: Check protected Terraform readiness
     runs-on: ubuntu-latest
     steps:
       - name: Validate Terraform auth configuration

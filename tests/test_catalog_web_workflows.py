@@ -16,24 +16,43 @@ from workflow_helpers import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
-PMTILES_CDN_SYNC_READINESS = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync-readiness.yml"
 SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
-SCRATCH_CLEANUP_IAM_SYNC_READINESS = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync-readiness.yml"
+PROTECTED_TERRAFORM_READINESS = REPO_ROOT / ".github/workflows/protected-terraform-readiness.yml"
 
 
-def assert_readiness_workflow(
-    testcase: unittest.TestCase,
-    workflow_path: Path,
-    *,
-    expected_name: str,
-) -> None:
-    workflow = load_workflow(workflow_path)
+def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -> dict:
+    workflow = load_workflow(PROTECTED_TERRAFORM_READINESS)
     trigger = workflow_triggers(workflow)
     job = workflow["jobs"]["readiness"]
     steps = workflow_steps_by_name(workflow, "readiness")
 
-    testcase.assertEqual(workflow["name"], expected_name)
+    testcase.assertEqual(workflow["name"], "Protected Terraform readiness")
     testcase.assertEqual(trigger["pull_request"]["branches"], ["main"])
+    testcase.assertEqual(
+        set(trigger["pull_request"]["paths"]),
+        {
+            ".github/workflows/protected-terraform-readiness.yml",
+            ".github/workflows/artifact-registry-iam-sync.yml",
+            ".github/workflows/metadata-service-deploy.yml",
+            ".github/workflows/pmtiles-cdn-sync.yml",
+            ".github/workflows/preview-terraform-iam-sync.yml",
+            ".github/workflows/scratch-cleanup-iam-sync.yml",
+            "catalog/shared-datasets-catalog.csv",
+            "docs/assets/**",
+            "services/metadata_service/**",
+            "terraform/envs/prod/artifact_registry_iam.tf",
+            "terraform/envs/prod/canonical_mutation_iam.tf",
+            "terraform/envs/prod/main.tf",
+            "terraform/envs/prod/metadata_service.tf",
+            "terraform/envs/prod/monitoring.tf",
+            "terraform/envs/prod/pmtiles_cdn.tf",
+            "terraform/envs/prod/preview_terraform_iam.tf",
+            "terraform/envs/prod/scratch_cleanup_iam_sync/**",
+            "terraform/envs/prod/shared_bucket_public.tf",
+            "terraform/envs/prod/variables.tf",
+            "terraform/envs/prod/versions.tf",
+        },
+    )
     testcase.assertNotIn("workflow_dispatch", trigger)
     testcase.assertNotIn("environment", job)
     testcase.assertEqual(workflow["permissions"], {"contents": "read"})
@@ -45,6 +64,7 @@ def assert_readiness_workflow(
         "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT",
         steps["Validate Terraform auth configuration"]["run"],
     )
+    return workflow
 
 
 def assert_protected_terraform_sync(
@@ -57,8 +77,6 @@ def assert_protected_terraform_sync(
     enforce_step_name: str,
     expected_targets: set[str],
     blocked_resources: set[str],
-    readiness_path: Path,
-    readiness_name: str,
 ) -> dict:
     workflow = load_workflow(workflow_path)
     trigger = workflow_triggers(workflow)
@@ -101,11 +119,13 @@ def assert_protected_terraform_sync(
         all_runs,
     )
 
-    assert_readiness_workflow(testcase, readiness_path, expected_name=readiness_name)
     return workflow
 
 
 class CatalogWebWorkflowTests(unittest.TestCase):
+    def test_protected_terraform_readiness_consolidates_auth_checks(self):
+        assert_protected_terraform_readiness_workflow(self)
+
     def test_catalog_web_deploy_uses_publisher_identity_and_no_cache_publish_helper(self):
         workflow = load_workflow(CATALOG_DEPLOY)
         trigger = workflow_triggers(workflow)
@@ -196,8 +216,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
                 "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
             },
-            readiness_path=PMTILES_CDN_SYNC_READINESS,
-            readiness_name="PMTiles CDN sync readiness",
         )
         steps = workflow_steps_by_name(workflow, "sync")
         verify_run = steps["Verify catalog CDN routes"]["run"]
@@ -241,8 +259,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "google_storage_bucket.shared_bucket",
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
             },
-            readiness_path=SCRATCH_CLEANUP_IAM_SYNC_READINESS,
-            readiness_name="Scratch cleanup IAM sync readiness",
         )
 
         plan_step = workflow_steps_by_name(workflow, "sync")["Terraform plan"]["run"]
