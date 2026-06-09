@@ -298,6 +298,27 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
     return normalized
 
 
+def compact_plan_summary(plan_type: str, normalized: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "asset_slug": normalized.get("asset_slug", ""),
+        "proposal_id": normalized.get("proposal_id", ""),
+        "plan_type": plan_type,
+    }
+    if plan_type == "publish":
+        promotions = normalized.get("promotions", [])
+        summary.update(
+            {
+                "promotion_count": len(promotions),
+                "new_destination_count": sum(1 for item in promotions if not item.get("destination_generation")),
+                "replacement_count": sum(1 for item in promotions if item.get("destination_generation")),
+                "compatibility_waiver_count": sum(1 for item in promotions if item.get("compatibility_waiver")),
+            }
+        )
+    else:
+        summary["deletion_count"] = len(normalized.get("deletions", []))
+    return summary
+
+
 def command_detect(args: argparse.Namespace) -> int:
     body = event_body(args.event_path)
     result = {
@@ -328,7 +349,12 @@ def command_extract(args: argparse.Namespace) -> int:
     payload = json.dumps(normalized, indent=2, sort_keys=True) + "\n"
     if args.output:
         pathlib.Path(args.output).write_text(payload)
-    print(payload, end="")
+    if args.quiet:
+        return 0
+    if args.print_plan or not args.output:
+        print(payload, end="")
+    else:
+        print(json.dumps(compact_plan_summary(args.plan_type, normalized), indent=2, sort_keys=True))
     return 0
 
 
@@ -363,6 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
     extract.add_argument("--event-path", required=True, help="Path to the GitHub event JSON payload.")
     extract.add_argument("--bucket", default=DEFAULT_BUCKET, help="Expected shared datasets bucket.")
     extract.add_argument("--output", help="Optional path for normalized plan JSON.")
+    extract.add_argument(
+        "--print-plan",
+        action="store_true",
+        help="Print the full normalized plan even when --output is set. By default --output prints only a compact summary.",
+    )
+    extract.add_argument("--quiet", action="store_true", help="Write --output without printing anything.")
     extract.set_defaults(func=command_extract)
 
     event_from_pr = subparsers.add_parser(

@@ -30,7 +30,16 @@ if str(REPO_ROOT) not in sys.path:
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 PREVIEW_BUCKET = "skytruth-shared-datasets-1-preview"
 WORKFLOW_SCHEMA_VERSION = 1
-WORKFLOW_COMMANDS = {"start", "next", "confirm", "status", "render-pr", "render-report", "validate"}
+WORKFLOW_COMMANDS = {
+    "start",
+    "next",
+    "confirm",
+    "status",
+    "render-pr",
+    "render-report",
+    "validate",
+    "refresh-retry-plan",
+}
 GENERATED_FEATURE_ID_COLUMN = "feature_id"
 GENERATED_FEATURE_ID_ALGORITHM = "shared-datasets-generated-feature-id:v1"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -2599,6 +2608,166 @@ def build_publish_plan_from_state(state: dict[str, Any]) -> dict[str, Any]:
     return reviewed_dataset_plan.normalize_publish_plan(publish_plan, bucket=state["bucket"])
 
 
+def _string_generation(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _stat_blob_payload(uri: str, *, generation: str = "") -> dict[str, Any]:
+    from google.api_core.exceptions import NotFound
+    from scripts import gcs_asset
+
+    client = gcs_asset.get_client()
+    bucket_name, name = gcs_asset.parse_gs_uri(uri)
+    blob = client.bucket(bucket_name).blob(name, generation=int(generation) if generation else None)
+    try:
+        blob.reload()
+    except NotFound:
+        return {"uri": uri, "requested_generation": generation, "exists": False}
+    return {
+        "uri": uri,
+        "requested_generation": generation,
+        "exists": True,
+        "generation": str(blob.generation),
+        "size": blob.size,
+        "content_type": blob.content_type,
+        "cache_control": blob.cache_control or "",
+        "crc32c": blob.crc32c,
+        "md5_hash": blob.md5_hash,
+        "updated": blob.updated.isoformat() if blob.updated else None,
+    }
+
+
+def stat_publish_plan_objects(plan: dict[str, Any]) -> dict[str, Any]:
+    rows = []
+    for index, promotion in enumerate(plan.get("promotions", []), start=1):
+        source_generation = _string_generation(promotion.get("source_generation"))
+        source = _stat_blob_payload(promotion["source_uri"], generation=source_generation)
+        destination = _stat_blob_payload(promotion["destination_uri"])
+        rows.append(
+            {
+                "index": index,
+                "source_uri": promotion["source_uri"],
+                "destination_uri": promotion["destination_uri"],
+                "planned_source_generation": source_generation,
+                "planned_destination_generation": _string_generation(promotion.get("destination_generation")),
+                "source": source,
+                "destination": destination,
+                "source_generation_ok": source.get("exists") and source.get("generation") == source_generation,
+                "destination_generation_changed": destination.get("generation", "")
+                != _string_generation(promotion.get("destination_generation")),
+            }
+        )
+    return {"asset_slug": plan.get("asset_slug"), "proposal_id": plan.get("proposal_id", ""), "rows": rows}
+
+
+def refresh_retry_plan(
+    plan: dict[str, Any],
+    stat_report: dict[str, Any],
+    *,
+    remove_waivers: bool = False,
+    allow_crc_mismatch: bool = False,
+    bucket: str = DEFAULT_BUCKET,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from scripts import reviewed_dataset_plan
+
+    promotions = plan.get("promotions")
+    rows = stat_report.get("rows")
+    if not isinstance(promotions, list) or not promotions:
+        raise WorkflowError("publish plan must contain a non-empty promotions list")
+    if not isinstance(rows, list) or not rows:
+        raise WorkflowError("stat report must contain a non-empty rows list")
+    rows_by_destination = {
+        str(row.get("destination_uri")): row for row in rows if isinstance(row, dict) and row.get("destination_uri")
+    }
+    missing_stats = []
+    missing_sources = []
+    source_generation_mismatches = []
+    crc_mismatches = []
+    refreshed_destinations = []
+    destinations_still_absent = []
+    refreshed_plan = json.loads(json.dumps(plan))
+    for index, promotion in enumerate(refreshed_plan["promotions"], start=1):
+        destination_uri = promotion["destination_uri"]
+        row = rows_by_destination.get(destination_uri)
+        if not row:
+            missing_stats.append(destination_uri)
+            continue
+        source = row.get("source") if isinstance(row.get("source"), dict) else {}
+        destination = row.get("destination") if isinstance(row.get("destination"), dict) else {}
+        planned_source_generation = _string_generation(promotion.get("source_generation"))
+        if not source.get("exists"):
+            missing_sources.append(destination_uri)
+            continue
+        if _string_generation(source.get("generation")) != planned_source_generation:
+            source_generation_mismatches.append(
+                {
+                    "destination_uri": destination_uri,
+                    "planned_source_generation": planned_source_generation,
+                    "current_source_generation": _string_generation(source.get("generation")),
+                }
+            )
+            continue
+        if destination.get("exists"):
+            source_crc = source.get("crc32c")
+            destination_crc = destination.get("crc32c")
+            if not source_crc or not destination_crc:
+                crc_mismatches.append(
+                    {
+                        "destination_uri": destination_uri,
+                        "source_crc32c": source_crc or "",
+                        "destination_crc32c": destination_crc or "",
+                        "reason": "missing CRC32C evidence",
+                    }
+                )
+                if not allow_crc_mismatch:
+                    continue
+            elif source_crc != destination_crc:
+                crc_mismatches.append(
+                    {
+                        "destination_uri": destination_uri,
+                        "source_crc32c": source_crc,
+                        "destination_crc32c": destination_crc,
+                    }
+                )
+                if not allow_crc_mismatch:
+                    continue
+            current_generation = _string_generation(destination.get("generation"))
+            if _string_generation(promotion.get("destination_generation")) != current_generation:
+                refreshed_destinations.append(destination_uri)
+            promotion["destination_generation"] = current_generation
+        else:
+            if promotion.get("destination_generation"):
+                refreshed_destinations.append(destination_uri)
+            promotion["destination_generation"] = ""
+            destinations_still_absent.append(destination_uri)
+        if remove_waivers and promotion.get("compatibility_waiver") is not None:
+            promotion["compatibility_waiver"] = None
+
+    if missing_stats:
+        raise WorkflowError("missing stat report rows for: " + ", ".join(sorted(missing_stats)))
+    errors = []
+    if missing_sources:
+        errors.append("missing staged sources for: " + ", ".join(missing_sources))
+    if source_generation_mismatches:
+        errors.append("source generation mismatches: " + json.dumps(source_generation_mismatches, sort_keys=True))
+    if crc_mismatches and not allow_crc_mismatch:
+        errors.append("source/destination CRC32C mismatches: " + json.dumps(crc_mismatches, sort_keys=True))
+    if errors:
+        raise WorkflowError("; ".join(errors))
+
+    normalized = reviewed_dataset_plan.normalize_publish_plan(refreshed_plan, bucket=bucket)
+    summary = {
+        "asset_slug": normalized.get("asset_slug"),
+        "proposal_id": normalized.get("proposal_id", ""),
+        "promotion_count": len(normalized.get("promotions", [])),
+        "refreshed_destination_count": len(refreshed_destinations),
+        "destinations_still_absent": destinations_still_absent,
+        "crc_mismatch_count": len(crc_mismatches),
+        "compatibility_waiver_count": sum(1 for item in normalized["promotions"] if item.get("compatibility_waiver")),
+    }
+    return normalized, summary
+
+
 def validate_pr_ready(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     for step in STEP_DEFINITIONS:
         if step.step_id == "pr-ready":
@@ -3349,6 +3518,28 @@ def command_validate(args: argparse.Namespace) -> int:
     return 0 if result["ready_for_pr"] or result.get("ready_for_preview", False) else 1
 
 
+def command_refresh_retry_plan(args: argparse.Namespace) -> int:
+    plan = read_json_file(args.plan, label="publish plan")
+    if args.stat_gcs:
+        stat_report = stat_publish_plan_objects(plan)
+        if args.stats_output:
+            write_json_file(args.stats_output, stat_report, overwrite=True)
+    else:
+        stat_report = read_json_file(args.stat_report, label="stat report")
+    refreshed_plan, summary = refresh_retry_plan(
+        plan,
+        stat_report,
+        remove_waivers=args.remove_waivers,
+        allow_crc_mismatch=args.allow_crc_mismatch,
+        bucket=args.bucket,
+    )
+    write_json_file(args.output, refreshed_plan, overwrite=True)
+    if args.summary_output:
+        write_json_file(args.summary_output, summary, overwrite=True)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def build_workflow_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Guide a first-upload shared-datasets publish as a state machine.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3399,6 +3590,38 @@ def build_workflow_parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate", help="Validate state readiness for PR rendering.")
     validate.add_argument("--state-file", type=Path, required=True)
     validate.set_defaults(func=command_validate)
+
+    retry = subparsers.add_parser(
+        "refresh-retry-plan",
+        help="Refresh destination generations in a fenced publish plan after a partial approved mutation failure.",
+    )
+    retry.add_argument("--plan", type=Path, required=True, help="Normalized publish plan JSON from a PR body.")
+    stat_group = retry.add_mutually_exclusive_group(required=True)
+    stat_group.add_argument(
+        "--stat-report",
+        type=Path,
+        help="Previously captured JSON report with source and destination object stats.",
+    )
+    stat_group.add_argument(
+        "--stat-gcs",
+        action="store_true",
+        help="Stat every planned source and destination in GCS now. Requires network access and credentials.",
+    )
+    retry.add_argument("--output", type=Path, required=True, help="Path for the refreshed publish plan JSON.")
+    retry.add_argument("--stats-output", type=Path, help="Optional path for GCS stats when using --stat-gcs.")
+    retry.add_argument("--summary-output", type=Path, help="Optional path for the compact refresh summary JSON.")
+    retry.add_argument("--bucket", default=DEFAULT_BUCKET, help="Expected shared datasets bucket for plan validation.")
+    retry.add_argument(
+        "--remove-waivers",
+        action="store_true",
+        help="Remove compatibility waivers when a partial run already advanced the schema snapshot.",
+    )
+    retry.add_argument(
+        "--allow-crc-mismatch",
+        action="store_true",
+        help="Refresh generations even when current destination CRC32C differs from the staged source. Use only after review.",
+    )
+    retry.set_defaults(func=command_refresh_retry_plan)
 
     return parser
 

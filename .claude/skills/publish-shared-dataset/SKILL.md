@@ -129,6 +129,25 @@ commands run and resolved tool paths/versions or explicit not-applicable notes.
 The final publish-plan is validated through `scripts/reviewed_dataset_plan.py`,
 so it matches the protected workflow's schema.
 
+If an approved mutation workflow fails after some promotions have already run,
+use the concierge retry helper instead of rerunning the stale PR body:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py refresh-retry-plan \
+  --plan publish-plan.json \
+  --stat-gcs \
+  --stats-output retry-gcs-stats.json \
+  --output retry-publish-plan.json \
+  --summary-output retry-summary.json
+```
+
+The command refreshes destination generations only after the staged source
+generation is still present and, for existing destinations, the current
+destination CRC32C matches the staged source CRC32C. It leaves still-absent
+destinations as no-clobber creates. Use `--remove-waivers` only after confirming
+that a partial run already advanced the schema snapshot and the protected schema
+preflight no longer reports blocked schema changes.
+
 For FGB vector assets, the concierge plans both canonical FGB and PMTiles
 display artifacts by default.
 
@@ -485,8 +504,10 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     validation commands, and any unresolved assumptions. If using the GitHub CLI,
     pass `--reviewer jonaraphael` to `gh pr create` when `jonaraphael` is not the
     PR author; if using a GitHub connector, set `jonaraphael` as requested
-    reviewer when allowed. If GitHub refuses because `jonaraphael` authored the
-    PR, record that note in the PR body. Include a fenced
+    reviewer when allowed. If the authenticated author is already `jonaraphael`,
+    do not spend a known-failing reviewer request; record the restricted
+    self-acceptance note in the PR body directly. If GitHub refuses because
+    `jonaraphael` authored the PR, record that note in the PR body. Include a fenced
     `shared-datasets-publish-plan` JSON block so merge or restricted
     self-acceptance dispatch can trigger promotion:
 
@@ -621,9 +642,11 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     passed, any stale companion formats, validation commands, and consumer
     impact. If using the GitHub CLI, pass `--reviewer jonaraphael` to
     `gh pr create` when `jonaraphael` is not the PR author; if using a GitHub
-    connector, set `jonaraphael` as requested reviewer when allowed. If GitHub
-    refuses because `jonaraphael` authored the PR, record that note in the PR
-    body. Include a fenced `shared-datasets-publish-plan` JSON block whose
+    connector, set `jonaraphael` as requested reviewer when allowed. If the
+    authenticated author is already `jonaraphael`, do not spend a known-failing
+    reviewer request; record the restricted self-acceptance note in the PR body
+    directly. If GitHub refuses because `jonaraphael` authored the PR, record
+    that note in the PR body. Include a fenced `shared-datasets-publish-plan` JSON block whose
     `promotions` are ordered exactly as they should be copied.
 15. Do not promote canonical objects from the local terminal. After a same-repo
     PR containing the publish-plan block is merged to `main`, the GitHub
@@ -641,6 +664,40 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     release index reports the newest successful release and latest run, catalog
     web freshness is correct, upload/schema alert state is reported, and any
     residual uncertainty is documented in the PR or final response.
+
+### Approved Mutation Retry Recovery
+
+Use this only after a reviewed publish PR has merged and the GitHub `Approved
+dataset mutation` workflow failed before completing all publish-plan
+promotions. It is a recovery path for the same reviewed object set, not a way to
+approve new data after merge.
+
+1. Inspect the failed workflow enough to identify the failed step and last
+   attempted promotion. Avoid dumping full logs unless the short failure
+   snippet is insufficient.
+2. Extract the current PR publish plan to a file. `reviewed_dataset_plan.py
+   extract --output ...` prints only a compact summary by default; use
+   `--print-plan` only when the full JSON is truly needed on stdout.
+3. Stat every planned staged source and every planned destination. Confirm all
+   staged sources still exist at their approved source generations.
+4. For each destination that now exists, compare CRC32C with the staged source.
+   If any destination differs, stop for human review. Do not refresh generation
+   preconditions over a content mismatch.
+5. Refresh the publish plan so existing destinations use their current
+   generations and still-missing destinations keep an empty
+   `destination_generation`.
+6. Reassess schema waivers. If the first run already updated the schema
+   snapshot, `check-schema-compatibility` may now report no blocked changes and
+   reject a supplied waiver. Remove waivers in the retry plan only in that
+   condition; otherwise keep the waiver on schema-breaking replacements.
+7. Edit the merged PR body only to update generation preconditions, remove
+   stale waivers, and add a retry note describing the partial run. Do not add
+   new source URIs, destination URIs, delete operations, catalog semantics, or
+   data bytes after merge.
+8. Dispatch `Approved dataset mutation` from `main` with the reviewed PR number.
+   Continue monitoring until promotion, finalization, release-index rebuild,
+   upload summary, scratch cleanup, and downstream catalog/localization workflows
+   either succeed or report a new specific failure.
 
 ### Fresh-Agent Reviewed Deletion Runbook
 

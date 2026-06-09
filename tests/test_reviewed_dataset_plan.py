@@ -332,6 +332,76 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
 
+    def test_extract_publish_plan_with_output_prints_compact_summary(self):
+        path = event_path(
+            """
+```shared-datasets-publish-plan
+{
+  "asset_slug": "example-asset",
+  "proposal_id": "pr-123",
+  "promotions": [
+    {
+      "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
+      "source_generation": "123",
+      "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb",
+      "destination_generation": "456",
+      "content_type": "application/octet-stream",
+      "cache_control": ""
+    }
+  ]
+}
+```
+"""
+        )
+        output = Path(tempfile.NamedTemporaryFile(suffix=".json", delete=False).name)
+        try:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = reviewed_dataset_plan.main(["extract", "publish", "--event-path", str(path), "--output", str(output)])
+            printed = json.loads(stdout.getvalue())
+            written = json.loads(output.read_text())
+        finally:
+            path.unlink()
+            output.unlink(missing_ok=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(printed["promotion_count"], 1)
+        self.assertEqual(printed["replacement_count"], 1)
+        self.assertNotIn("source_uri", stdout.getvalue())
+        self.assertEqual(written["promotions"][0]["source_generation"], "123")
+
+    def test_extract_publish_plan_print_plan_keeps_full_stdout(self):
+        path = event_path(
+            """
+```shared-datasets-publish-plan
+{
+  "asset_slug": "example-asset",
+  "proposal_id": "pr-123",
+  "promotions": [
+    {
+      "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
+      "source_generation": "123",
+      "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb"
+    }
+  ]
+}
+```
+"""
+        )
+        output = Path(tempfile.NamedTemporaryFile(suffix=".json", delete=False).name)
+        try:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = reviewed_dataset_plan.main(
+                    ["extract", "publish", "--event-path", str(path), "--output", str(output), "--print-plan"]
+                )
+        finally:
+            path.unlink()
+            output.unlink(missing_ok=True)
+
+        self.assertEqual(code, 0)
+        self.assertIn("source_uri", stdout.getvalue())
+
     def test_pr_api_payload_to_event_accepts_open_same_repo_default_branch_pr(self):
         event = reviewed_dataset_plan.pr_api_payload_to_event(
             {

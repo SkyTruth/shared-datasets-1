@@ -284,6 +284,36 @@ If an upload fails due to `412 Precondition Failed`:
 4. Determine whether another process updated the object.
 5. Do not retry as unsafe overwrite unless explicitly approved.
 
+If the GitHub `Approved dataset mutation` workflow fails mid-promotion:
+
+- Treat the bucket as changed state. Do not rerun the same PR body or publish
+  plan unchanged.
+- Stat every planned staged source at its recorded source generation and every
+  planned destination at its current generation.
+- Confirm every staged source still exists at the recorded generation.
+- For destinations that now exist, compare CRC32C with the staged source before
+  refreshing the destination-generation precondition. If CRC32C differs, stop
+  for human review; do not paper over the mismatch with a new generation.
+- For destinations that are still absent, leave `destination_generation` empty.
+- Update only the generation preconditions needed to continue the same reviewed
+  object set. Do not add new sources, destinations, deletes, or semantic
+  changes to a merged PR body as part of retry recovery.
+- Reassess schema compatibility waivers: if the partial run already advanced
+  the schema snapshot and `check-schema-compatibility` now reports no blocked
+  schema changes, remove stale waivers from the retry plan.
+
+Use `scripts/publishing_concierge.py refresh-retry-plan` to produce a compact
+retry plan and summary from a publish plan plus current GCS stats.
+`scripts/reviewed_dataset_plan.py extract --output ...` writes the full
+normalized plan to disk but prints only a compact summary by default; use
+`--print-plan` only when the full JSON is truly needed on stdout.
+
+GCS and GitHub network diagnostics often need network access outside the local
+sandbox. If a prior command in the same task has already failed or hung on
+DNS/network access, rerun important `gcs_asset.py`, `gh`, or `gcloud` diagnostic
+commands with the required approved network path instead of first repeating a
+known-bad sandbox attempt.
+
 If a cron job fails after writing a release but before updating `latest/`:
 
 - Keep the release if it is valid.

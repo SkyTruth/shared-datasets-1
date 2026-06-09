@@ -2228,6 +2228,131 @@ class PublishingConciergeTests(unittest.TestCase):
 
             self.assertEqual(publish_plan["promotions"][0]["compatibility_waiver"], waiver)
 
+    def test_refresh_retry_plan_updates_generations_and_removes_waivers(self):
+        plan = {
+            "asset_slug": "example",
+            "proposal_id": "pr-123",
+            "promotions": [
+                {
+                    "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example/pr-123/example.csv",
+                    "source_generation": "111",
+                    "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/330-offshore-platforms/example/latest/example.csv",
+                    "destination_generation": "222",
+                    "content_type": "text/csv",
+                    "cache_control": "",
+                    "compatibility_waiver": {"reviewer": "jonaraphael", "blocked_changes": []},
+                },
+                {
+                    "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example/pr-123/runs/2026-06-09.json",
+                    "source_generation": "112",
+                    "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/330-offshore-platforms/example/runs/2026-06-09.json",
+                    "destination_generation": "",
+                    "content_type": "application/json",
+                    "cache_control": "",
+                    "compatibility_waiver": None,
+                },
+            ],
+        }
+        stat_report = {
+            "rows": [
+                {
+                    "destination_uri": plan["promotions"][0]["destination_uri"],
+                    "source": {"exists": True, "generation": "111", "crc32c": "same"},
+                    "destination": {"exists": True, "generation": "333", "crc32c": "same"},
+                },
+                {
+                    "destination_uri": plan["promotions"][1]["destination_uri"],
+                    "source": {"exists": True, "generation": "112", "crc32c": "run"},
+                    "destination": {"exists": False},
+                },
+            ]
+        }
+
+        refreshed, summary = publishing_concierge.refresh_retry_plan(plan, stat_report, remove_waivers=True)
+
+        self.assertEqual(refreshed["promotions"][0]["destination_generation"], "333")
+        self.assertEqual(refreshed["promotions"][1]["destination_generation"], "")
+        self.assertIsNone(refreshed["promotions"][0]["compatibility_waiver"])
+        self.assertEqual(summary["refreshed_destination_count"], 1)
+        self.assertEqual(summary["compatibility_waiver_count"], 0)
+        self.assertEqual(summary["destinations_still_absent"], [plan["promotions"][1]["destination_uri"]])
+
+    def test_refresh_retry_plan_rejects_crc_mismatch(self):
+        plan = {
+            "asset_slug": "example",
+            "proposal_id": "pr-123",
+            "promotions": [
+                {
+                    "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example/pr-123/example.csv",
+                    "source_generation": "111",
+                    "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/330-offshore-platforms/example/latest/example.csv",
+                    "destination_generation": "222",
+                    "content_type": "text/csv",
+                    "cache_control": "",
+                }
+            ],
+        }
+        stat_report = {
+            "rows": [
+                {
+                    "destination_uri": plan["promotions"][0]["destination_uri"],
+                    "source": {"exists": True, "generation": "111", "crc32c": "source-crc"},
+                    "destination": {"exists": True, "generation": "333", "crc32c": "different-crc"},
+                }
+            ]
+        }
+
+        with self.assertRaisesRegex(publishing_concierge.WorkflowError, "CRC32C mismatches"):
+            publishing_concierge.refresh_retry_plan(plan, stat_report)
+
+    def test_refresh_retry_plan_cli_writes_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = {
+                "asset_slug": "example",
+                "proposal_id": "pr-123",
+                "promotions": [
+                    {
+                        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example/pr-123/example.csv",
+                        "source_generation": "111",
+                        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/330-offshore-platforms/example/latest/example.csv",
+                        "destination_generation": "222",
+                        "content_type": "text/csv",
+                        "cache_control": "",
+                    }
+                ],
+            }
+            stats = {
+                "rows": [
+                    {
+                        "destination_uri": plan["promotions"][0]["destination_uri"],
+                        "source": {"exists": True, "generation": "111", "crc32c": "same"},
+                        "destination": {"exists": True, "generation": "333", "crc32c": "same"},
+                    }
+                ]
+            }
+            plan_path = self._write_json(root / "plan.json", plan)
+            stats_path = self._write_json(root / "stats.json", stats)
+            output_path = root / "retry-plan.json"
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = publishing_concierge.main(
+                    [
+                        "refresh-retry-plan",
+                        "--plan",
+                        str(plan_path),
+                        "--stat-report",
+                        str(stats_path),
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(output_path.read_text())["promotions"][0]["destination_generation"], "333")
+            self.assertEqual(json.loads(stdout.getvalue())["refreshed_destination_count"], 1)
+
     def test_render_report_outputs_completion_scaffold(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -225,6 +225,22 @@ browser or resolver requests one metadata sidecar for the active locale; if the
 localized sidecar is absent, the resolver returns the canonical
 `{asset-slug}.metadata.ndjson.gz` fallback.
 
+## Reviewed Publish Plan Retries
+
+A merged PR publish plan is a reviewed mutation contract. If the approved
+mutation workflow fails after partially promoting objects, retry recovery may
+update the merged PR body only to refresh generation preconditions for the same
+source and destination URIs, remove compatibility waivers that are stale because
+the partial run already advanced the schema snapshot, and document the retry.
+
+Retry recovery must not add new sources, new destinations, delete operations,
+format changes, metadata semantics, or data bytes after merge. Before refreshing
+a destination generation, verify that the approved staged source still exists at
+the recorded generation and that any already-existing destination matches the
+staged source by CRC32C. Leave still-absent destinations with an empty
+`destination_generation` so the publisher workflow uses the normal no-clobber
+create path.
+
 Multi-object assets, including Zarr, must write immutable data under
 `releases/YYYY-MM-DD/{asset-slug}.zarr/` and update only
 `latest/manifest.json`. Do not mirror thousands of mutable Zarr chunk objects
