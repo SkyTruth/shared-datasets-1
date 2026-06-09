@@ -178,6 +178,8 @@ properties for that field. After an approved publish plan promotes a new
 translation source CSV, `.github/workflows/metadata-localization.yml` reruns
 the materialization pipeline for that source and writes generated localized
 sidecars with generation preconditions from the approved publisher environment.
+Catalog web deployment is chained after this materialization step so catalog
+release metadata is rebuilt from the post-localization release indexes.
 
 ## Operations
 

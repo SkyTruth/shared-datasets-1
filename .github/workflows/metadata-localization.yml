@@ -83,23 +83,6 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
-      - name: Validate publisher auth configuration
-        env:
-          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-
-      - name: Authenticate as shared datasets publisher
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
-
       - name: Prepare reviewed publish plan
         id: reviewed_plan
         if: ${{ github.event_name == 'workflow_run' }}
@@ -153,6 +136,45 @@ jobs:
             --event-path reviewed-pr-event.json \
             --output publish-plan.json
           echo "publish_plan=publish-plan.json" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate publisher auth configuration
+        if: >-
+          ${{
+            (
+              github.event_name == 'workflow_run' &&
+              steps.reviewed_plan.outputs.publish_plan != ''
+            ) ||
+            (
+              github.event_name == 'workflow_dispatch' &&
+              inputs.translation_source_uri != ''
+            )
+          }}
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
+      - name: Authenticate as shared datasets publisher
+        if: >-
+          ${{
+            (
+              github.event_name == 'workflow_run' &&
+              steps.reviewed_plan.outputs.publish_plan != ''
+            ) ||
+            (
+              github.event_name == 'workflow_dispatch' &&
+              inputs.translation_source_uri != ''
+            )
+          }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
 
       - name: Materialize reviewed translation-source promotions
         if: ${{ github.event_name == 'workflow_run' && steps.reviewed_plan.outputs.publish_plan != '' }}

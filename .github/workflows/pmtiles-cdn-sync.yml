@@ -5,12 +5,17 @@ on:
     branches:
       - main
     paths:
-      - "catalog/shared-datasets-catalog.csv"
-      - "docs/assets/**"
       - "terraform/envs/prod/pmtiles_cdn.tf"
       - "terraform/envs/prod/shared_bucket_public.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
+  workflow_run:
+    workflows:
+      - Catalog web deploy
+    branches:
+      - main
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -26,9 +31,59 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
+  detect_relevant_change:
+    name: Detect PMTiles CDN sync need
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.filter.outputs.should_run }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
+          fetch-depth: 2
+
+      - name: Detect relevant merged changes
+        id: filter
+        env:
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${WORKFLOW_RUN_CONCLUSION}" != "success" ]]; then
+            echo "should_run=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only HEAD^ HEAD)"
+          sync_pattern='^(catalog/shared-datasets-catalog\.csv|docs/assets/|terraform/envs/prod/(pmtiles_cdn|shared_bucket_public|variables|versions)\.tf)$'
+
+          if printf '%s\n' "${changed_files}" | grep -E "${sync_pattern}" >/dev/null; then
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "should_run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
   sync:
     name: Apply PMTiles CDN route sync
-    if: ${{ github.event_name != 'pull_request' }}
+    needs: detect_relevant_change
+    if: ${{ github.event_name != 'pull_request' && needs.detect_relevant_change.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:

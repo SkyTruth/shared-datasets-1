@@ -221,9 +221,10 @@ approved dataset mutation workflow succeeds, extracts any promoted
 `{asset-slug}.metadata-translations.csv` objects from the reviewed publish
 plan, downloads the sibling canonical sidecar and schema, materializes all
 available locale sidecars, and uploads those generated sidecars with current
-generation preconditions from the approved publisher environment. Manual
-dispatch can run the same pipeline for an explicit canonical translation-source
-URI.
+generation preconditions from the approved publisher environment. Catalog web
+deployment runs after this workflow, which lets the catalog bundle read release
+indexes that include generated localized sidecars. Manual dispatch can run the
+same pipeline for an explicit canonical translation-source URI.
 
 ## Localized metadata sidecars
 

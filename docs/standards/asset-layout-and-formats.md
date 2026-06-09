@@ -216,7 +216,9 @@ a new `{asset-slug}.metadata-translations.csv`, the
 `Feature metadata localization materialization` workflow regenerates sibling
 localized metadata sidecars from the promoted CSV, canonical sidecar, and
 schema, then uploads the derived sidecars with current-generation
-preconditions from the approved publisher environment.
+preconditions from the approved publisher environment. Catalog web deployment
+runs after this materialization workflow so release-index-backed catalog
+metadata reflects the localized sidecars before publication.
 
 Catalog and app consumers must not fetch or merge a translation overlay. A
 browser or resolver requests one metadata sidecar for the active locale; if the

@@ -73,6 +73,8 @@ def assert_protected_terraform_sync(
     *,
     expected_name: str,
     push_paths: set[str],
+    expected_job_if: str = "${{ github.event_name != 'pull_request' }}",
+    expected_needs: str | None = None,
     plan_name: str,
     enforce_step_name: str,
     expected_targets: set[str],
@@ -91,7 +93,11 @@ def assert_protected_terraform_sync(
     testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
     testcase.assertIn("workflow_dispatch", trigger)
     testcase.assertNotIn("pull_request", trigger)
-    testcase.assertEqual(job["if"], "${{ github.event_name != 'pull_request' }}")
+    testcase.assertEqual(job["if"], expected_job_if)
+    if expected_needs is None:
+        testcase.assertNotIn("needs", job)
+    else:
+        testcase.assertEqual(job["needs"], expected_needs)
     testcase.assertEqual(job["environment"], "shared-datasets-production")
     testcase.assertEqual(
         job["concurrency"],
@@ -134,20 +140,9 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         steps = workflow_steps_by_name(workflow, "deploy")
         step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
 
-        self.assertEqual(trigger["push"]["branches"], ["main"])
-        self.assertEqual(
-            set(trigger["push"]["paths"]),
-            {
-                ".github/workflows/catalog-web-deploy.yml",
-                "catalog/**",
-                "docs/assets/**",
-                "scripts/catalog_docs.py",
-                "scripts/catalog_site.py",
-                "scripts/catalog_web_publish.py",
-                "web/catalog/**",
-            },
-        )
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
+        self.assertNotIn("push", trigger)
+        self.assertEqual(trigger["workflow_run"]["workflows"], ["Feature metadata localization materialization"])
+        self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertEqual(job["environment"], "shared-datasets-production")
@@ -196,13 +191,16 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             PMTILES_CDN_SYNC,
             expected_name="PMTiles CDN sync",
             push_paths={
-                "catalog/shared-datasets-catalog.csv",
-                "docs/assets/**",
                 "terraform/envs/prod/pmtiles_cdn.tf",
                 "terraform/envs/prod/shared_bucket_public.tf",
                 "terraform/envs/prod/variables.tf",
                 "terraform/envs/prod/versions.tf",
             },
+            expected_job_if=(
+                "${{ github.event_name != 'pull_request' && "
+                "needs.detect_relevant_change.outputs.should_run == 'true' }}"
+            ),
+            expected_needs="detect_relevant_change",
             plan_name="pmtiles-cdn-sync",
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
@@ -216,6 +214,23 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
                 "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
             },
+        )
+        trigger = workflow_triggers(workflow)
+        self.assertEqual(trigger["workflow_run"]["workflows"], ["Catalog web deploy"])
+        self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
+        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
+        detect_steps = workflow_steps_by_name(workflow, "detect_relevant_change")
+        self.assertEqual(
+            workflow["jobs"]["detect_relevant_change"]["outputs"]["should_run"],
+            "${{ steps.filter.outputs.should_run }}",
+        )
+        self.assertIn(
+            "catalog/shared-datasets-catalog\\.csv|docs/assets/",
+            detect_steps["Detect relevant merged changes"]["run"],
+        )
+        self.assertIn(
+            'ref: ${{ github.event.workflow_run.head_sha || \'main\' }}',
+            (PMTILES_CDN_SYNC).read_text(encoding="utf-8"),
         )
         steps = workflow_steps_by_name(workflow, "sync")
         verify_run = steps["Verify catalog CDN routes"]["run"]

@@ -1399,7 +1399,8 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertTrue(any("Do not use production publish-release" in command for command in state["generated_commands"]["remote_write"]))
             self.assertTrue(
                 any(
-                    "production catalog-web-deploy.yml automation runs after reviewed main pushes" in command
+                    "production catalog-web-deploy.yml automation runs from the reviewed" in command
+                    and "post-merge mutation/localization chain" in command
                     and "preview-only bucket uploads do not trigger it" in command
                     for command in state["generated_commands"]["remote_write"]
                 )

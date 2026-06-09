@@ -1,20 +1,11 @@
 name: Catalog web deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/catalog-web-deploy.yml"
-      - "catalog/**"
-      - "docs/assets/**"
-      - "scripts/catalog_docs.py"
-      - "scripts/catalog_site.py"
-      - "scripts/catalog_web_publish.py"
-      - "web/catalog/**"
   workflow_run:
     workflows:
-      - Approved dataset mutation
+      - Feature metadata localization materialization
+    branches:
+      - main
     types:
       - completed
   workflow_dispatch:

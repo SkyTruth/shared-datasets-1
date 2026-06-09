@@ -15,6 +15,7 @@ class MetadataLocalizationWorkflowTests(unittest.TestCase):
         workflow = load_workflow(WORKFLOW)
         trigger = workflow_triggers(workflow)
         steps = workflow_steps_by_name(workflow, "materialize")
+        step_names = list(steps)
 
         self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
@@ -35,6 +36,14 @@ class MetadataLocalizationWorkflowTests(unittest.TestCase):
         )
         self.assertIn("--translation-source-uri", steps["Materialize manual translation source"]["run"])
         self.assertEqual(steps["Upload materialization report"]["uses"], "actions/upload-artifact@v4")
+        self.assertLess(
+            step_names.index("Prepare reviewed publish plan"),
+            step_names.index("Validate publisher auth configuration"),
+        )
+        self.assertIn(
+            "steps.reviewed_plan.outputs.publish_plan != ''",
+            steps["Validate publisher auth configuration"]["if"],
+        )
 
     def test_workflow_keeps_canonical_writes_in_approved_runtime(self):
         workflow = load_workflow(WORKFLOW)

@@ -773,7 +773,9 @@ fall back to the canonical metadata sidecar values. After a reviewed publish
 plan promotes a new `{asset-slug}.metadata-translations.csv`, the
 `Feature metadata localization materialization` workflow regenerates sibling
 localized sidecars from the canonical metadata and schema using generation
-preconditions in the approved publisher environment.
+preconditions in the approved publisher environment. The catalog web deploy
+workflow runs after that localization step, so refreshed release-index metadata
+is included before the public catalog bundle is republished.
 
 ## Catalog web preview
 

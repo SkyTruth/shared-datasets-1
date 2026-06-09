@@ -1583,8 +1583,9 @@ def workflow_state_payload(
             (
                 f"After upload, run `gh workflow run feature-preview-deploy.yml --ref {ref_text} "
                 "-f preview_data_mode=preserve` and verify the refreshed viewer catalog. "
-                "The production catalog-web-deploy.yml automation runs after reviewed main pushes, "
-                "but preview-only bucket uploads do not trigger it."
+                "The production catalog-web-deploy.yml automation runs from the reviewed "
+                "post-merge mutation/localization chain, but preview-only bucket uploads "
+                "do not trigger it."
             ),
         ]
     else:
@@ -1771,8 +1772,8 @@ def commands_for_preview_catalog_refresh(state: dict[str, Any]) -> list[str]:
     return [
         (
             "Confirm this is a preview-only refresh: production catalog web deployment is automatic "
-            "via `.github/workflows/catalog-web-deploy.yml` after reviewed pushes to main that touch "
-            "catalog/docs/web-generator inputs, but preview-only GCS uploads do not trigger that workflow."
+            "via `.github/workflows/catalog-web-deploy.yml` after the reviewed post-merge "
+            "mutation/localization chain, but preview-only GCS uploads do not trigger that workflow."
         ),
         f"Run `gh workflow run feature-preview-deploy.yml --ref {preview_ref} -f preview_data_mode=preserve` after preview-upload succeeds.",
         "Wait for the run to finish successfully, especially the Collect preview release indexes, Build preview catalog web bundle, and Publish preview catalog web bundle steps.",
