@@ -126,14 +126,22 @@ def deep_translator_factory(provider: str) -> Callable[[str], Translator]:
     return factory
 
 
-def progress_iter(items: Sequence[tuple[str, str]], *, enabled: bool) -> Sequence[tuple[str, str]] | Any:
-    if not enabled:
-        return items
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        return items
-    return tqdm(items, unit="text")
+def emit_progress(
+    *,
+    current: int,
+    total: int,
+    started_at: float,
+    label: str,
+) -> None:
+    percent = 100.0 if total == 0 else (current / total) * 100.0
+    elapsed = max(0.0, time.monotonic() - started_at)
+    rate = 0.0 if elapsed == 0 else current / elapsed
+    remaining = "" if rate <= 0 or current >= total else f", eta_seconds={int((total - current) / rate)}"
+    print(
+        f"{label}: {current}/{total} ({percent:.1f}%), elapsed_seconds={int(elapsed)}{remaining}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def translation_key(row: Mapping[str, Any]) -> tuple[str, str, str, str]:
@@ -272,12 +280,18 @@ def translate_unique_values(
     sleep_seconds: float,
     on_error: str,
     progress: bool,
+    progress_interval_seconds: float,
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
     unique_pairs = sorted({(task.target, task.source_text) for task in tasks})
     translators: dict[str, Translator] = {}
     translations: dict[tuple[str, str], str] = {}
     failures: dict[tuple[str, str], str] = {}
-    for target, source_text in progress_iter(unique_pairs, enabled=progress):
+    total = len(unique_pairs)
+    started_at = time.monotonic()
+    last_progress_at = started_at
+    if progress:
+        emit_progress(current=0, total=total, started_at=started_at, label="translation-progress")
+    for index, (target, source_text) in enumerate(unique_pairs, start=1):
         try:
             translator = translators.get(target)
             if translator is None:
@@ -299,6 +313,16 @@ def translate_unique_values(
                 translations[(target, source_text)] = source_text
             elif on_error != "skip":
                 raise FeatureMetadataMachineTranslateError("--on-error must be fail, source, or skip")
+        if progress:
+            now = time.monotonic()
+            if index == total or now - last_progress_at >= progress_interval_seconds:
+                emit_progress(
+                    current=index,
+                    total=total,
+                    started_at=started_at,
+                    label="translation-progress",
+                )
+                last_progress_at = now
     return translations, failures
 
 
@@ -332,6 +356,7 @@ def generate_translation_source(
     expected_asset_slug: str | None = None,
     expected_release: str | None = None,
     progress: bool = False,
+    progress_interval_seconds: float = 30.0,
 ) -> dict[str, Any]:
     normalized_locales = feature_metadata_localization.parse_locale_arguments(locales)
     if not normalized_locales:
@@ -380,6 +405,7 @@ def generate_translation_source(
         sleep_seconds=sleep_seconds,
         on_error=on_error,
         progress=progress,
+        progress_interval_seconds=progress_interval_seconds,
     )
 
     generated_rows: list[dict[str, str]] = []
@@ -466,6 +492,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stringify-non-string", action="store_true")
     parser.add_argument("--skip-numeric-strings", action="store_true")
     parser.add_argument("--progress", action="store_true")
+    parser.add_argument(
+        "--progress-interval-seconds",
+        type=float,
+        default=30.0,
+        help="When --progress is set, emit one compact stderr progress line at this interval.",
+    )
     parser.add_argument("--report", type=Path)
     return parser
 
@@ -493,6 +525,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_asset_slug=args.asset_slug,
             expected_release=args.release,
             progress=args.progress,
+            progress_interval_seconds=args.progress_interval_seconds,
         )
     except (
         FeatureMetadataMachineTranslateError,

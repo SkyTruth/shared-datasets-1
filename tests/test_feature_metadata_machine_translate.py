@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -192,6 +194,39 @@ class FeatureMetadataMachineTranslateTests(unittest.TestCase):
         self.assertEqual(calls, [("pt", "Alpha")])
         self.assertEqual(rows[0]["locale"], "pt_br")
         self.assertEqual(rows[0]["value"], "pt:Alpha")
+
+    def test_progress_emits_compact_counters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical = root / "example-asset.metadata.ndjson.gz"
+            translations = root / "example-asset.metadata-translations.csv"
+            release_feature_model.write_metadata_sidecar(
+                [
+                    sidecar_record("1", VALID_HASH_A, {"name": "Alpha"}),
+                    sidecar_record("2", VALID_HASH_B, {"name": "Beta"}),
+                ],
+                canonical,
+            )
+            calls: list[tuple[str, str]] = []
+            stderr = io.StringIO()
+
+            with contextlib.redirect_stderr(stderr):
+                report = feature_metadata_machine_translate.generate_translation_source(
+                    canonical_sidecar=canonical,
+                    translation_source=translations,
+                    locales=["es"],
+                    fields=["name"],
+                    translator_factory=fake_translator_factory(calls),
+                    sleep_seconds=0,
+                    progress=True,
+                    progress_interval_seconds=0,
+                )
+
+        progress_lines = stderr.getvalue().strip().splitlines()
+        self.assertEqual(report["translated_unique_value_count"], 2)
+        self.assertEqual(progress_lines[0].split(",")[0], "translation-progress: 0/2 (0.0%)")
+        self.assertEqual(progress_lines[-1].split(",")[0], "translation-progress: 2/2 (100.0%)")
+        self.assertTrue(all("Alpha" not in line and "Beta" not in line for line in progress_lines))
 
 
 if __name__ == "__main__":
