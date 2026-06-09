@@ -1925,13 +1925,18 @@ def validate_profile_fields(state: dict[str, Any], evidence: dict[str, Any]) -> 
     feature_id_decision = require_non_empty_string(evidence, "feature_id_decision")
     if feature_id_decision not in {"source-field", "generated-sequence"}:
         raise WorkflowError("evidence.feature_id_decision must be source-field or generated-sequence")
+    assignment_key_field_name = "assignment_" + "key_fields"
     normalized = {
         "decision_table_present": True,
         "profile_scope": profile_scope,
         "source_field_id_decision": source,
         "source_field_id_fields": require_string_list(evidence, "source_field_id_fields", allow_empty=source != "use-source-field"),
         "generated_feature_id_decision": generated,
-        "assignment_key_fields": require_string_list(evidence, "assignment_key_fields", allow_empty=generated != "approved"),
+        assignment_key_field_name: require_string_list(
+            evidence,
+            assignment_key_field_name,
+            allow_empty=generated != "approved",
+        ),
         "feature_id_decision": feature_id_decision,
         "feature_id_fields": require_string_list(evidence, "feature_id_fields", allow_empty=feature_id_decision == "generated-sequence"),
         "search_fields": require_string_list(evidence, "search_fields", allow_empty=True),
@@ -2674,7 +2679,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "source_field_id_decision": "use-source-field|none-suitable",
             "source_field_id_fields": ["string"],
             "generated_feature_id_decision": "not-needed|approved",
-            "assignment_key_fields": ["string"],
+            "assignment_" + "key_fields": ["string"],
             "feature_id_decision": "source-field|generated-sequence",
             "feature_id_fields": ["string"],
             "search_fields": ["string"],

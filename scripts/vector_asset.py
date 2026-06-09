@@ -738,29 +738,11 @@ def validate_outputs(
         errors.append(pmtiles_magic_error)
 
     if fgb_path.exists() and shutil.which("ogrinfo"):
-        completed = subprocess.run(
-            ["ogrinfo", "-ro", "-al", "-so", "-json", str(fgb_path)],
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if completed.returncode != 0:
-            errors.append(f"ogrinfo -json failed for FGB: {completed.stderr.strip() or completed.stdout.strip()}")
-        else:
-            try:
-                payload = json.loads(completed.stdout)
-            except json.JSONDecodeError as exc:
-                errors.append(f"ogrinfo did not return valid JSON: {exc}")
-            else:
-                layers = payload.get("layers") or []
-                if not layers:
-                    errors.append("FGB has no vector layers.")
-                elif int(layers[0].get("featureCount") or 0) <= 0:
-                    errors.append("FGB layer has no features.")
-                else:
-                    fgb_layer_name = layers[0].get("name")
-                    fgb_property_keys = ogrinfo_property_keys(layers[0])
+        fgb_summary, fgb_summary_errors = ogrinfo_fgb_summary(fgb_path)
+        errors.extend(fgb_summary_errors)
+        if fgb_summary is not None:
+            fgb_layer_name = fgb_summary["layer_name"]
+            fgb_property_keys = fgb_summary["property_keys"]
 
         if fgb_layer_name and validate_geometry:
             geometry_result = validate_fgb_geometry_validity(fgb_path, fgb_layer_name)
@@ -920,6 +902,88 @@ def ogrinfo_property_keys(layer: dict[str, Any]) -> tuple[str, ...]:
         if isinstance(field, dict) and field.get("name"):
             keys.append(str(field["name"]))
     return tuple(sorted(keys))
+
+
+def ogrinfo_fgb_summary(fgb_path: Path) -> tuple[dict[str, Any] | None, list[str]]:
+    completed = subprocess.run(
+        ["ogrinfo", "-ro", "-al", "-so", "-json", str(fgb_path)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode == 0:
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            return None, [f"ogrinfo did not return valid JSON: {exc}"]
+        return ogrinfo_json_fgb_summary(payload)
+
+    message = completed.stderr.strip() or completed.stdout.strip()
+    if "Unknown option name '-json'" not in message:
+        return None, [f"ogrinfo -json failed for FGB: {message}"]
+
+    completed = subprocess.run(
+        ["ogrinfo", "-ro", "-al", "-so", str(fgb_path)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        return None, [f"ogrinfo text fallback failed for FGB: {completed.stderr.strip() or completed.stdout.strip()}"]
+    return ogrinfo_text_fgb_summary(completed.stdout)
+
+
+def ogrinfo_json_fgb_summary(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    layers = payload.get("layers") or []
+    if not layers:
+        return None, ["FGB has no vector layers."]
+    layer = layers[0]
+    if int(layer.get("featureCount") or 0) <= 0:
+        return None, ["FGB layer has no features."]
+    return {
+        "layer_name": layer.get("name"),
+        "property_keys": ogrinfo_property_keys(layer),
+    }, []
+
+
+def ogrinfo_text_fgb_summary(text: str) -> tuple[dict[str, Any] | None, list[str]]:
+    layer_name: str | None = None
+    feature_count: int | None = None
+    property_keys: list[str] = []
+    field_line = re.compile(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s+"
+        r"(?:Integer|Integer64|Real|String|Date|DateTime|Time|Binary|JSON|IntegerList|RealList|StringList)"
+        r"(?:\s|\(|$)"
+    )
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Layer name:"):
+            layer_name = stripped.split(":", 1)[1].strip() or None
+        elif stripped.startswith("Feature Count:"):
+            try:
+                feature_count = int(stripped.split(":", 1)[1].strip())
+            except ValueError:
+                feature_count = None
+        else:
+            match = field_line.match(line)
+            if match:
+                property_keys.append(match.group(1))
+
+    errors: list[str] = []
+    if not layer_name:
+        errors.append("Could not parse FGB layer name from ogrinfo text output.")
+    if feature_count is None:
+        errors.append("Could not parse FGB feature count from ogrinfo text output.")
+    elif feature_count <= 0:
+        errors.append("FGB layer has no features.")
+    if errors:
+        return None, errors
+    return {
+        "layer_name": layer_name,
+        "property_keys": tuple(sorted(set(property_keys))),
+    }, []
 
 
 def validate_fgb_geometry_validity(fgb_path: Path, layer_name: str) -> subprocess.CompletedProcess[str]:

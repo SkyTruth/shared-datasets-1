@@ -101,6 +101,66 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(validate_outputs.call_args.kwargs["exact_pmtiles_properties"], vector_asset.PMTILES_METADATA_COLUMNS)
         self.assertFalse(validate_outputs.call_args.kwargs["validate_geometry"])
 
+    def test_ogrinfo_fgb_summary_falls_back_to_text_output_without_json_support(self):
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+            if "-json" in command:
+                return mock.Mock(
+                    returncode=1,
+                    stdout="",
+                    stderr="FAILURE: Unknown option name '-json'",
+                )
+            return mock.Mock(
+                returncode=0,
+                stdout=(
+                    "INFO: Open of `example.fgb'\n"
+                    "      using driver `FlatGeobuf' successful.\n"
+                    "\n"
+                    "Layer name: example\n"
+                    "Geometry: Unknown (any)\n"
+                    "Feature Count: 2\n"
+                    "Layer SRS WKT:\n"
+                    "(unknown)\n"
+                    "  feature_id: String (0.0)\n"
+                    "  geometry_hash: String (0.0)\n"
+                    "  properties_hash: String (0.0)\n"
+                ),
+                stderr="",
+            )
+
+        with mock.patch("scripts.vector_asset.subprocess.run", side_effect=run):
+            summary, errors = vector_asset.ogrinfo_fgb_summary(Path("example.fgb"))
+
+        self.assertEqual(errors, [])
+        self.assertEqual(summary["layer_name"], "example")
+        self.assertEqual(
+            summary["property_keys"],
+            (
+                vector_asset.FEATURE_ID_COLUMN,
+                vector_asset.GEOMETRY_HASH_COLUMN,
+                vector_asset.PROPERTIES_HASH_COLUMN,
+            ),
+        )
+        self.assertEqual(
+            calls,
+            [
+                ["ogrinfo", "-ro", "-al", "-so", "-json", "example.fgb"],
+                ["ogrinfo", "-ro", "-al", "-so", "example.fgb"],
+            ],
+        )
+
+    def test_ogrinfo_text_fgb_summary_rejects_empty_layer(self):
+        summary, errors = vector_asset.ogrinfo_text_fgb_summary(
+            "Layer name: example\n"
+            "Feature Count: 0\n"
+            "  feature_id: String (0.0)\n"
+        )
+
+        self.assertIsNone(summary)
+        self.assertEqual(errors, ["FGB layer has no features."])
+
 
 if __name__ == "__main__":
     unittest.main()
