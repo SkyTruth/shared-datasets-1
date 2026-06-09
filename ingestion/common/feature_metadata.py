@@ -134,7 +134,6 @@ def _feature_record(
     }
     enriched_feature = {
         "type": "Feature",
-        "id": feature_id,
         "properties": published_properties,
         "geometry": geometry,
     }

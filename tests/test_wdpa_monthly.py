@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import gzip
 import hashlib
 import io
 import json
@@ -135,12 +136,16 @@ def fake_asset_outputs(
     fgb = tmp_path / f"{asset.slug}.fgb"
     pmtiles = tmp_path / f"{asset.slug}.pmtiles"
     metadata = tmp_path / f"{asset.slug}.metadata.ndjson.gz"
+    metadata_es = tmp_path / f"{asset.slug}.metadata.es.ndjson.gz"
+    metadata_translations = tmp_path / f"{asset.slug}.metadata-translations.csv"
     schema = tmp_path / f"{asset.slug}.schema.json"
     manifest = tmp_path / f"{asset.slug}.manifest.json"
     for path, data in (
         (fgb, b"fgb"),
         (pmtiles, b"pmtiles"),
         (metadata, b"metadata"),
+        (metadata_es, b"metadata-es"),
+        (metadata_translations, b"feature_id,field,locale,source_value_hash,value,review_state,notes\n"),
         (schema, b'{"schema_version":2}\n'),
     ):
         path.write_bytes(data)
@@ -154,6 +159,8 @@ def fake_asset_outputs(
         fgb=fgb,
         pmtiles=pmtiles,
         metadata=metadata,
+        metadata_es=metadata_es,
+        metadata_translations=metadata_translations,
         schema=schema,
         manifest=manifest,
         row_count=2,
@@ -161,10 +168,14 @@ def fake_asset_outputs(
             "fgb": VALID_FGB_SHA,
             "pmtiles": VALID_PMTILES_SHA,
             "metadata": VALID_METADATA_SHA,
+            "metadata_es": VALID_METADATA_SHA,
+            "csv": VALID_METADATA_SHA,
+            "metadata_translations": VALID_METADATA_SHA,
             "schema": VALID_SCHEMA_SHA,
         },
         schema_payload=schema_payload,
         sidecar_records=(),
+        localization_report={"valid": True, "applied_translation_count": 2},
     )
 
 
@@ -468,9 +479,60 @@ class WdpaMonthlyTests(unittest.TestCase):
         self.assertEqual(manifest["identity"]["assignment_key"], ["SITE_PID"])
         self.assertNotIn("generation", artifacts["manifest"])
         self.assertNotIn("latest_generation", artifacts["manifest"])
+        release_paths = [item["path"] for item in record["release_paths"]]
+        latest_paths = [item["path"] for item in record["latest_paths"]]
+        self.assertIn(
+            f"gs://{bucket.name}/{asset.release_object(run_date, '.metadata.es.ndjson.gz')}",
+            release_paths,
+        )
+        self.assertIn(
+            f"gs://{bucket.name}/{asset.release_object(run_date, '.metadata-translations.csv')}",
+            release_paths,
+        )
+        self.assertIn(
+            f"gs://{bucket.name}/{asset.latest_object('.metadata.es.ndjson.gz')}",
+            latest_paths,
+        )
+        self.assertIn(
+            f"gs://{bucket.name}/{asset.latest_object('.metadata-translations.csv')}",
+            latest_paths,
+        )
+        self.assertEqual(record["localization"]["translation_locale"], "es")
+        self.assertEqual(record["localization"]["translation_field"], "NAME_ENG")
         manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
         self.assertEqual(record["sha256"]["manifest"], manifest_sha)
         self.assertEqual(json.loads(run_record.text)["sha256"]["manifest"], manifest_sha)
+
+    def test_legacy_wdpa_metadata_sidecar_preserves_generated_ids(self):
+        bucket = FakeBucket()
+        asset = wdpa.ASSETS[0]
+        latest = bucket.blob(asset.latest_object(".metadata.ndjson.gz"))
+        latest.exists = True
+        latest.data = gzip.compress(
+            (
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "asset_slug": asset.slug,
+                        "release": "2026-06-07",
+                        "feature_id": "src:SITE_PID:WDPA-1",
+                        "feature_hash": "sha256:" + "a" * 64,
+                        "properties": {
+                            "SITE_PID": "WDPA-1",
+                            "ext_id": "42",
+                        },
+                        "provenance": {},
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+
+        records = wdpa.load_previous_records_for_asset(publisher, asset)
+
+        self.assertEqual(records, [{"feature_id": "42", "identity_key": ["WDPA-1"]}])
 
 
 @unittest.skipUnless(
