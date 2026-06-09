@@ -8,6 +8,7 @@ update external databases.
 from __future__ import annotations
 
 import datetime as dt
+import csv
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from ingestion.common import feature_metadata
@@ -38,6 +40,7 @@ from ingestion.common.runtime import (
     run_command as common_run_command,
     sha256_file,
 )
+from scripts import feature_metadata_localization, release_feature_model
 
 
 LOGGER = logging.getLogger("wdpa_monthly")
@@ -56,6 +59,10 @@ RUN_RECORD_VERSION = 1
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
 PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
+TRANSLATION_LOCALE = "es"
+TRANSLATION_FIELD = "NAME_ENG"
+TRANSLATION_REVIEW_STATE = "needs_review"
+TRANSLATION_NOTES = "Initial Spanish sidecar preserves source proper-name value pending human review."
 
 
 class SourceNotAvailableError(FileNotFoundError):
@@ -106,12 +113,15 @@ class AssetOutputs:
     fgb: Path
     pmtiles: Path
     metadata: Path
+    metadata_es: Path
+    metadata_translations: Path
     schema: Path
     manifest: Path
     row_count: int
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     sidecar_records: tuple[dict[str, Any], ...]
+    localization_report: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -628,31 +638,24 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
     remove_if_exists(mbtiles)
     run_command(
         [
-            "ogr2ogr",
-            "-f",
-            "MBTiles",
-            "-nln",
-            asset.tile_layer,
-            "-nlt",
-            "PROMOTE_TO_MULTI",
-            "-dsco",
-            f"NAME={asset.title}",
-            "-dsco",
-            f"DESCRIPTION={asset.title} metadata lookup vector tiles",
-            "-dsco",
-            f"MINZOOM={PMTILES_MINZOOM}",
-            "-dsco",
-            f"MAXZOOM={PMTILES_MAXZOOM}",
-            "-lco",
-            f"NAME={asset.tile_layer}",
-            "-lco",
-            f"MINZOOM={PMTILES_MINZOOM}",
-            "-lco",
-            f"MAXZOOM={PMTILES_MAXZOOM}",
-            "-select",
-            ",".join(PMTILES_PROPERTIES),
+            "tippecanoe",
+            "-o",
             str(mbtiles),
-            f"GeoJSONSeq:{geojsonseq}",
+            "-l",
+            asset.tile_layer,
+            "-Z",
+            str(PMTILES_MINZOOM),
+            "-z",
+            str(PMTILES_MAXZOOM),
+            "--force",
+            "--drop-densest-as-needed",
+            "--extend-zooms-if-still-dropping",
+            "--drop-rate=1",
+            f"--name={asset.title}",
+            f"--description={asset.title} metadata lookup vector tiles",
+            "-y",
+            feature_metadata.FEATURE_ID_COLUMN,
+            str(geojsonseq),
         ]
     )
     run_command(["pmtiles", "convert", str(mbtiles), str(output)])
@@ -682,6 +685,136 @@ def validate_pmtiles(path: Path) -> None:
         run_command(["tippecanoe-decode", "-S", str(path)], capture_json=True)
 
 
+def write_translation_source(records: Sequence[Mapping[str, Any]], path: Path) -> int:
+    """Write initial proper-name translation rows from canonical metadata."""
+    count = 0
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "feature_id",
+                "field",
+                "locale",
+                "source_value_hash",
+                "value",
+                "review_state",
+                "notes",
+            ],
+        )
+        writer.writeheader()
+        for record in records:
+            properties = record.get("properties")
+            if not isinstance(properties, Mapping):
+                continue
+            value = properties.get(TRANSLATION_FIELD)
+            if value is None or str(value) == "":
+                continue
+            writer.writerow(
+                {
+                    "feature_id": str(record.get("feature_id") or ""),
+                    "field": TRANSLATION_FIELD,
+                    "locale": TRANSLATION_LOCALE,
+                    "source_value_hash": feature_metadata_localization.source_value_hash(value),
+                    "value": str(value),
+                    "review_state": TRANSLATION_REVIEW_STATE,
+                    "notes": TRANSLATION_NOTES,
+                }
+            )
+            count += 1
+    if count == 0:
+        raise RuntimeError(f"{TRANSLATION_FIELD} translation source would be empty")
+    return count
+
+
+def materialize_localized_metadata(
+    *,
+    metadata: Path,
+    metadata_translations: Path,
+    metadata_es: Path,
+    asset: AssetSpec,
+    run_date: dt.date,
+) -> dict[str, Any]:
+    report = feature_metadata_localization.materialize_locale_sidecar(
+        canonical_sidecar=metadata,
+        translation_source=metadata_translations,
+        output_sidecar=metadata_es,
+        locale=TRANSLATION_LOCALE,
+        translatable_fields={TRANSLATION_FIELD},
+        expected_asset_slug=asset.slug,
+        expected_release=run_date.isoformat(),
+        fail_on_stale=True,
+    )
+    return report.to_dict()
+
+
+def legacy_wdpa_previous_records(records: Sequence[Mapping[str, Any]], *, asset: AssetSpec) -> list[dict[str, Any]]:
+    """Adapt old WDPA metadata sidecars into generated-ID previous records."""
+    converted: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, record in enumerate(records, start=1):
+        if record.get("schema_version") != 1:
+            errors.append(f"record {index} is not legacy schema_version 1")
+            continue
+        if record.get("asset_slug") not in (None, asset.slug):
+            errors.append(f"record {index} asset_slug does not match {asset.slug}")
+            continue
+        properties = record.get("properties")
+        if not isinstance(properties, Mapping):
+            errors.append(f"record {index} properties must be an object")
+            continue
+        site_pid = str(properties.get("SITE_PID") or "").strip()
+        ext_id = str(properties.get("ext_id") or "").strip()
+        if not site_pid:
+            errors.append(f"record {index} is missing properties.SITE_PID")
+            continue
+        try:
+            release_feature_model.validate_feature_id(ext_id)
+        except release_feature_model.ReleaseFeatureModelError as exc:
+            errors.append(f"record {index} properties.ext_id is not a reusable feature_id: {exc}")
+            continue
+        converted.append(
+            {
+                "feature_id": ext_id,
+                "identity_key": [site_pid],
+            }
+        )
+    if errors:
+        raise RuntimeError("legacy WDPA metadata sidecar cannot preserve generated IDs: " + "; ".join(errors[:10]))
+    if not converted:
+        raise RuntimeError("legacy WDPA metadata sidecar did not contain any reusable ID mappings")
+    return converted
+
+
+def load_previous_records_for_asset(
+    publisher: GcsPublisher,
+    asset: AssetSpec,
+) -> list[dict[str, Any]] | None:
+    try:
+        return publisher.load_latest_metadata_records(asset)
+    except RuntimeError as original_error:
+        object_name = asset.latest_object(".metadata.ndjson.gz")
+        blob = publisher.bucket.blob(object_name)
+        try:
+            blob.reload()
+        except NotFound:
+            return None
+        try:
+            raw_records = list(
+                release_feature_model.read_metadata_sidecar_bytes(
+                    blob.download_as_bytes(),
+                    label=f"gs://{publisher.bucket.name}/{object_name}",
+                )
+            )
+            converted = legacy_wdpa_previous_records(raw_records, asset=asset)
+        except Exception as legacy_error:
+            raise original_error from legacy_error
+        LOGGER.warning(
+            "%s latest metadata sidecar uses legacy feature_id contract; preserving generated IDs from properties.ext_id and SITE_PID",
+            asset.slug,
+        )
+        return converted
+
+
 def build_asset_outputs(
     *,
     source: str,
@@ -704,6 +837,8 @@ def build_asset_outputs(
     enriched_geojsonseq = workdir / f"{asset.slug}.metadata.geojsonseq"
     pmtiles = workdir / f"{asset.slug}.pmtiles"
     metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
+    metadata_es = workdir / f"{asset.slug}.metadata.{TRANSLATION_LOCALE}.ndjson.gz"
+    metadata_translations = workdir / f"{asset.slug}.metadata-translations.csv"
     schema = workdir / f"{asset.slug}.schema.json"
     manifest = workdir / f"{asset.slug}.manifest.json"
 
@@ -733,12 +868,25 @@ def build_asset_outputs(
         )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
+    translation_count = write_translation_source(sidecar_records, metadata_translations)
     schema_payload = feature_metadata.schema_from_records(
         asset_slug=asset.slug,
         release=run_date.isoformat(),
         records=sidecar_records,
     )
     feature_metadata.write_schema(schema_payload, schema)
+    localization_report = materialize_localized_metadata(
+        metadata=metadata,
+        metadata_translations=metadata_translations,
+        metadata_es=metadata_es,
+        asset=asset,
+        run_date=run_date,
+    )
+    if localization_report.get("applied_translation_count") != translation_count:
+        raise RuntimeError(
+            f"{asset.slug} localized metadata applied "
+            f"{localization_report.get('applied_translation_count')} of {translation_count} translation rows"
+        )
     build_pmtiles(enriched_geojsonseq, asset, pmtiles)
     remove_if_exists(geojsonseq)
 
@@ -772,6 +920,8 @@ def build_asset_outputs(
         fgb=fgb,
         pmtiles=pmtiles,
         metadata=metadata,
+        metadata_es=metadata_es,
+        metadata_translations=metadata_translations,
         schema=schema,
         manifest=manifest,
         row_count=actual_rows,
@@ -779,10 +929,14 @@ def build_asset_outputs(
             "fgb": sha256_file(fgb),
             "pmtiles": sha256_file(pmtiles),
             "metadata": sha256_file(metadata),
+            f"metadata_{TRANSLATION_LOCALE}": sha256_file(metadata_es),
+            "csv": sha256_file(metadata_translations),
+            "metadata_translations": sha256_file(metadata_translations),
             "schema": sha256_file(schema),
         },
         schema_payload=schema_payload,
         sidecar_records=tuple(sidecar_records),
+        localization_report=localization_report,
     )
 
 
@@ -825,6 +979,16 @@ def publish_asset(
         object_name=asset.release_object(run_date, ".metadata.ndjson.gz"),
         metadata=metadata,
     )
+    release_metadata_es = publisher.upload_new_object(
+        local_path=outputs.metadata_es,
+        object_name=asset.release_object(run_date, f".metadata.{TRANSLATION_LOCALE}.ndjson.gz"),
+        metadata=metadata,
+    )
+    release_metadata_translations = publisher.upload_new_object(
+        local_path=outputs.metadata_translations,
+        object_name=asset.release_object(run_date, ".metadata-translations.csv"),
+        metadata=metadata,
+    )
     release_schema = publisher.upload_new_object(
         local_path=outputs.schema,
         object_name=asset.release_object(run_date, ".schema.json"),
@@ -843,6 +1007,16 @@ def publish_asset(
     latest_metadata = publisher.replace_latest_object(
         local_path=outputs.metadata,
         object_name=asset.latest_object(".metadata.ndjson.gz"),
+        metadata=metadata,
+    )
+    latest_metadata_es = publisher.replace_latest_object(
+        local_path=outputs.metadata_es,
+        object_name=asset.latest_object(f".metadata.{TRANSLATION_LOCALE}.ndjson.gz"),
+        metadata=metadata,
+    )
+    latest_metadata_translations = publisher.replace_latest_object(
+        local_path=outputs.metadata_translations,
+        object_name=asset.latest_object(".metadata-translations.csv"),
         metadata=metadata,
     )
     latest_schema = publisher.replace_latest_object(
@@ -912,7 +1086,14 @@ def publish_asset(
         "sha256": sha256_values,
         "field_count": len(source_fields),
         "notes": "Generated by simplified monthly WDPA job; fields preserved from source.",
+        "localization": {
+            "translation_locale": TRANSLATION_LOCALE,
+            "translation_field": TRANSLATION_FIELD,
+            "report": outputs.localization_report,
+        },
     }
+    record["release_paths"].extend([release_metadata_es, release_metadata_translations])
+    record["latest_paths"].extend([latest_metadata_es, latest_metadata_translations])
     run_record = publisher.write_run_record(
         asset=asset,
         run_date=run_date,
@@ -938,7 +1119,7 @@ def metadata_for_asset(
 
 def run() -> list[dict[str, Any]]:
     configure_logging()
-    for binary in ("ogrinfo", "ogr2ogr", "pmtiles"):
+    for binary in ("ogrinfo", "ogr2ogr", "tippecanoe", "pmtiles"):
         require_binary(binary)
 
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)
@@ -1056,7 +1237,7 @@ def run() -> list[dict[str, Any]]:
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
-                previous_records=publisher.load_latest_metadata_records(asset),
+                previous_records=load_previous_records_for_asset(publisher, asset),
             )
             records.append(
                 publish_asset(
@@ -1072,6 +1253,8 @@ def run() -> list[dict[str, Any]]:
             remove_if_exists(outputs.fgb)
             remove_if_exists(outputs.pmtiles)
             remove_if_exists(outputs.metadata)
+            remove_if_exists(outputs.metadata_es)
+            remove_if_exists(outputs.metadata_translations)
             remove_if_exists(outputs.schema)
             remove_if_exists(outputs.manifest)
         return records
