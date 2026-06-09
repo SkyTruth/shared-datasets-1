@@ -2998,9 +2998,16 @@ def render_pr_body_from_state(state: dict[str, Any], *, publish_plan: dict[str, 
     validation = step_record(state, "validate-artifacts").get("evidence", {})
     catalog = step_record(state, "catalog-outputs").get("evidence", {})
     publish_plan = publish_plan or build_publish_plan_from_state(state)
+    existing_asset_destination = any(
+        promotion.get("destination_generation")
+        and "/_catalog/" not in str(promotion.get("destination_uri", ""))
+        for promotion in publish_plan.get("promotions", [])
+        if isinstance(promotion, dict)
+    )
+    summary_action = "Publish shared dataset revision" if existing_asset_destination else "Publish new shared dataset"
     body = f"""## Summary
 
-Publish new shared dataset `{plan['asset_slug']}`: {plan['title']}.
+{summary_action} `{plan['asset_slug']}`: {plan['title']}.
 
 ## Validation
 
