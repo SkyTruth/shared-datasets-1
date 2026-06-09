@@ -25,11 +25,13 @@ notes: Initial reviewed shared-datasets release from the supplied FlatGeobuf Wor
   release 2026-06-06; source sha256 15a039d989c7fd8ad41231f041ca428101d6bb5202c8039f6ef00c21a85413fc. The 2026-06-09 corrective
   schema-contract revision rebuilds the release with feature_id values copied from MRGID, geometry_hash values, properties_hash
   values, release metadata/schema/manifest schema_version 2 artifacts, metadata-translations rows keyed by raw feature_id,
-  and localized GEONAME/name metadata sidecars for es, fr, id, pt, pt_br, and sw. PMTiles are v3 MVT metadata-lookup tiles
-  at maxzoom 12 with feature_id only. Hashes for the 2026-06-09 candidates are fgb cce07effbf7eb74494d96de5a6c0e3b8af6908b580d73af177ef45e493e5151f;
-  pmtiles de835691551e4c16af415579b0e2a2bfeb0d9095fedd410aa1210d6815fb9a51; metadata 4a83a16d3e3ab3105d3207d936d4e4e4b78c3e6d0876f5c182751053b4b57a1a;
-  metadata-translations 114c82dad426ed568b1a2001731df06d1ea5e9058dde37de74719bd464c7c0d6; schema e36c73a22de54ee9b25bf7a856320def695deb1a08506313ab9d22a2489256ac;
-  manifest 4bbceaf7b72c542beedd5a1ab6bd2b623ab3fdfc6c319e744552da82696a66fe. Firestore metadata serving is inactive for this
+  and localized GEONAME/name metadata sidecars for es, fr, id, pt, pt_br, and sw. A same-release display-field repair backfills
+  the High Seas feature, feature_id 63203, with GEONAME values derived from upstream name so GEONAME is populated for every
+  feature. PMTiles are v3 MVT metadata-lookup tiles at maxzoom 12 with feature_id only. Hashes for the 2026-06-09 candidates
+  are fgb cce07effbf7eb74494d96de5a6c0e3b8af6908b580d73af177ef45e493e5151f; GEONAME repair fgb 00ff0ef8a28a915643e0095629db54b736feb547a437f0510c1e30577b669923;
+  pmtiles de835691551e4c16af415579b0e2a2bfeb0d9095fedd410aa1210d6815fb9a51; metadata d2e5ad2afe0b0468fdbdbfbf75548a4bc55315ea6b977bb15161d4ec638e5ae4;
+  metadata-translations 374f7ba8f0e7df87167a21088a9a5924934a3d7de8b723e27812922f727fa45c; schema e36c73a22de54ee9b25bf7a856320def695deb1a08506313ab9d22a2489256ac;
+  manifest 7d8f8fb2d0c2557078a323f6168f0596c029ed3c0321c0a75512c93d3bde7925. Firestore metadata serving is inactive for this
   release model; applications should read sidecars. Release history, source generations, row counts, and hashes are recorded
   in the bucket release index and per-run record.
 admission:
@@ -259,7 +261,9 @@ columns. The PMTiles are metadata-lookup tiles and intentionally carry only
 `feature_id`; applications should resolve labels and attributes
 through the metadata sidecar. Firestore metadata serving is inactive for this
 release model, and the release manifest records an `inactive_firestore_serving`
-index policy.
+index policy. `GEONAME` is the display-label field for this asset and is
+populated for all 286 features; the High Seas row derives `GEONAME` from its
+upstream `name` value.
 
 ## Properties / columns
 
@@ -267,7 +271,7 @@ index policy.
 |---|---|
 | `id` | Internal vector-helper identifier; use `feature_id` or `MRGID` for stable joins |
 | `MRGID` | Marine Regions identifier; selected source field ID and source for `feature_id` |
-| `GEONAME` | Source boundary display name; translatable field in localized metadata sidecars |
+| `GEONAME` | Display name; source boundary display name for EEZ rows and a High Seas compatibility label derived from upstream `name`; translatable field in localized metadata sidecars |
 | `MRGID_TER1`, `MRGID_TER2`, `MRGID_TER3` | Marine Regions territory identifiers for claimant territories |
 | `POL_TYPE` | Source polygon type such as `200NM`, `Overlapping claim`, or `Joint regime` |
 | `MRGID_SOV1`, `MRGID_SOV2`, `MRGID_SOV3` | Marine Regions sovereign identifiers |
@@ -280,7 +284,7 @@ index policy.
 | `ISO_SOV1`, `ISO_SOV2`, `ISO_SOV3` | ISO sovereign codes where supplied |
 | `UN_SOV1`, `UN_SOV2`, `UN_SOV3` | United Nations sovereign numeric codes where supplied |
 | `UN_TER1`, `UN_TER2`, `UN_TER3` | United Nations territory numeric codes where supplied |
-| `name` | Source helper display name |
+| `name` | Source helper display name retained for the High Seas source component |
 | `source` | Source component label |
 | `layer` | Source layer label |
 | `path` | Source path label |
@@ -294,7 +298,7 @@ index policy.
 |---|---:|---:|---:|---:|---:|---:|---:|---|---|
 | `MRGID` | Integer | 286 | 286 | 286 | 1 | 0.35% | 1.00 | Selected source field ID | None |
 | `MRGID_EEZ` | Integer | 286 | 285 | 285 | 1 | 0.35% | 1.00 | Rejected ID candidate | One blank value |
-| `GEONAME` | String | 286 | 285 | 285 | 1 | 0.35% | 1.00 | Search field | One blank value; display/search field |
+| `GEONAME` | String | 286 | 286 | 286 | 1 | 0.35% | 1.00 | Search/display field | Populated for all features; High Seas value derived from upstream `name` |
 | `TERRITORY1` | String | 286 | 285 | 254 | 3 | 1.05% | 1.00 | Search field | One blank value; not unique |
 | `SOVEREIGN1` | String | 286 | 285 | 157 | 23 | 8.04% | 1.28 | Search field | One blank value; not unique |
 | `ISO_SOV1` | String | 286 | 285 | 157 | 23 | 8.04% | 1.35 | Search field | One blank value; not unique |
@@ -315,12 +319,13 @@ The Cerulean source contains 282 EEZ translation rows. The supplied feature set
 matched 280 of those MRGIDs. Two Cerulean MRGIDs, `8489` and `33176`, were not
 present in the supplied FGB, and six supplied feature MRGIDs, `64430`, `64431`,
 `64440`, `64446`, `64459`, and `64460`, had no Cerulean translation row. The
-High Seas feature, `63203`, has localized `name` values in all six locales
-because the canonical metadata record stores its display label in `name` rather
-than `GEONAME`. The 2026-06-09 translation source has 1,680 rows; each localized
-sidecar applies 280 translations, has no stale, orphaned, or missing-field rows,
+High Seas feature, `63203`, has localized `GEONAME` and `name` values in all six
+locales; its `GEONAME` values are derived from the upstream High Seas `name`
+field so applications can use `GEONAME` as one display field across the combined
+asset. The 2026-06-09 translation source has 1,686 rows; each localized sidecar
+applies 281 translations, has no stale, orphaned, or missing-field rows,
 preserves all 286 feature records, and falls back to canonical names for the six
-features without localized values.
+features without localized GEONAME values.
 
 ## Source and Terms
 
