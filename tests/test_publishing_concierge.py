@@ -2183,6 +2183,27 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertIn("```shared-datasets-publish-plan", body)
             self.assertIn("_catalog/web/catalog.json", body)
 
+    def test_publish_plan_preserves_schema_compatibility_waiver(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(root)
+            self._complete_first_csv_workflow_through_pr_ready(root, state_file)
+            state = json.loads(state_file.read_text())
+            waiver = {
+                "asset_slug": "example",
+                "rationale": "Reviewed schema-contract migration removes a legacy field.",
+                "consumer_impact": "Consumers must migrate from legacy_id to feature_id.",
+                "reviewer": "jonaraphael",
+                "pr_reference": "test PR",
+                "migration_path": "Use feature_id instead of legacy_id.",
+                "blocked_changes": [{"kind": "removed", "field": "legacy_id"}],
+            }
+            state["steps"]["stage-scratch"]["evidence"]["staged_objects"][0]["compatibility_waiver"] = waiver
+
+            publish_plan = publishing_concierge.build_publish_plan_from_state(state)
+
+            self.assertEqual(publish_plan["promotions"][0]["compatibility_waiver"], waiver)
+
     def test_render_report_outputs_completion_scaffold(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
