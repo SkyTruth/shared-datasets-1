@@ -20,13 +20,13 @@ source: Marine Regions World Seas IHO v3
 license: See source terms
 citation: Flanders Marine Institute (2018). IHO Sea Areas, version 3. Available online at https://www.marineregions.org/.
   https://doi.org/10.14284/323.
-notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29; sha256 1fb5a7988b686e1076fe0a21d75d5df32fa28dfcd100dbe3db3aaaf8c9493ba6;
-  PMTiles sha256 0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b; PMTiles rebuilt 2026-05-04 at maxzoom 12
-  from sampled FGB geometry detail with local tile and browser QA. The 2026-06-05 reviewed metadata-contract release uses
-  MRGID as the selected source identifier, adds feature_id, geometry_hash, properties_hash, metadata/schema/manifest artifacts,
-  and keeps the 2026-04-29 release readable and unchanged. It also adds machine-translated NAME metadata sidecars for es,
-  fr, id, pt, pt_br, and sw. PMTiles are metadata-lookup tiles with feature_id only. Release history, source generations,
-  row counts, and hashes are recorded in the bucket release index and per-run record.
+notes: Initial upload from iho-mr_World_Seas_IHO_v3.fgb; release 2026-04-29. The 2026-06-05 metadata-contract release used
+  identity v1 (feature_id 'src:MRGID:{n}', ext_id, feature_hash) and added machine-translated NAME metadata sidecars for es,
+  fr, id, pt, pt_br, and sw. The 2026-06-09 release migrates the asset to the release feature identity v2 contract; feature_id
+  is the bare MRGID string, geometry_hash and properties_hash replace feature_hash, and the ext_id and feature_hash columns
+  are removed. Existing machine translations were carried forward re-keyed to the v2 feature_ids. PMTiles are metadata-lookup
+  tiles with feature_id only. Prior releases remain readable and unchanged. Release history, source generations, row counts,
+  and hashes are recorded in the bucket release index and per-run record.
 row_count: 101
 data_profile:
   field_count: 13
@@ -46,7 +46,7 @@ data_profile:
     duplicate_value_count: 0
     duplicate_row_count: 0
     status: unique
-    notes: Unique; selected source field ID for feature_id in the 2026-06-05 metadata-contract release
+    notes: Unique; selected source field ID for feature_id; v2 feature_id is the bare MRGID string as of release 2026-06-09
 feature_identity:
   strategy: source_field
   source_fields:
@@ -233,8 +233,16 @@ generated from the same source layer for web-map display and feature lookup.
 This is a direct format conversion from the Marine Regions source layer. Source
 field names and values are preserved in the FlatGeobuf output. Metadata-contract
 releases add `feature_id`, `geometry_hash`, and `properties_hash` fields to the canonical
-FGB and metadata sidecar. PMTiles intentionally carry only `feature_id` and
-`feature_id` properties; source attributes are served from the metadata sidecar/API.
+FGB and metadata sidecar. PMTiles intentionally carry only the `feature_id`
+property; source attributes are served from the metadata sidecar/API.
+
+Identity v2 migration (2026-06-09): `feature_id` changed from the v1
+`src:MRGID:{n}` form to the bare MRGID string (for example `src:MRGID:1904`
+became `1904`). The v1 `ext_id` and `feature_hash` columns were removed;
+`geometry_hash` and `properties_hash` replace `feature_hash`. Consumers that
+stored v1 feature_ids can migrate by stripping the `src:MRGID:` prefix. The
+`area` and `MRGID` columns are typed 32-bit integer in the v2 FGB (previously
+integer64); all values are unchanged.
 
 ## Properties / columns
 
@@ -252,8 +260,8 @@ definitions.
 | `min_Y` | real | Source-provided minimum latitude for the feature envelope. |
 | `max_X` | real | Source-provided maximum longitude for the feature envelope. |
 | `max_Y` | real | Source-provided maximum latitude for the feature envelope. |
-| `area` | integer64 | Source-provided area value; units need source confirmation. |
-| `MRGID` | integer64 | Marine Regions Gazetteer identifier for the feature. |
+| `area` | integer | Source-provided area value; units need source confirmation. |
+| `MRGID` | integer | Marine Regions Gazetteer identifier for the feature. |
 | `feature_id` | string | Public URL-safe lookup handle; mirrors `MRGID` as a string. |
 | `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
 | `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
@@ -268,10 +276,22 @@ selection. The sampled FGB profile resolved to maxzoom 12 from representative
 segment lengths. The rebuilt PMTiles SHA-256 is
 `0d0985cf36ad244215f80bf198dcc43eaef1767bdd9e580f07062391d273f51b`.
 
-The 2026-06-05 release repairs the asset to the release-oriented vector metadata
-contract from the existing latest FGB generation `1777477236329598`, without
-refetching or changing the 2026-04-29 release. The selected source field ID is
-`MRGID`, and `feature_id` is the string form of `MRGID`.
+The 2026-06-05 release repaired the asset to the release-oriented vector metadata
+contract (identity v1) from the existing latest FGB generation `1777477236329598`,
+without refetching or changing the 2026-04-29 release.
+
+The 2026-06-09 release migrates the asset to the release feature identity v2
+contract from the existing latest FGB generation `1780805504653873`, again
+without refetching the source. The selected source field ID remains `MRGID`,
+and `feature_id` is now the bare string form of `MRGID` (v1 used
+`src:MRGID:{n}`). The v1 `ext_id` and `feature_hash` columns were removed, and
+`geometry_hash` plus `properties_hash` were added to the canonical FGB and
+metadata sidecar. PMTiles were rebuilt as metadata-lookup tiles carrying only
+`feature_id` (v1 tiles also carried `ext_id`), preserving the `iho_world_seas`
+tile layer name and the `World_Seas_IHO_v3` FGB layer name. The 606 machine
+translation rows for `NAME` (es, fr, id, pt, pt_br, sw) were carried forward
+re-keyed to the v2 feature_ids; translated values are unchanged and remain
+machine_translated pending human review.
 
 ## Localized Metadata
 
@@ -280,7 +300,9 @@ Machine translations for `NAME` are recorded in
 metadata sidecars for `es`, `fr`, `id`, `pt`, `pt_br`, and `sw`. Each localized
 sidecar preserves all 101 feature records and carries one translated `NAME`
 value per feature. Translation rows carry `review_state = machine_translated`
-and have not been human reviewed.
+and have not been human reviewed. The 2026-06-09 identity v2 release carried
+all 606 translation rows forward re-keyed to the new feature_ids; translated
+values and source-value hashes are unchanged.
 
 ## Known caveats
 
