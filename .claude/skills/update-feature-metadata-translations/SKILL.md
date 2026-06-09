@@ -26,6 +26,11 @@ maintainer chooses locales and fields, the upload is not complete until those
 requested rows exist in the translation source CSV and the generated localized
 sidecars have been materialized and validated.
 
+When the publishing concierge has profiled fields, review
+`plan.curator_field_options.translation_field_candidates` before asking for the
+final translation field decision. Treat those candidates as suggestions, not
+approval.
+
 ## Source And Generated Artifacts
 
 Keep the canonical `{asset-slug}.metadata.ndjson.gz` immutable as the provider
@@ -65,6 +70,27 @@ canonical sidecar, schema or translatable-field allowlist, and translation CSV.
    `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/{asset-slug}/`.
 2. Start from the current canonical sidecar, schema, and translation source.
 3. Add or update CSV rows only for maintainer-approved locales and fields.
+   For machine-generated first-pass rows, use the local helper with the exact
+   asset, fields, and locales recorded by the publishing concierge:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
+  python scripts/feature_metadata_machine_translate.py \
+  --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
+  --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
+  --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
+  --locale es --locale fr \
+  --field name --field designation \
+  --asset-slug example-asset \
+  --release YYYY-MM-DD \
+  --report "$WORK_ROOT/vector-assets/example-asset/reports/machine-translation-summary.json" \
+  --progress
+```
+
+   Do not hard-code WDPA, `name`, or any locale set. The helper is generic.
+   Preserve the concierge-approved field list, and pass
+   `--translator-target locale=target_code` when a field-safe locale such as
+   `pt_br` must map to a deep-translator target such as `pt`.
 4. Keep one row per `feature_id`, field, locale, and source-value hash. Duplicate
    translation keys fail validation.
 5. Generate every localized sidecar represented in the CSV:
@@ -102,6 +128,9 @@ resolver asks for one metadata sidecar for the active locale and receives either
 
 - Do not put full translated metadata back into PMTiles.
 - Do not dynamically generate localized sidecars per request.
+- Do not spend Codex tokens translating full metadata tables when
+  `scripts/feature_metadata_machine_translate.py` can generate the
+  maintainer-approved rows locally with `deep-translator`.
 - Do not make local canonical GCS writes; use reviewed scratch staging and the
   approved publisher workflow.
 - Keep generated publishable bytes outside the repo except tiny fixtures.

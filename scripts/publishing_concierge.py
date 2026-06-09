@@ -80,6 +80,11 @@ GROUP_FIELD_RE = re.compile(
     r"(^name$|name$|title|label|site|region|zone|area_name|place|locality|unit|country|layer|type|class|status|category|basin|province)",
     re.IGNORECASE,
 )
+TRANSLATION_FIELD_RE = re.compile(
+    r"(^name$|name|title|label|designation|desig|description|desc|status|type|class|category|country|region|zone|site|place|locality|basin|province)",
+    re.IGNORECASE,
+)
+LONG_TEXT_TRANSLATION_FIELD_RE = re.compile(r"(description|desc|note|notes|remark|remarks|comment|comments)", re.IGNORECASE)
 MEASUREMENT_FIELD_RE = re.compile(
     r"(area|length|shape|perimeter|lat|lon|longitude|latitude|rank|zoom|count|width|height|depth|elev|elevation)$",
     re.IGNORECASE,
@@ -192,6 +197,7 @@ class CuratorFieldOptions:
     group_field_candidates: list[FieldRecommendation]
     notes: list[str]
     generated_feature_id_option: GeneratedFeatureIdOption = dataclass_field(default_factory=lambda: GeneratedFeatureIdOption(False))
+    translation_field_candidates: list[FieldRecommendation] = dataclass_field(default_factory=list)
     total_rows: int | None = None
     total_columns: int | None = None
     profiled_row_count: int | None = None
@@ -314,6 +320,15 @@ def field_is_id_like(field: str) -> bool:
 def field_is_group_like(field: str) -> bool:
     normalized = normalize_field_name(field)
     return bool(GROUP_FIELD_RE.search(normalized)) and not field_is_measurement(normalized)
+
+
+def field_is_translation_like(field: str) -> bool:
+    normalized = normalize_field_name(field)
+    return bool(TRANSLATION_FIELD_RE.search(normalized)) and not field_is_measurement(normalized)
+
+
+def field_is_long_text_translation_like(field: str) -> bool:
+    return bool(LONG_TEXT_TRANSLATION_FIELD_RE.search(normalize_field_name(field)))
 
 
 def field_is_temporal(field: str, datatype: str | None = None) -> bool:
@@ -714,6 +729,62 @@ def group_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
     )
 
 
+def translation_recommendation(profile: FieldProfile) -> FieldRecommendation | None:
+    if profile.datatype != "string" or profile.non_empty_values <= 0:
+        return None
+    if field_is_measurement(profile.name) or field_is_id_like(profile.name):
+        return None
+    if field_is_code_like(profile.name) or field_is_temporal(profile.name, profile.datatype):
+        return None
+
+    normalized = normalize_field_name(profile.name)
+    long_text = field_is_long_text_translation_like(profile.name)
+    translation_like = field_is_translation_like(profile.name) or grouping_role(profile) is not None
+    if field_is_low_information(profile.name) and not long_text:
+        return None
+    if not translation_like and not long_text:
+        return None
+
+    concerns = recommendation_concerns(profile, source_id=False)
+    if profile.distinct_values <= 1:
+        concerns.append("single distinct value; translation may not be worth generated sidecar rows")
+    if profile.average_value_length is not None and profile.average_value_length >= 240:
+        concerns.append(f"long average value length {profile.average_value_length:g}; review rate limits and output quality")
+    elif profile.average_value_length is not None and profile.average_value_length >= 120:
+        concerns.append(f"moderate average value length {profile.average_value_length:g}; spot-check machine translation quality")
+
+    if normalized in {"name", "name_eng", "title", "label"} or normalized.endswith("_name"):
+        confidence = "high"
+        reason = "Human-readable display label; strong default for localized metadata sidecars."
+    elif long_text:
+        confidence = "low"
+        reason = "Longer descriptive text can be translated, but should be explicitly approved and reviewed."
+    else:
+        confidence = "medium"
+        reason = "Human-readable string field that may be useful in localized metadata sidecars."
+
+    return FieldRecommendation(
+        field=profile.name,
+        role="deep-translator candidate",
+        reason=reason,
+        datatype=profile.datatype,
+        distinct_values=profile.distinct_values,
+        non_empty_values=profile.non_empty_values,
+        empty_values=profile.empty_values,
+        distinction_percent=profile.distinction_percent,
+        emptiness_percent=profile.emptiness_percent,
+        domination_percent=profile.domination_percent,
+        skew_ratio=profile.skew_ratio,
+        duplicate_value_count=profile.duplicate_value_count,
+        duplicate_row_count=profile.duplicate_row_count,
+        sentinel_value_count=profile.sentinel_value_count,
+        sentinel_value_percent=profile.sentinel_value_percent,
+        top_examples=profile.top_examples,
+        concerns=concerns,
+        confidence=confidence,
+    )
+
+
 def classify_field_profile(profile: FieldProfile) -> tuple[str, str | None]:
     if source_id_recommendation(profile):
         return "source feature_id candidate", None
@@ -754,6 +825,7 @@ def profile_rows(
     profiles = build_field_profiles(rows)
     id_candidates = [candidate for profile in profiles if (candidate := source_id_recommendation(profile))]
     group_candidates = [candidate for profile in profiles if (candidate := group_recommendation(profile))]
+    translation_candidates = [candidate for profile in profiles if (candidate := translation_recommendation(profile))]
 
     id_candidates.sort(key=lambda candidate: (candidate.confidence != "high", -(candidate.distinct_values or 0), candidate.field.lower()))
     group_candidates.sort(
@@ -762,6 +834,15 @@ def profile_rows(
             candidate.field.lower() != "name",
             candidate.role == "filter field",
             -(candidate.distinct_values or 0),
+            candidate.field.lower(),
+        )
+    )
+    translation_candidates.sort(
+        key=lambda candidate: (
+            candidate.confidence != "high",
+            candidate.confidence == "low",
+            candidate.field.lower() != "name" and not candidate.field.lower().endswith("_name"),
+            -(candidate.non_empty_values or 0),
             candidate.field.lower(),
         )
     )
@@ -781,6 +862,12 @@ def profile_rows(
         notes.append("No high-likelihood source feature ID field was found.")
     if not group_candidates:
         notes.append("No high-likelihood grouping/search field was found.")
+    if translation_candidates:
+        notes.append(
+            "Translation field candidates are suggestions only; confirm exact locales and fields in the translation-decision step."
+        )
+    else:
+        notes.append("No high-likelihood machine-translation field was found.")
     if generated_feature_id_available:
         notes.append(
             f"Fallback {GENERATED_FEATURE_ID_COLUMN} is available when no URL-safe source field ID is suitable."
@@ -790,6 +877,7 @@ def profile_rows(
         group_candidates[:8],
         notes,
         generated_feature_id_option=GeneratedFeatureIdOption(generated_feature_id_available),
+        translation_field_candidates=translation_candidates[:8],
         total_rows=total,
         total_columns=len(profiles),
         profiled_row_count=profiled_row_count,
@@ -1704,12 +1792,76 @@ def commands_for_profile_fields(state: dict[str, Any]) -> list[str]:
 
 def commands_for_translation_decision(_state: dict[str, Any]) -> list[str]:
     return [
+        "Review `plan.curator_field_options.translation_field_candidates` in `status --json` output before asking for final translation choices.",
         "Ask the maintainer which locales and metadata fields should be autogenerated, or record an explicit no-translation decision.",
+        "When autogeneration is selected, the build step will include generic feature metadata translation commands for the recorded fields and locales.",
+    ]
+
+
+def autogenerated_translation_fields(state: dict[str, Any]) -> list[str]:
+    evidence = step_record(state, "translation-decision").get("evidence", {})
+    if evidence.get("decision") != "autogenerate":
+        return []
+    return [str(field) for field in evidence.get("fields") or []]
+
+
+def shell_option_flags(option: str, values: Sequence[str]) -> str:
+    return " ".join(f"{option} {shlex.quote(str(value))}" for value in values)
+
+
+def commands_for_translation_artifacts(state: dict[str, Any]) -> list[str]:
+    locales = autogenerated_locales(state)
+    fields = autogenerated_translation_fields(state)
+    if not locales or not fields:
+        return []
+    plan = plan_from_state(state)
+    asset_slug = str(plan["asset_slug"])
+    release_date = str(plan.get("release_date") or "YYYY-MM-DD")
+    publish_dir = str(plan.get("publish_dir") or f"{STANDARD_WORK_ROOT_SHELL}/vector-assets/{asset_slug}/publish")
+    locale_flags = shell_option_flags("--locale", locales)
+    field_flags = shell_option_flags("--field", fields)
+    canonical_sidecar = f"{publish_dir}/{asset_slug}.metadata.ndjson.gz"
+    translation_source = f"{publish_dir}/{asset_slug}.metadata-translations.csv"
+    schema = f"{publish_dir}/{asset_slug}.schema.json"
+    return [
+        "Generate machine translation rows for the exact locales and fields recorded in translation-decision evidence.",
+        (
+            "UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm "
+            "python scripts/feature_metadata_machine_translate.py "
+            f"--canonical-sidecar {canonical_sidecar} "
+            f"--translation-source {translation_source} "
+            f"--schema {schema} "
+            f"{locale_flags} {field_flags} "
+            f"--asset-slug {asset_slug} --release {release_date} "
+            f"--report {publish_dir}/{asset_slug}.metadata-translations.report.json "
+            "--progress"
+        ),
+        (
+            "UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py "
+            f"--canonical-sidecar {canonical_sidecar} "
+            f"--translation-source {translation_source} "
+            f"--schema {schema} "
+            "--all-locales "
+            f"--output-dir {publish_dir} "
+            f"--report-dir {publish_dir}/localization-reports "
+            f"--asset-slug {asset_slug} --release {release_date} "
+            f"--report {publish_dir}/{asset_slug}.metadata-localization-report.json"
+        ),
     ]
 
 
 def commands_for_build_artifacts(state: dict[str, Any]) -> list[str]:
-    return list(plan_from_state(state).get("suggested_commands") or [])
+    commands = list(plan_from_state(state).get("suggested_commands") or [])
+    commands.extend(commands_for_translation_artifacts(state))
+    return commands
+
+
+def autogenerated_locales(state: dict[str, Any]) -> list[str]:
+    evidence = step_record(state, "translation-decision").get("evidence", {})
+    if evidence.get("decision") != "autogenerate":
+        return []
+    return [str(locale) for locale in evidence.get("locales") or []]
+
 
 
 def commands_for_validate_artifacts(_state: dict[str, Any]) -> list[str]:
@@ -1980,13 +2132,6 @@ def validate_translation_decision(_state: dict[str, Any], evidence: dict[str, An
         "fields": fields,
         "notes": str(evidence.get("notes", "")).strip(),
     }
-
-
-def autogenerated_locales(state: dict[str, Any]) -> list[str]:
-    evidence = step_record(state, "translation-decision").get("evidence", {})
-    if evidence.get("decision") != "autogenerate":
-        return []
-    return [str(locale) for locale in evidence.get("locales") or []]
 
 
 def required_artifact_formats(state: dict[str, Any]) -> set[str]:

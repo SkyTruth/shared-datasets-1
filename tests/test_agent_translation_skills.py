@@ -26,6 +26,9 @@ class AgentTranslationSkillsTests(unittest.TestCase):
             "{asset-slug}.metadata-translations.csv",
             "feature_id,field,locale,source_value_hash,value,review_state,notes",
             "scripts/feature_metadata_localization.py",
+            "scripts/feature_metadata_machine_translate.py",
+            "deep-translator",
+            "Do not hard-code WDPA",
             "Do not add frontend merge logic or a translation overlay fetch",
         ):
             with self.subTest(marker=marker):
@@ -35,6 +38,7 @@ class AgentTranslationSkillsTests(unittest.TestCase):
         self.assertIn("Use `update-feature-metadata-translations`", agents)
         self.assertIn("update-feature-metadata-translations", skills_readme)
         self.assertIn(".claude/skills/update-feature-metadata-translations/SKILL.md", publish_skill)
+        self.assertIn("scripts/feature_metadata_machine_translate.py", publish_skill)
         self.assertIn("scripts/feature_metadata_localization.py --all-locales", publish_skill)
         self.assertIn("generated localized metadata sidecars", normalized_publish_skill)
 
