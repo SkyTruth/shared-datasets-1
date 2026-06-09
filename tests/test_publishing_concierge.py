@@ -2180,8 +2180,31 @@ class PublishingConciergeTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             body = stdout.getvalue()
+            self.assertIn("Publish new shared dataset `example`", body)
             self.assertIn("```shared-datasets-publish-plan", body)
             self.assertIn("_catalog/web/catalog.json", body)
+
+    def test_render_pr_labels_existing_asset_promotions_as_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(root)
+            self._complete_first_csv_workflow_through_pr_ready(root, state_file)
+            state = json.loads(state_file.read_text())
+            destinations = state["steps"]["stat-destinations"]["evidence"]["destinations"]
+            destinations[0]["destination_generation"] = "333"
+            destinations[0]["status"] = "exists"
+            state_file.write_text(json.dumps(state))
+
+            self.assertEqual(
+                self._confirm(root, state_file, "pr-ready", {"reviewed_pr_body": True}),
+                0,
+            )
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = publishing_concierge.main(["render-pr", "--state-file", str(state_file)])
+
+            self.assertEqual(code, 0)
+            self.assertIn("Publish shared dataset revision `example`", stdout.getvalue())
 
     def test_publish_plan_preserves_schema_compatibility_waiver(self):
         with tempfile.TemporaryDirectory() as tmp:
