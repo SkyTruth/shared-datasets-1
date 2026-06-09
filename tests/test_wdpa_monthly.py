@@ -609,13 +609,15 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
             self.assertTrue(outputs.fgb.exists())
             self.assertTrue(outputs.pmtiles.exists())
             self.assertTrue(outputs.metadata.exists())
+            self.assertTrue(outputs.metadata_es.exists())
+            self.assertTrue(outputs.metadata_translations.exists())
             self.assertTrue(outputs.schema.exists())
 
     @staticmethod
     def _feature(marine: str, name: str, geometry: dict) -> dict:
         return {
             "type": "Feature",
-            "properties": {"MARINE": marine, "NAME": name, "SITE_PID": name},
+            "properties": {"MARINE": marine, "NAME": name, "NAME_ENG": name, "SITE_PID": name},
             "geometry": geometry,
         }
 
