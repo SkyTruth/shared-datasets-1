@@ -127,6 +127,73 @@ class FeatureMetadataTranslationPipelineTests(unittest.TestCase):
         self.assertEqual(result["release_index"], {"path": "release-index", "generation": 3})
         self.assertEqual(result["uploads"], [{"uri": "localized", "generation": "2"}])
 
+    def test_materialize_skips_sidecars_already_promoted_by_plan(self):
+        class Report:
+            locale = "es"
+            output_sidecar = "/tmp/example-asset.metadata.es.ndjson.gz"
+
+            def to_dict(self):
+                return {"locale": self.locale}
+
+        translation_uri = (
+            "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/"
+            "example-asset/releases/2026-05-01/example-asset.metadata-translations.csv"
+        )
+        localized_uri = (
+            "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/"
+            "example-asset/releases/2026-05-01/example-asset.metadata.es.ndjson.gz"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "download_object",
+                    return_value={"generation": "1"},
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline.feature_metadata_localization,
+                    "resolved_translatable_fields",
+                    return_value={"name"},
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline.feature_metadata_localization,
+                    "materialize_locale_sidecars",
+                    return_value=[Report()],
+                ),
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "upload_object_with_current_generation",
+                ) as upload,
+                mock.patch.object(
+                    feature_metadata_translation_pipeline,
+                    "rebuild_release_index_for_asset",
+                ) as rebuild,
+            ):
+                result = feature_metadata_translation_pipeline.materialize_translation_source(
+                    translation_source_uri=translation_uri,
+                    work_dir=Path(tmp),
+                    asset_slug=None,
+                    release=None,
+                    upload=True,
+                    fail_on_stale=False,
+                    skip_upload_uris={localized_uri},
+                )
+
+        upload.assert_not_called()
+        rebuild.assert_not_called()
+        self.assertEqual(
+            result["uploads"],
+            [
+                {
+                    "uri": localized_uri,
+                    "skipped": True,
+                    "reason": "already_promoted_in_publish_plan",
+                }
+            ],
+        )
+        self.assertIsNone(result["release_index"])
+
 
 if __name__ == "__main__":
     unittest.main()

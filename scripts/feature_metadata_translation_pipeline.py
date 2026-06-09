@@ -47,6 +47,14 @@ def translation_source_uris_from_publish_plan(path: Path, *, bucket: str) -> lis
     return uris
 
 
+def destination_uris_from_publish_plan(path: Path, *, bucket: str) -> set[str]:
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(plan, dict):
+        raise FeatureMetadataTranslationPipelineError("publish plan must be a JSON object")
+    normalized = reviewed_dataset_plan.normalize_publish_plan(plan, bucket=bucket)
+    return {promotion["destination_uri"] for promotion in normalized["promotions"]}
+
+
 def sibling_uri(translation_source_uri: str, suffix: str) -> str:
     if not translation_source_uri.endswith(TRANSLATION_SOURCE_SUFFIX):
         raise FeatureMetadataTranslationPipelineError(
@@ -148,6 +156,7 @@ def materialize_translation_source(
     release: str | None,
     upload: bool,
     fail_on_stale: bool,
+    skip_upload_uris: set[str] | None = None,
 ) -> dict[str, Any]:
     canonical_sidecar_uri = sibling_uri(translation_source_uri, CANONICAL_METADATA_SUFFIX)
     schema_uri = sibling_uri(translation_source_uri, ".schema.json")
@@ -178,16 +187,27 @@ def materialize_translation_source(
         report_dir=report_dir,
     )
     uploads = []
+    skip_upload_uris = skip_upload_uris or set()
     if upload:
         for report in reports:
+            destination_uri = localized_destination_uri(canonical_sidecar_uri, report.locale)
+            if destination_uri in skip_upload_uris:
+                uploads.append(
+                    {
+                        "uri": destination_uri,
+                        "skipped": True,
+                        "reason": "already_promoted_in_publish_plan",
+                    }
+                )
+                continue
             uploads.append(
                 upload_object_with_current_generation(
                     Path(report.output_sidecar),
-                    localized_destination_uri(canonical_sidecar_uri, report.locale),
+                    destination_uri,
                 )
             )
     release_index_info = None
-    if uploads:
+    if any(not upload_info.get("skipped") for upload_info in uploads):
         release_index_info = rebuild_release_index_for_asset(
             asset_slug or asset_slug_from_translation_source_uri(translation_source_uri)
         )
@@ -241,7 +261,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         uris = unique_uris(args.translation_source_uri)
+        skip_upload_uris: set[str] = set()
         if args.publish_plan:
+            skip_upload_uris = destination_uris_from_publish_plan(args.publish_plan, bucket=args.bucket)
             uris.extend(
                 uri
                 for uri in translation_source_uris_from_publish_plan(args.publish_plan, bucket=args.bucket)
@@ -262,6 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     release=args.release,
                     upload=args.upload,
                     fail_on_stale=args.fail_on_stale,
+                    skip_upload_uris=skip_upload_uris,
                 )
             )
     except (
