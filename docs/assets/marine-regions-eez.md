@@ -22,11 +22,16 @@ citation: Flanders Marine Institute (2023). Maritime Boundaries Geodatabase, Mar
   (200NM), version 12. Available online at https://www.marineregions.org/. https://doi.org/10.14284/632. Flanders Marine Institute
   (2024). Maritime Boundaries Geodatabase, High Seas, version 2. Available online at https://www.marineregions.org/. https://doi.org/10.14284/696.
 notes: Initial reviewed shared-datasets release from the supplied FlatGeobuf World_EEZ_v12_20231025-World_High_Seas_v2_20241010.fgb;
-  release 2026-06-06; source sha256 15a039d989c7fd8ad41231f041ca428101d6bb5202c8039f6ef00c21a85413fc. The release preserves
-  source geometry and attributes, adds source-field feature_id values from MRGID, feature_id values from MRGID, properties_hash
-  values, canonical metadata/schema/manifest artifacts, and localized GEONAME metadata sidecars for es, fr, id, pt, pt_br,
-  and sw generated from Cerulean AOI translations. PMTiles are lightweight metadata-lookup tiles with feature_id only. Release
-  history, source generations, row counts, and hashes are recorded in the bucket release index and per-run record.
+  release 2026-06-06; source sha256 15a039d989c7fd8ad41231f041ca428101d6bb5202c8039f6ef00c21a85413fc. The 2026-06-09 corrective
+  schema-contract revision rebuilds the release with feature_id values copied from MRGID, geometry_hash values, properties_hash
+  values, release metadata/schema/manifest schema_version 2 artifacts, metadata-translations rows keyed by raw feature_id,
+  and localized GEONAME/name metadata sidecars for es, fr, id, pt, pt_br, and sw. PMTiles are v3 MVT metadata-lookup tiles
+  at maxzoom 12 with feature_id only. Hashes for the 2026-06-09 candidates are fgb cce07effbf7eb74494d96de5a6c0e3b8af6908b580d73af177ef45e493e5151f;
+  pmtiles de835691551e4c16af415579b0e2a2bfeb0d9095fedd410aa1210d6815fb9a51; metadata 4a83a16d3e3ab3105d3207d936d4e4e4b78c3e6d0876f5c182751053b4b57a1a;
+  metadata-translations 114c82dad426ed568b1a2001731df06d1ea5e9058dde37de74719bd464c7c0d6; schema e36c73a22de54ee9b25bf7a856320def695deb1a08506313ab9d22a2489256ac;
+  manifest 4bbceaf7b72c542beedd5a1ab6bd2b623ab3fdfc6c319e744552da82696a66fe. Firestore metadata serving is inactive for this
+  release model; applications should read sidecars. Release history, source generations, row counts, and hashes are recorded
+  in the bucket release index and per-run record.
 admission:
   intended_consumers:
   - SkyTruth and Global Fishing Watch analysis workflows
@@ -69,7 +74,7 @@ feature_identity:
   - MRGID
 feature_metadata:
   storage: metadata_sidecar_v1
-  index_backend: firestore
+  index_backend: inactive_firestore_serving
   feature_id_column: feature_id
   geometry_hash_column: geometry_hash
   properties_hash_column: properties_hash
@@ -252,7 +257,9 @@ The canonical FlatGeobuf has 286 MultiPolygon features in EPSG:4326. It includes
 the source fields plus generated `feature_id`, `geometry_hash`, and `properties_hash`
 columns. The PMTiles are metadata-lookup tiles and intentionally carry only
 `feature_id`; applications should resolve labels and attributes
-through the metadata sidecar or metadata index.
+through the metadata sidecar. Firestore metadata serving is inactive for this
+release model, and the release manifest records an `inactive_firestore_serving`
+index policy.
 
 ## Properties / columns
 
@@ -300,18 +307,20 @@ the release uses the string form of `MRGID` directly as `feature_id`.
 
 `GEONAME` translations were imported from
 `cerulean-cloud/docs/aoi_name_translations.csv` into
-`marine-regions-eez.metadata-translations.csv`, then materialized into localized
-metadata sidecars for `es`, `fr`, `id`, `pt`, `pt_br`, and `sw`.
+`marine-regions-eez.metadata-translations.csv`, then keyed to raw `feature_id`
+values and materialized into localized metadata sidecars for `es`, `fr`, `id`,
+`pt`, `pt_br`, and `sw`.
 
 The Cerulean source contains 282 EEZ translation rows. The supplied feature set
 matched 280 of those MRGIDs. Two Cerulean MRGIDs, `8489` and `33176`, were not
 present in the supplied FGB, and six supplied feature MRGIDs, `64430`, `64431`,
 `64440`, `64446`, `64459`, and `64460`, had no Cerulean translation row. The
-High Seas feature, `63203`, has localized `name` values in all six
-locales because the canonical metadata record stores its display label in
-`name` rather than `GEONAME`. Each localized sidecar still preserves all 286
-feature records and falls back to canonical names where no localized value is
-available.
+High Seas feature, `63203`, has localized `name` values in all six locales
+because the canonical metadata record stores its display label in `name` rather
+than `GEONAME`. The 2026-06-09 translation source has 1,680 rows; each localized
+sidecar applies 280 translations, has no stale, orphaned, or missing-field rows,
+preserves all 286 feature records, and falls back to canonical names for the six
+features without localized values.
 
 ## Source and Terms
 

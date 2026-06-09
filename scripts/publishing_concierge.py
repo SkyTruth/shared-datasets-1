@@ -2519,15 +2519,19 @@ def validate_stage_scratch(state: dict[str, Any], evidence: dict[str, Any]) -> d
                 raise WorkflowError(f"evidence.staged_objects[{index}].content_type must be application/json")
             if cache_control != no_cache_control():
                 raise WorkflowError(f"evidence.staged_objects[{index}].cache_control must be {no_cache_control()!r}")
-        normalized.append(
-            {
-                "source_uri": source_uri,
-                "source_generation": source_generation,
-                "destination_uri": destination_uri,
-                "content_type": content_type,
-                "cache_control": cache_control,
-            }
-        )
+        normalized_item = {
+            "source_uri": source_uri,
+            "source_generation": source_generation,
+            "destination_uri": destination_uri,
+            "content_type": content_type,
+            "cache_control": cache_control,
+        }
+        compatibility_waiver = obj.get("compatibility_waiver")
+        if compatibility_waiver is not None:
+            if not isinstance(compatibility_waiver, dict):
+                raise WorkflowError(f"evidence.staged_objects[{index}].compatibility_waiver must be an object")
+            normalized_item["compatibility_waiver"] = compatibility_waiver
+        normalized.append(normalized_item)
     return {"staged_objects": normalized}
 
 
@@ -2575,16 +2579,17 @@ def build_publish_plan_from_state(state: dict[str, Any]) -> dict[str, Any]:
     promotions = []
     for item in staged:
         destination_uri = item["destination_uri"]
-        promotions.append(
-            {
-                "source_uri": item["source_uri"],
-                "source_generation": item["source_generation"],
-                "destination_uri": destination_uri,
-                "destination_generation": destinations.get(destination_uri, ""),
-                "content_type": item.get("content_type", ""),
-                "cache_control": item.get("cache_control", ""),
-            }
-        )
+        promotion = {
+            "source_uri": item["source_uri"],
+            "source_generation": item["source_generation"],
+            "destination_uri": destination_uri,
+            "destination_generation": destinations.get(destination_uri, ""),
+            "content_type": item.get("content_type", ""),
+            "cache_control": item.get("cache_control", ""),
+        }
+        if item.get("compatibility_waiver"):
+            promotion["compatibility_waiver"] = item["compatibility_waiver"]
+        promotions.append(promotion)
     publish_plan = {
         "asset_slug": plan["asset_slug"],
         "proposal_id": state["proposal_id"],
