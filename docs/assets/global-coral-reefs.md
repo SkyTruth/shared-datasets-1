@@ -39,7 +39,16 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   and properties_hash values. Corrective release artifact hashes before promotion finalization are fgb 474498fdc17bc83afe3c70dfb2475dacec32747f29e6139741b4c3d838e0d713;
   point fgb cfdff78a343cd9cb177ecfac8f1a265850408360b1750fac6cb92137b28e4c2d; pmtiles c6078a4bbb23bdd25ac2bb8283b7a5b1d383f36d4060cf3a54fcf1ffacdc6936;
   metadata 8d90c2f7d4de274d2f24f2e99ec1f4fa8db66edfdb321e3f9e948c289c4332dc; schema 319351fb6b07f5d74b886b097ed74252dd03e0635ef217062840bb0155454331.
-  Finalized manifest checksum is recorded in the release run record after promotion.
+  Finalized manifest checksum is recorded in the release run record after promotion. The 2026-06-10 release-feature-model
+  v2 revision rebuilds the published artifacts from the 2026-06-06 prod FGB so the live contract matches this doc. The v1
+  ext_id and combined feature_hash columns are dropped, feature_id holds generated decimal sequence values 1 through 18429
+  assigned from the (geometry_hash, properties_hash) content key (0 content-key collisions across all 18,429 features), and
+  split geometry_hash/properties_hash columns plus schema_version 2 metadata/schema/manifest artifacts are published with
+  Firestore serving marked inactive. PMTiles remain feature_id-only metadata-lookup tiles at maxzoom 12 with all 925 point
+  features retained (Tippecanoe drop-rate 1). 2026-06-10 artifact sha256 before promotion finalization are fgb 795c44841c53c0b05dbb7a6193a2898a883fbd441d138fc72c11e115da9fc50c;
+  point fgb ce764cfe652179321174f155878376a8c89d6a15deb048734b021075718dce76; pmtiles 60111af2b44765bbdf26c39672f8c47888e2314de2bee97b49701d684a31d877;
+  metadata eecf0c8a086d3ff1885e80e1e3160416676b6e26bcf929379adcc05f530b8adf; schema 6a2f120e70d0d150cfed21272079899e42aef04e9aabd6cad88e3403e1a52380.
+  Prior releases 2026-04-29, 2026-05-04, 2026-06-05, and 2026-06-06 remain unchanged and readable.
 row_count: 18429
 data_profile:
   field_count: 22
@@ -149,6 +158,35 @@ files:
   format: json
   role: run-record
   purpose: Manual URL-safe feature_id corrective release record
+- path: releases/2026-06-10/global-coral-reefs.fgb
+  format: fgb
+  role: release
+  purpose: Dated release-feature-model v2 mixed polygon and point FlatGeobuf with feature_id, geometry_hash, and properties_hash
+- path: releases/2026-06-10/global-coral-reefs-points.fgb
+  format: fgb
+  role: release
+  purpose: Dated companion point subset with matching v2 feature_id, geometry_hash, and properties_hash values
+- path: releases/2026-06-10/global-coral-reefs.pmtiles
+  format: pmtiles
+  role: release
+  purpose: Dated metadata-lookup map-tile release with feature_id-only properties at maxzoom 12
+- path: releases/2026-06-10/global-coral-reefs.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Dated canonical feature metadata sidecar (schema_version 2) keyed by feature_id with geometry_hash and properties_hash
+- path: releases/2026-06-10/global-coral-reefs.schema.json
+  format: json
+  role: metadata
+  purpose: Dated release feature metadata schema (schema_version 2) for field projection
+- path: releases/2026-06-10/global-coral-reefs.manifest.json
+  format: json
+  role: metadata
+  purpose: Dated release manifest (release_feature_model schema_version 2) tying source inputs, artifacts, checksums, identity,
+    validation, and Firestore-inactive index policy
+- path: runs/2026-06-10.json
+  format: json
+  role: run-record
+  purpose: Manual release-feature-model v2 identity-contract revision release record
 ---
 
 # Global Distribution of Coral Reefs
@@ -204,6 +242,13 @@ The active canonical analytical file is now a mixed polygon and point FlatGeobuf
 | `releases/2026-06-06/global-coral-reefs.schema.json` | `json` | `metadata` | Dated release feature metadata schema for field projection |
 | `releases/2026-06-06/global-coral-reefs.manifest.json` | `json` | `metadata` | Dated release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `runs/2026-06-06.json` | `json` | `run-record` | Manual URL-safe feature_id corrective release record |
+| `releases/2026-06-10/global-coral-reefs.fgb` | `fgb` | `release` | Dated release-feature-model v2 mixed polygon and point FlatGeobuf with feature_id, geometry_hash, and properties_hash |
+| `releases/2026-06-10/global-coral-reefs-points.fgb` | `fgb` | `release` | Dated companion point subset with matching v2 feature_id, geometry_hash, and properties_hash values |
+| `releases/2026-06-10/global-coral-reefs.pmtiles` | `pmtiles` | `release` | Dated metadata-lookup map-tile release with feature_id-only properties at maxzoom 12 |
+| `releases/2026-06-10/global-coral-reefs.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Dated canonical feature metadata sidecar (schema_version 2) keyed by feature_id with geometry_hash and properties_hash |
+| `releases/2026-06-10/global-coral-reefs.schema.json` | `json` | `metadata` | Dated release feature metadata schema (schema_version 2) for field projection |
+| `releases/2026-06-10/global-coral-reefs.manifest.json` | `json` | `metadata` | Dated release manifest (release_feature_model schema_version 2) tying source inputs, artifacts, checksums, identity, validation, and Firestore-inactive index policy |
+| `runs/2026-06-10.json` | `json` | `run-record` | Manual release-feature-model v2 identity-contract revision release record |
 <!-- END GENERATED files-table -->
 
 ## Schema notes
@@ -258,6 +303,8 @@ PMTiles were rebuilt on 2026-05-04 at maxzoom 12 from the published polygon and 
 The corrective 2026-06-05 metadata-contract release was built from the existing prod polygon and point FGBs to avoid rehydrating the source shapefile package. The mixed canonical FGB contains 17,504 polygon features and 925 point features. The point companion is a subset with matching `feature_id`, `geometry_hash`, and `properties_hash` values. PMTiles were rebuilt from the mixed FGB as a single metadata-lookup layer with only `feature_id` properties.
 
 The corrective 2026-06-06 feature_id release was built from the 2026-06-05 metadata-contract latest artifacts. It preserves `geometry_hash` and `properties_hash` values, uses generated decimal sequence handles, and republishes the mixed FGB, point companion FGB, PMTiles lookup archive, metadata sidecar, schema, manifest, and run record through a reviewed publish plan.
+
+The 2026-06-10 release-feature-model v2 revision rebuilds the published artifacts from the 2026-06-06 prod FGB to make the live data contract match this asset doc. The published 2026-06-06 artifacts were still release-feature-model v1: the projectable identity column was `ext_id` and the sidecar carried a single combined `feature_hash`. The v2 release drops `ext_id` and `feature_hash`, publishes `feature_id` (generated decimal sequence `1`–`18429` assigned from the `(geometry_hash, properties_hash)` content key, verified collision-free across all 18,429 features), and adds split `geometry_hash` and `properties_hash` columns. The metadata sidecar, schema, and manifest move to `schema_version` 2 (`shared-datasets-feature-identity:v2`) and the manifest marks Firestore metadata serving inactive. The metadata-lookup PMTiles are rebuilt at maxzoom 12 with `feature_id`-only properties and all 925 point features retained. This is an incompatible schema change for any consumer that read `ext_id` or `feature_hash` from `latest/`; pin release `2026-06-06` for the legacy v1 columns.
 
 Requested citation:
 
