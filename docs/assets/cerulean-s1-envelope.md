@@ -16,29 +16,30 @@ available_formats:
 metadata_paths:
 - README.md
 - runs/YYYY-MM-DD.json
-- latest/cerulean-s1-envelope.metadata.ndjson.gz
-- latest/cerulean-s1-envelope.schema.json
-- latest/cerulean-s1-envelope.manifest.json
 source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
   confirmation.
 notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
-  is a deprecated pre-rename location and is intentionally not an active catalog slug; release 2026-05-01; source features
-  1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11; pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d;
-  PMTiles rebuilt 2026-05-04 with zooms 0-6, no simplification, and synthetic source_layer property for catalog inspection;
-  corrective metadata-contract release 2026-06-05 reuses latest FGB generation 1777669295802653, adds generated feature_id,
-  geometry_hash, properties_hash, metadata sidecar, schema, manifest, and metadata-lookup PMTiles with only feature_id; fgb
-  sha256 94520e1987bc4f84e253218c6467b1ddeb1b5ad4b59b17fba2ac037a935966ac; pmtiles sha256 825cb5d5142ce63752d71ec43e76098506c3cf07c683a4032d4c0fe00dd52fab;
-  metadata sha256 af34ee531b4404337b773107376b7d8c8cee4662b4b08992c59abdebddb492d6; schema sha256 c0a8f1b1f6916ff8488d5e1802cfafb1ef44ff3d63d4113f07a80df6eab6ea18;
-  manifest sha256 ab2dd57bb04704512d5493d6f734487c78a5805d6d9d70beebdf8e6654504dd7; canonical FGB preserves the source WKT
-  geometry as an envelope only
+  is a deprecated pre-rename location and is intentionally not an active catalog slug. Release 2026-05-01 is the initial upload
+  (source features 1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11). Release 2026-05-04 is
+  a canonical-file repair and PMTiles rebuild with zooms 0-6, no simplification, and a synthetic source_layer property (pmtiles
+  sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d). A 2026-06-05 v1 metadata-contract release was
+  documented here but never promoted; no sidecar, schema, manifest, or releases/2026-06-05/ objects exist in the bucket and
+  the hashes previously recorded for it are retracted. The 2026-06-10 corrective schema-contract release publishes the asset's
+  first promoted metadata contract directly under release feature identity v2, built from the unchanged latest FGB generation
+  1777669295802653, with generated monotonic decimal feature_id assigned from the geometry_hash+properties_hash identity key,
+  geometry_hash and properties_hash columns, schema_version 2 metadata/schema/manifest artifacts, and metadata-lookup PMTiles
+  rebuilt at maxzoom 6 with only feature_id. Hashes for the 2026-06-10 candidates are fgb d658c6ee78c9c81510baf3b479f471c936f494bfc4ee06f83c57e30eec3ccf33;
+  pmtiles 014d5bed6a28e15dade63d5b64fc620e479f380d3be8e7876b95d9e3994737c2; metadata ad1631c356a2bb71edeb75233185520fc678da683a20985b85610cd8ea95936b;
+  schema 7901582ecaadf2d260646be9e46a8694be6e423c9c494e163e64f5b643f01185; manifest a4995e460e781cb915db747c5140f8d6cda6c923b398048d38aad0efaee9626f.
+  Canonical FGB preserves the source WKT geometry as an envelope only
 row_count: 1
 data_profile:
   field_count: 3
   identity_candidates: []
-  notes: No source attribute fields or source field ID candidate; metadata-contract releases use a generated geometry-digest
-    feature_id.
+  notes: No source attribute fields or source field ID candidate; releases use generated monotonic decimal feature_id values
+    assigned from the geometry_hash+properties_hash identity key.
 feature_identity:
   strategy: generated_sequence_content_hash
   source_fields: []
@@ -78,34 +79,30 @@ files:
   format: json
   role: metadata
   purpose: Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy
-- path: releases/2026-05-01/cerulean-s1-envelope.fgb
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.fgb
   format: fgb
   role: release
-  purpose: Dated legacy pre-metadata-contract canonical release
-- path: releases/2026-06-05/cerulean-s1-envelope.fgb
-  format: fgb
-  role: release
-  purpose: Dated metadata-contract canonical release
-- path: releases/2026-06-05/cerulean-s1-envelope.pmtiles
+  purpose: Dated canonical release
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles
   format: pmtiles
   role: release
-  purpose: Dated metadata-lookup map-tile release
-- path: releases/2026-06-05/cerulean-s1-envelope.metadata.ndjson.gz
+  purpose: Dated map-tile release
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.metadata.ndjson.gz
   format: ndjson_gzip
   role: metadata
   purpose: Dated canonical feature metadata sidecar keyed by feature_id
-- path: releases/2026-06-05/cerulean-s1-envelope.schema.json
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.schema.json
   format: json
   role: metadata
   purpose: Dated release feature metadata schema for field projection
-- path: releases/2026-06-05/cerulean-s1-envelope.manifest.json
+- path: releases/YYYY-MM-DD/cerulean-s1-envelope.manifest.json
   format: json
   role: metadata
   purpose: Dated release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy
-- path: runs/2026-05-01.json
+- path: runs/YYYY-MM-DD.json
   format: json
   role: run-record
-  purpose: Manual publish record
+  purpose: Manual release run record
 ---
 
 # Cerulean S1 Envelope
@@ -157,13 +154,12 @@ display and metadata lookup only.
 | `latest/cerulean-s1-envelope.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
 | `latest/cerulean-s1-envelope.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/cerulean-s1-envelope.manifest.json` | `json` | `metadata` | Release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
-| `releases/2026-05-01/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated legacy pre-metadata-contract canonical release |
-| `releases/2026-06-05/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated metadata-contract canonical release |
-| `releases/2026-06-05/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated metadata-lookup map-tile release |
-| `releases/2026-06-05/cerulean-s1-envelope.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Dated canonical feature metadata sidecar keyed by feature_id |
-| `releases/2026-06-05/cerulean-s1-envelope.schema.json` | `json` | `metadata` | Dated release feature metadata schema for field projection |
-| `releases/2026-06-05/cerulean-s1-envelope.manifest.json` | `json` | `metadata` | Dated release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
-| `runs/2026-05-01.json` | `json` | `run-record` | Manual publish record |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.fgb` | `fgb` | `release` | Dated canonical release |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Dated canonical feature metadata sidecar keyed by feature_id |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.schema.json` | `json` | `metadata` | Dated release feature metadata schema for field projection |
+| `releases/YYYY-MM-DD/cerulean-s1-envelope.manifest.json` | `json` | `metadata` | Dated release manifest tying source input, artifacts, checksums, IDs, validation, and index-load policy |
+| `runs/YYYY-MM-DD.json` | `json` | `run-record` | Manual release run record |
 <!-- END GENERATED files-table -->
 
 ## Schema notes
@@ -174,19 +170,26 @@ Geometry is WGS84 multipolygon geometry. The source CSV contains one valid
 `cerulean_s1_envelope`.
 
 The source CSV is not published as a canonical format because shared-datasets
-CSV assets must not contain geometry columns. The corrective 2026-06-05 release
+CSV assets must not contain geometry columns. The corrective 2026-06-10 release
 starts from the existing `latest/cerulean-s1-envelope.fgb` object, generation
 `1777669295802653`, and does not reacquire upstream source material.
 
-The metadata-contract release generates `feature_id` from the normalized
-geometry digest because the source has no source identifier. `geometry_hash` is
-computed from canonical geometry, and `properties_hash` is computed from
-projected non-geometry sidecar properties.
+An earlier 2026-06-05 v1 metadata-contract release was documented for this
+asset but never promoted: the bucket has no sidecar, schema, manifest, or
+`releases/2026-06-05/` objects, so there is no published v1 `feature_id` to
+preserve. The 2026-06-10 release is the asset's first promoted metadata
+contract and uses release feature identity v2 directly. Because the source has
+no attribute fields, `feature_id` is a generated monotonic decimal string
+(`1`) assigned from the pair of `geometry_hash` and `properties_hash` identity
+keys. `geometry_hash` is computed from canonical geometry, and
+`properties_hash` is computed from the projected non-geometry sidecar
+properties, which form an empty record for this asset. Adding the three
+identity columns is an append-compatible schema change; no prior columns were
+removed or retyped.
 
-The PMTiles artifact is a display and metadata-lookup derivative with zooms 0
-through 6 and no display simplification. The 2026-06-05 PMTiles archive keeps
-maxzoom 6 to preserve the accepted coarse envelope display from the 2026-05-04
-rebuild. PMTiles feature properties are intentionally limited to `feature_id`.
+The PMTiles artifact is a metadata-lookup derivative with zooms 0 through 6,
+keeping the accepted coarse envelope display from the 2026-05-04 rebuild.
+PMTiles feature properties are intentionally limited to `feature_id`.
 
 The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
 was an initial name for this dataset before the framing was corrected. It is
@@ -198,7 +201,7 @@ catalog asset and not as the canonical publishing location.
 | Name | Type | Description |
 |---|---|---|
 | `geometry` | MultiPolygon | Cerulean Sentinel-1 analysis envelope geometry in WGS84. |
-| `feature_id` | string | Public URL-safe lookup handle generated from the normalized geometry digest. |
+| `feature_id` | string | Public URL-safe lookup handle; generated monotonic decimal string assigned from the geometry/properties hash identity key. |
 | `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
 | `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
 
@@ -220,21 +223,30 @@ Output summary:
 - Legacy 2026-05-01 FGB SHA-256: `4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11`
 - Legacy 2026-05-04 PMTiles SHA-256: `33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d`
 
-The corrective 2026-06-05 release adds the release-oriented metadata contract.
-It starts from `latest/cerulean-s1-envelope.fgb` generation `1777669295802653`,
-generates a URL-safe `feature_id`, and publishes `geometry_hash` and
+A 2026-06-05 v1 metadata-contract release was previously described here with
+artifact hashes, but it was never promoted to the bucket and those hashes are
+retracted; the 2026-05-01 and 2026-05-04 releases remained the only published
+state until the 2026-06-10 release.
+
+The corrective 2026-06-10 release publishes the asset's first promoted
+metadata contract directly under release feature identity v2. It starts from
+`latest/cerulean-s1-envelope.fgb` generation `1777669295802653`, assigns the
+generated monotonic decimal `feature_id` `1` from the
+`geometry_hash`+`properties_hash` identity key, and publishes
+`geometry_hash =
+sha256:56a7d9027b6f8d84265cb0be1fb22ef0f7d9b564590f4c7cba98b34dee57c939` and
 `properties_hash =
-sha256:ec963aca17dbd5389752844ec67376c4841e37990b5034ac611a1c6aa2de454c`.
-No translations are generated because the source has no human-readable metadata
-fields to localize.
+sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` (the
+hash of the empty properties record). No translations are generated because
+the source has no human-readable metadata fields to localize.
 
-2026-06-05 artifact summary:
+2026-06-10 artifact summary:
 
-- FGB SHA-256: `94520e1987bc4f84e253218c6467b1ddeb1b5ad4b59b17fba2ac037a935966ac`
-- PMTiles SHA-256: `825cb5d5142ce63752d71ec43e76098506c3cf07c683a4032d4c0fe00dd52fab`
-- Metadata sidecar SHA-256: `af34ee531b4404337b773107376b7d8c8cee4662b4b08992c59abdebddb492d6`
-- Schema SHA-256: `c0a8f1b1f6916ff8488d5e1802cfafb1ef44ff3d63d4113f07a80df6eab6ea18`
-- Manifest SHA-256: `ab2dd57bb04704512d5493d6f734487c78a5805d6d9d70beebdf8e6654504dd7`
+- FGB SHA-256: `d658c6ee78c9c81510baf3b479f471c936f494bfc4ee06f83c57e30eec3ccf33`
+- PMTiles SHA-256: `014d5bed6a28e15dade63d5b64fc620e479f380d3be8e7876b95d9e3994737c2`
+- Metadata sidecar SHA-256: `ad1631c356a2bb71edeb75233185520fc678da683a20985b85610cd8ea95936b`
+- Schema SHA-256: `7901582ecaadf2d260646be9e46a8694be6e423c9c494e163e64f5b643f01185`
+- Manifest SHA-256: `a4995e460e781cb915db747c5140f8d6cda6c923b398048d38aad0efaee9626f`
 - PMTiles maxzoom: 6
 - PMTiles zoom 0 decoded feature properties: `feature_id`
 - PMTiles build path: WGS84 GeoJSONSeq to Tippecanoe MBTiles to PMTiles
