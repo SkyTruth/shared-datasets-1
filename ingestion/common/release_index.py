@@ -566,11 +566,18 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
             )
             release_entry_by_path = {entry["path"]: entry for entry in release_entries}
             if record.get("release_paths"):
-                record["release_paths"] = [
-                    {**file_entry, **release_entry_by_path.get(file_entry["path"], {})}
-                    for file_entry in files_from_run_record(record)
-                    if file_entry.get("path")
-                ]
+                merged_release_paths = []
+                seen_release_paths = set()
+                for file_entry in files_from_run_record(record):
+                    path = file_entry.get("path")
+                    if not path:
+                        continue
+                    merged_release_paths.append({**file_entry, **release_entry_by_path.get(path, {})})
+                    seen_release_paths.add(path)
+                merged_release_paths.extend(
+                    entry for entry in release_entries if entry.get("path") not in seen_release_paths
+                )
+                record["release_paths"] = merged_release_paths
             else:
                 record["release_paths"] = release_entries
         records.append(
