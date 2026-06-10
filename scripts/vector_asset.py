@@ -462,14 +462,17 @@ def pmtiles_commands(plan: VectorBuildPlan, maxzoom: int | str, *, profile: FgbP
         "-z",
         str(maxzoom),
         "--force",
-        "--drop-densest-as-needed",
-        "--extend-zooms-if-still-dropping",
         f"--name={plan.title}",
         f"--description={plan.description}",
     ]
     if plan.pmtiles_feature_id_property:
-        # Metadata lookup tiles must preserve point features at overview zooms.
-        mbtiles_command.append("--drop-rate=1")
+        # Metadata lookup tiles must preserve point features at overview zooms,
+        # so disable rate-, count-, and size-based dropping; size-based
+        # --drop-densest-as-needed would otherwise thin dense point layers at
+        # low zooms and fail the lookup bundle's all-point retention check.
+        mbtiles_command.extend(["--drop-rate=1", "--no-feature-limit", "--no-tile-size-limit"])
+    else:
+        mbtiles_command.extend(["--drop-densest-as-needed", "--extend-zooms-if-still-dropping"])
     if plan.tile_simplify is not None:
         mbtiles_command.extend(["--simplification", str(plan.tile_simplify)])
     for property_name in pmtiles_include_properties(plan):
