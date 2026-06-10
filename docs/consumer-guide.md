@@ -34,7 +34,7 @@ Maintainer-only publishing and infrastructure procedures live in
 | Browser may display private PMTiles | TypeScript SDK plus app-owned backend session route | Private PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
 | Backend route issues private PMTiles cookies | TypeScript server entrypoint | Cookie signing uses Node crypto and should stay behind the app backend. |
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
-| Browser needs public feature attributes | TypeScript metadata artifact helpers | Resolve the release-index sidecar and fetch `tiles.skytruth.org/artifacts/...` directly. |
+| Browser needs public feature attributes | TypeScript `resolveSharedDatasetLayer` plus `fetchSharedDatasetMetadataRecords` | Resolve the layer and its release metadata sidecar together, then join clicked features by `feature_id`. |
 | Browser needs private feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
 | Backend has PMTiles feature IDs and needs full attributes | Release metadata sidecar, or Feature metadata API when serving is enabled | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is release-scoped and keyed by feature ID. |
 
@@ -155,8 +155,10 @@ Browser-safe entrypoint:
 ```ts
 import {
   ensurePmtilesCdnSession,
+  fetchSharedDatasetMetadataRecords,
   getPmtilesFetchCredentials,
   resolvePublicSharedDatasetMetadataSidecarUrl,
+  resolveSharedDatasetLayer,
   resolveSharedDatasetPmtilesRef
 } from "@skytruth/shared-datasets";
 ```

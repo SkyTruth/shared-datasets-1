@@ -72,7 +72,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 |---|---|---|
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
-| Browser click needs public feature attributes | Metadata artifact helpers | Resolve the release-index sidecar and fetch the public artifact URL directly from the CDN. |
+| Browser click needs public feature attributes | `resolveSharedDatasetLayer` plus `fetchSharedDatasetMetadataRecords` | Resolve the layer and its release metadata sidecar together, then join clicked features by `feature_id`. |
 | Browser click needs private feature attributes | App backend route to a signed metadata sidecar URL | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
@@ -204,6 +204,47 @@ default production layer lists, use `status === "active"` and preserve the
 license, citation, source, docs, release, and metadata sidecar references
 returned with each ref; if your app needs non-PMTiles assets or fields outside
 this type, fetch and parse the catalog JSON directly.
+
+## Layer And Metadata Resolution
+
+Because PMTiles expose only `feature_id`, mounting a layer and resolving its
+release metadata belong together. `resolveSharedDatasetLayer` is the
+recommended path: one call resolves the catalog ref, fetches the release
+index, and resolves the metadata sidecar from the same release:
+
+```ts
+import {
+  fetchSharedDatasetMetadataRecords,
+  resolveSharedDatasetLayer
+} from "@skytruth/shared-datasets";
+
+const layer = await resolveSharedDatasetLayer("example-public-layer", {
+  locale: userLocale
+});
+
+renderPmtilesLayer(layer.ref.url);
+
+if (layer.sidecar?.url) {
+  const records = await fetchSharedDatasetMetadataRecords(layer.sidecar.url);
+  const record = records.get(clickedFeatureId);
+}
+```
+
+The returned layer includes `ref` (the PMTiles catalog ref), `releaseIndex`,
+`resolvedRelease` (the concrete `YYYY-MM-DD` release the sidecar came from;
+persist it when lineage matters), and `sidecar` with the resolved locale,
+fallback flag, and artifact URL. `sidecar.url` is `null` for private assets —
+route those through an app-owned signed-URL backend instead. Pass
+`version: "YYYY-MM-DD"` to pin the sidecar to an exact release; the default is
+the release index `latest`, which matches what the `latest/` PMTiles CDN URL
+serves.
+
+`fetchSharedDatasetMetadataRecords` downloads the sidecar, transparently
+handles both CDN-decompressed NDJSON and raw gzip bytes, parses each line, and
+returns a `Map` keyed by `feature_id`. Loading eagerly is fine for small
+assets; for assets with very large sidecars, load lazily on first interaction
+and keep the parsed map cached. `parseSharedDatasetMetadataRecords` is exported
+separately for callers that fetch sidecar text themselves.
 
 ## Metadata Artifact Helpers
 

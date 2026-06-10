@@ -4,6 +4,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { gzipSync } from 'node:zlib';
 
 import {
   DEFAULT_ACCESS_TIER_CACHE_TTL_MS,
@@ -15,6 +16,7 @@ import {
   clearPmtilesCdnSession,
   createSharedDatasetAccessTierLookup,
   fetchSharedDatasetCatalogJson,
+  fetchSharedDatasetMetadataRecords,
   getAccessTiersFromSharedDatasetPmtilesRefs,
   getPmtilesFetchCredentials,
   getPmtilesTier,
@@ -22,9 +24,11 @@ import {
   isPrivatePmtilesUrl,
   normalizeSharedDatasetMetadataLocale,
   normalizeSharedDatasetAssetSlug,
+  parseSharedDatasetMetadataRecords,
   parseSharedDatasetsCatalogJson,
   resolveAllSharedDatasetPmtilesRefs,
   resolvePublicSharedDatasetMetadataSidecarUrl,
+  resolveSharedDatasetLayer,
   resolveSharedDatasetPmtilesRef,
   resolveSharedDatasetPmtilesRefs,
   resolveSharedDatasetPmtilesRefsFromCatalogJson,
@@ -376,6 +380,155 @@ test('resolves metadata sidecars and public artifact URLs from release indexes',
         bucketName: 'example-bucket'
       }),
     /public assets/
+  );
+});
+
+test('resolves layers with release-pinned metadata sidecars', async () => {
+  const releaseIndexUrl =
+    'https://tiles.skytruth.org/_catalog/releases/example-public-layer.json';
+  const fetchJson = async url => {
+    if (url === DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL) return catalogFixture;
+    if (url === releaseIndexUrl) return releaseIndexFixture;
+    throw new Error(`Unexpected URL ${url}`);
+  };
+
+  const layer = await resolveSharedDatasetLayer('Example-Public-Layer', {
+    fetchJson,
+    locale: 'es',
+    bucketName: 'example-bucket'
+  });
+  assert.equal(
+    layer.ref.url,
+    'https://tiles.skytruth.org/pmtiles/public/example-public-layer.pmtiles'
+  );
+  assert.equal(layer.releaseIndexUrl, releaseIndexUrl);
+  assert.equal(layer.resolvedRelease, '2026-01-15');
+  assert.equal(layer.sidecar.resolvedLocale, 'es');
+  assert.equal(layer.sidecar.metadataLocaleFallback, false);
+  assert.equal(
+    layer.sidecar.url,
+    'https://tiles.skytruth.org/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz'
+  );
+
+  const pinned = await resolveSharedDatasetLayer('example-public-layer', {
+    fetchJson,
+    version: '2026-01-01',
+    bucketName: 'example-bucket'
+  });
+  assert.equal(pinned.resolvedRelease, '2026-01-01');
+  assert.match(pinned.sidecar.url, /releases\/2026-01-01\//);
+
+  const withoutIndex = await resolveSharedDatasetLayer('example-private-layer', {
+    fetchJson
+  });
+  assert.equal(withoutIndex.releaseIndexUrl, null);
+  assert.equal(withoutIndex.releaseIndex, null);
+  assert.equal(withoutIndex.sidecar, null);
+
+  const privateCatalog = {
+    assets: [
+      {
+        access_tier: 'private',
+        available_formats: ['fgb', 'pmtiles'],
+        has_csv: false,
+        has_geojson: false,
+        has_pmtiles: true,
+        pmtiles_url:
+          'https://tiles.skytruth.org/pmtiles/private/example-private-layer.pmtiles',
+        release_index_url: '../releases/example-private-layer.json',
+        slug: 'example-private-layer'
+      }
+    ]
+  };
+  const privateLayer = await resolveSharedDatasetLayer('example-private-layer', {
+    fetchJson: async url =>
+      url === DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL
+        ? privateCatalog
+        : { ...releaseIndexFixture, asset_slug: 'example-private-layer' },
+    bucketName: 'example-bucket'
+  });
+  assert.equal(privateLayer.sidecar.url, null);
+  assert.match(privateLayer.sidecar.gsUri, /^gs:\/\/example-bucket\//);
+
+  await assert.rejects(
+    resolveSharedDatasetLayer('example-public-layer', {
+      fetchJson: async url =>
+        url === DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL
+          ? catalogFixture
+          : { ...releaseIndexFixture, asset_slug: 'other-layer' },
+      bucketName: 'example-bucket'
+    }),
+    /does not match example-public-layer/
+  );
+
+  await assert.rejects(
+    resolveSharedDatasetLayer('example-public-layer', {
+      fetchJson: async url => {
+        if (url === DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL) return catalogFixture;
+        throw new Error('index unavailable');
+      }
+    }),
+    /Unable to load shared dataset release index/
+  );
+});
+
+test('fetches and parses gzip NDJSON metadata sidecars into feature_id maps', async () => {
+  const ndjson = [
+    JSON.stringify({
+      schema_version: 2,
+      asset_slug: 'example-public-layer',
+      release: '2026-01-15',
+      feature_id: '1',
+      geometry_hash: `sha256:${'a'.repeat(64)}`,
+      properties_hash: `sha256:${'b'.repeat(64)}`,
+      properties: { name: 'Example feature' },
+      provenance: { source: 'Example source' }
+    }),
+    '',
+    JSON.stringify({ feature_id: '2', properties: { name: 'Second feature' } })
+  ].join('\n');
+
+  const toArrayBuffer = buffer =>
+    buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+
+  const gzipped = await fetchSharedDatasetMetadataRecords(
+    'https://tiles.example.test/artifacts/example.metadata.ndjson.gz',
+    { fetchBytes: async () => toArrayBuffer(gzipSync(Buffer.from(ndjson))) }
+  );
+  assert.equal(gzipped.size, 2);
+  assert.equal(gzipped.get('1').properties.name, 'Example feature');
+  assert.equal(gzipped.get('2').properties.name, 'Second feature');
+
+  const plain = await fetchSharedDatasetMetadataRecords(
+    'https://tiles.example.test/artifacts/example.metadata.ndjson.gz',
+    { fetchBytes: async () => toArrayBuffer(Buffer.from(ndjson)) }
+  );
+  assert.equal(plain.size, 2);
+
+  await assert.rejects(
+    fetchSharedDatasetMetadataRecords('https://tiles.example.test/missing', {
+      fetchBytes: async () => {
+        throw new Error('HTTP 404');
+      }
+    }),
+    /Unable to load shared dataset metadata sidecar/
+  );
+
+  assert.throws(
+    () => parseSharedDatasetMetadataRecords('{"feature_id": "1"}\n{"feature_id": "1"}'),
+    /duplicate feature_id 1/
+  );
+  assert.throws(
+    () => parseSharedDatasetMetadataRecords('{"properties": {}}'),
+    /missing feature_id/
+  );
+  assert.throws(
+    () => parseSharedDatasetMetadataRecords('not json'),
+    /Unable to parse metadata sidecar line 1/
+  );
+  assert.throws(
+    () => parseSharedDatasetMetadataRecords('[1, 2]'),
+    /must be a JSON object/
   );
 });
 
