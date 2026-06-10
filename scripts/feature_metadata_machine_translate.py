@@ -39,6 +39,10 @@ DEFAULT_TARGET_OVERRIDES = {
     "zh_hant": "zh-TW",
 }
 DEFAULT_TRANSLATION_WORKERS = 8
+DEFAULT_MAX_REQUESTS_PER_SECOND = 4.0
+DEFAULT_RETRY_ATTEMPTS = 2
+DEFAULT_RETRY_BASE_SECONDS = 15.0
+DEFAULT_CIRCUIT_BREAKER_FAILURES = 100
 NUMERIC_STRING_RE = re.compile(r"^[+-]?(?:\d+(?:[.,]\d+)*|\d*\.\d+)$")
 
 
@@ -49,6 +53,51 @@ class FeatureMetadataMachineTranslateError(ValueError):
 class Translator(Protocol):
     def translate(self, text: str) -> str:
         """Return translated text."""
+
+
+class RateLimiter:
+    """Token-spaced limiter shared across worker threads."""
+
+    def __init__(self, max_requests_per_second: float) -> None:
+        self._interval = 1.0 / max_requests_per_second if max_requests_per_second > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next_at = 0.0
+
+    def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            delay = self._next_at - now
+            self._next_at = max(now, self._next_at) + self._interval
+        if delay > 0:
+            time.sleep(delay)
+
+
+class CircuitBreaker:
+    """Open after too many consecutive failures so a provider ban fails fast."""
+
+    def __init__(self, failure_threshold: int) -> None:
+        self._threshold = failure_threshold
+        self._lock = threading.Lock()
+        self._consecutive_failures = 0
+        self._open = False
+
+    @property
+    def open(self) -> bool:
+        return self._open
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._consecutive_failures = 0
+
+    def record_failure(self) -> None:
+        if self._threshold <= 0:
+            return
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._threshold:
+                self._open = True
 
 
 @dataclass(frozen=True)
@@ -285,12 +334,18 @@ def translate_unique_values(
     progress: bool,
     progress_interval_seconds: float,
     workers: int = DEFAULT_TRANSLATION_WORKERS,
+    max_requests_per_second: float = DEFAULT_MAX_REQUESTS_PER_SECOND,
+    retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+    retry_base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
+    circuit_breaker_failures: int = DEFAULT_CIRCUIT_BREAKER_FAILURES,
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
     if workers < 1:
         raise FeatureMetadataMachineTranslateError("--workers must be at least 1")
     if on_error not in {"fail", "source", "skip"}:
         raise FeatureMetadataMachineTranslateError("--on-error must be fail, source, or skip")
 
+    rate_limiter = RateLimiter(max_requests_per_second)
+    circuit_breaker = CircuitBreaker(circuit_breaker_failures)
     unique_pairs = sorted({(task.target, task.source_text) for task in tasks})
     translations: dict[tuple[str, str], str] = {}
     failures: dict[tuple[str, str], str] = {}
@@ -317,13 +372,33 @@ def translate_unique_values(
     def translate_pair(pair: tuple[str, str]) -> tuple[tuple[str, str], str | None, str | None]:
         target, source_text = pair
         try:
-            translator = translator_for_target(target)
-            translated = str(translator.translate(source_text) or "")
-            if not translated.strip():
-                raise FeatureMetadataMachineTranslateError("translator returned an empty value")
+            last_exc: Exception | None = None
+            translated = ""
+            for attempt in range(retry_attempts + 1):
+                if circuit_breaker.open:
+                    raise FeatureMetadataMachineTranslateError(
+                        "circuit breaker open after repeated consecutive translation failures"
+                    )
+                if attempt > 0:
+                    time.sleep(retry_base_seconds * (2 ** (attempt - 1)))
+                rate_limiter.wait()
+                try:
+                    translator = translator_for_target(target)
+                    translated = str(translator.translate(source_text) or "")
+                    if not translated.strip():
+                        raise FeatureMetadataMachineTranslateError("translator returned an empty value")
+                except Exception as exc:  # noqa: BLE001 - retried, then controlled by --on-error.
+                    last_exc = exc
+                    continue
+                last_exc = None
+                break
+            if last_exc is not None:
+                raise last_exc
+            circuit_breaker.record_success()
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
         except Exception as exc:  # noqa: BLE001 - controlled by --on-error.
+            circuit_breaker.record_failure()
             if on_error == "fail":
                 raise FeatureMetadataMachineTranslateError(
                     f"translation failed for target {target!r}, value {source_text!r}: {exc}"
@@ -403,6 +478,10 @@ def generate_translation_source(
     progress: bool = False,
     progress_interval_seconds: float = 30.0,
     workers: int = DEFAULT_TRANSLATION_WORKERS,
+    max_requests_per_second: float = DEFAULT_MAX_REQUESTS_PER_SECOND,
+    retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+    retry_base_seconds: float = DEFAULT_RETRY_BASE_SECONDS,
+    circuit_breaker_failures: int = DEFAULT_CIRCUIT_BREAKER_FAILURES,
 ) -> dict[str, Any]:
     if workers < 1:
         raise FeatureMetadataMachineTranslateError("--workers must be at least 1")
@@ -455,6 +534,10 @@ def generate_translation_source(
         progress=progress,
         progress_interval_seconds=progress_interval_seconds,
         workers=workers,
+        max_requests_per_second=max_requests_per_second,
+        retry_attempts=retry_attempts,
+        retry_base_seconds=retry_base_seconds,
+        circuit_breaker_failures=circuit_breaker_failures,
     )
 
     generated_rows: list[dict[str, str]] = []
@@ -505,6 +588,8 @@ def generate_translation_source(
         "fields": normalized_fields,
         "target_by_locale": target_by_locale,
         "workers": workers,
+        "max_requests_per_second": max_requests_per_second,
+        "retry_attempts": retry_attempts,
         "feature_count": validation.feature_count,
         "existing_row_count": len(existing_rows),
         "generated_row_count": len(generated_rows),
@@ -536,6 +621,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sleep-seconds", type=float, default=0.05)
     parser.add_argument("--workers", type=int, default=DEFAULT_TRANSLATION_WORKERS)
+    parser.add_argument(
+        "--max-rps",
+        type=float,
+        default=DEFAULT_MAX_REQUESTS_PER_SECOND,
+        help="Global translator request rate cap shared by all workers. 0 disables the limiter.",
+    )
+    parser.add_argument(
+        "--retry-attempts",
+        type=int,
+        default=DEFAULT_RETRY_ATTEMPTS,
+        help="Retries per unique value with exponential backoff before --on-error applies.",
+    )
+    parser.add_argument("--retry-base-seconds", type=float, default=DEFAULT_RETRY_BASE_SECONDS)
+    parser.add_argument(
+        "--circuit-breaker-failures",
+        type=int,
+        default=DEFAULT_CIRCUIT_BREAKER_FAILURES,
+        help="Consecutive failures before remaining values fail fast. 0 disables the breaker.",
+    )
     parser.add_argument("--review-state", default="machine_translated")
     parser.add_argument("--on-error", choices=("fail", "source", "skip"), default="source")
     parser.add_argument("--no-preserve-existing", action="store_true")
@@ -570,6 +674,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_overrides=parse_mapping_arguments(args.translator_target),
             sleep_seconds=args.sleep_seconds,
             workers=args.workers,
+            max_requests_per_second=args.max_rps,
+            retry_attempts=args.retry_attempts,
+            retry_base_seconds=args.retry_base_seconds,
+            circuit_breaker_failures=args.circuit_breaker_failures,
             review_state=args.review_state,
             on_error=args.on_error,
             stringify_non_string=args.stringify_non_string,
