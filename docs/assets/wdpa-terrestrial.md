@@ -254,8 +254,8 @@ carry non-URL-safe underscore parcel suffixes). The v1 `id`, `ext_id`, and
 `feature_hash` columns were removed, and `geometry_hash` plus `properties_hash`
 were added to the canonical FGB and metadata sidecar. PMTiles were rebuilt as
 metadata-lookup tiles carrying only `feature_id` at maxzoom 12, preserving the
-`wdpa_terrestrial` tile and FGB layer names; the monthly job pins terrestrial
-PMTiles to maxzoom 12 while marine stays at maxzoom 8. The metadata-translations
+`wdpa_terrestrial` tile and FGB layer names; the monthly job builds WDPA PMTiles
+at maxzoom 12. The metadata-translations
 CSV and Spanish sidecar were regenerated against the v2 feature_ids; translation
 rows preserve the source `NAME_ENG` value with `review_state = needs_review`,
 and no machine or human translation has been applied yet.

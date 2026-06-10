@@ -24,9 +24,9 @@ citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Pr
 notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-09 feature_id contract repair release
   uses generated decimal feature_id values carried forward from prior releases when the SITE_PID-backed identity key matches,
   geometry_hash values, properties_hash values, canonical metadata/schema/manifest artifacts, metadata-translations CSV, and
-  an initial Spanish NAME_ENG metadata sidecar. PMTiles are lightweight metadata-lookup tiles with feature_id only. The release
-  preserves 331 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release history,
-  source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+  localized metadata sidecars for es, fr, id, pt, pt_br, and sw. PMTiles are lightweight metadata-lookup tiles with feature_id
+  only. The release preserves 331 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied.
+  Release history, source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 17657
 data_profile:
   field_count: 33
@@ -76,11 +76,31 @@ files:
 - path: latest/wdpa-marine.metadata.es.ndjson.gz
   format: ndjson_gzip
   role: metadata
-  purpose: Generated Spanish metadata sidecar materialized from NAME_ENG translations
+  purpose: Generated Spanish metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-marine.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated French metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-marine.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Indonesian metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-marine.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Portuguese metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-marine.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Brazilian Portuguese metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-marine.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Swahili metadata sidecar materialized from approved translation rows
 - path: latest/wdpa-marine.metadata-translations.csv
   format: csv
   role: metadata
-  purpose: Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash
+  purpose: Editable translation source keyed by feature_id, field, locale, and source-value hash
 - path: latest/wdpa-marine.schema.json
   format: json
   role: metadata
@@ -105,10 +125,30 @@ files:
   format: ndjson_gzip
   role: release
   purpose: Dated generated Spanish metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-marine.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated French metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-marine.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Indonesian metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-marine.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-marine.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Brazilian Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-marine.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Swahili metadata sidecar
 - path: releases/YYYY-MM-DD/wdpa-marine.metadata-translations.csv
   format: csv
   role: release
-  purpose: Dated editable Spanish translation source
+  purpose: Dated editable translation source
 - path: releases/YYYY-MM-DD/wdpa-marine.schema.json
   format: json
   role: release
@@ -146,6 +186,7 @@ source. Fields are preserved from the source dataset.
 ## When to use it
 
 - Use this for reusable marine protected-area and conserved-area boundaries or point records.
+- Use localized metadata sidecars when an application needs translated WDPA descriptive fields.
 - Do not use this when a terrestrial-only extract is required.
 
 ## Files
@@ -156,15 +197,25 @@ source. Fields are preserved from the source dataset.
 | `latest/wdpa-marine.fgb` | `fgb` | `canonical` | Canonical mixed-geometry vector dataset |
 | `latest/wdpa-marine.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same monthly extract |
 | `latest/wdpa-marine.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
-| `latest/wdpa-marine.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from NAME_ENG translations |
-| `latest/wdpa-marine.metadata-translations.csv` | `csv` | `metadata` | Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash |
+| `latest/wdpa-marine.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata.fr.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated French metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata.id.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Indonesian metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata.pt.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Portuguese metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Brazilian Portuguese metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata.sw.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Swahili metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-marine.metadata-translations.csv` | `csv` | `metadata` | Editable translation source keyed by feature_id, field, locale, and source-value hash |
 | `latest/wdpa-marine.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/wdpa-marine.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/wdpa-marine.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/wdpa-marine.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
 | `releases/YYYY-MM-DD/wdpa-marine.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
 | `releases/YYYY-MM-DD/wdpa-marine.metadata.es.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Spanish metadata sidecar |
-| `releases/YYYY-MM-DD/wdpa-marine.metadata-translations.csv` | `csv` | `release` | Dated editable Spanish translation source |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata.fr.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated French metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata.id.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Indonesian metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata.pt.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Brazilian Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata.sw.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Swahili metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-marine.metadata-translations.csv` | `csv` | `release` | Dated editable translation source |
 | `releases/YYYY-MM-DD/wdpa-marine.schema.json` | `json` | `release` | Dated release feature schema |
 | `releases/YYYY-MM-DD/wdpa-marine.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Monthly run record |
@@ -237,20 +288,38 @@ A 2026-06-09 feature_id contract repair release was staged from the unchanged Ju
 lookup handles. The release adds generated decimal `feature_id` values tied to
 SITE_PID-backed identity keys, `geometry_hash` values, `properties_hash`
 checksums, a canonical metadata sidecar, release schema, manifest,
-metadata-translations CSV, and generated Spanish localized sidecar for
-`NAME_ENG`. The PMTiles release is a lightweight lookup archive with only
-`feature_id` properties generated with Tippecanoe and converted to PMTiles v3.
+metadata-translations CSV, and generated localized sidecars for `es`, `fr`,
+`id`, `pt`, `pt_br`, and `sw`. The PMTiles release is a lightweight lookup
+archive with only `feature_id` properties generated with Tippecanoe and
+converted to PMTiles v3.
 The repaired artifact SHA-256 values are FGB
 `c93c482f715e2e061cb8bdb745cfadc6462f4c8ae6db391df95c4ed39ba1bcb9`,
-PMTiles `48820907ecd8c00a591fdc1eb021a644d9a3ff4bb86a092d191aa8dc222173e9`,
+PMTiles `f94f28fa6fd3d93d2c0abc8bf39a026b253b0554279906e5f5cd6e163ed253ee`,
 metadata sidecar `7bae601c9d5643fcbcbc456e453c805c92b123e0d8dad51bf4a8bba8f0d5bbb9`,
 schema `a198467d5b866a960cbf417826980aebd9d8f104594d266e07db7b39f9a660ec`,
 manifest `d4c5bf52e7011340076b35ba6ed8f2029f7d2d35762f85b18bf3f4fb2a97780f`,
 and metadata-translations CSV
 `05eba30d4e53176fb4acaaf139826b8dc1bd49c67a232cb19c8be4bff6545a6d`.
-The generated Spanish sidecar has the same SHA-256 as the canonical metadata
-sidecar because the initial `NAME_ENG` rows preserve source proper-name values
-pending human review.
+
+The same 2026-06-09 release was expanded with machine-generated first-pass
+translations for `DESIG_ENG`, `DESIG_TYPE`, `GOV_TYPE`, `OWN_TYPE`, `NO_TAKE`,
+`STATUS`, `VERIF`, `OECM_ASMT`, `DESIG`, `GOVSUBTYPE`, `OWNSUBTYPE`,
+`MANG_PLAN`, `CONS_OBJ`, `SUPP_INFO`, `INLND_WTRS`, and `IUCN_CAT` in `es`,
+`fr`, `id`, `pt`, `pt_br`, and `sw`. The expanded translation CSV contains
+1,712,729 rows including the previous Spanish `NAME_ENG` rows. Localization
+validation applied 300,169 Spanish rows and 282,512 rows for each other locale,
+with no stale or orphaned translations. Expanded artifact SHA-256 values are
+metadata-translations CSV
+`df1fbe53b8f05592e7a024bc23603a9b0f16e5c12eb0560532f465c466649fc6`,
+metadata.es `0a75924aeeaf4cca3eed091d1edae1a7206a2d85f643945cfa4165918b30682f`,
+metadata.fr `c4c82edc9da75c1011f89eeef21dc8eec78d0d3cb8bfa9191788b778ae986ee4`,
+metadata.id `5ede90b63e4c29dec7eb906a51669d9ba7c86a1dffd039bfc637b799298a2885`,
+metadata.pt `fe062371384d625670cf91340328df5ba38e458efb33fc9116cd5ec0580fbf94`,
+metadata.pt_br `fe062371384d625670cf91340328df5ba38e458efb33fc9116cd5ec0580fbf94`,
+and metadata.sw `1259f97f12d07524fd227a7db0327f6cd768bca475b7a741f4448fdc965451e9`.
+The PMTiles companion was rebuilt at maxzoom 12 with Tippecanoe v2.79.0 and
+validated with `pmtiles verify`, `pmtiles show`, and decoded z0/z12 tile
+property checks.
 
 ## Known caveats
 

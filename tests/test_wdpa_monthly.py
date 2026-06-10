@@ -371,6 +371,25 @@ class WdpaMonthlyTests(unittest.TestCase):
             "MARINE = '0'",
         )
 
+    def test_build_pmtiles_uses_zoom_12(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            commands = []
+
+            def capture_command(command, **_kwargs):
+                commands.append(command)
+
+            with mock.patch.object(wdpa, "run_command", capture_command):
+                wdpa.build_pmtiles(
+                    tmp_path / "source.geojsonseq",
+                    wdpa.ASSETS[0],
+                    tmp_path / "wdpa-marine.pmtiles",
+                )
+
+        tippecanoe_command = commands[0]
+        self.assertEqual(tippecanoe_command[tippecanoe_command.index("-Z") + 1], "0")
+        self.assertEqual(tippecanoe_command[tippecanoe_command.index("-z") + 1], "12")
+
     def test_sampled_where_clause_is_deterministic(self):
         sample = wdpa.SampleSpec(fraction=0.01, seed=123)
         self.assertEqual(

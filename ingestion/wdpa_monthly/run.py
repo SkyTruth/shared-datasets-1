@@ -57,7 +57,7 @@ USER_AGENT = "shared-datasets-1-wdpa-monthly/1.0"
 ASSET_PARENT = "100-geographic-reference/130-protected-areas"
 RUN_RECORD_VERSION = 1
 PMTILES_MINZOOM = 0
-PMTILES_MAXZOOM = 8
+PMTILES_MAXZOOM = 12
 PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
 TRANSLATION_LOCALE = "es"
 TRANSLATION_FIELD = "NAME_ENG"
@@ -75,7 +75,6 @@ class AssetSpec:
     title: str
     tile_layer: str
     split_group: str
-    pmtiles_maxzoom: int = PMTILES_MAXZOOM
 
     @property
     def root(self) -> str:
@@ -149,7 +148,6 @@ ASSETS: tuple[AssetSpec, ...] = (
         title="WDPA Terrestrial Protected and Conserved Areas",
         tile_layer="wdpa_terrestrial",
         split_group="terrestrial",
-        pmtiles_maxzoom=12,
     ),
 )
 
@@ -648,7 +646,7 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
             "-Z",
             str(PMTILES_MINZOOM),
             "-z",
-            str(asset.pmtiles_maxzoom),
+            str(PMTILES_MAXZOOM),
             "--force",
             "--drop-densest-as-needed",
             "--extend-zooms-if-still-dropping",
