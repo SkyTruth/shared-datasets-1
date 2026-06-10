@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Feature metadata localization materialization
+      - Release index rebuild
     branches:
       - main
     types:

@@ -1,0 +1,129 @@
+name: Release index rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      asset_slug:
+        description: "Catalog asset slug whose _catalog/releases/{slug}.json should be rebuilt."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1
+  PUBLISHER_SERVICE_ACCOUNT: shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com
+  SHARED_DATASETS_ALLOW_CANONICAL_MUTATION: "1"
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  rebuild:
+    name: Rebuild release index
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: release-index-rebuild-${{ inputs.asset_slug }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Release index rebuild may only publish from main." >&2
+            exit 1
+          fi
+
+      - name: Validate asset slug
+        env:
+          ASSET_SLUG: ${{ inputs.asset_slug }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${ASSET_SLUG}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "asset_slug must be a shared-datasets slug." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Validate publisher auth configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+
+      - name: Authenticate as shared datasets publisher
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Rebuild release index
+        env:
+          ASSET_SLUG: ${{ inputs.asset_slug }}
+        run: |
+          set -euo pipefail
+
+          uv run python scripts/gcs_asset.py release-index rebuild \
+            --asset-slug "${ASSET_SLUG}" \
+            --catalog catalog/shared-datasets-catalog.csv \
+            > "${RUNNER_TEMP}/release-index-rebuild.json"
+
+          python - <<'PY'
+          import json
+          import os
+
+          report_path = os.path.join(os.environ["RUNNER_TEMP"], "release-index-rebuild.json")
+          payload = json.load(open(report_path, encoding="utf-8"))
+          latest = payload.get("payload", {}).get("latest_release") or {}
+          files = latest.get("files") or []
+          locales = sorted(
+              {
+                  file.get("locale")
+                  for file in files
+                  if file.get("format") == "metadata" and file.get("locale")
+              }
+          )
+          print(json.dumps({
+              "release_index": payload.get("release_index", {}),
+              "latest_release": latest.get("date"),
+              "localized_metadata_locales": locales,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload rebuild report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-index-rebuild-report
+          path: ${{ runner.temp }}/release-index-rebuild.json
+          if-no-files-found: ignore

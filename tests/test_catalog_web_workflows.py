@@ -15,6 +15,7 @@ from workflow_helpers import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
+RELEASE_INDEX_REBUILD = REPO_ROOT / ".github/workflows/release-index-rebuild.yml"
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
 SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 PROTECTED_TERRAFORM_READINESS = REPO_ROOT / ".github/workflows/protected-terraform-readiness.yml"
@@ -141,7 +142,10 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
 
         self.assertNotIn("push", trigger)
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Feature metadata localization materialization"])
+        self.assertEqual(
+            trigger["workflow_run"]["workflows"],
+            ["Feature metadata localization materialization", "Release index rebuild"],
+        )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
         self.assertIn("workflow_dispatch", trigger)
@@ -184,6 +188,42 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertIn("node --check web/catalog/app.js", steps["Check browser JavaScript syntax"]["run"])
         self.assertNotIn("shared-datasets-publish-plan", step_runs)
+
+    def test_release_index_rebuild_uses_publisher_identity_and_existing_cli(self):
+        workflow = load_workflow(RELEASE_INDEX_REBUILD)
+        trigger = workflow_triggers(workflow)
+        env = workflow["env"]
+        job = workflow["jobs"]["rebuild"]
+        steps = workflow_steps_by_name(workflow, "rebuild")
+
+        self.assertEqual(workflow["name"], "Release index rebuild")
+        self.assertNotIn("push", trigger)
+        self.assertIn("workflow_dispatch", trigger)
+        self.assertEqual(trigger["workflow_dispatch"]["inputs"]["asset_slug"]["required"], True)
+        self.assertEqual(trigger["workflow_dispatch"]["inputs"]["asset_slug"]["type"], "string")
+        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(job["environment"], "shared-datasets-production")
+        self.assertEqual(
+            job["concurrency"],
+            {"group": "release-index-rebuild-${{ inputs.asset_slug }}", "cancel-in-progress": False},
+        )
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(
+            env["PUBLISHER_SERVICE_ACCOUNT"],
+            "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
+        )
+        self.assertEqual(env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
+        self.assertIn("Release index rebuild may only publish from main", steps["Validate main ref"]["run"])
+        self.assertEqual(steps["Validate asset slug"]["env"], {"ASSET_SLUG": "${{ inputs.asset_slug }}"})
+        self.assertIn("asset_slug must be a shared-datasets slug", steps["Validate asset slug"]["run"])
+        self.assertIn(
+            "Missing repository variable: GCP_WORKLOAD_IDENTITY_PROVIDER",
+            steps["Validate publisher auth configuration"]["run"],
+        )
+        self.assertEqual(steps["Rebuild release index"]["env"], {"ASSET_SLUG": "${{ inputs.asset_slug }}"})
+        self.assertIn("uv run python scripts/gcs_asset.py release-index rebuild", steps["Rebuild release index"]["run"])
+        self.assertIn('--asset-slug "${ASSET_SLUG}"', steps["Rebuild release index"]["run"])
+        self.assertIn("--catalog catalog/shared-datasets-catalog.csv", steps["Rebuild release index"]["run"])
 
     def test_pmtiles_cdn_sync_has_explicit_resource_change_allowlist(self):
         workflow = assert_protected_terraform_sync(
