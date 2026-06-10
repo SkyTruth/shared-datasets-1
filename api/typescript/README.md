@@ -73,7 +73,7 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
 | Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
 | Browser click needs public feature attributes | Metadata artifact helpers | Resolve the release-index sidecar and fetch the public artifact URL directly from the CDN. |
-| Browser click needs private feature attributes | App backend route to a signed metadata URL or metadata lookup API | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
+| Browser click needs private feature attributes | App backend route to a signed metadata sidecar URL | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
 | Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and release metadata sidecar references in consumer-owned config. |
@@ -83,17 +83,20 @@ files or resolve durable `gs://` object identities with Application Default
 Credentials.
 
 Release-oriented vector PMTiles are intentionally lightweight and should not be
-treated as the source of full feature attributes. Use the PMTiles `feature_id`
-property for internal click-to-metadata joins through a release metadata sidecar
-or an app-owned backend route that calls:
+treated as the source of full feature attributes. They expose exactly one
+feature property, `feature_id`. Use it for click-to-metadata joins through a
+release metadata sidecar resolved from the release index. The IAP-protected
+metadata lookup API (`POST /v1/assets/{slug}/releases/{release}:lookup`) is
+dormant while Firestore metadata serving is inactive — otherwise valid lookup
+requests return `409 index_not_ready` — so active consumer workflows must use
+the sidecar.
 
-```http
-POST /v1/assets/{slug}/releases/{release}:lookup
-```
-
-For user-visible URLs, pass the URL-safe public `feature_id` handle through the
-app backend and resolve metadata with the same release-scoped sidecar/API
-contract.
+`feature_id` values are URL-safe strings matching `^[A-Za-z0-9]{1,64}$`, either
+copied from a verified-unique source field (for example `marine-regions-eez`
+copies `MRGID`) or assigned as monotonic decimal sequence strings preserved
+across releases. For user-visible URLs, pass that public `feature_id` handle
+through the app backend and resolve metadata with the same release-scoped
+sidecar contract.
 
 ## Catalog Helpers
 
@@ -229,6 +232,25 @@ if (sidecar) {
 The resolver tries the requested locale first and falls back to the canonical
 `.metadata.ndjson.gz` sidecar when a localized sidecar is absent. It returns
 `null` when the release index has no metadata sidecar.
+
+Each sidecar is gzip NDJSON with one JSON record per feature:
+
+```json
+{
+  "schema_version": 2,
+  "asset_slug": "marine-regions-eez",
+  "release": "2026-06-09",
+  "feature_id": "63203",
+  "geometry_hash": "sha256:...",
+  "properties_hash": "sha256:...",
+  "properties": { "MRGID": 63203, "GEONAME": "High Seas" },
+  "provenance": { "source": "Marine Regions World EEZ v12 and World High Seas v2" }
+}
+```
+
+Join PMTiles features to records by `feature_id`. Localized sidecars keep the
+same record shape with translated display values already materialized into
+`properties`.
 
 Private assets should not expose direct sidecar URLs from browser code. Consumer
 backends should expose an app-owned route such as:

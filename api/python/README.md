@@ -15,7 +15,7 @@ browser PMTiles session handshakes and Cloud CDN signed-cookie helpers.
 | Backend code needs a durable object identity but not bytes | `resolve_dataset(slug, format)` |
 | Service code needs to list or search assets | `Catalog.load_gcs()` plus `catalog.search(...)` |
 | CI or diagnostics need quick checks | `skytruth-datasets` CLI |
-| Service code needs feature metadata by PMTiles `feature_id` | Feature metadata HTTP API, not this SDK |
+| Service code needs feature metadata by PMTiles `feature_id` | Release metadata sidecar via `Catalog.versions(...)` and `catalog.fetch(slug, "metadata", version=...)` |
 | Browser map code needs PMTiles | TypeScript helpers or direct tiered CDN URLs, not this SDK |
 | Backend route signs private PMTiles cookies | TypeScript server helpers, not this SDK |
 
@@ -66,22 +66,23 @@ read the PMTiles signing key and does not sign Cloud CDN cookies. The backend
 route that issues browser PMTiles cookies needs separate Secret Manager access
 and should use the TypeScript server helpers.
 
-Feature metadata lookup is also a separate service. Release-oriented vector
-PMTiles carry geometry plus `feature_id` values; callers that need full
-attributes and hashes should load the release metadata sidecar or call the
-IAP-protected metadata API:
+Feature metadata is published beside the data, not inside PMTiles.
+Release-oriented vector PMTiles carry geometry plus `feature_id` values only;
+callers that need full attributes, hashes, or provenance should read the
+release metadata sidecar (see "Feature Metadata Sidecars" below). The
+IAP-protected metadata lookup API
+(`POST /v1/assets/{slug}/releases/{release}:lookup`) is dormant while Firestore
+metadata serving is inactive — otherwise valid lookup requests return
+`409 index_not_ready` — so active consumer workflows must use the sidecar.
 
-```http
-POST /v1/assets/{slug}/releases/{release}:lookup
-```
-
-`feature_id` values are unique URL-safe alphanumeric strings, usually generated
-decimal sequence values. `geometry_hash` is returned with sidecar/API records
-as the stable geometry-equivalence key for grouping or de-duplicating footprints
-after metadata is loaded; do not use hashes as lookup handles.
-
-Use `release=latest` only for convenience and persist the response
-`resolved_release` when lineage matters.
+`feature_id` values are unique URL-safe strings matching `^[A-Za-z0-9]{1,64}$`.
+They are either copied from a verified-unique source field (for example
+`marine-regions-eez` copies `MRGID`) or assigned as monotonic decimal sequence
+strings that are preserved across releases. Sidecar records also carry
+`geometry_hash`, the stable geometry-equivalence key for grouping or
+de-duplicating footprints after metadata is loaded, and `properties_hash`, the
+fingerprint of published non-geometry properties. Do not use hashes as lookup
+handles.
 
 ## Fastest Backend Path
 
@@ -165,6 +166,63 @@ catalog = Catalog.load("./catalog/shared-datasets-catalog.csv")
 Public catalog loading without the GCS extra is available through the shared
 CDN endpoint, but production backend data reads should use `Catalog.load_gcs()`
 or the top-level helpers with ADC.
+
+## Feature Metadata Sidecars
+
+Release-oriented vector assets publish full feature metadata as a gzip NDJSON
+sidecar beside the canonical FGB, plus a release schema and manifest:
+
+```text
+latest/{asset-slug}.metadata.ndjson.gz           # canonical metadata sidecar
+latest/{asset-slug}.metadata.{locale}.ndjson.gz  # optional localized views
+latest/{asset-slug}.schema.json                  # release feature schema
+latest/{asset-slug}.manifest.json                # release manifest
+```
+
+The recommended backend flow resolves the release first, then fetches the
+sidecar for that exact release date:
+
+```python
+import gzip
+import json
+
+from skytruth_shared_datasets import Catalog
+
+catalog = Catalog.load_gcs()
+release_index = catalog.versions("marine-regions-eez", access="gcs")
+release_date = release_index["latest_release"]["date"]
+
+ref = catalog.fetch("marine-regions-eez", "metadata", version=release_date, access="gcs")
+
+with gzip.open(ref.cache_path, "rt", encoding="utf-8") as handle:
+    records = {row["feature_id"]: row for row in map(json.loads, handle)}
+```
+
+Each sidecar line is one JSON record:
+
+```json
+{
+  "schema_version": 2,
+  "asset_slug": "marine-regions-eez",
+  "release": "2026-06-09",
+  "feature_id": "63203",
+  "geometry_hash": "sha256:...",
+  "properties_hash": "sha256:...",
+  "properties": {"MRGID": 63203, "GEONAME": "High Seas"},
+  "provenance": {"source": "Marine Regions World EEZ v12 and World High Seas v2"}
+}
+```
+
+Join canonical FGB rows or PMTiles features to these records by `feature_id`;
+the same column is present in the FGB, the PMTiles, and the sidecar. For
+localized display labels, fetch the locale-specific sidecar listed in the
+release index `files` (for example `marine-regions-eez.metadata.es.ndjson.gz`)
+and fall back to the canonical sidecar when that locale is absent. Localized
+sidecars keep the same record shape with translated display values already
+materialized into `properties`.
+
+Persist the resolved release date in lineage records; every sidecar record
+embeds its `release` value.
 
 ## API Reference
 

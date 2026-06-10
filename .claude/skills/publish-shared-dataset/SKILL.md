@@ -192,29 +192,26 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   --description "Example vector tiles"
 ```
 
-- Generated group IDs are opt-in. Before adding `--group-id-field`, present the
-  curator with the standard provider-ID and grouping/search decision table from
-  `publishing_concierge.py` or an equivalent profile. The table must include
-  file row/column counts and, for displayed candidates, datatype, distinction
-  (`distinct values / profiled rows`), emptiness, domination, skew ratio,
-  top-value examples, and concerns. Show only likely URL-safe provider
-  `ext_id` options, the generated sequence fallback, and likely
-  grouping/search/filter options by default; keep the full per-field profile in
-  JSON or notes for inspection. Run exact stats on all local rows
-  when the source is small enough. When exact full-column counters would be too
-  expensive, use a deterministic random sample of about 10,000 rows, never the
-  first N rows, and label the output as sampled. If a suitable provider ID
-  exists, prefer it and do not generate an ID. If no provider ID exists and the
-  current request did not explicitly choose a grouping field, stop after
-  presenting options. When the curator chooses group-level addressing for an
-  asset that lacks a useful provider row ID, add `--group-id-field FIELD` to the
-  vector build, repeating the flag for composite grouping fields. For vector
-  assets, if no provider ID or grouping field is suitable and the curator
-  explicitly asks for row-level addressing, use `--generate-row-id` to add the
-  last-resort `shared_datasets_row_id` column. Do not generate
-  `shared_datasets_group_id`
-  or `shared_datasets_row_id` from a guessed decision, even when an existing
-  asset doc names a likely field.
+- Feature identity is a recorded decision, not a default. Before building
+  release artifacts, present the curator with the standard feature identity
+  decision table from `publishing_concierge.py` or an equivalent profile. The
+  table must include file row/column counts and, for displayed candidates,
+  datatype, distinction (`distinct values / profiled rows`), emptiness,
+  domination, skew ratio, top-value examples, and concerns. Show likely
+  URL-safe source-field `feature_id` candidates, the generated monotonic
+  decimal sequence fallback, and likely search/filter fields by default; keep
+  the full per-field profile in JSON or notes for inspection. Run exact stats
+  on all local rows when the source is small enough. When exact full-column
+  counters would be too expensive, use a deterministic random sample of about
+  10,000 rows, never the first N rows, and label the output as sampled. Prefer
+  a verified unique, nonblank source field whose values already satisfy the
+  `feature_id` rules (`^[A-Za-z0-9]{1,64}$`) and copy it directly as
+  `feature_id`. If no source field is suitable, assign generated monotonic
+  decimal `feature_id` values from an approved assignment key: one or two
+  source fields, or the pair of stored geometry and properties hashes.
+  Preserve prior-release identity-key to `feature_id` mappings when
+  regenerating IDs. Do not infer and publish any generated ID from guessed
+  fields or without the recorded decision point.
 - Local downloads, generated artifacts, and scratch files must follow
   `docs/standards/local-temp-workspaces.md`.
 - The default vector work directory is
@@ -232,19 +229,20 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/vector_asset.py build ./source.fgb 
   code. For every PMTiles build, verify that the file is not MBTiles/SQLite,
   confirm the PMTiles magic bytes, run `pmtiles verify`, inspect `pmtiles show`
   for min/max zoom, tile type, compression, layer metadata, and bounds, and
-  decode representative tiles to confirm the expected layer and compact feature
-  properties such as `feature_id` and `ext_id`. If the build tool produced MBTiles, convert
+  decode representative tiles to confirm the expected layer and the compact
+  `feature_id` lookup property. If the build tool produced MBTiles, convert
   it with `pmtiles convert` and validate the converted archive before upload.
   Record these validation commands in the PR or final response.
 - Release-oriented vector assets use a strict artifact set: canonical FGB with
-  `feature_id` and `feature_hash`, PMTiles filtered to geometry plus
-  `feature_id` and `ext_id`, a canonical `{asset-slug}.metadata.ndjson.gz`
+  `feature_id`, `geometry_hash`, and `properties_hash`, PMTiles filtered to
+  geometry plus `feature_id` only, a canonical `{asset-slug}.metadata.ndjson.gz`
   sidecar, `{asset-slug}.schema.json`, and `{asset-slug}.manifest.json`. Use
   `scripts/release_feature_model.py` helpers for IDs, hashes, sidecar
   serialization, validation, and manifest creation.
-  Use `--pmtiles-feature-id-property feature_id` with `scripts/vector_asset.py`
-  to build lightweight metadata-lookup tiles containing `feature_id` and
-  `ext_id`.
+  Use `--metadata-lookup` (or `--pmtiles-feature-id-property feature_id`) with
+  `scripts/vector_asset.py` to build lightweight metadata-lookup tiles
+  containing only `feature_id` and to require the three identity columns in the
+  canonical FGB.
 - For the first upload of a release-oriented vector asset, ask the maintainer
   before finalizing artifacts:
 
@@ -319,38 +317,33 @@ For normal asset metadata changes:
      `notes`.
    - If no credible identifier field exists, set
      `identity_candidates: []` and add a short `data_profile.notes` explanation
-     such as `No documented ext_id candidate`.
+     such as `No documented unique source ID candidate`.
    Compute duplicate counts over non-empty candidate values: duplicate values
    are distinct values appearing more than once, and duplicate rows are all rows
    carrying those repeated values.
    - `search_fields`: curator-selected high-value search/filter fields such as
      names, labels, site names, region names, or source grouping labels. Keep
      these separate from provider identity candidates.
-   - `generated_group_id`: required when the canonical artifact has a
-     generated `shared_datasets_group_id` column. Record the column, algorithm,
-     grouping fields, token length, group count, blank group count when
-     applicable, and stability note.
-   - `generated_row_id`: required when the canonical artifact has a generated
-     `shared_datasets_row_id` column. Record the column, algorithm, token
-     length, generated row count, duplicate geometry counts when present,
-     stability note, and warning that this is not a provider/entity/group ID.
-   During dataset creation, present the curator with the standard decision
-   table from `publishing_concierge.py`: likely provider-ID candidates and
-   likely grouping/search/filter fields with distinction, emptiness, domination,
-   skew ratio, examples, and concerns. Do not generate
-   `shared_datasets_group_id` until the curator-selected grouping field is
-   known. For vector assets, use `shared_datasets_row_id` only when the curator
-   explicitly rejects provider and grouping options but still requires row-level
-   addresses.
-   If `generated_group_id` is present, `shared_datasets_group_id` must be a
-   native property/column in the canonical FGB/table and metadata sidecar. For vector builds, pass
-   `--group-id-field FIELD` to `scripts/vector_asset.py build`; the helper
-   automatically validates that the column survives in the canonical artifact.
-   If `generated_row_id` is present, `shared_datasets_row_id` must be a native
-   property/column in the canonical FGB/table and metadata sidecar. For vector
-   builds, pass `--generate-row-id` to `scripts/vector_asset.py build`; the
-   helper automatically validates that the column survives in the canonical
-   artifact.
+   - `feature_identity`: required for release-oriented vector assets. Record
+     `strategy` as one of `source_field`, `generated_sequence_source_fields`,
+     or `generated_sequence_content_hash`. `source_field` requires
+     `source_fields` naming the copied field. The generated-sequence strategies
+     require `generated_id_type: monotonic_integer_string` and an
+     `assignment_key`: one or two `source_fields` for
+     `generated_sequence_source_fields`, or exactly
+     `[geometry_hash, properties_hash]` for
+     `generated_sequence_content_hash`.
+   - `feature_metadata`: required when the asset publishes the release feature
+     metadata contract. Record `storage: metadata_sidecar_v1`; the
+     `feature_id`, `geometry_hash`, and `properties_hash` column names; and the
+     `latest/` sidecar, schema, and manifest paths, each of which must also
+     appear exactly once in `files`.
+   During dataset creation, present the curator with the standard feature
+   identity decision table from `publishing_concierge.py`: likely source-field
+   `feature_id` candidates and likely search/filter fields with distinction,
+   emptiness, domination, skew ratio, examples, and concerns. Do not assign
+   generated `feature_id` values until the curator-approved assignment key is
+   known.
 6. For COG or Zarr assets, include raster metadata: CRS, resolution, dimensions,
    band semantics, dtype, nodata, units, scale/offset, and sampling where
    applicable.
