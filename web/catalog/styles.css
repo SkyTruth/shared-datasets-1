@@ -1010,10 +1010,13 @@ h3 {
   font-size: 0.85rem;
 }
 
-.feature-hit-heading span:last-child {
-  flex: 0 0 auto;
+.feature-hit-heading > .feature-hit-meta {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.76rem;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .feature-table {
@@ -1219,8 +1222,9 @@ h3 {
     display: grid;
   }
 
-  .feature-hit-heading span:last-child {
+  .feature-hit-heading > .feature-hit-meta {
     justify-self: start;
+    text-align: left;
   }
 
   .catalog-header {

@@ -1998,7 +1998,19 @@ function appendFeatureHit(feature) {
   swatch.style.background = feature.color || "var(--accent)";
   title.append(swatch, document.createTextNode(feature.assetTitle || "Dataset feature"));
   const meta = document.createElement("span");
-  meta.textContent = [feature.sourceLayer, feature.geometryType, feature.release].filter(Boolean).join(" / ");
+  meta.className = "feature-hit-meta";
+  const geometryHash = compactGeometryHash(feature.geometryHash);
+  meta.textContent = [
+    feature.sourceLayer,
+    feature.geometryType,
+    feature.release,
+    geometryHash ? `geom ${geometryHash}` : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  if (feature.geometryHash) {
+    meta.title = `Geometry hash: ${feature.geometryHash}`;
+  }
   hitHeader.append(title, meta);
   hit.append(hitHeader);
 
@@ -2021,6 +2033,15 @@ function appendFeatureHit(feature) {
 
   appendFeatureTable(hit, entries);
   elements.featureInspector.append(hit);
+}
+
+function compactGeometryHash(value) {
+  const hash = String(value || "").trim();
+  if (!hash) {
+    return "";
+  }
+  const digest = hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
+  return digest.slice(0, 12);
 }
 
 function appendFeatureTable(container, entries) {
