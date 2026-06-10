@@ -1661,8 +1661,25 @@ function resetMetadataLanguageControl() {
 }
 
 function selectedMetadataLocale(asset, locales = availableMetadataLocales(asset)) {
-  const current = normalizeMetadataLocale(state.metadataLocale || activeMetadataLocale());
-  return current && locales.includes(current) ? current : "";
+  for (const candidate of metadataLocaleCandidates(state.metadataLocale || activeMetadataLocale())) {
+    if (locales.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function metadataLocaleCandidates(value) {
+  const normalized = normalizeMetadataLocale(value);
+  if (!normalized) {
+    return [];
+  }
+  const candidates = [normalized];
+  const baseLocale = normalized.split("_", 1)[0];
+  if (baseLocale && baseLocale !== normalized) {
+    candidates.push(baseLocale);
+  }
+  return candidates;
 }
 
 function availableMetadataLocales(asset) {
