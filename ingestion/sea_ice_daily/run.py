@@ -449,39 +449,27 @@ def convert_geojsonseq_to_fgb(geojsonseq: Path, output: Path) -> None:
 
 def build_pmtiles(geojsonseq: Path, output: Path) -> None:
     remove_if_exists(output)
-    mbtiles = output.with_suffix(".mbtiles")
-    remove_if_exists(mbtiles)
     run_command(
         [
-            "ogr2ogr",
-            "-f",
-            "MBTiles",
-            "-nln",
-            ASSET.tile_layer,
-            "-nlt",
-            "PROMOTE_TO_MULTI",
-            "-dsco",
-            f"NAME={ASSET.title}",
-            "-dsco",
-            f"DESCRIPTION={ASSET.title} metadata lookup vector tiles",
-            "-dsco",
-            f"MINZOOM={PMTILES_MINZOOM}",
-            "-dsco",
-            f"MAXZOOM={PMTILES_MAXZOOM}",
-            "-lco",
-            f"NAME={ASSET.tile_layer}",
-            "-lco",
-            f"MINZOOM={PMTILES_MINZOOM}",
-            "-lco",
-            f"MAXZOOM={PMTILES_MAXZOOM}",
-            "-select",
-            ",".join(PMTILES_PROPERTIES),
-            str(mbtiles),
-            f"GeoJSONSeq:{geojsonseq}",
+            "tippecanoe",
+            f"--output={output}",
+            "--force",
+            "--quiet",
+            f"--layer={ASSET.tile_layer}",
+            f"--minimum-zoom={PMTILES_MINZOOM}",
+            f"--maximum-zoom={PMTILES_MAXZOOM}",
+            "--no-tile-size-limit",
+            "--no-feature-limit",
+            "--no-tile-compression",
+            "--include",
+            feature_metadata.FEATURE_ID_COLUMN,
+            str(geojsonseq),
         ]
     )
-    run_command(["pmtiles", "convert", str(mbtiles), str(output)])
-    remove_if_exists(mbtiles)
+
+
+def validate_pmtiles(path: Path) -> None:
+    run_command(["pmtiles", "show", str(path)])
 
 
 def ogrinfo_text(path: Path, layer_name: str | None = None) -> str:
@@ -536,10 +524,6 @@ def layer_fields(path: Path) -> tuple[str, ...]:
         if not fields:
             raise RuntimeError(f"No fields found in {path}")
         return fields
-
-
-def validate_pmtiles(path: Path) -> None:
-    run_command(["pmtiles", "show", str(path)])
 
 
 def build_outputs(
@@ -823,6 +807,7 @@ def run() -> dict[str, Any]:
         "gdal_polygonize.py",
         "ogr2ogr",
         "ogrinfo",
+        "tippecanoe",
         "pmtiles",
     ):
         require_binary(binary)
