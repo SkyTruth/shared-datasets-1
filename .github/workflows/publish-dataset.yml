@@ -546,6 +546,7 @@ jobs:
                           asset_slug,
                           "--dataset-path",
                           str(dataset_path),
+                          "--upload-snapshot",
                       ],
                       check=True,
                   )

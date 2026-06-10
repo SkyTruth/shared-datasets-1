@@ -110,6 +110,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertLess(promote_run.index('"copy",'), promote_run.index('"stat", promotion["destination_uri"]'))
         self.assertLess(promote_run.index('"stat", promotion["destination_uri"]'), promote_run.index('"download",'))
         self.assertLess(promote_run.index('"download",'), promote_run.index('"check-schema",'))
+        self.assertIn('"--upload-snapshot"', promote_run)
 
         self.assertIn("scripts/finalize_promoted_release_metadata.py", finalize_run)
         self.assertIn("--publish-plan publish-plan.json", finalize_run)

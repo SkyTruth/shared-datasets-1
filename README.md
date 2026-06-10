@@ -530,9 +530,12 @@ uv run python scripts/dataset_alerts.py check-schema-compatibility \
 
 Schema snapshots are stored under
 `gs://skytruth-shared-datasets-1/_catalog/schema-snapshots/`. After a successful
-compatible or waived publish, `check-schema` remains available to emit the
-structured Cloud Logging warning and update the snapshot for diagnostics and
-monitoring.
+compatible or waived publish, the approved publisher workflow runs
+`check-schema --upload-snapshot` to emit the structured Cloud Logging warning
+and update the snapshot for diagnostics and monitoring. Local `check-schema`
+runs are read-only by default: they print the schema-change payload and skip the
+snapshot upload unless `--upload-snapshot` is passed from a runtime with
+`SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
 
 FYI Slack summaries use the Secret Manager secret
 `shared-datasets-slack-webhook-url` by default. To set or rotate the webhook:

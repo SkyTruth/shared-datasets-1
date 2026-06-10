@@ -23,7 +23,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_docs
-from scripts.gcs_asset import parse_gs_uri
+from scripts.gcs_asset import ALLOW_CANONICAL_MUTATION_ENV, parse_gs_uri, require_mutation_allowed
 from scripts.slack_notify import notify
 
 
@@ -532,13 +532,41 @@ def check_schema(
     dataset_path: Path = typer.Option(..., exists=True, dir_okay=False, help="Local canonical dataset file."),
     snapshot_uri: Optional[str] = typer.Option(None, help="Override remote schema snapshot URI."),
     dry_run: bool = typer.Option(False, help="Print Slack payload instead of posting."),
-    skip_snapshot_upload: bool = typer.Option(False, help="Do not write the new snapshot."),
+    upload_snapshot: bool = typer.Option(
+        False,
+        "--upload-snapshot",
+        help=(
+            "Write the schema-change log and remote snapshot. Requires "
+            f"{ALLOW_CANONICAL_MUTATION_ENV}=1."
+        ),
+    ),
+    skip_snapshot_upload: bool = typer.Option(
+        False,
+        "--skip-snapshot-upload",
+        help="Deprecated compatibility flag. Snapshot upload is skipped unless --upload-snapshot is set.",
+    ),
 ) -> None:
     """Compare a canonical file schema with its last snapshot and warn on any delta."""
+
+    resolved_dry_run = dry_run if isinstance(dry_run, bool) else False
+    resolved_upload_snapshot = upload_snapshot if isinstance(upload_snapshot, bool) else False
+    resolved_skip_snapshot_upload = skip_snapshot_upload if isinstance(skip_snapshot_upload, bool) else False
+
+    if resolved_dry_run and resolved_upload_snapshot:
+        raise typer.BadParameter("--dry-run cannot be combined with --upload-snapshot")
+    if resolved_skip_snapshot_upload and resolved_upload_snapshot:
+        raise typer.BadParameter("--skip-snapshot-upload cannot be combined with --upload-snapshot")
 
     fields = schema_for_path(dataset_path)
     uri = snapshot_uri or snapshot_uri_for(asset_slug, os.environ.get("SHARED_DATASETS_BUCKET", DEFAULT_BUCKET))
     previous, generation = load_snapshot(uri)
+    write_remote_snapshot = (
+        resolved_upload_snapshot
+        and not resolved_dry_run
+        and not resolved_skip_snapshot_upload
+    )
+    if write_remote_snapshot:
+        require_mutation_allowed(uri, operation="schema snapshot update")
     payload = {
         "asset_slug": asset_slug,
         "source_path": str(dataset_path),
@@ -565,10 +593,17 @@ def check_schema(
                     "old_fields_text": truncate_label_text(format_field_list(old_fields)),
                     "new_fields_text": truncate_label_text(format_field_list(fields)),
                 },
-                dry_run=dry_run,
+                dry_run=not write_remote_snapshot,
             )
-    if not skip_snapshot_upload and not dry_run:
+    if write_remote_snapshot:
         write_snapshot(uri, payload, generation=generation)
+    elif not resolved_dry_run:
+        print(
+            "schema snapshot upload skipped; pass --upload-snapshot from an approved "
+            f"{ALLOW_CANONICAL_MUTATION_ENV}=1 runtime to write "
+            f"{uri}",
+            file=sys.stderr,
+        )
 
 
 @app.command("check-schema-compatibility")

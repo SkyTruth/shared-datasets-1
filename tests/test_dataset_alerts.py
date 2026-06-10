@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -307,6 +308,35 @@ class DatasetAlertsTests(unittest.TestCase):
                 ),
                 mock.patch.object(dataset_alerts, "write_snapshot") as write_snapshot,
                 mock.patch.object(dataset_alerts, "emit_cloud_logging_warning", side_effect=failing_emit),
+                mock.patch.dict(os.environ, {dataset_alerts.ALLOW_CANONICAL_MUTATION_ENV: "1"}),
+            ):
+                dataset_alerts.check_schema(
+                    asset_slug="asset",
+                    dataset_path=path,
+                    snapshot_uri="gs://bucket/_catalog/schema-snapshots/asset.json",
+                    dry_run=False,
+                    upload_snapshot=True,
+                    skip_snapshot_upload=False,
+                )
+
+        write_snapshot.assert_called_once()
+
+    def test_check_schema_default_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "asset.csv"
+            path.write_text("id,name,added\n1,alpha,new\n")
+
+            stderr = io.StringIO()
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    dataset_alerts,
+                    "load_snapshot",
+                    return_value=({"fields": [{"name": "id", "type": "Integer"}]}, 12),
+                ),
+                mock.patch.object(dataset_alerts, "write_snapshot") as write_snapshot,
+                contextlib.redirect_stderr(stderr),
+                contextlib.redirect_stdout(stdout),
             ):
                 dataset_alerts.check_schema(
                     asset_slug="asset",
@@ -316,7 +346,9 @@ class DatasetAlertsTests(unittest.TestCase):
                     skip_snapshot_upload=False,
                 )
 
-        write_snapshot.assert_called_once()
+        write_snapshot.assert_not_called()
+        self.assertIn("schema snapshot upload skipped", stderr.getvalue())
+        self.assertIn('"alert_type": "dataset_schema_changed"', stdout.getvalue())
 
 
 if __name__ == "__main__":

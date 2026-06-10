@@ -384,8 +384,11 @@ uv run python scripts/dataset_alerts.py check-schema-compatibility \
 
 Schema validation reports added, removed, renamed, reordered, and type-changed
 fields so reviewers can confirm the new release schema is intentional. After a
-successful reviewed publish, `check-schema` can still emit structured Cloud
-Logging warnings and update the snapshot for monitoring.
+successful reviewed publish, the approved publisher workflow runs
+`check-schema --upload-snapshot` to emit structured Cloud Logging warnings and
+update the snapshot for monitoring. Local `check-schema` runs are read-only by
+default and skip snapshot upload unless the explicit flag is used from a runtime
+with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
 
 Production Terraform mutations must land through reviewed PRs and protected
 GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is

@@ -895,6 +895,7 @@ def default_schema_updater(asset_slug: str, dataset_path: Path) -> None:
         dataset_path=dataset_path,
         snapshot_uri=None,
         dry_run=False,
+        upload_snapshot=True,
         skip_snapshot_upload=False,
     )
 

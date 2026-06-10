@@ -241,6 +241,11 @@ staged source by CRC32C. Leave still-absent destinations with an empty
 `destination_generation` so the publisher workflow uses the normal no-clobber
 create path.
 
+Schema snapshot advancement is a canonical mutation. Local `check-schema` runs
+are read-only by default and must not be used to advance
+`_catalog/schema-snapshots/`; only the approved publisher workflow should pass
+`--upload-snapshot` with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
+
 Multi-object assets, including Zarr, must write immutable data under
 `releases/YYYY-MM-DD/{asset-slug}.zarr/` and update only
 `latest/manifest.json`. Do not mirror thousands of mutable Zarr chunk objects
