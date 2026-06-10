@@ -624,6 +624,54 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["role"], "metadata")
         self.assertEqual(files["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"]["locale"], "es")
 
+    def test_rebuild_index_adds_post_run_localized_metadata_sidecars(self):
+        bucket = FakeBucket()
+        for name, generation, size in (
+            ("asset/releases/2026-05-01/asset.fgb", 8, 13),
+            ("asset/releases/2026-05-01/asset.metadata.ndjson.gz", 9, 21),
+            ("asset/releases/2026-05-01/asset.metadata.es.ndjson.gz", 10, 34),
+            ("asset/releases/2026-05-01/asset.metadata.fr.ndjson.gz", 11, 35),
+        ):
+            blob = bucket.blob(name)
+            blob.exists = True
+            blob.generation = generation
+            blob.size = size
+        run_record = bucket.blob("asset/runs/2026-05-01.json")
+        run_record.exists = True
+        run_record.text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": "test-asset",
+                "run_date": "2026-05-01",
+                "release_date": "2026-05-01",
+                "status": "success",
+                "release_path": "gs://test-bucket/asset/releases/2026-05-01/",
+                "release_paths": [
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.fgb",
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.ndjson.gz",
+                    "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz",
+                ],
+                "row_count": 10,
+            }
+        )
+
+        index = release_index.rebuild_index_from_bucket(
+            bucket,
+            {
+                "asset_slug": "test-asset",
+                "canonical_format": "fgb",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            },
+        )
+
+        files = {item["path"]: item for item in index["latest_release"]["files"]}
+        fr_path = "gs://test-bucket/asset/releases/2026-05-01/asset.metadata.fr.ndjson.gz"
+        self.assertEqual(files[fr_path]["format"], "metadata")
+        self.assertEqual(files[fr_path]["role"], "metadata")
+        self.assertEqual(files[fr_path]["locale"], "fr")
+        self.assertEqual(files[fr_path]["generation"], 11)
+        self.assertEqual(files[fr_path]["size"], 35)
+
     def test_rebuild_index_uses_artifact_path_hashes_for_localized_metadata(self):
         bucket = FakeBucket()
         for name, generation, size in (
