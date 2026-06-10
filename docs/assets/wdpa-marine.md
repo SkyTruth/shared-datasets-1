@@ -294,7 +294,7 @@ archive with only `feature_id` properties generated with Tippecanoe and
 converted to PMTiles v3.
 The repaired artifact SHA-256 values are FGB
 `c93c482f715e2e061cb8bdb745cfadc6462f4c8ae6db391df95c4ed39ba1bcb9`,
-PMTiles `48820907ecd8c00a591fdc1eb021a644d9a3ff4bb86a092d191aa8dc222173e9`,
+PMTiles `f94f28fa6fd3d93d2c0abc8bf39a026b253b0554279906e5f5cd6e163ed253ee`,
 metadata sidecar `7bae601c9d5643fcbcbc456e453c805c92b123e0d8dad51bf4a8bba8f0d5bbb9`,
 schema `a198467d5b866a960cbf417826980aebd9d8f104594d266e07db7b39f9a660ec`,
 manifest `d4c5bf52e7011340076b35ba6ed8f2029f7d2d35762f85b18bf3f4fb2a97780f`,
@@ -317,6 +317,9 @@ metadata.id `5ede90b63e4c29dec7eb906a51669d9ba7c86a1dffd039bfc637b799298a2885`,
 metadata.pt `fe062371384d625670cf91340328df5ba38e458efb33fc9116cd5ec0580fbf94`,
 metadata.pt_br `fe062371384d625670cf91340328df5ba38e458efb33fc9116cd5ec0580fbf94`,
 and metadata.sw `1259f97f12d07524fd227a7db0327f6cd768bca475b7a741f4448fdc965451e9`.
+The PMTiles companion was rebuilt at maxzoom 12 with Tippecanoe v2.79.0 and
+validated with `pmtiles verify`, `pmtiles show`, and decoded z0/z12 tile
+property checks.
 
 ## Known caveats
 
