@@ -149,6 +149,8 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "return latestVersion ? { ...asset, ...latestVersion } : asset",
                 "featureMetadataCache",
                 "availableMetadataLocales",
+                "metadataLocaleCandidates",
+                'const baseLocale = normalized.split("_", 1)[0]',
                 "metadataSidecarFileForReference",
                 'format: "metadata"',
                 'params.set("locale", normalizedLocale)',
