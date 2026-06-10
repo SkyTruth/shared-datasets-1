@@ -92,6 +92,15 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    Preserve the concierge-approved field list, and pass
    `--translator-target locale=target_code` when a field-safe locale such as
    `pt_br` must map to a deep-translator target such as `pt`.
+
+   For really large translation workloads, do not force the local
+   `deep-translator` helper through a huge request queue. Use Google
+   Translate's document workflow instead:
+   `https://translate.google.com/?op=docs`. Export the approved source rows to
+   `.xlsx` shards of roughly 60,000 rows and about 1 MB each, translate those
+   document shards, then import the translated values back into
+   `{asset-slug}.metadata-translations.csv` while preserving the original
+   `feature_id`, `field`, `locale`, and `source_value_hash` keys.
 4. Keep one row per `feature_id`, field, locale, and source-value hash. Duplicate
    translation keys fail validation.
 5. Generate every localized sidecar represented in the CSV:

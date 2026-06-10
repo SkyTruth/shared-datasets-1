@@ -28,6 +28,8 @@ class AgentTranslationSkillsTests(unittest.TestCase):
             "scripts/feature_metadata_localization.py",
             "scripts/feature_metadata_machine_translate.py",
             "deep-translator",
+            "https://translate.google.com/?op=docs",
+            "roughly 60,000 rows and about 1 MB each",
             "Do not hard-code WDPA",
             "Do not add frontend merge logic or a translation overlay fetch",
         ):
