@@ -23,13 +23,15 @@ notes: Combined local onshore and offshore shapefiles into one FGB plus PMTiles 
   sha256 d77f5e4bdb9d231a9058e70c03648092a613c5009889d5f57e0ae05969950296; pmtiles sha256 798ea67f06e20c7912b441cf0a6b3eb5ceee9063d9f164c9e57daacd737741a7;
   corrective release 2026-05-06 repaired geometry with GDAL -makevalid while preserving duplicate source PRIMKEY rows; fgb
   sha256 b2a19482a325dc7eae3f91f1ededcf586531dcee04272239c4ca210d23fa358b; pmtiles sha256 e3fb9bf85f023e316438ba1ef3a8ca78182b541d37b23eeede69346272e1af22;
-  corrective release 2026-06-05 adds generated feature_id values, geometry_hash values, properties_hash values, canonical
-  metadata/schema/manifest artifacts, a machine-translated Spanish NAME metadata sidecar, and metadata-lookup PMTiles with
-  only feature_id; fgb sha256 e2ac998e9b82a017667d24cfc8096ac29e658d07605863fe764106e214b016bd; pmtiles sha256 b25cd901930fedb1fe8a5ac2ac517ddf80f89739eeccad504db57f4568f54ffe;
-  metadata sha256 703d29b548a1941d6a63dde4754be3140909f430df12295ed2852af424b9a42d; metadata.es sha256 34bd03d5d67a4670835219fa1a9b1d31c635e84da2b0ef34d90db7f06e1736e5;
-  metadata-translations sha256 762d0eb6d2063690f7091ab8bb28a5283965e2ee4240a1b20b1260ec90615265; schema sha256 18b8182a5ffae1758647cb874933a7c0788f0e6cb7c7e4b0ebb09c24679b2739;
-  manifest sha256 0e4b58d68693e17e612ddabb352e127aa9b755693dd61e553da65e06d56189b6; PMTiles maxzoom 9 preserved from the existing
-  published PETRODATA PMTiles because this remediation changes metadata lookup fields rather than source scale
+  the 2026-06-05 metadata-contract release (PR 48) merged but its promotion failed the schema preflight and published nothing,
+  so it was superseded without backfill; release 2026-06-10 introduces the feature identity v2 metadata contract with generated
+  decimal feature_id values, geometry_hash values, properties_hash values, canonical metadata/schema/manifest artifacts, a
+  machine-translated Spanish NAME metadata sidecar, and metadata-lookup PMTiles with only feature_id; fgb sha256 6e248d38aa190c9098b4328d6346f0486043dd9f4e6cf71f973a756921a18daf;
+  pmtiles sha256 453e5b8b589f64961f94437795c9c35011018467dd80a04325c418c2ea593b91; metadata sha256 89a6f09bb09439a53b429e8fe31e7226bc91ce208d48402807c9890c84462c0e;
+  metadata.es sha256 b5ed4daa56d1b9be879e123d1c31dc7fc6380ac907853f38e31317c07cdd3d74; metadata-translations sha256 a7867a02aea52cea05b757dc4dfa74353ba0cd26b0f2585e2816d649fe9ba674;
+  schema sha256 8405208e3be1c45b8a220976c8e81d799b9b15c6d46a2def965eeac5f1015414; manifest sha256 ba7c51a2a8cf01c8bf75eff69a15d6625be8a0953e17a257a5f779f7e38d7da5;
+  PMTiles maxzoom 9 resolved by auto maxzoom from FGB sampled geometry detail, matching the previously published PETRODATA
+  maxzoom
 geometry_type: MultiPolygon
 row_count: 1273
 data_profile:
@@ -52,8 +54,13 @@ data_profile:
     duplicate_value_count: 0
     duplicate_row_count: 0
     status: unique
-    notes: Generated per-feature ID approved for the 2026-06-05 metadata-contract release after source field IDs were ruled
-      out.
+    notes: Generated decimal per-feature ID approved for the 2026-06-10 feature identity v2 release after source field IDs
+      were ruled out.
+search_fields:
+- NAME
+- COUNTRY
+- source_layer
+- RESINFO
 feature_identity:
   strategy: generated_sequence_content_hash
   source_fields: []
@@ -183,11 +190,11 @@ This is a format conversion from `Petrodata_Onshore_V1.2.shp` and `Petrodata_off
 
 The local v1.2 files contain 1,273 source features: 891 onshore and 382 offshore. The canonical 2026-05-06 release keeps all 1,273 source features, repairs one invalid geometry, and preserves the three duplicate `PRIMKEY` pairs present in the source. The PRIO codebook describes PETRODATA's variables and notes that polygons may represent one or several fields, with polygon size determined by source point distribution rather than the number of fields inside.
 
-The reviewed 2026-06-05 metadata-contract release keeps all 1,273 features and adds generated per-feature `feature_id` values because neither `PRIMKEY` nor `source_layer + PRIMKEY` is unique. Its published `feature_id` values are generated decimal sequence handles; no `feature_id` or `feature_id` is published. `properties_hash` is computed from normalized geometry plus projected metadata properties. The canonical FGB and metadata sidecar preserve full source attributes.
+The reviewed 2026-06-10 feature identity v2 release keeps all 1,273 features and adds generated per-feature `feature_id` values because neither `PRIMKEY` nor `source_layer + PRIMKEY` is unique. Its published `feature_id` values are generated monotonic decimal sequence handles (`1` through `1273`); no legacy `ext_id` or `feature_hash` columns are published. `geometry_hash` is a SHA-256 hash of the canonical feature geometry and `properties_hash` is a SHA-256 hash of the projected non-geometry properties; the pair is the generated-ID assignment key and is unique across all 1,273 features. The canonical FGB and metadata sidecar preserve full source attributes.
 
-The PMTiles artifact is generated from the same combined polygons, with zooms 0 through 9. The 2026-06-05 PMTiles archive preserves maxzoom 9 from the existing published PETRODATA tiles because this corrective release changes metadata lookup fields rather than source scale. PMTiles feature properties are intentionally limited to `feature_id`.
+The PMTiles artifact is generated from the same combined polygons, with zooms 0 through 9. Auto maxzoom selection resolved maxzoom 9 from sampled FGB geometry detail, matching the previously published PETRODATA tiles. PMTiles feature properties are intentionally limited to `feature_id`.
 
-The Spanish metadata sidecar is materialized from `petrodata.metadata-translations.csv` for locale `es` and field `NAME`. Translation rows are machine-translated and carry `review_state = machine_translated`; they have not been human reviewed.
+The Spanish metadata sidecar is materialized from `petrodata.metadata-translations.csv` for locale `es` and field `NAME`. Translation rows were machine-translated for the staged 2026-06-05 release and re-keyed to the 2026-06-10 `feature_id` values by source-value hash; they carry `review_state = machine_translated` and have not been human reviewed.
 
 ## Properties / columns
 
@@ -226,13 +233,25 @@ The PMTiles artifact was rebuilt on 2026-05-04 from the canonical FGB using auto
 
 The corrective 2026-05-06 release repairs one invalid Bangladesh polygon with GDAL `-makevalid` while preserving all source rows, including the duplicate `AL001PET`, `TU006PET`, and `TU009PET` pairs. The rebuilt FGB has 1,273 features, 1,270 distinct `PRIMKEY` values, and zero invalid geometries. The rebuilt FGB SHA-256 is `b2a19482a325dc7eae3f91f1ededcf586531dcee04272239c4ca210d23fa358b`; the rebuilt PMTiles SHA-256 is `e3fb9bf85f023e316438ba1ef3a8ca78182b541d37b23eeede69346272e1af22`.
 
-The corrective 2026-06-05 release adds the release-oriented metadata contract.
-It starts from `latest/petrodata.fgb` generation `1778081494369379`, generates
-unique `feature_id` values after confirming `PRIMKEY` and
-`source_layer + PRIMKEY` are non-unique, and publishes `geometry_hash` and
-`properties_hash` values plus canonical metadata, Spanish metadata, schema, and
-manifest artifacts. The PMTiles archive keeps maxzoom 9 and decodes to exactly
-`feature_id` properties. Older releases remain readable
+A 2026-06-05 metadata-contract release was prepared and merged through PR 48,
+but its `Approved dataset mutation` promotion failed the schema-compatibility
+preflight (five integer fields were narrowed from `Integer64` to `Integer`
+without a waiver) and published nothing. That staged release also implemented
+the superseded feature identity v1 contract (`gen:`-prefixed `feature_id`
+handles, `ext_id`, `feature_hash`) and was not retried.
+
+The 2026-06-10 release introduces the release feature identity v2 metadata
+contract. It is built from `releases/2026-05-06/petrodata.fgb` generation
+`1778081462517258` (byte-identical to `latest/petrodata.fgb` at build time),
+preserves all source field types including the five `Integer64` widths,
+generates unique decimal `feature_id` values `1` through `1273` after
+confirming `PRIMKEY` and `source_layer + PRIMKEY` are non-unique, and
+publishes `geometry_hash` and `properties_hash` values plus canonical
+metadata, Spanish metadata, translation-source, schema, and manifest
+artifacts at sidecar/schema/manifest `schema_version` 2. No prior canonical
+`feature_id` contract was ever published, so no identity mapping carryover
+applies. The PMTiles archive resolves to maxzoom 9 via auto selection and
+decodes to exactly `feature_id` properties. Older releases remain readable
 pre-metadata-contract history and are not backfilled.
 
 ## Known caveats
