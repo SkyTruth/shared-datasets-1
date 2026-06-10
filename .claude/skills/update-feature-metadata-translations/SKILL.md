@@ -84,6 +84,7 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
   --asset-slug example-asset \
   --release YYYY-MM-DD \
   --report "$WORK_ROOT/vector-assets/example-asset/reports/machine-translation-summary.json" \
+  --workers 8 \
   --progress
 ```
 

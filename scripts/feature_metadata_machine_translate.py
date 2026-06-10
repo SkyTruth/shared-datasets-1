@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import json
 import re
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +38,7 @@ DEFAULT_TARGET_OVERRIDES = {
     "zh_hans": "zh-CN",
     "zh_hant": "zh-TW",
 }
+DEFAULT_TRANSLATION_WORKERS = 8
 NUMERIC_STRING_RE = re.compile(r"^[+-]?(?:\d+(?:[.,]\d+)*|\d*\.\d+)$")
 
 
@@ -281,26 +284,43 @@ def translate_unique_values(
     on_error: str,
     progress: bool,
     progress_interval_seconds: float,
+    workers: int = DEFAULT_TRANSLATION_WORKERS,
 ) -> tuple[dict[tuple[str, str], str], dict[tuple[str, str], str]]:
+    if workers < 1:
+        raise FeatureMetadataMachineTranslateError("--workers must be at least 1")
+    if on_error not in {"fail", "source", "skip"}:
+        raise FeatureMetadataMachineTranslateError("--on-error must be fail, source, or skip")
+
     unique_pairs = sorted({(task.target, task.source_text) for task in tasks})
-    translators: dict[str, Translator] = {}
     translations: dict[tuple[str, str], str] = {}
     failures: dict[tuple[str, str], str] = {}
     total = len(unique_pairs)
     started_at = time.monotonic()
     last_progress_at = started_at
+    completed = 0
+    progress_lock = threading.Lock()
+    translator_state = threading.local()
     if progress:
         emit_progress(current=0, total=total, started_at=started_at, label="translation-progress")
-    for index, (target, source_text) in enumerate(unique_pairs, start=1):
+
+    def translator_for_target(target: str) -> Translator:
+        translators = getattr(translator_state, "translators", None)
+        if translators is None:
+            translators = {}
+            translator_state.translators = translators
+        translator = translators.get(target)
+        if translator is None:
+            translator = translator_factory(target)
+            translators[target] = translator
+        return translator
+
+    def translate_pair(pair: tuple[str, str]) -> tuple[tuple[str, str], str | None, str | None]:
+        target, source_text = pair
         try:
-            translator = translators.get(target)
-            if translator is None:
-                translator = translator_factory(target)
-                translators[target] = translator
+            translator = translator_for_target(target)
             translated = str(translator.translate(source_text) or "")
             if not translated.strip():
                 raise FeatureMetadataMachineTranslateError("translator returned an empty value")
-            translations[(target, source_text)] = translated
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
         except Exception as exc:  # noqa: BLE001 - controlled by --on-error.
@@ -308,21 +328,46 @@ def translate_unique_values(
                 raise FeatureMetadataMachineTranslateError(
                     f"translation failed for target {target!r}, value {source_text!r}: {exc}"
                 ) from exc
-            failures[(target, source_text)] = f"{type(exc).__name__}: {exc}"
             if on_error == "source":
-                translations[(target, source_text)] = source_text
-            elif on_error != "skip":
-                raise FeatureMetadataMachineTranslateError("--on-error must be fail, source, or skip")
-        if progress:
+                return pair, source_text, f"{type(exc).__name__}: {exc}"
+            return pair, None, f"{type(exc).__name__}: {exc}"
+        return pair, translated, None
+
+    def record_result(pair: tuple[str, str], translated: str | None, failure: str | None) -> None:
+        nonlocal completed, last_progress_at
+        with progress_lock:
+            if failure is not None:
+                failures[pair] = failure
+            if translated is not None:
+                translations[pair] = translated
+            completed += 1
             now = time.monotonic()
-            if index == total or now - last_progress_at >= progress_interval_seconds:
+            if progress and (completed == total or now - last_progress_at >= progress_interval_seconds):
                 emit_progress(
-                    current=index,
+                    current=completed,
                     total=total,
                     started_at=started_at,
                     label="translation-progress",
                 )
                 last_progress_at = now
+
+    if workers == 1:
+        for pair in unique_pairs:
+            record_result(*translate_pair(pair))
+        return translations, failures
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    futures = [executor.submit(translate_pair, pair) for pair in unique_pairs]
+    try:
+        for future in concurrent.futures.as_completed(futures):
+            record_result(*future.result())
+    except Exception:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
     return translations, failures
 
 
@@ -357,7 +402,10 @@ def generate_translation_source(
     expected_release: str | None = None,
     progress: bool = False,
     progress_interval_seconds: float = 30.0,
+    workers: int = DEFAULT_TRANSLATION_WORKERS,
 ) -> dict[str, Any]:
+    if workers < 1:
+        raise FeatureMetadataMachineTranslateError("--workers must be at least 1")
     normalized_locales = feature_metadata_localization.parse_locale_arguments(locales)
     if not normalized_locales:
         raise FeatureMetadataMachineTranslateError("at least one --locale is required")
@@ -406,6 +454,7 @@ def generate_translation_source(
         on_error=on_error,
         progress=progress,
         progress_interval_seconds=progress_interval_seconds,
+        workers=workers,
     )
 
     generated_rows: list[dict[str, str]] = []
@@ -455,6 +504,7 @@ def generate_translation_source(
         "locales": normalized_locales,
         "fields": normalized_fields,
         "target_by_locale": target_by_locale,
+        "workers": workers,
         "feature_count": validation.feature_count,
         "existing_row_count": len(existing_rows),
         "generated_row_count": len(generated_rows),
@@ -485,6 +535,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override translator target code for a locale, for example pt_br=pt. May be repeated.",
     )
     parser.add_argument("--sleep-seconds", type=float, default=0.05)
+    parser.add_argument("--workers", type=int, default=DEFAULT_TRANSLATION_WORKERS)
     parser.add_argument("--review-state", default="machine_translated")
     parser.add_argument("--on-error", choices=("fail", "source", "skip"), default="source")
     parser.add_argument("--no-preserve-existing", action="store_true")
@@ -518,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             provider=args.provider,
             target_overrides=parse_mapping_arguments(args.translator_target),
             sleep_seconds=args.sleep_seconds,
+            workers=args.workers,
             review_state=args.review_state,
             on_error=args.on_error,
             stringify_non_string=args.stringify_non_string,

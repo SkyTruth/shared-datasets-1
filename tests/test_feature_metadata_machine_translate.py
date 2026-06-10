@@ -95,6 +95,7 @@ class FeatureMetadataMachineTranslateTests(unittest.TestCase):
 
         self.assertEqual(report["generated_row_count"], 8)
         self.assertEqual(report["translated_unique_value_count"], 6)
+        self.assertEqual(report["workers"], feature_metadata_machine_translate.DEFAULT_TRANSLATION_WORKERS)
         self.assertEqual(sorted(calls), sorted([("es", "Alpha"), ("es", "Park"), ("es", "Reserve"), ("fr", "Alpha"), ("fr", "Park"), ("fr", "Reserve")]))
         self.assertEqual(rows[0].keys(), set(feature_metadata_machine_translate.TRANSLATION_COLUMNS))
         self.assertIn(
@@ -195,6 +196,54 @@ class FeatureMetadataMachineTranslateTests(unittest.TestCase):
         self.assertEqual(rows[0]["locale"], "pt_br")
         self.assertEqual(rows[0]["value"], "pt:Alpha")
 
+    def test_workers_translate_unique_values_once_per_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            canonical = root / "example-asset.metadata.ndjson.gz"
+            translations = root / "example-asset.metadata-translations.csv"
+            release_feature_model.write_metadata_sidecar(
+                [
+                    sidecar_record("1", VALID_HASH_A, {"name": "Alpha"}),
+                    sidecar_record("2", VALID_HASH_B, {"name": "Alpha"}),
+                    sidecar_record("3", "sha256:" + "c" * 64, {"name": "Beta"}),
+                ],
+                canonical,
+            )
+            calls: list[tuple[str, str]] = []
+
+            report = feature_metadata_machine_translate.generate_translation_source(
+                canonical_sidecar=canonical,
+                translation_source=translations,
+                locales=["es", "fr"],
+                fields=["name"],
+                translator_factory=fake_translator_factory(calls),
+                sleep_seconds=0,
+                workers=2,
+            )
+            rows = read_csv_rows(translations)
+
+        self.assertEqual(report["workers"], 2)
+        self.assertEqual(report["generated_row_count"], 6)
+        self.assertEqual(report["translated_unique_value_count"], 4)
+        self.assertEqual(sorted(calls), sorted([("es", "Alpha"), ("es", "Beta"), ("fr", "Alpha"), ("fr", "Beta")]))
+        self.assertEqual([row["feature_id"] for row in rows], ["1", "1", "2", "2", "3", "3"])
+        self.assertEqual(rows[0]["value"], "es:Alpha")
+        self.assertEqual(rows[1]["value"], "fr:Alpha")
+
+    def test_rejects_invalid_worker_count(self):
+        with self.assertRaisesRegex(
+            feature_metadata_machine_translate.FeatureMetadataMachineTranslateError,
+            "--workers must be at least 1",
+        ):
+            feature_metadata_machine_translate.generate_translation_source(
+                canonical_sidecar=Path("unused.metadata.ndjson.gz"),
+                translation_source=Path("unused.metadata-translations.csv"),
+                locales=["es"],
+                fields=["name"],
+                translator_factory=fake_translator_factory([]),
+                workers=0,
+            )
+
     def test_progress_emits_compact_counters(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -220,6 +269,7 @@ class FeatureMetadataMachineTranslateTests(unittest.TestCase):
                     sleep_seconds=0,
                     progress=True,
                     progress_interval_seconds=0,
+                    workers=1,
                 )
 
         progress_lines = stderr.getvalue().strip().splitlines()
