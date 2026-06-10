@@ -21,12 +21,14 @@ license: See Protected Planet WDPA terms
 citation: 'UNEP-WCMC and IUCN (2026). Protected Planet: The World Database on Protected Areas (WDPA) and World Database on
   Other Effective Area-based Conservation Measures (WD-OECM) [Online], June 2026, Cambridge, UK: UNEP-WCMC and IUCN. Available
   at: www.protectedplanet.net.'
-notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-05 reviewed metadata-contract release
-  adds source-field feature_id values from SITE_PID, geometry_hash values, properties_hash values, canonical metadata/schema/manifest
-  artifacts, and an initial Spanish NAME_ENG metadata sidecar generated from the metadata-translations CSV. PMTiles are lightweight
-  metadata-lookup tiles with feature_id only. The release preserves 2,661 upstream invalid geometries from the current FGB;
-  no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in the bucket
-  release index and per-run records.
+notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2026-06-05 metadata-contract release used identity
+  v1 (composite src:SITE_PID feature_id and ext_id values, feature_hash) and added canonical metadata/schema/manifest artifacts
+  plus an initial Spanish NAME_ENG metadata sidecar. The 2026-06-09 release migrates the asset to the release feature identity
+  v2 contract; feature_id values are generated decimal sequence handles keyed by SITE_PID, geometry_hash and properties_hash
+  replace feature_hash, and the v1 id, ext_id, and feature_hash columns are removed. PMTiles are lightweight metadata-lookup
+  tiles with feature_id only, built at maxzoom 12. The release preserves 2,661 upstream invalid geometries from the Jun2026
+  source FGB; no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in
+  the bucket release index and per-run records.
 row_count: 304572
 data_profile:
   field_count: 33
@@ -42,10 +44,14 @@ data_profile:
     duplicate_value_count: 0
     duplicate_row_count: 0
     status: unique
-    notes: Unique
+    notes: Unique and non-blank, but 2,142 values are not URL-safe (underscore parcel suffixes such as 305092_1), so SITE_PID
+      is the identity assignment key rather than the published feature_id
 feature_identity:
-  strategy: source_field
+  strategy: generated_sequence_source_fields
   source_fields:
+  - SITE_PID
+  generated_id_type: monotonic_integer_string
+  assignment_key:
   - SITE_PID
 feature_metadata:
   storage: metadata_sidecar_v1
@@ -173,6 +179,14 @@ The simplified monthly job does not rename, add, or remove source fields. Refer
 to the Protected Planet WDPA user manual and source metadata for authoritative
 field definitions.
 
+Identity v2 migration (2026-06-09): `feature_id` changed from the v1 composite
+`src:SITE_PID:{pid}` form to generated decimal sequence handles assigned in
+source row order and keyed by `SITE_PID`. The v1 `id`, `ext_id`, and
+`feature_hash` columns were removed; `geometry_hash` and `properties_hash`
+replace `feature_hash`. Consumers that stored v1 feature_id or ext_id handles
+should re-resolve features through `SITE_PID` in the metadata sidecar. Source
+fields, row count, and geometry are unchanged from the Jun2026 source release.
+
 ## Properties / columns
 
 Definitions are inherited from the Protected Planet WDPA/WDOECM source and need
@@ -215,7 +229,7 @@ releases add `feature_id`, `geometry_hash`, and `properties_hash` fields.
 | `OECM_ASMT` | string | OECM assessment status. |
 | `GIS_M_AREA` | real | GIS-calculated marine area in square kilometers; null for point rows where not supplied. |
 | `GIS_AREA` | real | GIS-calculated total area in square kilometers; null for point rows where not supplied. |
-| `feature_id` | string | Public URL-safe lookup handle. Releases use URL-safe `SITE_PID` values only when every value is unique, nonblank, and alphanumeric; otherwise they use generated decimal sequence handles. |
+| `feature_id` | string | Public URL-safe lookup handle. Generated decimal sequence handle assigned from the `SITE_PID` identity key; `SITE_PID` itself is unique but not URL-safe (2,142 underscore parcel suffixes), so it is not published as the handle. |
 | `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
 | `properties_hash` | string | SHA-256 content hash computed from projected non-geometry metadata properties. |
 
@@ -225,12 +239,26 @@ Updated by `python -m ingestion.wdpa_monthly.run`, deployed as the
 `wdpa-monthly` Cloud Run Job and scheduled for `0 9 1-10 * *` UTC.
 
 A 2026-06-05 metadata-contract release was staged from the unchanged June 2026
-latest FGB so consumers can use feature metadata sidecars and Firestore index
-loads. The release adds SITE_PID-backed `feature_id` values, `properties_hash`
-checksums, a canonical metadata sidecar, release schema, manifest,
-metadata-translations CSV, and generated Spanish localized sidecar for
-`NAME_ENG`. The PMTiles release is a lightweight lookup archive with only
-`feature_id` properties.
+latest FGB so consumers can use feature metadata sidecars. That release used
+identity v1: composite `src:SITE_PID:{pid}` `feature_id` and `ext_id` values,
+`feature_hash` checksums, a canonical metadata sidecar, release schema,
+manifest, metadata-translations CSV, and a generated Spanish localized sidecar
+for `NAME_ENG`.
+
+The 2026-06-09 release migrates the asset to the release feature identity v2
+contract, rebuilt from the unchanged Jun2026 source data in
+`releases/2026-06-01/wdpa-terrestrial.fgb` (generation `1780393820549219`)
+without refetching the source. `feature_id` values are generated decimal
+sequence handles keyed by `SITE_PID` (`SITE_PID` is unique but 2,142 values
+carry non-URL-safe underscore parcel suffixes). The v1 `id`, `ext_id`, and
+`feature_hash` columns were removed, and `geometry_hash` plus `properties_hash`
+were added to the canonical FGB and metadata sidecar. PMTiles were rebuilt as
+metadata-lookup tiles carrying only `feature_id` at maxzoom 12, preserving the
+`wdpa_terrestrial` tile and FGB layer names; the monthly job pins terrestrial
+PMTiles to maxzoom 12 while marine stays at maxzoom 8. The metadata-translations
+CSV and Spanish sidecar were regenerated against the v2 feature_ids; translation
+rows preserve the source `NAME_ENG` value with `review_state = needs_review`,
+and no machine or human translation has been applied yet.
 
 ## Known caveats
 
@@ -238,7 +266,7 @@ The canonical FGB intentionally keeps mixed point and polygon geometries. Some
 desktop GIS and map clients handle mixed-geometry layers less gracefully than
 single-geometry layers.
 
-The 2026-06-05 metadata-contract release preserves 2,661 invalid geometries
+The 2026-06-05 and 2026-06-09 releases preserve 2,661 invalid geometries
 already present in the June 2026 source FGB. Geometry repair was intentionally
-out of scope for this contract repair because it would change canonical feature
-geometry, geometry hashes, and properties hashes.
+out of scope for these contract releases because it would change canonical
+feature geometry, geometry hashes, and properties hashes.

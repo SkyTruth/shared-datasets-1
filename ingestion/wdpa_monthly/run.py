@@ -75,6 +75,7 @@ class AssetSpec:
     title: str
     tile_layer: str
     split_group: str
+    pmtiles_maxzoom: int = PMTILES_MAXZOOM
 
     @property
     def root(self) -> str:
@@ -148,6 +149,7 @@ ASSETS: tuple[AssetSpec, ...] = (
         title="WDPA Terrestrial Protected and Conserved Areas",
         tile_layer="wdpa_terrestrial",
         split_group="terrestrial",
+        pmtiles_maxzoom=12,
     ),
 )
 
@@ -646,7 +648,7 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
             "-Z",
             str(PMTILES_MINZOOM),
             "-z",
-            str(PMTILES_MAXZOOM),
+            str(asset.pmtiles_maxzoom),
             "--force",
             "--drop-densest-as-needed",
             "--extend-zooms-if-still-dropping",
