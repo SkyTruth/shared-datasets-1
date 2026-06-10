@@ -523,11 +523,12 @@ ice_date: String (0.0)
             ["gdal_polygonize.py", "--help"],
             ["ogr2ogr", "--version"],
             ["ogrinfo", "--version"],
+            ["tippecanoe", "--version"],
             ["pmtiles", "version"],
         )
     )
     and shutil.which("tippecanoe-decode"),
-    "requires runnable GDAL, tippecanoe-decode, and PMTiles binaries",
+    "requires runnable GDAL, Tippecanoe, tippecanoe-decode, and PMTiles binaries",
 )
 class SeaIceDailyIntegrationTests(unittest.TestCase):
     def test_synthetic_raster_builds_fgb_and_pmtiles(self):

@@ -92,11 +92,10 @@ requests return `409 index_not_ready` — so active consumer workflows must use
 the sidecar.
 
 `feature_id` values are URL-safe strings matching `^[A-Za-z0-9]{1,64}$`, either
-copied from a verified-unique source field (for example `marine-regions-eez`
-copies `MRGID`) or assigned as monotonic decimal sequence strings preserved
-across releases. For user-visible URLs, pass that public `feature_id` handle
-through the app backend and resolve metadata with the same release-scoped
-sidecar contract.
+copied from a verified-unique source field or assigned as monotonic decimal
+sequence strings preserved across releases. For user-visible URLs, pass that
+public `feature_id` handle through the app backend and resolve metadata with
+the same release-scoped sidecar contract.
 
 ## Catalog Helpers
 
@@ -238,13 +237,13 @@ Each sidecar is gzip NDJSON with one JSON record per feature:
 ```json
 {
   "schema_version": 2,
-  "asset_slug": "marine-regions-eez",
+  "asset_slug": "example-boundary-layer",
   "release": "2026-06-09",
-  "feature_id": "63203",
+  "feature_id": "12345",
   "geometry_hash": "sha256:...",
   "properties_hash": "sha256:...",
-  "properties": { "MRGID": 63203, "GEONAME": "High Seas" },
-  "provenance": { "source": "Marine Regions World EEZ v12 and World High Seas v2" }
+  "properties": { "SOURCE_ID": 12345, "NAME": "Example feature" },
+  "provenance": { "source": "Example source release" }
 }
 ```
 
