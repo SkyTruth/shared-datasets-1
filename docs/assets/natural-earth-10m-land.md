@@ -20,14 +20,17 @@ source: Natural Earth 1:10,000,000 physical land polygons v5.1.1
 license: Public domain per Natural Earth Terms of Use
 citation: Made with Natural Earth. Free vector and raster map data at naturalearthdata.com; land polygons version 5.1.1.
 notes: Initial upload from local Natural Earth ne_10m_land shapefile version 5.1.1; release 2026-04-30; source features 11;
-  fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a; pmtiles sha256 52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be;
-  PMTiles rebuilt 2026-05-04 with zooms 0-8, no pre-tiling simplification, no line simplification, and no tiny-polygon reduction
-  at maximum zoom for higher-zoom display fidelity; future rebuilds must use the repo-standard GeoJSONSeq to Tippecanoe MBTiles
-  to PMTiles conversion path; canonical FGB preserves source geometry and fields; metadata-contract release 2026-06-05 was
-  built from the unchanged 2026-04-30 release FGB and adds generated feature_id values, geometry_hash values, properties_hash
-  values, canonical metadata/schema/manifest artifacts, and metadata-lookup PMTiles with only feature_id; fgb sha256 fba2554abe0e0d55eb79095538782b6691200950400ad258f418b84286461032;
-  pmtiles sha256 45bc4178050c3704efe75381477ab2b829c389488e2573685b72c087d6c5e28b; metadata sha256 2111661d1b0b43247e8d47771a79b3d49541f1f1c4d40f269fe14ef31dd4f030;
-  schema sha256 05c1c4ab87d2fef7195fe140ece38371acb41340dee2779360b221dadb816a48; manifest sha256 1c0bb60bba5c5432274f0c68d54ed5bb374e95518488b5559267444c636f6ce4
+  fgb sha256 5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a. Release 2026-06-05 was a v1 metadata-contract
+  release built from the unchanged 2026-04-30 release FGB with v1 identity columns ext_id and feature_hash and 'gen:<24 hex
+  chars>' feature_id handles; it remains readable legacy history. The 2026-06-10 corrective schema-contract revision rebuilds
+  the release from the same unchanged 2026-04-30 source geometry under release feature identity v2 with generated monotonic
+  decimal feature_id values assigned from geometry_hash+properties_hash, geometry_hash and properties_hash columns replacing
+  ext_id and feature_hash, schema_version 2 metadata/schema/manifest artifacts, and metadata-lookup PMTiles rebuilt at maxzoom
+  12 (maintainer-requested display fidelity upgrade from maxzoom 8) with only feature_id, via the repo-standard GeoJSONSeq
+  to Tippecanoe MBTiles to PMTiles conversion path. Hashes for the 2026-06-10 candidates are fgb eadff2f0cb11f7daff481bd57fb541b8cdc2770b52369bc142ff28bd5582e036;
+  pmtiles daaa24c56134df90de6ecf8d67149d7a3628e0c9ebba69faa813800b102f79cd; metadata 91479e53f4ad0acef7844ae7e2b819765bfc54b7a0ebb691d79076b1fcf3a62d;
+  schema 2818348d1f84425f328c7c056d989b8234cc45cb531d01fbccf3b619e3b0999e; manifest 70e69ffd7259b8b5c1277c23bb75fc9d08094f6fbe9d54cf83096d01c44e4e7c.
+  Release history, source generations, row counts, and hashes are recorded in the bucket release index and per-run records.
 row_count: 11
 data_profile:
   field_count: 6
@@ -120,8 +123,9 @@ continental polygons split into smaller contiguous pieces to improve processing
 performance in some software.
 
 In Natural Earth naming, `10m` means 1:10,000,000 map scale; it is not
-10-meter ground resolution. The PMTiles maxzoom 8 display choice follows that
-source scale and is expected to look coarse at street or city zooms.
+10-meter ground resolution. The PMTiles maxzoom 12 display choice is a
+maintainer-requested fidelity upgrade over the source-scale default of 8;
+the underlying 1:10m geometry is still coarse at street or city zooms.
 
 The canonical file preserves the source attributes and promotes polygon geometry
 to multipolygon for consistent analytical handling. The PMTiles artifact is for
@@ -162,28 +166,32 @@ features with extent `(-180, -90) - (180, 83.634101)`. The published FlatGeobuf
 promotes geometries to multipolygon and keeps the source fields plus release
 metadata fields.
 
-The reviewed 2026-06-05 metadata-contract release was built from the unchanged
-2026-04-30 release FGB. It adds generated per-feature `feature_id` values because
-the source has no source feature ID. It also publishes `geometry_hash` and
-`properties_hash` values for generated-ID assignment and duplicate detection.
-`properties_hash` is computed from normalized geometry plus projected metadata
-properties. Natural Earth 10m Land has no schema-projectable display-name field,
-so this release does not include localized metadata.
+The reviewed 2026-06-10 revision migrates the asset to release feature identity
+v2, built from the unchanged 2026-04-30 release FGB. It assigns generated
+monotonic decimal `feature_id` values (`1`..`11`) because the source has no
+source feature ID; identity keys come from the pair of `geometry_hash` and
+`properties_hash` content hashes, which are published as columns. The earlier
+2026-06-05 release used the v1 identity contract (`ext_id` and `feature_hash`
+columns with `gen:<24 hex chars>` feature IDs) and remains readable legacy
+history; its IDs are not carried forward because they do not satisfy the v2
+URL-safe `feature_id` rules. Natural Earth 10m Land has no schema-projectable
+display-name field, so releases do not include localized metadata. One source
+feature carries no attributes at all and publishes an empty properties record.
 
-The PMTiles artifact was rebuilt on 2026-05-04 with zooms 0 through 8, no
-pre-tiling simplification, no line simplification, and no tiny-polygon reduction
-at maximum zoom. Future rebuilds must export WGS84 GeoJSONSeq from the FGB,
-build Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical
+The PMTiles artifact was rebuilt for the 2026-06-10 revision at zooms 0 through
+12 using the repo-standard path: export WGS84 GeoJSONSeq from the FGB, build
+Tippecanoe MBTiles, and convert with `pmtiles convert`. The canonical
 FlatGeobuf remains the analytical source and preserves the original source
-geometry. The maxzoom comes from the stable `source_scale_denominator: 10000000`
-hint, not from a meter-resolution interpretation of the Natural Earth `10m`
-label. PMTiles feature properties are intentionally limited to `feature_id`.
+geometry. The maxzoom 12 setting is a recorded maintainer override for display
+fidelity; the stable `source_scale_denominator: 10000000` hint would otherwise
+select maxzoom 8. PMTiles feature properties are intentionally limited to
+`feature_id`.
 
 ## Properties / columns
 
 | Name | Type | Description |
 |---|---|---|
-| `feature_id` | string | Public URL-safe lookup handle generated from the release identity policy. |
+| `feature_id` | string | Public URL-safe lookup handle; generated monotonic decimal string assigned from the geometry/properties hash identity key. |
 | `geometry_hash` | string | SHA-256 content hash computed from canonical feature geometry. |
 | `properties_hash` | string | SHA-256 content hash computed from published non-geometry properties. |
 | `featurecla` | string | Natural Earth feature class. Values in this source include `Land`, `Null island`, and one null source value. |
@@ -204,16 +212,25 @@ Output summary:
 - FGB SHA-256: `5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`
 - PMTiles SHA-256: `52793c9fd15c17777a271cb3f984d8a3ffee8acb7c25a8aa04b8809d458901be`
 
-The 2026-06-05 metadata-contract release starts from the 2026-04-30 release FGB
-generation `1777593092853652` and SHA-256
-`5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`. It
-generates unique URL-safe `feature_id` values and publishes `geometry_hash` and
-`properties_hash` values plus canonical metadata, schema, and manifest
-artifacts. The rebuilt FGB has 11 features, six
-non-geometry fields, and zero invalid geometries. The rebuilt PMTiles archive
-keeps maxzoom 8 and decodes to exactly `feature_id` properties.
-Older releases remain readable legacy pre-metadata-contract history and are not
-backfilled.
+The 2026-06-05 release was a v1 metadata-contract repair built from the
+2026-04-30 release FGB generation `1777593092853652`. It published v1 identity
+columns (`ext_id`, `feature_hash`) and `gen:<24 hex chars>` feature IDs with
+schema_version 1 sidecar/schema/manifest artifacts.
+
+The 2026-06-10 revision migrates the asset to release feature identity v2. It
+starts from the same unchanged 2026-04-30 release FGB generation
+`1777593092853652` and SHA-256
+`5e69cd50432794b6411a81d99faa1d1c74e9d778fbfd430e43e1c7adb4d9912a`, assigns
+generated monotonic decimal `feature_id` values from
+`geometry_hash`+`properties_hash` identity keys, replaces `ext_id` and
+`feature_hash` with `geometry_hash` and `properties_hash` columns (reviewed
+schema compatibility waiver), and publishes schema_version 2 metadata, schema,
+and manifest artifacts. The rebuilt FGB has 11 features, six non-geometry
+fields, and zero invalid geometries. The PMTiles archive was rebuilt at
+maxzoom 12 (maintainer-requested upgrade from maxzoom 8) and decodes to exactly
+`feature_id` properties. A complete v1-to-v2 `feature_id` mapping for all 11
+features is recorded in the revision publish PR. Older releases remain readable
+legacy history and are not backfilled.
 
 ## Known caveats
 
