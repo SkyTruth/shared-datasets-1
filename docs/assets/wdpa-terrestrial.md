@@ -26,9 +26,10 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2
   plus an initial Spanish NAME_ENG metadata sidecar. The 2026-06-09 release migrates the asset to the release feature identity
   v2 contract; feature_id values are generated decimal sequence handles keyed by SITE_PID, geometry_hash and properties_hash
   replace feature_hash, and the v1 id, ext_id, and feature_hash columns are removed. PMTiles are lightweight metadata-lookup
-  tiles with feature_id only, built at maxzoom 12. The release preserves 2,661 upstream invalid geometries from the Jun2026
-  source FGB; no geometry repair was applied. Release history, source versions, row counts, and file hashes are recorded in
-  the bucket release index and per-run records.
+  tiles with feature_id only, built at maxzoom 12. The 2026-06-09 release was later expanded with a complete translation set
+  for 17 descriptive fields in es, fr, id, pt, pt_br, and sw, including localized metadata sidecars for each locale. The release
+  preserves 2,661 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release history,
+  source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 304572
 data_profile:
   field_count: 33
@@ -79,11 +80,31 @@ files:
 - path: latest/wdpa-terrestrial.metadata.es.ndjson.gz
   format: ndjson_gzip
   role: metadata
-  purpose: Generated Spanish metadata sidecar materialized from NAME_ENG translations
+  purpose: Generated Spanish metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-terrestrial.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated French metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-terrestrial.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Indonesian metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-terrestrial.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Portuguese metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-terrestrial.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Brazilian Portuguese metadata sidecar materialized from approved translation rows
+- path: latest/wdpa-terrestrial.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Generated Swahili metadata sidecar materialized from approved translation rows
 - path: latest/wdpa-terrestrial.metadata-translations.csv
   format: csv
   role: metadata
-  purpose: Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash
+  purpose: Editable translation source keyed by feature_id, field, locale, and source-value hash
 - path: latest/wdpa-terrestrial.schema.json
   format: json
   role: metadata
@@ -108,10 +129,30 @@ files:
   format: ndjson_gzip
   role: release
   purpose: Dated generated Spanish metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata.fr.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated French metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata.id.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Indonesian metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata.pt.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata.pt_br.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Brazilian Portuguese metadata sidecar
+- path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata.sw.ndjson.gz
+  format: ndjson_gzip
+  role: release
+  purpose: Dated generated Swahili metadata sidecar
 - path: releases/YYYY-MM-DD/wdpa-terrestrial.metadata-translations.csv
   format: csv
   role: release
-  purpose: Dated editable Spanish translation source
+  purpose: Dated editable translation source
 - path: releases/YYYY-MM-DD/wdpa-terrestrial.schema.json
   format: json
   role: release
@@ -149,6 +190,7 @@ source. Fields are preserved from the source dataset.
 ## When to use it
 
 - Use this for reusable terrestrial protected-area and conserved-area boundaries or point records.
+- Use localized metadata sidecars when an application needs translated WDPA descriptive fields.
 - Do not use this when a marine or coastal extract is required.
 
 ## Files
@@ -159,15 +201,25 @@ source. Fields are preserved from the source dataset.
 | `latest/wdpa-terrestrial.fgb` | `fgb` | `canonical` | Canonical mixed-geometry vector dataset |
 | `latest/wdpa-terrestrial.pmtiles` | `pmtiles` | `companion` | Web map tiles generated from the same monthly extract |
 | `latest/wdpa-terrestrial.metadata.ndjson.gz` | `ndjson_gzip` | `metadata` | Canonical feature metadata sidecar keyed by feature_id |
-| `latest/wdpa-terrestrial.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from NAME_ENG translations |
-| `latest/wdpa-terrestrial.metadata-translations.csv` | `csv` | `metadata` | Editable Spanish translation source keyed by feature_id, field, locale, and source-value hash |
+| `latest/wdpa-terrestrial.metadata.es.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Spanish metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata.fr.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated French metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata.id.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Indonesian metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata.pt.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Portuguese metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Brazilian Portuguese metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata.sw.ndjson.gz` | `ndjson_gzip` | `metadata` | Generated Swahili metadata sidecar materialized from approved translation rows |
+| `latest/wdpa-terrestrial.metadata-translations.csv` | `csv` | `metadata` | Editable translation source keyed by feature_id, field, locale, and source-value hash |
 | `latest/wdpa-terrestrial.schema.json` | `json` | `metadata` | Release feature metadata schema for field projection |
 | `latest/wdpa-terrestrial.manifest.json` | `json` | `metadata` | Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.fgb` | `fgb` | `release` | Dated canonical release |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.pmtiles` | `pmtiles` | `release` | Dated map-tile release |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.ndjson.gz` | `ndjson_gzip` | `release` | Dated canonical metadata sidecar |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.es.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Spanish metadata sidecar |
-| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata-translations.csv` | `csv` | `release` | Dated editable Spanish translation source |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.fr.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated French metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.id.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Indonesian metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.pt.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.pt_br.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Brazilian Portuguese metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata.sw.ndjson.gz` | `ndjson_gzip` | `release` | Dated generated Swahili metadata sidecar |
+| `releases/YYYY-MM-DD/wdpa-terrestrial.metadata-translations.csv` | `csv` | `release` | Dated editable translation source |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.schema.json` | `json` | `release` | Dated release feature schema |
 | `releases/YYYY-MM-DD/wdpa-terrestrial.manifest.json` | `json` | `release` | Dated release manifest with artifact checksums and index-load policy |
 | `runs/YYYY-MM-DD.json` | `json` | `run-record` | Monthly run record |
@@ -255,10 +307,36 @@ carry non-URL-safe underscore parcel suffixes). The v1 `id`, `ext_id`, and
 were added to the canonical FGB and metadata sidecar. PMTiles were rebuilt as
 metadata-lookup tiles carrying only `feature_id` at maxzoom 12, preserving the
 `wdpa_terrestrial` tile and FGB layer names; the monthly job builds WDPA PMTiles
-at maxzoom 12. The metadata-translations
-CSV and Spanish sidecar were regenerated against the v2 feature_ids; translation
-rows preserve the source `NAME_ENG` value with `review_state = needs_review`,
-and no machine or human translation has been applied yet.
+at maxzoom 12.
+
+The same 2026-06-09 release was expanded with a complete machine-generated
+translation set mirroring wdpa-marine: `NAME_ENG`, `DESIG_ENG`, `DESIG_TYPE`,
+`GOV_TYPE`, `OWN_TYPE`, `NO_TAKE`, `STATUS`, `IUCN_CAT`, `VERIF`, `OECM_ASMT`,
+`DESIG`, `MANG_PLAN`, `CONS_OBJ`, `SUPP_INFO`, `INLND_WTRS`, `GOVSUBTYPE`, and
+`OWNSUBTYPE` in `es`, `fr`, `id`, `pt`, `pt_br`, and `sw`. The expanded
+metadata-translations CSV contains 31,066,344 rows (304,572 features x 17
+fields x 6 locales; full coverage, no remaining `needs_review` placeholder
+rows). Translation provenance is recorded per row in `notes`: values whose
+source text already appeared in the wdpa-marine translation CSV were seeded
+from those marine rows (`seeded_from=wdpa-marine`); `NAME_ENG` and the
+remaining unique values were translated by a maintainer-supplied translation
+service and imported from per-language spreadsheets
+(`imported_from=name_eng-translations-zip`,
+`imported_from=pending-translations-zip`); 7,107 `NAME_ENG` es values and
+6,095 `DESIG_ENG` unique values were machine translated with
+deep-translator/Google (`provider=google`). `pt` and `pt_br` rows carry
+identical values, matching the wdpa-marine convention. Localization validation
+applied 5,177,724 rows per locale with no stale or orphaned translations.
+Expanded artifact SHA-256 values are metadata-translations CSV
+`0c71507f9e9244d2fcdb3be633fc2e78b391195b9cf37a26bb98bff5128bab86`,
+metadata.es `6ab50a002dfdc61f3fb96a362559bf23872d78e1dbd4e19b62a80c5a5aac2777`,
+metadata.fr `d0b6ff4fac764d4c7f5c7cd34c483143051d18a4b0a60fa9b1951952764b3dd3`,
+metadata.id `bb1d3617725497f0a2692bd22c40f7baa7dd34b2bf15d885a2b1e1f55580b068`,
+metadata.pt `a35c990d26e30d8c428ebe10385b3203e8b64ab846c5416f06968659e9301578`,
+metadata.pt_br `a35c990d26e30d8c428ebe10385b3203e8b64ab846c5416f06968659e9301578`,
+and metadata.sw `0f175da54cc0f64da606930dc081c106570d1196faf1c72bb43969cc0de45b69`.
+All translated values carry `review_state = machine_translated` pending human
+review.
 
 ## Known caveats
 
