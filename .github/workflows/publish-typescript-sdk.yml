@@ -51,6 +51,8 @@ jobs:
       - name: Check release version
         id: release-version
         working-directory: api/typescript
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           node <<'NODE'
           const { execFileSync } = require("node:child_process");
@@ -58,7 +60,6 @@ jobs:
 
           const outputPath = process.env.GITHUB_OUTPUT;
           const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-          const eventPath = process.env.GITHUB_EVENT_PATH;
           const eventName = process.env.GITHUB_EVENT_NAME;
           const releasePatterns = [
             "api/typescript/src/",
@@ -126,25 +127,32 @@ jobs:
             return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}`;
           };
 
-          const readEvent = () => {
-            if (!eventPath || !fs.existsSync(eventPath)) return {};
-            return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+          const pushRange = () => {
+            const head = process.env.GITHUB_SHA || "HEAD";
+            const before = (process.env.PUSH_BEFORE_SHA || "").trim();
+            return before && !/^0+$/.test(before) ? [before, head] : [`${head}^`, head];
           };
 
-          const changedFiles = (event) => {
-            const files = new Set();
-            for (const commit of event.commits || []) {
-              for (const field of ["added", "modified", "removed"]) {
-                for (const file of commit[field] || []) {
-                  files.add(file);
-                }
-              }
+          const gitLines = (args) => {
+            try {
+              return execFileSync("git", args, { encoding: "utf8" })
+                .split("\n")
+                .map((line) => line.trim())
+                .filter(Boolean);
+            } catch (error) {
+              console.log(`git ${args.join(" ")} failed: ${String(error.message || error)}`);
+              return [];
             }
-            return [...files];
           };
 
-          const requestedBumpType = (event) => {
-            const messages = (event.commits || []).map((commit) => commit.message || "").join("\n");
+          const changedFiles = () => {
+            const [before, head] = pushRange();
+            return gitLines(["diff", "--name-only", before, head]);
+          };
+
+          const requestedBumpType = () => {
+            const [before, head] = pushRange();
+            const messages = gitLines(["log", "--format=%B", `${before}..${head}`]).join("\n");
             const match = messages.match(/(?:typescript-sdk-release|typescript-sdk-bump):\s*(major|minor|patch)|\[typescript-sdk:(major|minor|patch)\]/i);
             return (match?.[1] || match?.[2] || "minor").toLowerCase();
           };
@@ -165,13 +173,16 @@ jobs:
             }
           }
 
-          const event = readEvent();
-          const packageContentChanged =
-            eventName === "push" &&
-            changedFiles(event).some((file) => releasePatterns.some((pattern) => file === pattern || file.startsWith(pattern)));
+          const files = eventName === "push" ? changedFiles() : [];
+          const packageContentChanged = files.some((file) =>
+            releasePatterns.some((pattern) => file === pattern || file.startsWith(pattern))
+          );
+          if (eventName === "push") {
+            console.log(`Push changed ${files.length} file(s); package content changed: ${packageContentChanged}.`);
+          }
           const comparison = publishedVersion ? compareSemver(pkg.version, publishedVersion) : 1;
           const shouldBump = comparison <= 0 && packageContentChanged;
-          const bumpType = shouldBump ? requestedBumpType(event) : "";
+          const bumpType = shouldBump ? requestedBumpType() : "";
           const bumpBaseVersion =
             publishedVersion && compareSemver(publishedVersion, pkg.version) >= 0 ? publishedVersion : pkg.version;
           const targetVersion = shouldBump ? bumpVersion(bumpBaseVersion, bumpType) : pkg.version;
