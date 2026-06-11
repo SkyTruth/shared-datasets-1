@@ -445,13 +445,15 @@ authentication is not configured. Repository variables must include
 changes are not allowed to merge as silently skipped post-merge work. Catalog
 and asset-documentation changes trigger PMTiles CDN sync only after the catalog
 web deploy workflow completes, so route verification sees the refreshed
-`_catalog/web/` objects. PMTiles Terraform-file changes still trigger the
+`_catalog/web/` objects. The protected sync plan covers both the PMTiles URL
+map and the catalog-driven public managed-folder IAM resources needed when an
+asset changes access tier. PMTiles Terraform-file changes still trigger the
 protected sync workflow directly after merge. Workflow-only changes to
 `.github/workflows/pmtiles-cdn-sync.yml` trigger the consolidated
 `Protected Terraform readiness` workflow on PRs, but do not trigger the
 protected apply workflow after merge. Dispatch `PMTiles CDN sync` manually from
 `main` when a workflow-only change is intended to apply already-merged URL-map
-configuration.
+or public managed-folder IAM configuration.
 
 Live checks after CDN cutover and direct public GCS removal:
 

@@ -5,7 +5,7 @@ title: Global Distribution of Coral Reefs
 category: 500-conservation-ecosystems
 subcategory: 530-habitat-condition
 status: active
-access_tier: private
+access_tier: public
 owner: SkyTruth
 update_cadence: manual
 canonical_format: fgb
@@ -20,11 +20,13 @@ metadata_paths:
 - latest/global-coral-reefs.schema.json
 - latest/global-coral-reefs.manifest.json
 source: UNEP-WCMC, WorldFish Centre, WRI, and TNC Global Distribution of Coral Reefs v4.1
-license: UNEP-WCMC General Data License (excluding WDPA); contextual internal use with citation only; no redistribution without
-  permission
+license: Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA); preserve attribution, license notice, and ShareAlike
+  requirements. The local ZIP also includes a legacy UNEP-WCMC General Data License file, but the current UNEP-WCMC GIS Portal
+  item is public and lists CC-BY-SA 4.0 in licenseInfo and ISO metadata.
 citation: 'UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources
-  including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Cambridge (UK): UN Environment Programme
-  World Conservation Monitoring Centre. https://doi.org/10.34892/t2wk-5t34.'
+  including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Includes contributions from IMaRS-USF
+  and IRD (2005), IMaRS-USF (2005) and Spalding et al. (2001). Cambridge (UK): UN Environment Programme World Conservation
+  Monitoring Centre. Data DOI: https://doi.org/10.34892/t2wk-5t34.'
 notes: Converted local polygon and point shapefiles to FGB plus PMTiles with both layers; release 2026-04-29; polygon fgb
   sha256 387d9999983a2cf9916ce3d7d496c45319ed8196eccfe9b3d2e8622b82756869; point fgb sha256 a81fcf8264e397fe08cd2655ad580cf36da6fea6010e830b97947fb091bb8ccf;
   pmtiles sha256 2e33c2bbbf0942d0b692e663815177c47f87a008a5206451e0e293f8af82b7b6; metadata-contract release 2026-06-05 changes
@@ -48,7 +50,9 @@ notes: Converted local polygon and point shapefiles to FGB plus PMTiles with bot
   features retained (Tippecanoe drop-rate 1). 2026-06-10 artifact sha256 before promotion finalization are fgb 795c44841c53c0b05dbb7a6193a2898a883fbd441d138fc72c11e115da9fc50c;
   point fgb ce764cfe652179321174f155878376a8c89d6a15deb048734b021075718dce76; pmtiles 60111af2b44765bbdf26c39672f8c47888e2314de2bee97b49701d684a31d877;
   metadata eecf0c8a086d3ff1885e80e1e3160416676b6e26bcf929379adcc05f530b8adf; schema 6a2f120e70d0d150cfed21272079899e42aef04e9aabd6cad88e3403e1a52380.
-  Prior releases 2026-04-29, 2026-05-04, 2026-06-05, and 2026-06-06 remain unchanged and readable.
+  Prior releases 2026-04-29, 2026-05-04, 2026-06-05, and 2026-06-06 remain unchanged and readable. On 2026-06-11, the asset
+  access tier was updated from private to public after verifying the current UNEP-WCMC GIS Portal item has access public and
+  CC-BY-SA 4.0 licenseInfo with ISO metadata date 2026-03-23.
 row_count: 18429
 data_profile:
   field_count: 22
@@ -193,14 +197,14 @@ files:
 
 <!-- BEGIN GENERATED asset-summary -->
 - **Status:** active
-- **Access tier:** private
+- **Access tier:** public
 - **Owner:** SkyTruth
 - **Update cadence:** manual
 - **Canonical file:** `latest/global-coral-reefs.fgb`
 - **Available formats:** `fgb`, `pmtiles`
 - **Source:** UNEP-WCMC, WorldFish Centre, WRI, and TNC Global Distribution of Coral Reefs v4.1
-- **License / terms:** UNEP-WCMC General Data License (excluding WDPA); contextual internal use with citation only; no redistribution without permission
-- **Citation:** UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Cambridge (UK): UN Environment Programme World Conservation Monitoring Centre. https://doi.org/10.34892/t2wk-5t34.
+- **License / terms:** Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA); preserve attribution, license notice, and ShareAlike requirements. The local ZIP also includes a legacy UNEP-WCMC General Data License file, but the current UNEP-WCMC GIS Portal item is public and lists CC-BY-SA 4.0 in licenseInfo and ISO metadata.
+- **Citation:** UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Includes contributions from IMaRS-USF and IRD (2005), IMaRS-USF (2005) and Spalding et al. (2001). Cambridge (UK): UN Environment Programme World Conservation Monitoring Centre. Data DOI: https://doi.org/10.34892/t2wk-5t34.
 <!-- END GENERATED asset-summary -->
 
 ## What this is
@@ -214,7 +218,7 @@ The active canonical analytical file is now a mixed polygon and point FlatGeobuf
 - Use this as a contextual map layer for coral reef extent and location.
 - Filter `geometry_role = 'polygon'` if a workflow expects the legacy polygon-only canonical geometry contract.
 - Cite the source when displaying or using the layer.
-- Do not treat this as an externally redistributable dataset unless UNEP-WCMC permission is confirmed.
+- When redistributing or adapting this dataset, carry forward the source citation, CC-BY-SA 4.0 license notice, and ShareAlike obligations.
 - Do not use polygon area totals without checking for overlaps and source caveats.
 
 ## Files
@@ -308,10 +312,10 @@ The 2026-06-10 release-feature-model v2 revision rebuilds the published artifact
 
 Requested citation:
 
-UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Cambridge (UK): UN Environment Programme World Conservation Monitoring Centre. Data DOI: https://doi.org/10.34892/t2wk-5t34
+UNEP-WCMC, WorldFish Centre, WRI, TNC (2021). Global distribution of coral reefs, compiled from multiple sources including the Millennium Coral Reef Mapping Project. Version 4.1, updated by UNEP-WCMC. Includes contributions from IMaRS-USF and IRD (2005), IMaRS-USF (2005) and Spalding et al. (2001). Cambridge (UK): UN Environment Programme World Conservation Monitoring Centre. Data DOI: https://doi.org/10.34892/t2wk-5t34
 
 ## Known Caveats
 
 The source metadata notes that the dataset was compiled from multiple sources with varying scale and quality, has not undergone external review, may include overlapping polygons, and may require dissolve operations before surface-area calculations.
 
-The source license restricts commercial use, sublicensing, and redistribution. This asset is intended for internal contextual display with citation, not third-party data distribution.
+The current UNEP-WCMC GIS Portal item is public and lists Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA) in `licenseInfo` and the ISO metadata, with metadata date 2026-03-23. The local source ZIP still includes a legacy 2014 UNEP-WCMC General Data License file and readme that restrict redistribution. Treat the current portal metadata as the publication authority for public access, and keep the legacy license conflict visible for reviewers and downstream users.
