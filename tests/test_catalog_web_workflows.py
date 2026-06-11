@@ -274,6 +274,16 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         steps = workflow_steps_by_name(workflow, "sync")
         verify_run = steps["Verify catalog CDN routes"]["run"]
+        enforce_run = steps["Enforce PMTiles resource-change allowlist"]["run"]
+
+        self.assertEqual(
+            python_literal_string_set(enforce_run, "allowed_for_each_prefixes"),
+            {
+                "google_storage_managed_folder.shared_bucket_public_prefixes",
+                "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+            },
+        )
+        self.assertIn('address.startswith(f"{prefix}[")', enforce_run)
 
         self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', steps["Invalidate catalog CDN cache"]["run"])

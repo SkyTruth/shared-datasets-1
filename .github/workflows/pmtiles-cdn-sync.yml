@@ -163,6 +163,15 @@ jobs:
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
           }
+          allowed_for_each_prefixes = {
+              "google_storage_managed_folder.shared_bucket_public_prefixes",
+              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+          }
+
+          def is_allowed_address(address):
+              if address in allowed_exact:
+                  return True
+              return any(address.startswith(f"{prefix}[") for prefix in allowed_for_each_prefixes)
 
           blocked = []
           for resource in plan.get("resource_changes", []):
@@ -170,7 +179,7 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
-              if address in allowed_exact:
+              if is_allowed_address(address):
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 
