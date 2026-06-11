@@ -149,6 +149,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertIn('resource "google_iam_workload_identity_pool_provider" "github_readonly"', readonly_tf)
         self.assertIn("assertion.workflow == 'Catalog drift guard'", readonly_tf)
         self.assertIn("assertion.workflow == 'Bucket hygiene audit'", readonly_tf)
+        self.assertIn("assertion.workflow == 'Dataset breaking change alert'", readonly_tf)
         self.assertIn('account_id   = "shared-datasets-gh-readonly"', readonly_tf)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', readonly_tf)
         self.assertIn('role   = "roles/storage.objectViewer"', readonly_tf)

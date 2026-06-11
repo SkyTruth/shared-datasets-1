@@ -88,16 +88,17 @@ Decide whether the commit adds substantially exciting new repository functionali
 
 3. If no alert is warranted, write a normal concise commit message.
 
-4. If alert-worthy, inspect the last 30 commit messages before choosing an
-   emoji:
+4. If alert-worthy, collect the last 30 emojis used in fenced `repo-alert`
+   blocks before choosing a new emoji:
 
 ```bash
-git log -30 --format=%B
+git log --format=%B
 ```
 
-Collect any `emoji:` values from recent fenced `repo-alert` blocks, including
-the current `HEAD` message when amending. Do not reuse any of those emojis. If
-the most obvious emoji is already present in those 30 messages, choose a fresh
+Scan newest to oldest until you have collected 30 `emoji:` values from fenced
+`repo-alert` blocks, or until history runs out. Include the current `HEAD`
+message when amending. Do not reuse any of those last 30 repo-alert emojis. If
+the most obvious emoji is already in that off-limits set, choose a fresh
 association that still fits the staged functionality.
 Prefer a fresh, memorable association over the most literal possible symbol
 when both are honest fits for the staged functionality. Adjacent metaphors,
@@ -122,8 +123,8 @@ Fields:
   slightly creative association is allowed when it remains easy to explain.
   Do not use map or globe emojis, including `🗺️`, `🌍`, `🌎`, `🌏`, or `🌐`;
   these are overused in this repository and are not valid repo-alert choices.
-  Do not use any emoji found in `repo-alert` blocks from the last 30 commit
-  messages.
+  Do not use any of the last 30 emoji values found in fenced `repo-alert`
+  blocks.
 - `headline`: short, clear, announcement-style title.
 - `summary`: one brief sentence describing what changed.
 - `why_excited`: one brief sentence explaining why the team should care.

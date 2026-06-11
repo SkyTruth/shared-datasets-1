@@ -106,6 +106,194 @@ class DatasetAlertsTests(unittest.TestCase):
         self.assertEqual(result.blocked_diffs[0]["kind"], "removed")
         self.assertEqual(result.waiver["reviewer"], "jonaraphael")
 
+    def test_breaking_changes_from_schema_results_include_blocked_and_reordered_diffs(self):
+        old = [
+            {"name": "a", "type": "Integer"},
+            {"name": "b", "type": "String"},
+        ]
+        waived = dataset_alerts.check_schema_compatibility(
+            asset_slug="asset",
+            dataset_path=Path("asset.fgb"),
+            fields=[{"name": "a", "type": "Integer"}],
+            compatibility_waiver={
+                "asset_slug": "asset",
+                "blocked_changes": [{"kind": "removed", "field": "b"}],
+                "rationale": "Source removed a retired field and reviewer approved the contract break.",
+                "consumer_impact": "Known consumers use field a only.",
+                "reviewer": "jonaraphael",
+                "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                "migration_path": "Pin the prior dated release if b is required.",
+            },
+            snapshot_loader=lambda _uri: ({"fields": old}, 10),
+        )
+        reordered = dataset_alerts.check_schema_compatibility(
+            asset_slug="asset",
+            dataset_path=Path("asset.fgb"),
+            fields=[old[1], old[0]],
+            snapshot_loader=lambda _uri: ({"fields": old}, 10),
+        )
+
+        changes = dataset_alerts.breaking_changes_from_schema_results([waived, reordered])
+
+        summaries = [change["summary"] for change in changes]
+        self.assertIn("Schema field removed: `b`.", summaries)
+        self.assertIn("Schema field order changed.", summaries)
+        self.assertTrue(any("Pin the prior dated release" in change["consumer_action"] for change in changes))
+
+    def test_breaking_alert_payload_is_brief_slug_scoped_and_fingerprinted(self):
+        changes = [
+            {
+                "category": "feature_identity",
+                "summary": "feature_id changed from source IDs to generated IDs.",
+                "consumer_action": "Refresh joins that use feature_id before reading latest.",
+                "affected_surfaces": ["latest/asset.fgb", "latest/asset.metadata.ndjson.gz"],
+            },
+            {
+                "category": "schema",
+                "summary": "Schema field removed: `old_name`.",
+                "consumer_action": "Pin the prior release if old_name is required.",
+                "affected_surfaces": ["latest canonical schema", "old_name"],
+            },
+        ]
+
+        alert = dataset_alerts.build_breaking_alert(
+            asset_slug="asset",
+            changes=changes,
+            phase="planned",
+            row={"title": "Asset Title"},
+            pr_number="123",
+            pr_url="https://github.com/SkyTruth/shared-datasets-1/pull/123",
+        )
+        reordered = dataset_alerts.build_breaking_alert(
+            asset_slug="asset",
+            changes=list(reversed(changes)),
+            phase="planned",
+            row={"title": "Asset Title"},
+            pr_number="123",
+            pr_url="https://github.com/SkyTruth/shared-datasets-1/pull/123",
+        )
+
+        self.assertEqual(alert["title"], "BREAKING planned: asset latest contract")
+        self.assertIn("*Asset:* Asset Title (`asset`)", alert["body"])
+        self.assertIn("*Status:* Planned in PR #123", alert["body"])
+        self.assertIn("ignore if you do not consume `asset@latest`", alert["body"])
+        self.assertNotIn("@channel", alert["body"])
+        self.assertNotIn("@here", alert["body"])
+        self.assertEqual(alert["fingerprint"], reordered["fingerprint"])
+
+        changed = dataset_alerts.build_breaking_alert(
+            asset_slug="asset",
+            changes=[{**changes[0], "summary": "Different feature_id policy."}],
+            phase="planned",
+        )
+        self.assertNotEqual(alert["fingerprint"], changed["fingerprint"])
+
+    def test_collect_breaking_changes_returns_empty_for_non_breaking_publish(self):
+        changes = dataset_alerts.collect_breaking_changes(
+            plan={
+                "asset_slug": "asset",
+                "proposal_id": "pr-123",
+                "promotions": [
+                    {
+                        "source_uri": "gs://bucket/_scratch/pending-publishes/asset/pr-123/asset.fgb",
+                        "destination_uri": "gs://bucket/100/ref/asset/latest/asset.fgb",
+                    }
+                ],
+            },
+            plan_type="publish",
+        )
+
+        self.assertEqual(changes, [])
+        self.assertIsNone(dataset_alerts.build_breaking_alert(asset_slug="asset", changes=changes, phase="live"))
+
+    def test_delete_plan_latest_target_is_breaking_change(self):
+        changes = dataset_alerts.collect_breaking_changes(
+            plan={
+                "asset_slug": "asset",
+                "proposal_id": "pr-123",
+                "deletions": [
+                    {
+                        "uri": "gs://bucket/100/ref/asset/latest/asset.fgb",
+                        "generation": "123",
+                        "reason": "Remove invalid latest object after replacement.",
+                    }
+                ],
+            },
+            plan_type="delete",
+        )
+
+        self.assertEqual(changes[0]["category"], "lifecycle_delete")
+        self.assertIn("latest", changes[0]["summary"])
+
+    def test_catalog_contract_changes_are_breaking_when_surfaces_are_removed_or_restricted(self):
+        current_row = {
+            "canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb",
+            "canonical_format": "fgb",
+            "available_formats": "fgb;pmtiles",
+            "access_tier": "public",
+            "has_pmtiles": "true",
+            "metadata_paths": (
+                "README.md;latest/asset.metadata.ndjson.gz;"
+                "latest/asset.schema.json;latest/asset.manifest.json"
+            ),
+        }
+        proposed_row = {
+            "canonical_path": "gs://bucket/100/ref/asset/latest/asset.csv",
+            "canonical_format": "csv",
+            "available_formats": "csv",
+            "access_tier": "private",
+            "has_pmtiles": "false",
+            "metadata_paths": "README.md",
+        }
+
+        changes = dataset_alerts.collect_breaking_changes(
+            plan={"asset_slug": "asset", "proposal_id": "pr-123", "promotions": []},
+            plan_type="publish",
+            current_row=current_row,
+            proposed_row=proposed_row,
+        )
+
+        categories = {change["category"] for change in changes}
+        summaries = "\n".join(change["summary"] for change in changes)
+        self.assertEqual(
+            categories,
+            {"access", "artifact_set", "format", "metadata_sidecar", "path", "pmtiles_lookup"},
+        )
+        self.assertIn("Catalog canonical path changed", summaries)
+        self.assertIn("Catalog canonical format changed", summaries)
+        self.assertIn("Available formats removed", summaries)
+        self.assertIn("Access tier changed", summaries)
+        self.assertIn("PMTiles availability changed", summaries)
+        self.assertIn("Metadata Sidecar removed", summaries)
+        self.assertIn("Release Manifest removed", summaries)
+        self.assertIn("Schema Sidecar removed", summaries)
+
+    def test_catalog_contract_additions_do_not_create_breaking_alerts(self):
+        current_row = {
+            "canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb",
+            "canonical_format": "fgb",
+            "available_formats": "fgb",
+            "access_tier": "private",
+            "has_pmtiles": "false",
+            "metadata_paths": "README.md",
+        }
+        proposed_row = {
+            **current_row,
+            "available_formats": "fgb;pmtiles",
+            "access_tier": "public",
+            "has_pmtiles": "true",
+            "metadata_paths": "README.md;latest/asset.metadata.ndjson.gz",
+        }
+
+        changes = dataset_alerts.collect_breaking_changes(
+            plan={"asset_slug": "asset", "proposal_id": "pr-123", "promotions": []},
+            plan_type="publish",
+            current_row=current_row,
+            proposed_row=proposed_row,
+        )
+
+        self.assertEqual(changes, [])
+
     def test_schema_compatibility_rejects_incomplete_waiver(self):
         old = [
             {"name": "a", "type": "Integer"},

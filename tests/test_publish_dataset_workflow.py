@@ -7,6 +7,7 @@ from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_tri
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/publish-dataset.yml"
+BREAKING_ALERT_WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/dataset-breaking-change-alert.yml"
 
 
 def step_names(workflow: dict, job_name: str) -> list[str]:
@@ -65,6 +66,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertEqual(apply_job["needs"], "reviewed_pr_plans")
         self.assertEqual(apply_job["environment"], "shared-datasets-production")
         self.assertEqual(apply_job["concurrency"]["cancel-in-progress"], False)
+        self.assertEqual(self.workflow["permissions"]["issues"], "write")
         self.assertIn("has_publish_plan == 'true'", apply_job["if"])
         self.assertIn("has_delete_plan == 'true'", apply_job["if"])
         self.assertEqual(
@@ -86,6 +88,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         compatibility_run = self.apply_steps["Check approved schema compatibility"]["run"]
         release_index_run = self.apply_steps["Rebuild promoted release index"]["run"]
         finalize_run = self.apply_steps["Finalize promoted release metadata"]["run"]
+        breaking_run = self.apply_steps["Send breaking change alert"]["run"]
         summary_run = self.apply_steps["Send dataset upload summary"]["run"]
         cleanup_run = self.apply_steps["Delete promoted scratch source objects"]["run"]
 
@@ -96,12 +99,19 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
             "Promote approved staged objects",
             "Finalize promoted release metadata",
             "Rebuild promoted release index",
+            "Send breaking change alert",
             "Send dataset upload summary",
             "Delete promoted scratch source objects",
             "Delete approved canonical objects",
         )
 
         self.assertIn("filename == canonical_filename", compatibility_run + promote_run + summary_run)
+        self.assertIn("schema-results", compatibility_run + breaking_run)
+        self.assertIn("breaking-alert", breaking_run)
+        self.assertIn("shared-datasets-breaking-alert", breaking_run)
+        self.assertIn("current-catalog-row.json", breaking_run)
+        self.assertIn("proposed-catalog-row.json", breaking_run)
+        self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", self.apply_steps["Send breaking change alert"]["env"])
         self.assertIn('not promotion.get("destination_generation")', compatibility_run)
         self.assertIn("Skipping schema compatibility check for new destination", compatibility_run)
         self.assertNotIn('f"{asset_slug}{suffix}"', compatibility_run + promote_run + summary_run)
@@ -133,6 +143,23 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn('"delete"', cleanup_run)
         self.assertIn('"--confirm"', cleanup_run)
 
+    def test_delete_plan_sends_live_breaking_alert_after_delete(self):
+        names = step_names(self.workflow, "apply-approved-pr-plans")
+        delete_alert_run = self.apply_steps["Send deletion breaking change alert"]["run"]
+
+        assert_ordered(
+            self,
+            names,
+            "Delete approved canonical objects",
+            "Send deletion breaking change alert",
+        )
+        self.assertIn("breaking-alert", delete_alert_run)
+        self.assertIn("--plan-type", delete_alert_run)
+        self.assertIn("delete", delete_alert_run)
+        self.assertIn("current-catalog-row.json", delete_alert_run)
+        self.assertIn("proposed-catalog-row.json", delete_alert_run)
+        self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", self.apply_steps["Send deletion breaking change alert"]["env"])
+
     def test_catalog_json_publish_plan_can_skip_when_destination_already_matches(self):
         promote_run = self.apply_steps["Promote approved staged objects"]["run"]
 
@@ -150,6 +177,39 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
             promote_run.index("if catalog_json_destination_already_current(promotion):"),
             promote_run.index('"copy",'),
         )
+
+    def test_planned_breaking_change_workflow_is_scoped_and_read_only(self):
+        workflow = load_workflow(BREAKING_ALERT_WORKFLOW)
+        trigger = workflow_triggers(workflow)
+        steps = workflow_steps_by_name(workflow, "alert")
+        all_runs = "\n".join(str(step.get("run", "")) for step in workflow["jobs"]["alert"]["steps"])
+
+        self.assertEqual(
+            trigger["pull_request"],
+            {
+                "branches": ["main"],
+                "types": ["opened", "edited", "synchronize", "reopened", "ready_for_review"],
+            },
+        )
+        job_if = workflow["jobs"]["alert"]["if"]
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", job_if)
+        self.assertIn("github.event.pull_request.draft == false", job_if)
+        self.assertEqual(workflow["permissions"]["id-token"], "write")
+        self.assertEqual(workflow["permissions"]["issues"], "write")
+        self.assertEqual(steps["Check out trusted repository code"]["with"]["ref"], "main")
+        self.assertIn(
+            "contents/catalog/shared-datasets-catalog.csv",
+            steps["Collect proposed catalog row from PR"]["run"],
+        )
+        self.assertIn("GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", steps["Validate read-only GCP auth configuration"]["run"])
+        self.assertIn("vars.GCP_READONLY_SERVICE_ACCOUNT", str(steps["Authenticate read-only to Google Cloud"]["with"]))
+        self.assertIn("check-schema-compatibility", steps["Collect planned schema compatibility results"]["run"])
+        self.assertIn("breaking-alert", steps["Send planned breaking alerts"]["run"])
+        self.assertIn("shared-datasets-breaking-alert", steps["Send planned breaking alerts"]["run"])
+        self.assertIn("proposed-catalog-row.json", steps["Send planned breaking alerts"]["run"])
+        self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", steps["Send planned breaking alerts"]["env"])
+        self.assertNotIn("gcs_asset.py copy", all_runs)
+        self.assertNotIn("gcs_asset.py delete", all_runs)
 
 
 if __name__ == "__main__":
