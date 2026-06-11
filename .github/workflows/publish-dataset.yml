@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
   pull-requests: read
 
 env:
@@ -222,6 +223,99 @@ jobs:
             --event-path "${{ steps.pr_event.outputs.event_path }}" \
             --output delete-plan.json
 
+      - name: Collect reviewed catalog rows
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' || needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PATH: ${{ steps.pr_event.outputs.event_path }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64
+          import csv
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import urllib.parse
+
+          def plan_asset_slug():
+              for path in ("publish-plan.json", "delete-plan.json"):
+                  plan_path = pathlib.Path(path)
+                  if plan_path.exists():
+                      return json.loads(plan_path.read_text())["asset_slug"]
+              return ""
+
+          def row_from_catalog_text(text, asset_slug):
+              for row in csv.DictReader(text.splitlines()):
+                  if row.get("asset_slug") == asset_slug:
+                      return row
+              return None
+
+          def remote_catalog_text(ref):
+              if not ref:
+                  return None
+              quoted_ref = urllib.parse.quote(ref, safe="")
+              try:
+                  payload = json.loads(
+                      subprocess.check_output(
+                          [
+                              "gh",
+                              "api",
+                              f"repos/{os.environ['GITHUB_REPOSITORY']}/contents/catalog/shared-datasets-catalog.csv?ref={quoted_ref}",
+                          ],
+                          text=True,
+                      )
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"Could not read catalog at {ref}: {exc}")
+                  return None
+              return base64.b64decode(str(payload.get("content") or "")).decode("utf-8")
+
+          def first_parent(ref):
+              if not ref:
+                  return ""
+              quoted_ref = urllib.parse.quote(ref, safe="")
+              try:
+                  payload = json.loads(
+                      subprocess.check_output(
+                          ["gh", "api", f"repos/{os.environ['GITHUB_REPOSITORY']}/commits/{quoted_ref}"],
+                          text=True,
+                      )
+                  )
+              except subprocess.CalledProcessError as exc:
+                  print(f"Could not inspect merge commit {ref}: {exc}")
+                  return ""
+              parents = payload.get("parents") or []
+              return str(parents[0].get("sha") or "") if parents else ""
+
+          asset_slug = plan_asset_slug()
+          if not asset_slug:
+              raise SystemExit(0)
+          event = json.loads(pathlib.Path(os.environ["EVENT_PATH"]).read_text())
+          pull_request = event.get("pull_request") or {}
+          proposed_ref = str(pull_request.get("merge_commit_sha") or pull_request.get("head", {}).get("sha") or "")
+          current_ref = first_parent(proposed_ref) or str(pull_request.get("base", {}).get("sha") or "")
+
+          current_text = remote_catalog_text(current_ref)
+          proposed_text = remote_catalog_text(proposed_ref)
+          if proposed_text is None and pathlib.Path("catalog/shared-datasets-catalog.csv").exists():
+              proposed_text = pathlib.Path("catalog/shared-datasets-catalog.csv").read_text()
+
+          if current_text:
+              row = row_from_catalog_text(current_text, asset_slug)
+              if row:
+                  pathlib.Path("current-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
+          if proposed_text:
+              row = row_from_catalog_text(proposed_text, asset_slug)
+              if row:
+                  pathlib.Path("proposed-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
+          if not pathlib.Path("current-catalog-row.json").exists():
+              print(f"No baseline catalog row found for {asset_slug}; skipping catalog contract comparison.")
+          if not pathlib.Path("proposed-catalog-row.json").exists():
+              print(f"No proposed catalog row found for {asset_slug}; skipping catalog contract comparison.")
+          PY
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -283,6 +377,7 @@ jobs:
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         run: |
           set -euo pipefail
+          mkdir -p schema-results
           python - <<'PY'
           import csv
           import json
@@ -367,7 +462,11 @@ jobs:
                       waiver_path = tmp_path / "compatibility-waiver.json"
                       waiver_path.write_text(json.dumps(waiver, indent=2, sort_keys=True) + "\n")
                       args.extend(["--compatibility-waiver", str(waiver_path)])
-                  subprocess.run(args, check=True)
+                  completed = subprocess.run(args, check=True, capture_output=True, text=True)
+                  output = completed.stdout.strip()
+                  if output:
+                      print(output)
+                      pathlib.Path("schema-results", f"promotion-{index}.json").write_text(output + "\n")
           PY
 
       - name: Promote approved staged objects
@@ -593,6 +692,104 @@ jobs:
           )
           PY
 
+      - name: Send breaking change alert
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          marker_prefix = "shared-datasets-breaking-alert"
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          pr_number = os.environ.get("PR_NUMBER", "").strip()
+          pr_url = os.environ.get("PR_URL", "").strip()
+          if not pr_url and pr_number:
+              pr_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/pull/{pr_number}"
+          args = [
+              "uv",
+              "run",
+              "python",
+              "scripts/dataset_alerts.py",
+              "breaking-alert",
+              "--phase",
+              "live",
+              "--plan-type",
+              "publish",
+              "--plan-json",
+              "publish-plan.json",
+              "--run-url",
+              run_url,
+              "--summary-json",
+              "publish-breaking-alert.json",
+              "--dry-run",
+          ]
+          if pr_number:
+              args.extend(["--pr-number", pr_number])
+          if pr_url:
+              args.extend(["--pr-url", pr_url])
+          for row_path, option in (
+              ("current-catalog-row.json", "--current-catalog-row-json"),
+              ("proposed-catalog-row.json", "--proposed-catalog-row-json"),
+          ):
+              if pathlib.Path(row_path).exists():
+                  args.extend([option, row_path])
+          for path in sorted(pathlib.Path("schema-results").glob("*.json")):
+              args.extend(["--schema-result", str(path)])
+          subprocess.run(args, check=True)
+
+          summary = json.loads(pathlib.Path("publish-breaking-alert.json").read_text())
+          if not summary.get("has_breaking_changes"):
+              raise SystemExit(0)
+          marker = summary["marker"]
+          if not marker.startswith(marker_prefix):
+              raise ValueError(f"unexpected breaking alert marker: {marker}")
+          if pr_number:
+              comments = json.loads(
+                  subprocess.check_output(
+                      [
+                          "gh",
+                          "api",
+                          f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{pr_number}/comments?per_page=100",
+                      ],
+                      text=True,
+                  )
+              )
+              if any(marker in str(comment.get("body") or "") for comment in comments):
+                  print(f"Breaking alert already sent for marker {marker}; skipping Slack.")
+                  raise SystemExit(0)
+          send_args = [
+              part for part in args
+              if part not in {"--dry-run", "publish-breaking-alert.json"}
+          ]
+          summary_index = send_args.index("--summary-json")
+          del send_args[summary_index:summary_index + 2]
+          subprocess.run(send_args, check=True)
+          if pr_number:
+              body = (
+                  f"<!-- {marker} -->\n"
+                  f"Live breaking change Slack alert sent for `{summary['asset_slug']}` "
+                  f"({summary['plan_type']})."
+              )
+              subprocess.run(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{pr_number}/comments",
+                      "-f",
+                      f"body={body}",
+                  ],
+                  check=True,
+              )
+          PY
+
       - name: Send dataset upload summary
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         env:
@@ -808,4 +1005,98 @@ jobs:
               if exists.returncode != 1:
                   print(f"could not verify deleted object absence: {deletion['uri']}", file=sys.stderr)
                   sys.exit(exists.returncode)
+          PY
+
+      - name: Send deletion breaking change alert
+        if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          marker_prefix = "shared-datasets-breaking-alert"
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          pr_number = os.environ.get("PR_NUMBER", "").strip()
+          pr_url = os.environ.get("PR_URL", "").strip()
+          if not pr_url and pr_number:
+              pr_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/pull/{pr_number}"
+          args = [
+              "uv",
+              "run",
+              "python",
+              "scripts/dataset_alerts.py",
+              "breaking-alert",
+              "--phase",
+              "live",
+              "--plan-type",
+              "delete",
+              "--plan-json",
+              "delete-plan.json",
+              "--run-url",
+              run_url,
+              "--summary-json",
+              "delete-breaking-alert.json",
+              "--dry-run",
+          ]
+          if pr_number:
+              args.extend(["--pr-number", pr_number])
+          if pr_url:
+              args.extend(["--pr-url", pr_url])
+          for row_path, option in (
+              ("current-catalog-row.json", "--current-catalog-row-json"),
+              ("proposed-catalog-row.json", "--proposed-catalog-row-json"),
+          ):
+              if pathlib.Path(row_path).exists():
+                  args.extend([option, row_path])
+          subprocess.run(args, check=True)
+          summary = json.loads(pathlib.Path("delete-breaking-alert.json").read_text())
+          if not summary.get("has_breaking_changes"):
+              raise SystemExit(0)
+          marker = summary["marker"]
+          if not marker.startswith(marker_prefix):
+              raise ValueError(f"unexpected breaking alert marker: {marker}")
+          if pr_number:
+              comments = json.loads(
+                  subprocess.check_output(
+                      [
+                          "gh",
+                          "api",
+                          f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{pr_number}/comments?per_page=100",
+                      ],
+                      text=True,
+                  )
+              )
+              if any(marker in str(comment.get("body") or "") for comment in comments):
+                  print(f"Breaking alert already sent for marker {marker}; skipping Slack.")
+                  raise SystemExit(0)
+          send_args = [
+              part for part in args
+              if part not in {"--dry-run", "delete-breaking-alert.json"}
+          ]
+          summary_index = send_args.index("--summary-json")
+          del send_args[summary_index:summary_index + 2]
+          subprocess.run(send_args, check=True)
+          if pr_number:
+              body = (
+                  f"<!-- {marker} -->\n"
+                  f"Live breaking deletion Slack alert sent for `{summary['asset_slug']}`."
+              )
+              subprocess.run(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{os.environ['GITHUB_REPOSITORY']}/issues/{pr_number}/comments",
+                      "-f",
+                      f"body={body}",
+                  ],
+                  check=True,
+              )
           PY

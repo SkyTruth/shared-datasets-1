@@ -21,6 +21,19 @@ SCHEMA_COMPATIBILITY_BLOCKING_KINDS = {"removed", "renamed", "type_changed"}
 WAIVER_REQUIRED_TEXT_FIELDS = ("rationale", "consumer_impact", "reviewer", "pr_reference", "migration_path")
 NO_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"
 GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
+BREAKING_CHANGE_CATEGORIES = {
+    "path",
+    "format",
+    "artifact_set",
+    "schema",
+    "feature_identity",
+    "pmtiles_lookup",
+    "metadata_sidecar",
+    "access",
+    "catalog",
+    "lifecycle_delete",
+    "other",
+}
 
 
 class PlanValidationError(ValueError):
@@ -167,6 +180,54 @@ def normalize_compatibility_waiver(raw: Any, *, asset_slug: str, label: str) -> 
     return normalized
 
 
+def normalize_string_list(value: Any, *, label: str) -> list[str]:
+    if isinstance(value, str):
+        values = [value.strip()] if value.strip() else []
+    elif isinstance(value, list):
+        values = []
+        for index, item in enumerate(value, start=1):
+            if not isinstance(item, str) or not item.strip():
+                raise PlanValidationError(f"{label}[{index}] must be a non-empty string")
+            values.append(item.strip())
+    else:
+        raise PlanValidationError(f"{label} must be a non-empty string or list of strings")
+    if not values:
+        raise PlanValidationError(f"{label} must not be empty")
+    return values
+
+
+def normalize_breaking_changes(raw: Any, *, label: str = "breaking_changes") -> list[dict[str, Any]]:
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise PlanValidationError(f"{label} must be a list")
+    normalized: list[dict[str, Any]] = []
+    for index, change in enumerate(raw, start=1):
+        item_label = f"{label}[{index}]"
+        if not isinstance(change, dict):
+            raise PlanValidationError(f"{item_label} must be an object")
+        category = str(change.get("category", "")).strip()
+        if category not in BREAKING_CHANGE_CATEGORIES:
+            allowed = ", ".join(sorted(BREAKING_CHANGE_CATEGORIES))
+            raise PlanValidationError(f"{item_label}.category must be one of: {allowed}")
+        summary = str(change.get("summary", "")).strip()
+        if not summary:
+            raise PlanValidationError(f"{item_label}.summary is required")
+        consumer_action = str(change.get("consumer_action", "")).strip()
+        if not consumer_action:
+            raise PlanValidationError(f"{item_label}.consumer_action is required")
+        surfaces = normalize_string_list(change.get("affected_surfaces"), label=f"{item_label}.affected_surfaces")
+        normalized.append(
+            {
+                "category": category,
+                "summary": summary,
+                "consumer_action": consumer_action,
+                "affected_surfaces": surfaces,
+            }
+        )
+    return normalized
+
+
 def require_cache_sensitive_metadata(
     *,
     destination_name: str,
@@ -199,6 +260,7 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
         "asset_slug": asset_slug,
         "proposal_id": proposal_id,
         "promotions": [],
+        "breaking_changes": normalize_breaking_changes(plan.get("breaking_changes")),
     }
 
     for index, raw in enumerate(promotions, start=1):
@@ -270,6 +332,7 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
         "asset_slug": asset_slug,
         "proposal_id": proposal_id,
         "deletions": [],
+        "breaking_changes": normalize_breaking_changes(plan.get("breaking_changes")),
     }
 
     for index, raw in enumerate(deletions, start=1):
@@ -312,10 +375,12 @@ def compact_plan_summary(plan_type: str, normalized: dict[str, Any]) -> dict[str
                 "new_destination_count": sum(1 for item in promotions if not item.get("destination_generation")),
                 "replacement_count": sum(1 for item in promotions if item.get("destination_generation")),
                 "compatibility_waiver_count": sum(1 for item in promotions if item.get("compatibility_waiver")),
+                "breaking_change_count": len(normalized.get("breaking_changes", [])),
             }
         )
     else:
         summary["deletion_count"] = len(normalized.get("deletions", []))
+        summary["breaking_change_count"] = len(normalized.get("breaking_changes", []))
     return summary
 
 

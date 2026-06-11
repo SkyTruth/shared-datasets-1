@@ -17,7 +17,7 @@ resource "google_iam_workload_identity_pool_provider" "github_readonly" {
 
   attribute_condition = join(" && ", [
     "assertion.repository == '${var.github_repository}'",
-    "(assertion.workflow == 'Catalog drift guard' || assertion.workflow == 'Bucket hygiene audit')",
+    "(assertion.workflow == 'Catalog drift guard' || assertion.workflow == 'Bucket hygiene audit' || assertion.workflow == 'Dataset breaking change alert')",
   ])
 
   oidc {

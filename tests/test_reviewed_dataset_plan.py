@@ -65,6 +65,14 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                         },
                     }
                 ],
+                "breaking_changes": [
+                    {
+                        "category": "feature_identity",
+                        "summary": "feature_id changed from source IDs to generated IDs.",
+                        "consumer_action": "Refresh joins that use feature_id before reading latest.",
+                        "affected_surfaces": ["latest/example-asset.fgb", "latest/example-asset.metadata.ndjson.gz"],
+                    }
+                ],
             }
         )
 
@@ -72,6 +80,71 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
         self.assertEqual(promotion["source_generation"], "123")
         self.assertEqual(promotion["cache_control"], "")
         self.assertEqual(promotion["compatibility_waiver"]["blocked_changes"][0]["field"], "retired")
+        self.assertEqual(normalized["breaking_changes"][0]["category"], "feature_identity")
+
+    def test_normalize_publish_plan_rejects_malformed_breaking_change(self):
+        base_plan = {
+            "asset_slug": "example-asset",
+            "proposal_id": "pr-123",
+            "promotions": [
+                {
+                    "source_uri": (
+                        f"gs://{BUCKET}/_scratch/pending-publishes/"
+                        "example-asset/pr-123/example-asset.fgb"
+                    ),
+                    "source_generation": "123",
+                    "destination_uri": (
+                        f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                        "example-asset/latest/example-asset.fgb"
+                    ),
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "category"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    **base_plan,
+                    "breaking_changes": [
+                        {
+                            "category": "not-real",
+                            "summary": "Bad category.",
+                            "consumer_action": "Update consumers.",
+                            "affected_surfaces": ["latest/example-asset.fgb"],
+                        }
+                    ],
+                }
+            )
+
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "summary"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    **base_plan,
+                    "breaking_changes": [
+                        {
+                            "category": "schema",
+                            "summary": "",
+                            "consumer_action": "Update consumers.",
+                            "affected_surfaces": ["latest/example-asset.fgb"],
+                        }
+                    ],
+                }
+            )
+
+        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "affected_surfaces"):
+            reviewed_dataset_plan.normalize_publish_plan(
+                {
+                    **base_plan,
+                    "breaking_changes": [
+                        {
+                            "category": "schema",
+                            "summary": "Schema changed.",
+                            "consumer_action": "Update consumers.",
+                            "affected_surfaces": [],
+                        }
+                    ],
+                }
+            )
 
     def test_normalize_publish_plan_rejects_malformed_compatibility_waiver(self):
         with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "consumer_impact"):
@@ -204,12 +277,21 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                         "reason": "Incorrect duplicate release superseded by approved replacement.",
                     }
                 ],
+                "breaking_changes": [
+                    {
+                        "category": "lifecycle_delete",
+                        "summary": "Removed an obsolete latest companion.",
+                        "consumer_action": "Stop reading the deleted companion.",
+                        "affected_surfaces": ["latest/example-asset.pmtiles"],
+                    }
+                ],
             }
         )
 
         deletion = normalized["deletions"][0]
         self.assertEqual(deletion["generation"], "123")
         self.assertIn("duplicate release", deletion["reason"])
+        self.assertEqual(normalized["breaking_changes"][0]["category"], "lifecycle_delete")
 
     def test_normalize_delete_plan_accepts_exact_gcloud_composite_temp_object(self):
         normalized = reviewed_dataset_plan.normalize_delete_plan(

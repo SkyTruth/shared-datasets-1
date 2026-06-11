@@ -814,6 +814,18 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
   automatic promotion. For intentional release-schema changes, describe the
   schema change, rationale, reviewer, PR reference, and consumer impact in the
   publish plan.
+- For changes that may break consumers of `{asset-slug}@latest`, include a
+  top-level `breaking_changes` array in the fenced publish or delete plan. Each
+  entry must include `category`, `summary`, `consumer_action`, and
+  `affected_surfaces`. Allowed categories are `path`, `format`, `artifact_set`,
+  `schema`, `feature_identity`, `pmtiles_lookup`, `metadata_sidecar`, `access`,
+  `catalog`, `lifecycle_delete`, and `other`. The planned-alert workflow posts a
+  slug-scoped Slack heads-up for same-repo, non-draft PRs; the approved mutation
+  workflow posts a live Slack alert after successful promotion or deletion.
+  Schema diffs, catalog contract removals/restrictions, and `latest/` deletion
+  targets are detected automatically where the workflow has enough context;
+  semantic contract changes such as feature identity policy or PMTiles lookup
+  semantics must be declared explicitly in `breaking_changes`.
 - A fenced `shared-datasets-delete-plan` JSON block if approval should trigger
   reviewed deletion; every deletion must include exact URI, generation, and
   reason.

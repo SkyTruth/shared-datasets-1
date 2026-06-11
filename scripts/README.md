@@ -374,6 +374,37 @@ when the canonical `latest/` object did not exist before the publish; the
 approved promotion workflow determines that from the publish plan
 `destination_generation`.
 
+For reviewed publish or delete plans that intentionally break the `latest`
+consumer contract, add a top-level `breaking_changes` array to the fenced plan.
+Each entry must include `category`, `summary`, `consumer_action`, and
+`affected_surfaces`. Use one of these categories:
+
+```text
+path, format, artifact_set, schema, feature_identity, pmtiles_lookup,
+metadata_sidecar, access, catalog, lifecycle_delete, other
+```
+
+Preview or send the concise Slack warning with:
+
+```bash
+uv run python scripts/dataset_alerts.py breaking-alert \
+  --phase planned \
+  --plan-type publish \
+  --plan-json publish-plan.json \
+  --pr-number 123 \
+  --pr-url https://github.com/SkyTruth/shared-datasets-1/pull/123 \
+  --dry-run
+```
+
+The GitHub workflows send planned and live breaking-change alerts
+automatically when the reviewed plan or schema compatibility results contain
+breaking changes. Messages are slug-scoped and do not use broad Slack mentions.
+The alert command also compares current/proposed catalog rows when workflows
+provide them, catching canonical path/format changes, format removals, stricter
+access, PMTiles removal, metadata sidecar/schema/manifest removal, and
+`latest/` deletion targets. Declare semantic changes explicitly in
+`breaking_changes` when they cannot be inferred safely.
+
 For canonical vector/table assets, run schema validation before publish:
 
 ```bash
