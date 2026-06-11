@@ -50,7 +50,7 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
             "100-geographic-reference/130-protected-areas/wdpa-marine/",
             folders,
         )
-        self.assertNotIn(
+        self.assertIn(
             "500-conservation-ecosystems/530-habitat-condition/global-coral-reefs/",
             folders,
         )

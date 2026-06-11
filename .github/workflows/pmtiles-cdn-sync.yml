@@ -142,6 +142,8 @@ jobs:
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
             -target=google_compute_url_map.pmtiles_cdn \
+            -target=google_storage_managed_folder.shared_bucket_public_prefixes \
+            -target=google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers \
             -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
             -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
@@ -158,6 +160,8 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_compute_url_map.pmtiles_cdn",
+              "google_storage_managed_folder.shared_bucket_public_prefixes",
+              "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
           }
 
           blocked = []

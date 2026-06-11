@@ -261,7 +261,8 @@ publisher identity, generation preconditions, and
 promotion path for repo-generated catalog web changes and the automatic refresh
 path after approved canonical data mutations. The protected PMTiles CDN sync
 workflow starts after catalog web deploy completes when the merged change
-touches catalog or asset documentation inputs that can affect PMTiles routes.
+touches catalog or asset documentation inputs that can affect PMTiles routes or
+public managed-folder IAM grants.
 The protected
 `.github/workflows/catalog-viewer-deploy.yml` workflow also starts after a
 successful `Approved dataset mutation` workflow so the IAP-protected viewer is

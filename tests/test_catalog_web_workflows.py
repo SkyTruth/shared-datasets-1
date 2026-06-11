@@ -245,14 +245,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
                 "google_compute_url_map.pmtiles_cdn",
+                "google_storage_managed_folder.shared_bucket_public_prefixes",
+                "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
             },
             blocked_resources={
                 "google_compute_backend_bucket.pmtiles_cdn",
                 "google_cloud_run_v2_service.catalog_viewer",
                 "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
                 "google_storage_bucket.shared_bucket",
-                "google_storage_managed_folder.shared_bucket_public_prefixes",
-                "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
             },
         )
         trigger = workflow_triggers(workflow)
