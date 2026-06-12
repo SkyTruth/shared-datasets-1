@@ -1,10 +1,9 @@
 # Proposal: `internal` PMTiles Access Tier
 
-Status: implemented in shared-datasets-1 (2026-06-11) — SDK tier types,
-policy function, session handler, client helpers, catalog validation,
-Terraform CORS conditions, and docs. Pending: SDK npm release, cerulean-ui
-adoption (Section 6), guest-grant storage decision (Open Question 4), and
-the first internal-tier asset.
+Status: implemented (2026-06-11/12) — shared-datasets-1 side merged in PR
+#83 and released as SDK 0.6.0; cerulean-ui adoption built (Section 6).
+Guest/funder access deferred by decision (Open Question 4): internal tier
+is allowed-domain only for now. Pending: the first internal-tier asset.
 Owner: jonaraphael
 Date: 2026-06-11
 
@@ -390,12 +389,15 @@ tier — same policy function, no second rule.
    the production catalog, or only at config-cache load?
 3. Default guest-grant duration when an admin doesn't specify one (proposed:
    30 days)?
-4. Where guest grants are stored and how admins manage them. A column on the
-   auth `user` table was proposed and rejected (2026-06-11). Candidates: a
-   dedicated grants table in the consumer DB; better-auth's admin-plugin
-   roles; or a shared SkyTruth-managed grant source consulted by every
-   consumer's `getViewer`. The SDK interface (`viewer.tierGrants`) is the
-   same regardless.
+4. ~~Where guest grants are stored and how admins manage them.~~ Deferred by
+   decision (2026-06-12): guest/funder access is not being built for now.
+   Internal-tier access is allowed-domain only; consumers return no
+   `tierGrants` from `getViewer`. The SDK grant machinery (`tierGrants`,
+   TTL clamping) stays dormant and unchanged, so this can be picked up later
+   without SDK or gate changes. A column on the auth `user` table was
+   proposed and rejected (2026-06-11); candidates if revisited: a dedicated
+   grants table in the consumer DB, better-auth's admin-plugin roles, or a
+   shared SkyTruth-managed grant source.
 
 Resolved 2026-06-11: cookie TTL is ~30 days for all tiers (was an open
 question about shortening below 24h — decided the opposite; see Security
