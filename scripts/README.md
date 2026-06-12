@@ -335,11 +335,12 @@ scripts/repo_alerts.py
 scripts/slack_notify.py
 ```
 
-The committing agent decides whether a commit adds substantially exciting new
-repository functionality. When it does, the agent appends one or more fenced
-`repo-alert` blocks to the commit message. The `repo-functionality-alert`
-GitHub Actions workflow runs after pushes to `main` and posts any fenced alert
-blocks it finds.
+The committing agent uses a high bar for repo alerts. Only exceptional,
+broad-use new repository functionality should get one or more fenced
+`repo-alert` blocks in the commit message. Routine fixes, maintenance, alert
+tuning, docs, and ordinary dataset refreshes should not. The
+`repo-functionality-alert` GitHub Actions workflow runs after pushes to `main`
+and posts any fenced alert blocks it finds.
 
 Alert blocks use this format:
 
@@ -360,19 +361,21 @@ uv run python scripts/repo_alerts.py send-from-github-event \
   --dry-run
 ```
 
-After a successful manual dataset upload, post a lightweight summary:
+After a successful new manual dataset upload, post a lightweight summary:
 
 ```bash
 uv run python scripts/dataset_alerts.py upload-summary \
   --asset-slug example-asset \
   --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
-  --dataset-path ./example-asset.fgb
+  --dataset-path ./example-asset.fgb \
+  --new-dataset
 ```
 
-This command defaults to a `Dataset updated` alert. Add `--new-dataset` only
-when the canonical `latest/` object did not exist before the publish; the
-approved promotion workflow determines that from the publish plan
-`destination_generation`.
+This command only posts to Slack when `--new-dataset` is set. Existing asset
+refreshes print a local skip message instead of posting `Dataset updated`. Use
+`--new-dataset` only when the canonical `latest/` object did not exist before
+the publish; the approved promotion workflow determines that from the publish
+plan `destination_generation`.
 
 For reviewed publish or delete plans that intentionally break the `latest`
 consumer contract, add a top-level `breaking_changes` array to the fenced plan.
@@ -416,10 +419,12 @@ uv run python scripts/dataset_alerts.py check-schema-compatibility \
 Schema validation reports added, removed, renamed, reordered, and type-changed
 fields so reviewers can confirm the new release schema is intentional. After a
 successful reviewed publish, the approved publisher workflow runs
-`check-schema --upload-snapshot` to emit structured Cloud Logging warnings and
-update the snapshot for monitoring. Local `check-schema` runs are read-only by
-default and skip snapshot upload unless the explicit flag is used from a runtime
-with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
+`check-schema --upload-snapshot` to update the snapshot and emit structured
+Cloud Logging diagnostics when a schema delta exists. Schema-change Slack
+monitoring is intentionally quiet; consumer-impacting schema changes should use
+the reviewed breaking-change alert path instead. Local `check-schema` runs are
+read-only by default and skip snapshot upload unless the explicit flag is used
+from a runtime with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
 
 Production Terraform mutations must land through reviewed PRs and protected
 GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is

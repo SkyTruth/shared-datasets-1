@@ -59,7 +59,7 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
   lifecycle {
     precondition {
-      condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled && !var.dataset_schema_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
+      condition     = (!var.cron_alerts_enabled && !var.dataset_delete_alerts_enabled && !var.dataset_write_alerts_enabled) || length(local.cron_alert_notification_channels) > 0
       error_message = "Monitoring alerts are enabled, but no notification channel is configured. Set cron_alert_notification_channels to an existing Slack notification channel, or set cron_alert_slack_channel_name and cron_alert_slack_auth_token."
     }
   }
@@ -401,80 +401,6 @@ EOT
 
   depends_on = [
     google_project_iam_audit_config.storage_data_write,
-    google_project_service.required,
-    terraform_data.cron_alert_channel_configured,
-  ]
-}
-
-resource "google_monitoring_alert_policy" "dataset_schema_changed" {
-  project      = var.project_id
-  display_name = "Shared dataset schema changed"
-  combiner     = "OR"
-  enabled      = var.dataset_schema_alerts_enabled
-  severity     = "WARNING"
-
-  notification_channels = local.cron_alert_notification_channels
-
-  conditions {
-    display_name = "Manual publish detected a canonical field/schema delta"
-
-    condition_matched_log {
-      filter = <<-EOT
-resource.type="global"
-logName="projects/${var.project_id}/logs/shared-datasets-alerts"
-severity>=WARNING
-jsonPayload.alert_type="dataset_schema_changed"
-EOT
-
-      label_extractors = {
-        asset_slug = "EXTRACT(jsonPayload.asset_slug)"
-        changes    = "EXTRACT(jsonPayload.changes_text)"
-        new_fields = "EXTRACT(jsonPayload.new_fields_text)"
-        old_fields = "EXTRACT(jsonPayload.old_fields_text)"
-      }
-    }
-  }
-
-  documentation {
-    mime_type = "text/markdown"
-    subject   = "Shared dataset schema changed"
-    content   = <<-EOT
-A canonical shared dataset schema changed.
-
-Asset: $${log.extracted_label.asset_slug}
-
-Changes:
-$${log.extracted_label.changes}
-
-Old fields:
-$${log.extracted_label.old_fields}
-
-New fields:
-$${log.extracted_label.new_fields}
-
-Review the matching structured log entry:
-
-```bash
-gcloud logging read 'logName="projects/${var.project_id}/logs/shared-datasets-alerts" AND jsonPayload.alert_type="dataset_schema_changed"' --project=${var.project_id} --limit=20
-```
-EOT
-  }
-
-  alert_strategy {
-    auto_close           = "604800s"
-    notification_prompts = ["OPENED"]
-
-    notification_rate_limit {
-      period = "3600s"
-    }
-  }
-
-  user_labels = {
-    component = "dataset-schema"
-    service   = "shared-datasets"
-  }
-
-  depends_on = [
     google_project_service.required,
     terraform_data.cron_alert_channel_configured,
   ]

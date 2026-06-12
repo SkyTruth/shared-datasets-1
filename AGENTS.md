@@ -368,9 +368,10 @@ A task is complete when:
 - For a new asset slug or meaningful dataset release, any dataset upload
   announcement that was sent, skipped, or uncertain is reported without blocking
   otherwise complete commit or publish work.
-- If a requested commit adds substantially exciting new repository
+- If a requested commit adds exceptional, broad-use new repository
   functionality, the committing agent generated and appended any warranted
-  fenced `repo-alert` block without asking the human to decide.
+  fenced `repo-alert` block without asking the human to decide. Default to no
+  repo-alert block for routine fixes, maintenance, alert tuning, or docs.
 - The PR or final response lists changed files and remote paths.
 - Any opened dataset publish PR requests review from `jonaraphael`, or records
   the GitHub self-review block when `jonaraphael` is the author, and includes the

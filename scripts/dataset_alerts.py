@@ -931,6 +931,9 @@ def upload_summary(
         sample_columns=sample_columns,
         new_dataset=resolved_new_dataset,
     )
+    if not resolved_new_dataset:
+        print("Dataset updated Slack alert disabled; skipping notification.")
+        return
     notify(
         title=title,
         body=body,

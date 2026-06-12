@@ -392,15 +392,17 @@ class DatasetAlertsTests(unittest.TestCase):
 
             self.assertEqual(dataset_alerts.row_count_from_asset_doc("asset", docs_dir=docs_dir), 304572)
 
-    def test_upload_summary_falls_back_to_asset_doc_row_count(self):
+    def test_upload_summary_skips_updated_dataset_notification(self):
         row = {
             "canonical_path": "gs://bucket/100/ref/asset/latest/asset.fgb",
             "source": "source",
         }
+        stdout = io.StringIO()
         with (
             mock.patch.object(dataset_alerts, "load_catalog", return_value={"asset": row}),
             mock.patch.object(dataset_alerts, "row_count_from_asset_doc", return_value=42),
             mock.patch.object(dataset_alerts, "notify") as notify,
+            contextlib.redirect_stdout(stdout),
         ):
             dataset_alerts.upload_summary(
                 asset_slug="asset",
@@ -412,10 +414,8 @@ class DatasetAlertsTests(unittest.TestCase):
                 dry_run=True,
             )
 
-        self.assertIn("*Rows:* `42`", notify.call_args.kwargs["body"])
-        self.assertEqual(notify.call_args.kwargs["title"], "Dataset updated")
-        self.assertEqual(notify.call_args.kwargs["status"], "success")
-        self.assertTrue(notify.call_args.kwargs["dry_run"])
+        notify.assert_not_called()
+        self.assertIn("Dataset updated Slack alert disabled", stdout.getvalue())
 
     def test_upload_summary_new_dataset_flag_sets_new_status(self):
         row = {

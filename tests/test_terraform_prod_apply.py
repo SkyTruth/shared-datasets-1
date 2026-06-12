@@ -20,7 +20,7 @@ class TerraformProdApplyTests(unittest.TestCase):
 
         self.assertEqual(terraform_prod_apply.resource_change_summary(plan), ["update b"])
 
-    def test_successful_apply_posts_summary(self):
+    def test_successful_apply_does_not_post_summary(self):
         calls = []
 
         def runner(command, **_kwargs):
@@ -52,7 +52,8 @@ class TerraformProdApplyTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(any("plan" in call for call in calls))
         self.assertTrue(any("apply" in call for call in calls))
-        notify.assert_called()
+        self.assertFalse(any("output" in call for call in calls))
+        notify.assert_not_called()
 
     def test_plan_failure_posts_failure_and_preserves_exit_code(self):
         def runner(command, **_kwargs):

@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
-import json
 import os
 import subprocess
 import sys
@@ -112,20 +110,6 @@ def apply_command(terraform_bin: str, plan_file: Path) -> list[str]:
     return [terraform_bin, f"-chdir={PROD_DIR}", "apply", "-input=false", str(plan_file)]
 
 
-def show_plan(terraform_bin: str, plan_file: Path, *, runner: Any = subprocess.run) -> dict[str, Any]:
-    command = [terraform_bin, f"-chdir={PROD_DIR}", "show", "-json", str(plan_file)]
-    result = run_command(command, runner=runner)
-    ensure_success("show plan", result, command)
-    return json.loads(result.stdout or "{}")
-
-
-def output_json(terraform_bin: str, *, runner: Any = subprocess.run) -> dict[str, Any]:
-    command = [terraform_bin, f"-chdir={PROD_DIR}", "output", "-json"]
-    result = run_command(command, runner=runner)
-    ensure_success("read outputs", result, command)
-    return json.loads(result.stdout or "{}")
-
-
 def resource_change_summary(plan: dict[str, Any]) -> list[str]:
     summary = []
     for change in plan.get("resource_changes", []):
@@ -134,39 +118,6 @@ def resource_change_summary(plan: dict[str, Any]) -> list[str]:
             continue
         summary.append(f"{'/'.join(actions)} {change.get('address')}")
     return summary
-
-
-def selected_outputs(outputs: dict[str, Any]) -> dict[str, str]:
-    keys = [
-        "cron_alert_policy_names",
-        "monitoring_alert_policy_names",
-        "slack_webhook_secret_id",
-        "wdpa_monthly_scheduler_id",
-        "sea_ice_daily_scheduler_id",
-    ]
-    selected = {}
-    for key in keys:
-        if key in outputs:
-            selected[key] = json.dumps(outputs[key].get("value"))
-    return selected
-
-
-def send_success_summary(changes: list[str], outputs: dict[str, Any], *, dry_run: bool) -> None:
-    body = "\n".join(
-        [
-            f"*Operator:* `{getpass.getuser()}`",
-            f"*Result:* `{'no-op' if not changes else 'applied'}`",
-            "*Changes:*",
-            *(f"- `{change}`" for change in (changes or ["none"])),
-        ]
-    )
-    notify(
-        title="Terraform prod apply succeeded",
-        body=body,
-        status="success",
-        fields=selected_outputs(outputs),
-        dry_run=dry_run,
-    )
 
 
 def send_failure_summary(exc: StageFailure, *, dry_run: bool) -> None:
@@ -197,14 +148,10 @@ def run_apply(argv: Sequence[str], *, runner: Any = subprocess.run) -> int:
         plan = plan_command(args.terraform_bin, plan_file, values)
         plan_result = run_command(plan, runner=runner)
         ensure_success("plan", plan_result, plan)
-        plan_payload = show_plan(args.terraform_bin, plan_file, runner=runner)
-        changes = resource_change_summary(plan_payload)
 
         apply = apply_command(args.terraform_bin, plan_file)
         apply_result = run_command(apply, runner=runner)
         ensure_success("apply", apply_result, apply)
-        outputs = output_json(args.terraform_bin, runner=runner)
-        send_success_summary(changes, outputs, dry_run=args.slack_dry_run)
         print(apply_result.stdout)
         return 0
     except StageFailure as exc:

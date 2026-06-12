@@ -475,8 +475,9 @@ preferred because it avoids putting Slack OAuth material in Terraform inputs.
 
 The `repo-functionality-alert` GitHub Actions workflow runs after pushes to
 `main` and posts any fenced `repo-alert` blocks found in pushed commit messages.
-The committing agent decides whether the change is substantially exciting,
-generates custom alert copy, and appends the block without human input.
+The committing agent uses a high bar: only exceptional, broad-use new repository
+functionality should get a block. Routine fixes, maintenance, alert tuning,
+docs, and ordinary dataset refreshes should not.
 
 Configure the workflow with the GitHub secret
 `SHARED_DATASETS_SLACK_WEBHOOK_URL`. Alert blocks use this format:
@@ -506,16 +507,15 @@ uv run python scripts/dataset_alerts.py upload-summary \
   --changed-path gs://skytruth-shared-datasets-1/path/to/object.fgb \
   --release-path gs://skytruth-shared-datasets-1/path/to/releases/YYYY-MM-DD/ \
   --row-count 123 \
-  --dataset-path ./gfw-fixed-infrastructure.fgb
+  --dataset-path ./gfw-fixed-infrastructure.fgb \
+  --new-dataset
 ```
 
-The helper defaults to a `Dataset updated` alert. Add `--new-dataset` only when
-the asset's canonical `latest/` object did not exist before the publish. The
-approved GitHub promotion workflow derives this from the publish plan
-`destination_generation`, so existing asset refreshes cannot be announced as
-new datasets. Do not send duplicate summaries for same-release cache refreshes,
-README wording fixes, PMTiles repairs, or other corrective follow-ups unless
-explicitly requested.
+The helper only posts to Slack when `--new-dataset` is set, which should be used
+only when the asset's canonical `latest/` object did not exist before the
+publish. Existing asset refreshes print a local skip message instead of posting
+`Dataset updated` to Slack. The approved GitHub promotion workflow derives the
+new-dataset flag from the publish plan `destination_generation`.
 
 For canonical vector/table assets, `publish-release` and the approved GitHub
 promotion workflow run schema validation before canonical objects are written.
@@ -531,10 +531,12 @@ uv run python scripts/dataset_alerts.py check-schema-compatibility \
 Schema snapshots are stored under
 `gs://skytruth-shared-datasets-1/_catalog/schema-snapshots/`. After a successful
 compatible or waived publish, the approved publisher workflow runs
-`check-schema --upload-snapshot` to emit the structured Cloud Logging warning
-and update the snapshot for diagnostics and monitoring. Local `check-schema`
-runs are read-only by default: they print the schema-change payload and skip the
-snapshot upload unless `--upload-snapshot` is passed from a runtime with
+`check-schema --upload-snapshot` to update the snapshot and, when a schema delta
+exists, emit a structured Cloud Logging diagnostic. Schema-change Slack
+monitoring is intentionally quiet; consumer-impacting schema changes should use
+the reviewed breaking-change alert path instead. Local `check-schema` runs are
+read-only by default: they print the schema-change payload and skip the snapshot
+upload unless `--upload-snapshot` is passed from a runtime with
 `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
 
 FYI Slack summaries use the Secret Manager secret

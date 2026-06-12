@@ -51,9 +51,3 @@ variable "dataset_write_alerts_enabled" {
   type        = bool
   default     = true
 }
-
-variable "dataset_schema_alerts_enabled" {
-  description = "Whether shared dataset schema change alerting should be enabled."
-  type        = bool
-  default     = true
-}

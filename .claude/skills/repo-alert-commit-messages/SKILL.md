@@ -9,7 +9,7 @@ Use this skill when an agent is asked to commit staged changes, amend a commit m
 
 ## Intent
 
-Commit-time alerts should be agent-generated and high-signal. The committing agent reviews the staged diff, decides whether the change adds substantially exciting new repository functionality, and, only when warranted, appends one or more fenced `repo-alert` blocks to the commit message.
+Commit-time alerts should be agent-generated and very high-signal. The committing agent reviews the staged diff, decides whether the change adds exceptional, broad-use repository functionality that maintainers should see outside the PR, and, only when warranted, appends one or more fenced `repo-alert` blocks to the commit message. Default to no alert.
 
 The main-branch GitHub workflow posts fenced `repo-alert` blocks from commit messages. It does not decide significance.
 
@@ -40,6 +40,7 @@ Do not add a `repo-alert` block for:
 - Operational fixes to existing automation, alerting, CI, deployment, secrets, retries, permissions, or error handling unless the commit adds a genuinely new capability users or maintainers did not have before.
 - Repairs that make a recently added feature work as intended.
 - Dataset uploads where the relevant notification is a dataset upload alert, not a repo functionality alert.
+- Routine new dataset refreshes, routine schema-compatible publishes, or ordinary catalog/doc updates.
 - Unstaged or unrelated files not included in the commit.
 - Human-requested marketing copy that is not grounded in the staged diff.
 
@@ -52,7 +53,7 @@ Negative examples:
 - Making a newly added workflow actually deliver after a configuration mistake should not get a repo-alert block; it is repair work, not a new capability.
 - A local dataset catalog row update should use dataset notification workflow, not a repo functionality alert, unless it also adds new repo behavior.
 
-Decision rule: a repo-alert is for net-new capability, not restoration. If the best headline starts with "Fix", "Restore", "Retry", "Handle missing", "Make X work", or "Improve diagnostics", do not add an alert unless the staged diff also introduces a distinct new feature.
+Decision rule: a repo-alert is for exceptional net-new capability, not restoration or routine improvement. If the best headline starts with "Fix", "Restore", "Retry", "Handle missing", "Make X work", "Improve diagnostics", "Reduce noise", or "Update docs", do not add an alert unless the staged diff also introduces a distinct, broadly useful feature.
 
 ## Workflow
 
@@ -84,7 +85,7 @@ Dataset upload announcements are separate from fenced `repo-alert` blocks.
 Dataset-only catalog updates should normally use the dataset upload announcement
 workflow, not a repo functionality alert.
 
-Decide whether the commit adds substantially exciting new repository functionality. Prefer alerting for new capabilities such as SDKs, automation workflows, publishing tools, ingestion frameworks, infrastructure modules, reusable APIs, or major operational improvements.
+Decide whether the commit clears the repo-alert bar. Only alert when the staged diff introduces a durable capability that changes how maintainers or downstream projects can use the repository, such as a new SDK/API surface, a new reviewed publish path, a new reusable ingestion framework, or a major automation capability with clear cross-project value. Do not alert for routine maintenance, alert tuning, non-breaking schema work, narrow one-off helpers, or improvements that are already visible in PR review.
 
 3. If no alert is warranted, write a normal concise commit message.
 
