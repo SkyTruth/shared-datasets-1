@@ -1163,8 +1163,8 @@ def build_plan(
         raise ConciergeError(f"asset slug must be lowercase kebab-case: {slug!r}")
     resolved_format = infer_format(source, canonical_format)
     curator_field_options = recommend_curator_field_options(source, resolved_format)
-    if access_tier not in {"public", "private"}:
-        raise ConciergeError("access tier must be public or private")
+    if access_tier not in {"public", "private", "internal"}:
+        raise ConciergeError("access tier must be public, private, or internal")
     if source_resolution_meters is not None and source_resolution_meters <= 0:
         raise ConciergeError("source resolution must be positive")
     if source_scale_denominator is not None and source_scale_denominator <= 0:
@@ -2036,8 +2036,8 @@ def validate_settle_contract(state: dict[str, Any], evidence: dict[str, Any]) ->
     if plan.get("release_date") and release_layout != "versioned":
         raise WorkflowError("release_date is set, so evidence.release_layout must be 'versioned'")
     access_tier = require_non_empty_string(evidence, "access_tier")
-    if access_tier not in {"public", "private"}:
-        raise WorkflowError("evidence.access_tier must be public or private")
+    if access_tier not in {"public", "private", "internal"}:
+        raise WorkflowError("evidence.access_tier must be public, private, or internal")
     flags = evidence.get("exception_flags")
     if not isinstance(flags, dict):
         raise WorkflowError("evidence.exception_flags must be an object of explicit boolean approvals")
@@ -3476,7 +3476,7 @@ def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--citation", help="Preferred citation for the original source publication.")
     parser.add_argument("--update-cadence", default="manual")
     parser.add_argument("--canonical-format", help="Canonical format override.")
-    parser.add_argument("--access-tier", default="public", choices=["public", "private"])
+    parser.add_argument("--access-tier", default="public", choices=["public", "private", "internal"])
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--release-date", help="Optional intended release date in YYYY-MM-DD form.")
     parser.add_argument("--source-resolution-meters", type=float, help="Optional source resolution hint for PMTiles auto maxzoom.")

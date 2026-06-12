@@ -7,7 +7,18 @@ Browser clients use the tiered shared URL surface:
 ```text
 https://tiles.skytruth.org/pmtiles/public/{asset}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{asset}.pmtiles
+https://tiles.skytruth.org/pmtiles/internal/{asset}.pmtiles
 ```
+
+Access tiers:
+
+- `public`: anonymous browser access, no cookie.
+- `private`: any authenticated consumer session. Self-registration is open, so
+  treat `private` as a soft barrier against anonymous scraping, not as
+  organization-confidential storage.
+- `internal`: sessions with a verified email in the allowed domain list
+  (default `skytruth.org`), or with an unexpired app-level guest grant issued
+  by an admin (for example, a funder reviewing a demo).
 
 Release artifacts that are not PMTiles, including generated localized metadata
 sidecars, use the artifact route:
@@ -231,11 +242,18 @@ from GCS when requests include credentials.
 Keep redirector regexes free of capture groups when possible; Cloud Armor
 rejected capture groups during testing, and non-capturing groups are portable.
 
-Consumers should sign cookie policies only for the private tier prefix:
+Consumers should sign cookie policies only for the restricted tier prefixes:
 
 ```text
 https://tiles.skytruth.org/pmtiles/private/
+https://tiles.skytruth.org/pmtiles/internal/
 ```
+
+Each restricted tier gets its own cookie scoped to its own `Path`
+(`/pmtiles/private` or `/pmtiles/internal`), and each cookie's `URLPrefix`
+policy covers only its tier. A private-tier cookie presented against an
+internal-tier URL fails signature validation. The same signing key validates
+both prefixes; no second key is needed.
 
 The cookie value must contain `URLPrefix`, `Expires`, `KeyName`, and
 `Signature`, in that order, using HMAC-SHA1 over the unsigned policy.
@@ -263,22 +281,39 @@ without a PMTiles session endpoint:
 https://tiles.skytruth.org/pmtiles/public/wdpa-marine.pmtiles
 ```
 
-Any consumer that may display private PMTiles should expose
+Any consumer that may display private or internal PMTiles should expose
 `/api/pmtiles/session` or an equivalent backend route that:
 
 - Returns `204` without a cookie for `tier=public`.
-- Requires an authenticated session for `tier=private`.
-- Allows private PMTiles to SkyTruth or admin users for the first rollout.
+- Requires an authenticated session for `tier=private`; any authenticated
+  user qualifies for the private tier (decision 2026-06-11).
+- Requires an authenticated session with a verified email in the allowed
+  domain list (default `skytruth.org`) or an unexpired app-level guest grant
+  for `tier=internal`, returning `403` for authenticated-but-unauthorized
+  viewers so clients can distinguish "sign in" from "not allowed".
+- Issues a cookie for every restricted tier the viewer qualifies for, so one
+  round-trip arms the whole map.
+- Supports `tier=grants` as a `200 {"tiers": [...]}` probe that reports the
+  viewer's qualifying tiers without setting cookies.
 - Reads the configured PMTiles CDN signing key from the consumer backend's
   secret store.
-- Signs `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
+- Signs the tier URL prefixes (`https://tiles.skytruth.org/pmtiles/private/`,
+  `https://tiles.skytruth.org/pmtiles/internal/`), not individual PMTiles
   object URLs.
 - Uses key name `shared-datasets-pmtiles-v1`.
-- Sets `Cloud-CDN-Cookie` with `Domain=.skytruth.org`,
-  `Path=/pmtiles/private`,
-  `Secure`, `HttpOnly`, `SameSite=None`, and a 24-hour TTL.
+- Sets `Cloud-CDN-Cookie` with `Domain=.skytruth.org`, the tier's `Path`
+  (`/pmtiles/private` or `/pmtiles/internal`),
+  `Secure`, `HttpOnly`, `SameSite=None`, and a 30-day TTL, clamped to the
+  grant expiry when authorization came from a time-boxed guest grant.
 - Returns `Cache-Control: no-store`.
 - Never logs or returns the key or cookie value.
+
+TypeScript consumers should not hand-write this contract:
+`createPmtilesSessionHandler` / `createNextPmtilesSessionHandler` in
+`@skytruth/shared-datasets/server` implement all of it given a `getViewer`
+and a `getSigningKey` function, and `isViewerAuthorizedForTier` exposes the
+same tier-authorization rule for API payload filtering and metadata URL
+entitlement checks so the gates cannot drift apart.
 
 Any consumer that may display private feature metadata should expose a separate
 backend route such as
@@ -300,7 +335,7 @@ Consumer config APIs should derive shared PMTiles URLs from catalog
 `access_tier` and emit only this URL shape:
 
 ```text
-https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles
+https://tiles.skytruth.org/pmtiles/{access-tier}/{slug}.pmtiles
 ```
 
 Do not emit direct
@@ -318,17 +353,21 @@ records to distinguish source-provided names, machine translations,
 human-reviewed translations, and mixed review state in user-facing confidence
 cues.
 
-Before mounting a private PMTiles layer, the frontend should call the session
-endpoint, preferably through `ensurePmtilesCdnSession`:
+Before mounting a private or internal PMTiles layer, the frontend should call
+the session endpoint, preferably through `ensurePmtilesCdnSession` with the
+tier resolved from the catalog ref:
 
 ```ts
 const result = await ensurePmtilesCdnSession({
-  accessTier: "private",
+  accessTier: ref.accessTier,
   endpoint: "/api/pmtiles/session"
 });
 ```
 
-Only mount the private layer after a successful result. If the PMTiles library
+Only mount the layer after a successful result. A result with `denied: true`
+(HTTP 403) means this viewer is not authorized for the tier; hide the layer
+instead of retrying. `getPmtilesCdnGrants` reports the viewer's qualifying
+tiers up front when a UI needs to decide what to offer. If the PMTiles library
 hides byte-range requests, wrap its source or protocol implementation so header,
 directory, and tile range requests use `getPmtilesFetchCredentials(url)`.
 
@@ -414,14 +453,16 @@ Apply this recipe to any downstream repo, including 30x30:
    headers, and credentialed PMTiles fetches.
 10. Run the consumer repo's lint, type-check, and production build.
 
-The signed cookie must be scoped to:
+Each signed cookie must be scoped to its tier:
 
 ```text
 Domain=.skytruth.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None
+Domain=.skytruth.org; Path=/pmtiles/internal; Secure; HttpOnly; SameSite=None
 ```
 
-Use a 24-hour TTL. Do not log the secret bytes, HMAC
-input key, HMAC output, or final cookie value.
+Use a 30-day TTL, clamped to grant expiry for guest-granted internal access.
+Do not log the secret bytes, HMAC input key, HMAC output, or final cookie
+value.
 
 ## Validation
 
@@ -467,6 +508,10 @@ Live checks after CDN cutover and direct public GCS removal:
 - Public metadata sidecar requests under `/artifacts/...` return `200`.
 - Private CDN range request without a cookie returns `403`.
 - Private CDN range request with a valid cookie returns `200` or `206`.
+- Internal CDN range request without a cookie returns `403`.
+- Internal CDN range request with a valid internal-tier cookie returns `200`
+  or `206`.
+- A private-tier cookie replayed against an internal-tier URL returns `403`.
 - Expired or malformed cookie returns `403`.
 - Unsigned `/private/.../{asset}.metadata.{locale}.ndjson.gz` requests for
   private assets return

@@ -151,7 +151,7 @@ REQUIRED_SECTIONS = [
 APPROVED_CANONICAL_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 PUBLISHED_ROLES = {"canonical", "companion"}
 FILE_ROLES = {"canonical", "companion", "release", "run-record", "source", "preview", "metadata", "localization"}
-ACCESS_TIERS = {"public", "private"}
+ACCESS_TIERS = {"public", "private", "internal"}
 DISALLOWED_CADENCE_DETAIL_RE = re.compile(r"\b(skip|skipped|unchanged|no[- ]?change)\b", re.IGNORECASE)
 
 

@@ -1,7 +1,9 @@
+import type { PmtilesTier } from './pmtiles-cdn-session.js';
+
 export const DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL =
   'https://tiles.skytruth.org/_catalog/web/catalog.json';
 
-export type SharedDatasetAccessTier = 'public' | 'private';
+export type SharedDatasetAccessTier = PmtilesTier;
 
 export type SharedDatasetPmtilesRef = {
   accessTier: SharedDatasetAccessTier;
@@ -118,7 +120,9 @@ export const getSharedDatasetAccessTier = (
   value: string | null | undefined
 ): SharedDatasetAccessTier | null => {
   const tier = value?.trim().toLowerCase();
-  return tier === 'public' || tier === 'private' ? tier : null;
+  return tier === 'public' || tier === 'private' || tier === 'internal'
+    ? tier
+    : null;
 };
 
 const requireCatalogString = (
