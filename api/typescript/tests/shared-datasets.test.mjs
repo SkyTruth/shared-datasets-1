@@ -14,8 +14,10 @@ import {
   DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL,
   SharedDatasetCatalogResolutionError,
   clearPmtilesCdnSession,
+  createCatalogSharedDatasetAccessTierLookup,
   createSharedDatasetAccessTierLookup,
   fetchSharedDatasetCatalogJson,
+  filterPrivateSharedDatasetRows,
   fetchSharedDatasetMetadataRecords,
   getAccessTiersFromSharedDatasetPmtilesRefs,
   getPmtilesFetchCredentials,
@@ -949,6 +951,92 @@ test('caches shared dataset access-tier lookups', async () => {
   assert.equal(await lookup('example-public-layer'), 'private');
   assert.equal(loadCount, 2);
   await assert.rejects(() => lookup('missing-layer'), /missing-layer/);
+});
+
+test('creates a catalog-backed access-tier lookup', async () => {
+  let fetchCount = 0;
+  let currentTime = 1_000;
+  const getAccessTier = createCatalogSharedDatasetAccessTierLookup({
+    fetchJson: async () => {
+      fetchCount += 1;
+      return catalogFixture;
+    },
+    now: () => currentTime,
+    ttlMs: 100
+  });
+
+  assert.equal(await getAccessTier('example-public-layer'), 'public');
+  assert.equal(await getAccessTier('example-private-layer'), 'private');
+  assert.equal(fetchCount, 1);
+  currentTime = 1_101;
+  assert.equal(await getAccessTier('example-public-layer'), 'public');
+  assert.equal(fetchCount, 2);
+  await assert.rejects(
+    () => getAccessTier('missing-layer'),
+    SharedDatasetCatalogResolutionError
+  );
+});
+
+test('filters private shared-dataset rows fail closed', async () => {
+  const getAccessTier = createCatalogSharedDatasetAccessTierLookup({
+    fetchJson: async () => catalogFixture
+  });
+
+  const { rows, tierLookupFailed } = await filterPrivateSharedDatasetRows(
+    [
+      { assetSlug: ' Example-Public-Layer ', id: 1 },
+      { assetSlug: 'example-private-layer', id: 2 },
+      { assetSlug: null, id: 3 },
+      { id: 4 }
+    ],
+    { getAccessTier }
+  );
+
+  assert.deepEqual(
+    rows.map(row => row.id),
+    [1, 3, 4]
+  );
+  assert.equal(tierLookupFailed, false);
+});
+
+test('reports tier-lookup failures while filtering shared-dataset rows', async () => {
+  const failingLookup = filterPrivateSharedDatasetRows(
+    [
+      { id: 1, layer: 'example-public-layer' },
+      { id: 2, layer: 'not-in-catalog' },
+      { id: 3, layer: null }
+    ],
+    {
+      getAccessTier: createCatalogSharedDatasetAccessTierLookup({
+        fetchJson: async () => catalogFixture
+      }),
+      getAssetSlug: row => row.layer
+    }
+  );
+
+  const { rows, tierLookupFailed } = await failingLookup;
+  assert.deepEqual(
+    rows.map(row => row.id),
+    [1, 3]
+  );
+  assert.equal(tierLookupFailed, true);
+
+  const { rows: catalogDownRows, tierLookupFailed: catalogDownFailed } =
+    await filterPrivateSharedDatasetRows(
+      [{ assetSlug: 'example-public-layer', id: 1 }, { id: 2 }],
+      {
+        getAccessTier: createCatalogSharedDatasetAccessTierLookup({
+          fetchJson: async () => {
+            throw new Error('catalog unavailable');
+          }
+        })
+      }
+    );
+  assert.deepEqual(
+    catalogDownRows.map(row => row.id),
+    [2]
+  );
+  assert.equal(catalogDownFailed, true);
 });
 
 test('main package entrypoint stays browser safe', async () => {

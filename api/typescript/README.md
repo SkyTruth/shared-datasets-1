@@ -488,6 +488,48 @@ const tier = await getAccessTier("example-public-layer");
 The default cache TTL is 5 minutes. Pass `ttlMs` and `now` to customize or test
 cache behavior.
 
+`createCatalogSharedDatasetAccessTierLookup` wires the same lookup to the
+shared datasets catalog directly, so the common server case is one call:
+
+```ts
+import { createCatalogSharedDatasetAccessTierLookup } from "@skytruth/shared-datasets";
+
+const getAccessTier = createCatalogSharedDatasetAccessTierLookup();
+const tier = await getAccessTier("example-public-layer");
+```
+
+It accepts the standard catalog fetch options (`catalogUrl`, `fetchJson`) plus
+`ttlMs` and `now`.
+
+## Filtering Private Rows Out Of Untrusted Payloads
+
+When a server endpoint returns rows derived from shared datasets to
+unauthenticated or otherwise untrusted requesters, use
+`filterPrivateSharedDatasetRows` instead of hand-rolling tier checks. It
+applies the standard access policy: rows from non-public datasets are dropped,
+rows whose tier cannot be resolved are dropped (fail closed), and rows without
+an asset slug pass through unchanged.
+
+```ts
+import {
+  createCatalogSharedDatasetAccessTierLookup,
+  filterPrivateSharedDatasetRows
+} from "@skytruth/shared-datasets";
+
+const getAccessTier = createCatalogSharedDatasetAccessTierLookup();
+
+const { rows, tierLookupFailed } = await filterPrivateSharedDatasetRows(
+  candidateRows, // each row carries an `assetSlug` field by default
+  { getAccessTier }
+);
+```
+
+Pass `getAssetSlug` when rows store the dataset slug under a different field.
+`tierLookupFailed` reports that at least one row was dropped because its tier
+could not be resolved: the result is safe to serve but over-filtered, so skip
+long-lived caching of it (otherwise a transient catalog outage pins a degraded
+payload until the cache expires).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
