@@ -32,8 +32,8 @@ AUTHENTICATED_GCS_HINT = (
 
 AccessMode = Literal["public", "gcs"]
 UrlStrategy = Literal["public_gcs", "cdn"]
-AccessTier = Literal["public", "private"]
-ACCESS_TIERS = {"public", "private"}
+AccessTier = Literal["public", "private", "internal"]
+ACCESS_TIERS = {"public", "private", "internal"}
 
 
 class SharedDatasetsError(Exception):
@@ -686,7 +686,8 @@ def _normalize_access(access: str) -> AccessMode:
 def _normalize_access_tier(access_tier: str) -> AccessTier:
     normalized = access_tier.strip().lower().replace("-", "_")
     if normalized not in ACCESS_TIERS:
-        raise ValueError("access_tier must be 'public' or 'private'")
+        allowed = "', '".join(sorted(ACCESS_TIERS))
+        raise ValueError(f"access_tier must be '{allowed}'")
     return normalized  # type: ignore[return-value]
 
 

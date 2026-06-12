@@ -333,6 +333,23 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertNotIn("tiles.skytruth.org", payload["pmtiles_url"])
         self.assertNotIn("Location", response.headers)
 
+    def test_internal_pmtiles_returns_no_store_signed_gcs_url_for_iap_identity(self):
+        catalog = catalog_payload()
+        catalog["assets"][1]["access_tier"] = "internal"
+        catalog["assets"][1]["pmtiles_url"] = (
+            "https://tiles.skytruth.org/pmtiles/internal/acled-europe-central-asia-aggregated-weekly-admin1.pmtiles"
+        )
+        response, signer = signed_url_request(
+            "acled-europe-central-asia-aggregated-weekly-admin1",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            catalog=catalog,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["pmtiles_url"].startswith("https://storage.googleapis.com/"))
+        self.assertEqual(signer.calls[0][0], PRIVATE_PATH)
+
     def test_static_root_serves_generated_index(self):
         store = FakeStore(catalog_payload())
         response = handle_request(
@@ -411,6 +428,21 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["filename"], "acled-europe-central-asia-aggregated-weekly-admin1.fgb")
         self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH)
         self.assertEqual(metadata_cdn_signer.calls, [])
+
+    def test_internal_latest_fgb_download_returns_signed_gcs_url(self):
+        catalog = catalog_payload()
+        catalog["assets"][1]["access_tier"] = "internal"
+        response, signer = download_url_request(
+            "acled-europe-central-asia-aggregated-weekly-admin1",
+            headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            catalog=catalog,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/"))
+        self.assertEqual(payload["gs_uri"], PRIVATE_FGB_PATH)
+        self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH)
 
     def test_historical_fgb_download_uses_release_index(self):
         response, _signer = download_url_request("wdpa-marine", version="2026-05-01")

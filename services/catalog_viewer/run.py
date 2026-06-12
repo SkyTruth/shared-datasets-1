@@ -29,6 +29,8 @@ DEFAULT_SIGNED_URL_TTL_SECONDS = 900
 DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
 NO_CACHE = "no-cache, max-age=0, must-revalidate"
 NO_STORE = "no-store"
+ACCESS_TIERS = {"public", "private", "internal"}
+RESTRICTED_ACCESS_TIERS = {"private", "internal"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
@@ -401,8 +403,11 @@ def handle_signed_url(
     if pmtiles_bucket != bucket_name:
         return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog PMTiles path is outside the shared bucket"})
 
-    access_tier = str(asset.get("access_tier") or "public").lower()
-    if access_tier == "private":
+    try:
+        access_tier = catalog_access_tier(asset)
+    except ValueError:
+        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog access tier is invalid"})
+    if access_tier in RESTRICTED_ACCESS_TIERS:
         email = authenticated_user_email(headers)
         if not email:
             return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
@@ -473,8 +478,11 @@ def handle_download_url(
         return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog download path is outside the shared bucket"})
 
     filename = basename(gs_uri) or f"{slug}.{format_name}"
-    access_tier = str(asset.get("access_tier") or "public").lower()
-    if access_tier == "private":
+    try:
+        access_tier = catalog_access_tier(asset)
+    except ValueError:
+        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog access tier is invalid"})
+    if access_tier in RESTRICTED_ACCESS_TIERS:
         email = authenticated_user_email(headers)
         if not email:
             return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
@@ -753,6 +761,13 @@ def asset_has_pmtiles(asset: Mapping[str, Any]) -> bool:
     return bool(asset.get("pmtiles_path")) and (
         asset.get("has_pmtiles") is True or (isinstance(formats, list) and "pmtiles" in formats)
     )
+
+
+def catalog_access_tier(asset: Mapping[str, Any]) -> str:
+    access_tier = str(asset.get("access_tier") or "").strip().lower()
+    if access_tier not in ACCESS_TIERS:
+        raise ValueError("invalid access_tier")
+    return access_tier
 
 
 def first_query_value(path: str, key: str) -> str:

@@ -1065,7 +1065,7 @@ def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | 
         has_csv="csv" in formats,
         public_url=latest_version.public_url,
         pmtiles_path=pmtiles_path,
-        pmtiles_url=latest_version.pmtiles_url if pmtiles_path else None,
+        pmtiles_url=pmtiles_cdn_url(asset.slug, asset.access_tier) if pmtiles_path else None,
         canonical_sha256=latest_version.canonical_sha256 or asset.canonical_sha256,
         pmtiles_sha256=latest_version.pmtiles_sha256 or asset.pmtiles_sha256,
         row_count=latest_version.rows if latest_version.rows is not None else asset.row_count,

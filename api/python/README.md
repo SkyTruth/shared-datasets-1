@@ -17,7 +17,7 @@ browser PMTiles session handshakes and Cloud CDN signed-cookie helpers.
 | CI or diagnostics need quick checks | `skytruth-datasets` CLI |
 | Service code needs feature metadata by PMTiles `feature_id` | Release metadata sidecar via `Catalog.versions(...)` and `catalog.fetch(slug, "metadata", version=...)` |
 | Browser map code needs PMTiles | TypeScript helpers or direct tiered CDN URLs, not this SDK |
-| Backend route signs private PMTiles cookies | TypeScript server helpers, not this SDK |
+| Backend route signs restricted PMTiles cookies | TypeScript server helpers, not this SDK |
 
 The SDK keeps canonical GCS object identity, access tier metadata, browser URL
 construction, downloads, cache paths, and lineage values together in a
@@ -61,7 +61,7 @@ In Cloud Run, scheduled jobs, GitHub Actions with Workload Identity Federation,
 or other managed runtimes, run the service as the approved runtime or reader
 service account and call the SDK without credential setup code.
 
-Private PMTiles cookie signing is a separate concern. This Python SDK does not
+Restricted PMTiles cookie signing is a separate concern. This Python SDK does not
 read the PMTiles signing key and does not sign Cloud CDN cookies. The backend
 route that issues browser PMTiles cookies needs separate Secret Manager access
 and should use the TypeScript server helpers.
@@ -245,7 +245,7 @@ Important `DatasetRef` fields:
 | `ref.format` | Resolved format. |
 | `ref.gs_uri` | Durable GCS object identity. |
 | `ref.url` | Browser-facing URL for the resolved object. PMTiles latest defaults to the CDN URL. |
-| `ref.access_tier` | `public` or `private`. |
+| `ref.access_tier` | `public`, `private`, or `internal`. |
 | `ref.cache_path` | Local downloaded path after `fetch_dataset`; `None` after `resolve_dataset`. |
 | `ref.resolved_id` | Stable lineage value, such as `wdpa-marine@2026-05-02`. |
 
@@ -266,6 +266,7 @@ Browser PMTiles should use the shared CDN:
 ```text
 https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
+https://tiles.skytruth.org/pmtiles/internal/{slug}.pmtiles
 ```
 
 The SDK keeps the canonical `gs://` identity in `DatasetRef.gs_uri` and exposes
@@ -331,6 +332,6 @@ should prefer the Python API so it can preserve `DatasetRef` metadata.
 
 Do not put this Python SDK in browser code. Browser clients should not receive
 GCS credentials, service account keys, raw signing keys, or signed cookie
-values. Browser PMTiles code should use the tiered CDN URL and, for private
-layers, a consumer backend session endpoint implemented with the TypeScript
-server helpers.
+values. Browser PMTiles code should use the tiered CDN URL and, for private or
+internal layers, a consumer backend session endpoint implemented with the
+TypeScript server helpers.

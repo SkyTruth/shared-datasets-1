@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="List catalog assets.")
     list_parser.add_argument("--category", help="Filter by top-level category.")
     list_parser.add_argument("--format", help="Filter by available format.")
-    list_parser.add_argument("--access-tier", choices=("public", "private"), help="Filter by access tier.")
+    list_parser.add_argument("--access-tier", choices=("public", "private", "internal"), help="Filter by access tier.")
     list_parser.add_argument("--status", default="active", help="Filter by status. Use --all-statuses to disable.")
     list_parser.add_argument("--all-statuses", action="store_true", help="Include assets with any status.")
 

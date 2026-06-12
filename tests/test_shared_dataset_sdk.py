@@ -186,12 +186,14 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
     def test_get_and_search_filter_catalog_assets(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
+        internal_catalog = Catalog.from_csv_text(FIXTURE_CSV.replace(",public,SkyTruth,manual", ",internal,SkyTruth,manual", 1))
 
         self.assertEqual(catalog.get("example-vector").slug, "example-vector")
         self.assertEqual([asset.slug for asset in catalog.search(category="100-geographic-reference")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(format="pmtiles")], ["example-vector"])
         self.assertEqual(catalog.search(format=".fgb"), [])
         self.assertEqual([asset.slug for asset in catalog.search(access_tier="public")], ["example-vector"])
+        self.assertEqual([asset.slug for asset in internal_catalog.search(access_tier="internal")], ["example-vector"])
         self.assertEqual([asset.slug for asset in catalog.search(status=None)], ["example-vector", "example-table"])
         with self.assertRaises(DatasetNotFoundError):
             catalog.get("missing")
@@ -238,6 +240,19 @@ class SharedDatasetSdkTests(unittest.TestCase):
             "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles",
         )
         self.assertEqual(pmtiles.url, "/pmtiles/public/example-vector.pmtiles")
+
+    def test_resolve_cdn_url_uses_internal_tier_path(self):
+        pmtiles_csv = FIXTURE_CSV.replace(
+            "example-vector/latest/example-vector.fgb,fgb,fgb;pmtiles;geojson",
+            "example-vector/latest/example-vector.pmtiles,pmtiles,pmtiles",
+            1,
+        ).replace(",public,SkyTruth,manual", ",internal,SkyTruth,manual", 1)
+        catalog = Catalog.from_csv_text(pmtiles_csv)
+
+        pmtiles = catalog.resolve("example-vector", format="pmtiles", web_base_url="/pmtiles")
+
+        self.assertEqual(pmtiles.access_tier, "internal")
+        self.assertEqual(pmtiles.url, "/pmtiles/internal/example-vector.pmtiles")
 
     def test_resolve_pmtiles_can_force_public_gcs_url(self):
         pmtiles_csv = FIXTURE_CSV.replace(

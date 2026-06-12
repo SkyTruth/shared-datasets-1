@@ -4,7 +4,7 @@ description: >-
   Use when integrating shared-datasets-1 into a SkyTruth consumer repo or app,
   including choosing between the Python SDK and TypeScript SDK, replacing direct
   GCS or hardcoded PMTiles URLs, using catalog.json-driven layer/search/config
-  metadata, adding signed-cookie private PMTiles access, preserving
+  metadata, adding signed-cookie restricted PMTiles access, preserving
   DatasetRef.resolved_id lineage, or preparing focused consumer adoption PRs.
 ---
 
@@ -32,7 +32,7 @@ Python SDK README: api/python/README.md
 TypeScript SDK README: api/typescript/README.md
 Machine catalog: https://tiles.skytruth.org/_catalog/web/catalog.json
 Catalog CSV: https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv
-Private PMTiles reference: docs/shared-datasets-consumer-skill/references/private-pmtiles-signed-cookies.md
+Restricted PMTiles reference: docs/shared-datasets-consumer-skill/references/private-pmtiles-signed-cookies.md
 ```
 
 Do not guess current access tiers, CORS origins, reader service accounts, signer
@@ -42,8 +42,8 @@ grants, or private asset lists from memory.
 
 | Consumer surface | Use |
 |---|---|
-| Browser map PMTiles, public or private | TypeScript SDK or catalog-derived `pmtiles_url`. |
-| Backend route that issues private PMTiles cookies | TypeScript SDK server entrypoint. |
+| Browser map PMTiles, public/private/internal | TypeScript SDK or catalog-derived `pmtiles_url`. |
+| Backend route that issues restricted PMTiles cookies | TypeScript SDK server entrypoint. |
 | Backend service config generated from catalog JSON | TypeScript SDK catalog helpers or direct catalog JSON parsing. |
 | Python jobs or services that download data files | Python SDK with the `gcs` extra. |
 | Python jobs or services that need catalog resolution but not bytes | Python SDK `resolve_dataset` or `Catalog`. |
@@ -60,7 +60,7 @@ TypeScript SDK for backend GCS downloads.
 2. Classify each hit by runtime surface:
    - Browser PMTiles should use `https://tiles.skytruth.org/pmtiles/{tier}/{slug}.pmtiles`
      or catalog JSON `pmtiles_url`.
-   - Private browser PMTiles need a backend signed-cookie session endpoint.
+   - Private and internal browser PMTiles need a backend signed-cookie session endpoint.
    - Browser or service catalog discovery should use
      `https://tiles.skytruth.org/_catalog/web/catalog.json` or an app-owned API.
    - Backend data downloads should use the Python SDK and ADC.
@@ -73,7 +73,7 @@ TypeScript SDK for backend GCS downloads.
 
 ## TypeScript PMTiles Pattern
 
-Use this when the consumer repo has browser PMTiles, private PMTiles, or a
+Use this when the consumer repo has browser PMTiles, restricted PMTiles, or a
 backend route that issues PMTiles cookies.
 
 The TypeScript package is published on npm as `@skytruth/shared-datasets`. If
@@ -112,18 +112,18 @@ Rules:
   `review_state` values for confidence cues.
 - Reject missing or unknown `access_tier`; do not silently default to public.
 - Public PMTiles do not need a cookie.
-- Private PMTiles require the session endpoint before mounting the layer.
-- Every private PMTiles byte-range request must include
+- Private and internal PMTiles require the session endpoint before mounting the layer.
+- Every restricted PMTiles byte-range request must include
   `credentials: "include"`.
 - Browser code must never receive GCS credentials, service account keys, raw
   signing key bytes, or full signed cookie values.
 - Do not import `@skytruth/shared-datasets/server` into browser bundles.
 
-Roll out private PMTiles in this order: replace direct PMTiles URLs with
+Roll out restricted PMTiles in this order: replace direct PMTiles URLs with
 catalog-derived `pmtiles_url`, bump layer-config cache keys, add the session
 endpoint, add credentialed PMTiles range fetches, call the session endpoint
-before mounting private layers, verify CSP/CORS, then run lint, type, test, and
-build checks.
+before mounting restricted layers, verify CSP/CORS, then run lint, type, test,
+and build checks.
 
 ## Python Backend Data Pattern
 
@@ -231,15 +231,15 @@ behavior.
 - If the repo reads public catalog files, use `https://tiles.skytruth.org/_catalog/`
   or an app-owned API.
 - Bump any config cache key that could retain old PMTiles URLs.
-- If private PMTiles are possible, add a backend session endpoint using the
+- If restricted PMTiles are possible, add a backend session endpoint using the
   TypeScript server helpers.
-- If private PMTiles are possible, ensure PMTiles range requests include browser
-  credentials and private layers wait for the session endpoint.
+- If restricted PMTiles are possible, ensure PMTiles range requests include
+  browser credentials and restricted layers wait for the session endpoint.
 - If backend Python code downloads shared data, add the Python SDK dependency
   and use `fetch_dataset("<slug>", "<format>")`.
 - If backend code runs in GCP, confirm the runtime identity has
   `roles/storage.objectViewer` on the shared bucket.
-- If backend code signs private PMTiles cookies, confirm the signer runtime has
+- If backend code signs restricted PMTiles cookies, confirm the signer runtime has
   access to the shared signing-key secret.
 - Do not expose GCS credentials to browser code.
 
@@ -250,8 +250,10 @@ Add focused tests that prove the surfaces touched:
 - PMTiles URLs use `https://tiles.skytruth.org/pmtiles/public/...`.
 - Private PMTiles URLs use
   `https://tiles.skytruth.org/pmtiles/private/...`.
-- Catalog-derived PMTiles URLs use `access_tier`; include public and private
-  fixture rows.
+- Internal PMTiles URLs use
+  `https://tiles.skytruth.org/pmtiles/internal/...`.
+- Catalog-derived PMTiles URLs use `access_tier`; include public, private, and
+  internal fixture rows.
 - Browser/service config reads use
   `https://tiles.skytruth.org/_catalog/web/catalog.json` or an app-owned API.
 - PMTiles layer source configuration does not hardcode
