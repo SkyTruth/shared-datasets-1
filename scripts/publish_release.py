@@ -85,6 +85,7 @@ class PublishPlan:
     checks: tuple[str, ...]
     schema_compatibility: dict[str, Any] | None = None
     compatibility_waiver: dict[str, Any] | None = None
+    identity_ambiguity_report: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ def build_publish_plan(
     schema_compatibility_checker: Callable[..., Any] | None = None,
     compatibility_waiver_path: Path | None = None,
     compatibility_waiver: dict[str, Any] | None = None,
+    identity_ambiguity_report_path: Path | None = None,
     cog_validator: Callable[[Path], Any] | None = None,
     vector_bundle_validator: Callable[[Path, Path], Any] | None = None,
 ) -> PublishPlan:
@@ -220,6 +222,7 @@ def build_publish_plan(
     schema_compatibility_check = schema_compatibility_checker or default_schema_compatibility_checker
     compatibility_waiver_payload = load_compatibility_waiver(compatibility_waiver_path, compatibility_waiver)
     schema_compatibility: dict[str, Any] | None = None
+    identity_ambiguity_report: dict[str, Any] | None = None
     validate_cog_fn = cog_validator or validate_cog
 
     data_format_order = tuple(dict.fromkeys((*available_formats, *(("pmtiles",) if vector_release else ()))))
@@ -285,6 +288,28 @@ def build_publish_plan(
             artifacts=artifacts,
             vector_bundle_validator=vector_bundle_validator,
         )
+        previous_records = load_latest_metadata_records_for_publish(
+            bucket=bucket,
+            asset_root=asset_root,
+            asset_slug=asset_slug,
+        )
+        identity_ambiguity_report = build_identity_ambiguity_report(
+            asset_slug=asset_slug,
+            release=release.isoformat(),
+            artifacts=artifacts,
+            previous_records=previous_records,
+        )
+        if identity_ambiguity_report["ambiguity_count"]:
+            checks.append(
+                "feature identity ambiguities require reviewer attention: "
+                f"{identity_ambiguity_report['ambiguity_count']}"
+            )
+        if identity_ambiguity_report_path is not None:
+            identity_ambiguity_report_path.parent.mkdir(parents=True, exist_ok=True)
+            identity_ambiguity_report_path.write_text(
+                json.dumps(identity_ambiguity_report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
     assert_object_missing(bucket, object_name_from_uri(run_record_uri), label="run record")
     metadata_uploads = tuple(
@@ -314,6 +339,7 @@ def build_publish_plan(
         checks=tuple(checks),
         schema_compatibility=schema_compatibility,
         compatibility_waiver=compatibility_waiver_payload,
+        identity_ambiguity_report=identity_ambiguity_report,
     )
 
 
@@ -503,7 +529,7 @@ def build_run_record_payload(
     row_count: int | None,
     notes: str,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
         "asset_slug": plan.asset_slug,
@@ -532,6 +558,12 @@ def build_run_record_payload(
         "stale_formats": list(plan.stale_formats),
         "checks": list(plan.checks),
     }
+    if plan.identity_ambiguity_report:
+        payload["identity_ambiguity_report"] = plan.identity_ambiguity_report
+        payload["identity_ambiguity_count"] = plan.identity_ambiguity_report.get("ambiguity_count", 0)
+        if plan.identity_ambiguity_report.get("ambiguity_count", 0):
+            payload["warnings"] = ["feature identity ambiguities require reviewer attention"]
+    return payload
 
 
 def plan_to_dict(plan: PublishPlan) -> dict[str, Any]:
@@ -760,6 +792,81 @@ def build_metadata_uploads(
             content_type=content_type_for(local_path),
             current_generation=current_generation(bucket, object_name_from_uri(uri)),
         )
+
+
+def load_latest_metadata_records_for_publish(
+    *,
+    bucket: Any,
+    asset_root: str,
+    asset_slug: str,
+) -> tuple[dict[str, Any], ...]:
+    object_name = f"{asset_root}/latest/{asset_slug}.metadata.ndjson.gz"
+    blob = bucket.blob(object_name)
+    try:
+        blob.reload()
+    except NotFound:
+        return ()
+    try:
+        records = tuple(
+            release_feature_model.read_metadata_sidecar_bytes(
+                blob.download_as_bytes(),
+                label=f"gs://{bucket.name}/{object_name}",
+            )
+        )
+        validation = release_feature_model.validate_sidecar_records(records)
+        if not validation.valid:
+            raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
+        release_feature_model.previous_feature_id_mapping(records)
+    except release_feature_model.ReleaseFeatureModelError as exc:
+        raise PublishReleaseError(
+            f"{asset_slug} latest metadata sidecar has incompatible feature identity mappings: {exc}"
+        ) from exc
+    return records
+
+
+def build_identity_ambiguity_report(
+    *,
+    asset_slug: str,
+    release: str,
+    artifacts: Iterable[PublishArtifact],
+    previous_records: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    metadata_artifact = next((artifact for artifact in artifacts if artifact.format == "metadata"), None)
+    if metadata_artifact is None:
+        return {
+            "schema_version": 1,
+            "asset_slug": asset_slug,
+            "release": release,
+            "ambiguity_count": 0,
+            "ambiguities": [],
+        }
+    previous = tuple(previous_records)
+    if not previous:
+        return {
+            "schema_version": 1,
+            "asset_slug": asset_slug,
+            "release": release,
+            "ambiguity_count": 0,
+            "ambiguities": [],
+        }
+    current_records = tuple(release_feature_model.read_metadata_sidecar(Path(metadata_artifact.local_path)))
+    ambiguities = release_feature_model.find_identity_ambiguities(
+        current_records,
+        previous_records=previous,
+    )
+    ambiguity_payloads = release_feature_model.identity_ambiguities_to_dicts(ambiguities)
+    return {
+        "schema_version": 1,
+        "asset_slug": asset_slug,
+        "release": release,
+        "ambiguity_count": len(ambiguity_payloads),
+        "ambiguities": ambiguity_payloads,
+        "resolution_file": f"catalog/feature-identity-resolutions/{asset_slug}.json",
+        "reviewer_action": (
+            "Review each ambiguity and decide whether the new feature should reuse a previous "
+            "feature_id or receive a new generated feature_id."
+        ),
+    }
 
 
 def assert_object_missing(bucket: Any, object_name: str, *, label: str) -> None:

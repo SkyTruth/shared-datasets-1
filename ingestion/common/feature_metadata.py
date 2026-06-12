@@ -69,9 +69,16 @@ def assign_generated_feature_ids(
     identity_keys: Iterable[Sequence[str]],
     *,
     previous_records: Iterable[Mapping[str, Any]] | None = None,
+    feature_id_overrides: Mapping[Sequence[str], str] | None = None,
+    force_new_identity_keys: Iterable[Sequence[str]] = (),
 ) -> dict[tuple[str, ...], str]:
     try:
-        return release_feature_model.assign_generated_feature_ids(identity_keys, previous_records=previous_records)
+        return release_feature_model.assign_generated_feature_ids(
+            identity_keys,
+            previous_records=previous_records,
+            feature_id_overrides=feature_id_overrides,
+            force_new_identity_keys=force_new_identity_keys,
+        )
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
 
@@ -191,6 +198,7 @@ def enrich_features_with_generated_ids(
     provenance: Mapping[str, Any],
     source_fields: Sequence[str] = (),
     previous_records: Iterable[Mapping[str, Any]] | None = None,
+    identity_resolution_decisions: Iterable[Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[release_feature_model.IdentityAmbiguity, ...]]:
     prepared: list[dict[str, Any]] = []
     seen_identity_keys: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -225,10 +233,8 @@ def enrich_features_with_generated_ids(
         seen_identity_keys[identity_key] = prepared_item
         prepared.append(prepared_item)
 
-    ids_by_key = assign_generated_feature_ids((item["identity_key"] for item in prepared), previous_records=previous_records)
     provisional_records = [
         {
-            "feature_id": ids_by_key[item["identity_key"]],
             "geometry_hash": item["geometry_hash"],
             "properties_hash": item["properties_hash"],
             "identity_key": item["identity_key"],
@@ -239,6 +245,21 @@ def enrich_features_with_generated_ids(
     ambiguities = release_feature_model.find_identity_ambiguities(
         provisional_records,
         previous_records=previous_records or (),
+    )
+    try:
+        resolutions = release_feature_model.validate_identity_resolutions(
+            release=release,
+            ambiguities=ambiguities,
+            decisions=identity_resolution_decisions or (),
+        )
+    except release_feature_model.ReleaseFeatureModelError as exc:
+        raise RuntimeError(str(exc)) from exc
+    unresolved_ambiguities = release_feature_model.unresolved_identity_ambiguities(ambiguities, resolutions)
+    ids_by_key = assign_generated_feature_ids(
+        (item["identity_key"] for item in prepared),
+        previous_records=previous_records,
+        feature_id_overrides=release_feature_model.resolved_feature_id_overrides(resolutions),
+        force_new_identity_keys=release_feature_model.resolved_force_new_identity_keys(resolutions),
     )
     enriched: list[dict[str, Any]] = []
     sidecar_records: list[dict[str, Any]] = []
@@ -263,7 +284,74 @@ def enrich_features_with_generated_ids(
         sidecar_records.append(sidecar)
     if not sidecar_records:
         raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
-    return enriched, sidecar_records, ambiguities
+    return enriched, sidecar_records, unresolved_ambiguities
+
+
+def identity_ambiguity_alert_body(
+    *,
+    asset_slug: str,
+    release: str,
+    ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
+    limit: int = 5,
+) -> str:
+    visible = list(ambiguities[:limit])
+    lines = [
+        f"*Asset:* `{asset_slug}`",
+        f"*Release:* `{release}`",
+        f"*Unresolved ambiguities:* `{len(ambiguities)}`",
+        "",
+        "Open a PR adding reviewed decisions to "
+        f"`catalog/feature-identity-resolutions/{asset_slug}.json`, merge it, then rerun the job.",
+    ]
+    for index, ambiguity in enumerate(visible, start=1):
+        lines.extend(
+            [
+                "",
+                f"*{index}. {ambiguity.ambiguity_type}*",
+                f"- New identity key: `{list(ambiguity.identity_key)}`",
+                f"- Geometry matches: `{list(ambiguity.matching_geometry_feature_ids)}`",
+                f"- Properties matches: `{list(ambiguity.matching_properties_feature_ids)}`",
+            ]
+        )
+    if len(ambiguities) > len(visible):
+        lines.append(f"\n... {len(ambiguities) - len(visible)} more unresolved ambiguity record(s) in job logs.")
+    return "\n".join(lines)
+
+
+def notify_identity_ambiguities(
+    *,
+    asset_slug: str,
+    release: str,
+    ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
+) -> bool:
+    from scripts.slack_notify import notify
+
+    return notify(
+        title="Feature identity ambiguity requires review",
+        body=identity_ambiguity_alert_body(asset_slug=asset_slug, release=release, ambiguities=ambiguities),
+        status="warning",
+        fields={
+            "asset_slug": asset_slug,
+            "release": release,
+            "ambiguity_count": str(len(ambiguities)),
+        },
+        strict=False,
+    )
+
+
+def raise_unresolved_identity_ambiguities(
+    *,
+    asset_slug: str,
+    release: str,
+    ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
+) -> None:
+    if not ambiguities:
+        return
+    notify_identity_ambiguities(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
+    raise RuntimeError(
+        f"{asset_slug} has {len(ambiguities)} unresolved partial identity hash match(es) requiring maintainer review: "
+        + json.dumps(release_feature_model.identity_ambiguities_to_dicts(ambiguities), sort_keys=True)
+    )
 
 
 def sidecar_record(

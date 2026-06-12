@@ -532,6 +532,7 @@ def build_outputs(
     source_date: dt.date,
     workdir: Path,
     previous_records: Sequence[Mapping[str, Any]] | None = None,
+    identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
 ) -> AssetOutputs:
     mask_tif = workdir / "ice-mask.tif"
     raw_gpkg = workdir / "ice-polygons.gpkg"
@@ -572,10 +573,13 @@ def build_outputs(
         release=source_date.isoformat(),
         provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
         previous_records=previous_records,
+        identity_resolution_decisions=identity_resolution_decisions,
     )
     if ambiguities:
-        raise RuntimeError(
-            f"{ASSET.slug} has {len(ambiguities)} partial identity hash match(es) requiring maintainer review"
+        feature_metadata.raise_unresolved_identity_ambiguities(
+            asset_slug=ASSET.slug,
+            release=source_date.isoformat(),
+            ambiguities=ambiguities,
         )
     feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
     feature_metadata.write_sidecar(sidecar_records, metadata)
@@ -895,6 +899,10 @@ def run() -> dict[str, Any]:
             source_date=downloaded.filename_date,
             workdir=workdir,
             previous_records=publisher.load_latest_metadata_records(ASSET),
+            identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
+                asset_slug=ASSET.slug,
+                release=downloaded.filename_date.isoformat(),
+            ),
         )
         return publish_outputs(
             publisher=publisher,
