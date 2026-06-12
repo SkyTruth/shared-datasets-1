@@ -2974,7 +2974,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "confirmed_subcategory": "string matching plan.subcategory",
             "confirmed_canonical_format": "string matching plan.canonical_format",
             "release_layout": "latest-only|versioned",
-            "access_tier": "public|private",
+            "access_tier": "public|private|internal",
             "exception_flags": {
                 "public_access_approved": "boolean",
                 "new_top_level_category_approved": "boolean",

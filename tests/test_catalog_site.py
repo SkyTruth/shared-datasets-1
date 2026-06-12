@@ -280,6 +280,84 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(len(version["files"]), 5)
         self.assertTrue(any(file["path"].endswith(".metadata.ndjson.gz") for file in version["files"]))
 
+    def test_latest_from_release_index_keeps_top_level_pmtiles_url_tiered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs_dir = root / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            (docs_dir / "example-asset.md").write_text(DOC)
+            categories_path = root / "categories.yaml"
+            self._write_categories(categories_path)
+            catalog_path = root / "catalog.csv"
+            with catalog_path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=catalog_site.REQUIRED_FIELDS)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "asset_slug": "example-asset",
+                        "title": "Example Asset",
+                        "category": "100-geographic-reference",
+                        "subcategory": "110-boundaries",
+                        "status": "active",
+                        "access_tier": "internal",
+                        "owner": "SkyTruth",
+                        "update_cadence": "manual",
+                        "canonical_path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
+                        "canonical_format": "fgb",
+                        "available_formats": "fgb;pmtiles",
+                        "metadata_paths": "README.md",
+                        "source": "Example source",
+                        "license": "Example license",
+                        "citation": "Example citation",
+                    }
+                )
+            release_index_dir = root / "_catalog/releases"
+            release_index_dir.mkdir(parents=True)
+            (release_index_dir / "example-asset.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "asset_slug": "example-asset",
+                        "latest_release": {"date": "2026-06-10"},
+                        "releases": [
+                            {
+                                "date": "2026-06-10",
+                                "files": [
+                                    {
+                                        "format": "fgb",
+                                        "path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-06-10/example-asset.fgb",
+                                    },
+                                    {
+                                        "format": "pmtiles",
+                                        "path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-06-10/example-asset.pmtiles",
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                release_index_dir=release_index_dir,
+                latest_from_release_index=True,
+                generated_at="2026-06-10T00:00:00Z",
+            )
+
+        asset = payload["assets"][0]
+        version = asset["versions"][0]
+        self.assertEqual(asset["pmtiles_path"], version["pmtiles_path"])
+        self.assertEqual(asset["pmtiles_url"], "https://tiles.skytruth.org/pmtiles/internal/example-asset.pmtiles")
+        self.assertEqual(
+            version["pmtiles_url"],
+            "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-asset/releases/2026-06-10/example-asset.pmtiles",
+        )
+
     def test_release_index_only_preview_flag_requires_assets_only_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -74,13 +74,13 @@ variable "catalog_viewer_iap_accessor_members" {
 }
 
 variable "catalog_viewer_allowed_email_domains" {
-  description = "Email domains accepted by the catalog viewer service after IAP authentication for private PMTiles signing."
+  description = "Email domains accepted by the catalog viewer service after IAP authentication for restricted PMTiles signing."
   type        = list(string)
   default     = ["skytruth.org"]
 }
 
 variable "catalog_viewer_signed_url_ttl_seconds" {
-  description = "TTL for private PMTiles V4 signed GCS URLs returned by the catalog viewer."
+  description = "TTL for restricted PMTiles V4 signed GCS URLs returned by the catalog viewer."
   type        = number
   default     = 900
 }

@@ -183,13 +183,13 @@ The street-style map is the default on every page load. Satellite is available
 as an explicit user-selected option.
 
 PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
-`https://tiles.skytruth.org/pmtiles/{public-or-private}/{slug}.pmtiles` URL for
+`https://tiles.skytruth.org/pmtiles/{public|private|internal}/{slug}.pmtiles` URL for
 latest releases. The public `tiles.skytruth.org/_catalog/web/` entry point is a
-static/public viewer: public PMTiles fetch anonymously, and private PMTiles may
-rely on an already-authorized `tiles.skytruth.org` setup when one exists.
+static/public viewer: public PMTiles fetch anonymously, and restricted PMTiles
+may rely on an already-authorized `tiles.skytruth.org` setup when one exists.
 
-When the app is served from the authenticated Cloud Run viewer, private PMTiles
-are resolved through the same-origin signer endpoint:
+When the app is served from the authenticated Cloud Run viewer, restricted
+PMTiles are resolved through the same-origin signer endpoint:
 
 ```text
 GET /api/pmtiles/signed-url?slug={asset-slug}

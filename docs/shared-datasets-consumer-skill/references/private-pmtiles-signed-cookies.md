@@ -1,7 +1,7 @@
-# Private PMTiles Signed Cookies
+# Restricted PMTiles Signed Cookies
 
-Read this reference before implementing, reviewing, or debugging private
-shared-datasets PMTiles in this consumer repo or app.
+Read this reference before implementing, reviewing, or debugging private or
+internal shared-datasets PMTiles in this consumer repo or app.
 
 ## Shared-Datasets Prerequisites
 
@@ -17,6 +17,7 @@ Shared signing material:
 Secret: configured PMTiles CDN signing-key secret in the upstream project
 Cloud CDN key name: shared-datasets-pmtiles-v1
 Signed prefix: https://tiles.skytruth.org/pmtiles/private/
+Internal signed prefix: https://tiles.skytruth.org/pmtiles/internal/
 ```
 
 In the upstream shared-datasets-1 Terraform, add this app's signer principal to
@@ -28,7 +29,7 @@ that issues the cookie.
 
 CDN backend-bucket mode requires exact browser origins; credentialed CORS
 cannot use `*`, `https://*.skytruth.org`, or redirector-only regex lists. Add
-each browser origin before deploying private PMTiles in that environment.
+each browser origin before deploying restricted PMTiles in that environment.
 Re-check the upstream infrastructure review materials before relying on any
 origin list.
 
@@ -42,6 +43,7 @@ Add an endpoint like:
 ```text
 GET /api/pmtiles/session?tier=public
 GET /api/pmtiles/session?tier=private
+GET /api/pmtiles/session?tier=internal
 DELETE /api/pmtiles/session
 ```
 
@@ -50,9 +52,9 @@ reimplementing the Cloud CDN policy format:
 
 ```ts
 import {
+  createPmtilesSessionHandler,
   decodePmtilesCdnSigningKey,
-  getExpiredPmtilesCookies,
-  getPrivatePmtilesSessionCookies
+  getExpiredPmtilesCookies
 } from "@skytruth/shared-datasets/server";
 import { getPmtilesTier } from "@skytruth/shared-datasets";
 ```
@@ -61,18 +63,17 @@ Required behavior:
 
 - `tier=public` returns `204` without a cookie.
 - `tier=private` requires an authenticated user session.
-- For the first rollout, allow only SkyTruth or admin users unless this app has
-  a more specific entitlement model.
+- `tier=internal` requires a verified email in the allowed domain list or an
+  explicit app-level internal tier grant.
 - Unknown `tier` returns `400`.
-- Unauthorized private users return `401` or `403`.
-- Authorized private users read the configured PMTiles CDN signing key from the
-  backend secret store.
+- Unauthorized restricted users return `401` or `403`.
+- Authorized restricted users read the configured PMTiles CDN signing key from
+  the backend secret store.
 - Decode the secret value from base64url to the raw 16-byte Cloud CDN key.
-- Sign `https://tiles.skytruth.org/pmtiles/private/`, not individual PMTiles
-  URLs.
+- Sign the requested restricted tier prefix, not individual PMTiles URLs.
 - Use HMAC-SHA1 and key name `shared-datasets-pmtiles-v1`.
-- Set every `Set-Cookie` header returned by `getPrivatePmtilesSessionCookies`;
-  the helper returns an array with the private signed cookie.
+- Prefer `createPmtilesSessionHandler` for new routes. If lower-level helpers
+  are needed, set every returned `Set-Cookie` header separately.
 - `DELETE` clears every cookie returned by `getExpiredPmtilesCookies` and
   returns `204`.
 - For both helper calls, send the returned string array as separate
@@ -81,16 +82,16 @@ Required behavior:
 - Never log or return the key bytes, HMAC input, HMAC output, unsigned policy,
   full cookie value, or signed URL.
 
-The private session cookie must be named `Cloud-CDN-Cookie` and set with:
+Each restricted session cookie must be named `Cloud-CDN-Cookie` and set with:
 
 ```text
 Domain=.skytruth.org
-Path=/pmtiles/private
+Path=/pmtiles/private or /pmtiles/internal
 Secure
 HttpOnly
 SameSite=None
-Max-Age=86400
-Expires=<24 hours from now>
+Max-Age=<configured TTL>
+Expires=<configured expiry>
 ```
 
 Cloud CDN signed-cookie policy fields must be in this order:
@@ -104,7 +105,7 @@ used for HMAC is the decoded raw 16-byte key, not the encoded secret text.
 
 ## App Frontend Loading
 
-Use the TypeScript SDK browser helpers before enabling private shared layers:
+Use the TypeScript SDK browser helpers before enabling restricted shared layers:
 
 ```ts
 import {
@@ -118,15 +119,16 @@ const result = await ensurePmtilesCdnSession({
 });
 
 if (!result.ok) {
-  throw new Error("Private PMTiles access was not granted.");
+  throw new Error("Restricted PMTiles access was not granted.");
 }
 ```
 
-Only add the private layer if the result is successful. Public layers may skip
-the call or use `accessTier: "public"`, which does not contact the endpoint.
+Only add the restricted layer if the result is successful. Public layers may
+skip the call or use `accessTier: "public"`, which does not contact the
+endpoint.
 
 On app sign-out, call the same endpoint with `clearPmtilesCdnSession` before or
-alongside the app's own session cleanup so private CDN cookies are expired:
+alongside the app's own session cleanup so restricted CDN cookies are expired:
 
 ```ts
 import { clearPmtilesCdnSession } from "@skytruth/shared-datasets";
@@ -159,7 +161,7 @@ Run this repo's lint, type, test, and build checks. Also verify:
 - Anonymous private users are denied.
 - Authorized private users receive `Cloud-CDN-Cookie` and `Cache-Control:
   no-store`.
-- Private PMTiles range requests carry the `Cloud-CDN-Cookie`.
+- Restricted PMTiles range requests carry the `Cloud-CDN-Cookie`.
 - Expired or malformed cookies fail with `403`.
 - The deployed browser origin is exactly allowlisted for credentialed CORS.
 - No logs contain secret bytes, HMAC material, signed cookie values, or GCS

@@ -15,8 +15,8 @@ contracts live in the focused SDK READMEs:
 - [Python SDK](../api/python/README.md): backend catalog resolution,
   authenticated GCS downloads, CLI diagnostics, and lineage.
 - [TypeScript SDK](../api/typescript/README.md): browser-safe PMTiles helpers,
-  catalog JSON resolution, private PMTiles session handshakes, fetch credential
-  selection, and server-only Cloud CDN signed-cookie helpers.
+  catalog JSON resolution, restricted PMTiles session handshakes, fetch
+  credential selection, and server-only Cloud CDN signed-cookie helpers.
 
 Maintainer-only publishing and infrastructure procedures live in
 [GCP asset operations](./gcp-asset-operations.md),
@@ -31,11 +31,11 @@ Maintainer-only publishing and infrastructure procedures live in
 | Backend Python code needs a URI or browser URL but not bytes | Python SDK `resolve_dataset(...)` or `Catalog.resolve(...)` | Preserves durable `gs://` identity, access tier, citation, and `resolved_id`. |
 | Backend service needs to list/search assets | Python SDK `Catalog.load_gcs()` or catalog CSV | Good for batch jobs, service config generation, and CI checks. |
 | Browser displays public PMTiles | TypeScript SDK or direct tiered CDN URL | No cookie or GCS credential is required. |
-| Browser may display private PMTiles | TypeScript SDK plus app-owned backend session route | Private PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
-| Backend route issues private PMTiles cookies | TypeScript server entrypoint | Cookie signing uses Node crypto and should stay behind the app backend. |
+| Browser may display private or internal PMTiles | TypeScript SDK plus app-owned backend session route | Restricted PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
+| Backend route issues restricted PMTiles cookies | TypeScript server entrypoint | Cookie signing uses Node crypto and should stay behind the app backend. |
 | App needs layer/search config | Catalog JSON plus either SDK | Preserve `access_tier`, `pmtiles_url`, citation, license, and freshness metadata. |
 | Browser needs public feature attributes | TypeScript `resolveSharedDatasetLayer` plus `fetchSharedDatasetMetadataRecords` | Resolve the layer and its release metadata sidecar together, then join clicked features by `feature_id`. |
-| Browser needs private feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
+| Browser needs private or internal feature attributes | App-owned backend signed metadata URL route or metadata API proxy | The backend authenticates, authorizes, validates the catalog sidecar, and returns app-approved metadata access. |
 | Backend has PMTiles feature IDs and needs full attributes | Release metadata sidecar, or Feature metadata API when serving is enabled | PMTiles intentionally carry only geometry plus `feature_id`; full metadata is release-scoped and keyed by feature ID. |
 
 Do not build browser integrations on anonymous
@@ -67,7 +67,7 @@ where relevant:
 |---|---|
 | `slug` | Stable asset identifier for SDK calls and PMTiles URLs. |
 | `status` and `consumer_guidance` | Whether the asset should be shown by default and any migration guidance. |
-| `access_tier` | Required for PMTiles URLs, authorization decisions, and private-cookie behavior. |
+| `access_tier` | Required for PMTiles URLs, authorization decisions, and restricted-cookie behavior. |
 | `canonical_path` and `canonical_format` | Primary analytical data object and format. |
 | `available_formats` | Whether requested formats such as `fgb`, `pmtiles`, or `csv` exist. |
 | `pmtiles_url` | Browser-facing PMTiles URL in the catalog JSON. |
@@ -130,7 +130,7 @@ canonical_uri = ref.gs_uri
 ```
 
 The Python SDK does not sign Cloud CDN cookies. Use the TypeScript server
-helpers for private PMTiles cookie issuance.
+helpers for restricted PMTiles cookie issuance.
 
 ## TypeScript Browser And Session API
 
@@ -183,29 +183,31 @@ Latest PMTiles use a tiered CDN URL:
 ```text
 https://tiles.skytruth.org/pmtiles/public/{slug}.pmtiles
 https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
+https://tiles.skytruth.org/pmtiles/internal/{slug}.pmtiles
 ```
 
-Public PMTiles can be loaded directly. Private PMTiles require a browser cookie
-issued by the consuming application's backend after authentication and
-authorization.
+Public PMTiles can be loaded directly. Private and internal PMTiles require a
+browser cookie issued by the consuming application's backend after
+authentication and authorization.
 
-Minimum private PMTiles flow:
+Minimum restricted PMTiles flow:
 
 1. Resolve `pmtiles_url` and `access_tier` from catalog JSON.
 2. Add a backend endpoint such as `/api/pmtiles/session`.
-3. For `tier=private`, authenticate and authorize the user.
+3. For `tier=private` or `tier=internal`, authenticate and authorize the user.
 4. Load the PMTiles CDN signing key from the consumer backend's secret store.
-5. Set `Cloud-CDN-Cookie` with `Domain=.skytruth.org`,
-   `Path=/pmtiles/private`, `Secure`, `HttpOnly`, and `SameSite=None`.
+5. Set `Cloud-CDN-Cookie` with `Domain=.skytruth.org`, the tier-specific path
+   (`/pmtiles/private` or `/pmtiles/internal`), `Secure`, `HttpOnly`, and
+   `SameSite=None`.
 6. Return `Cache-Control: no-store`.
-7. Before mounting a private layer, call the session endpoint with
+7. Before mounting a restricted layer, call the session endpoint with
    `credentials: "include"`.
 8. Ensure every PMTiles header, directory, and tile range request also uses
    `credentials: "include"`.
 
 Exact CORS origins and signer IAM grants are infrastructure concerns. Request a
-shared-datasets infrastructure PR before relying on private PMTiles from a new
-deployed frontend origin.
+shared-datasets infrastructure PR before relying on restricted PMTiles from a
+new deployed frontend origin.
 
 Private metadata should use a separate backend route, for example:
 
@@ -274,7 +276,7 @@ When moving an existing app to shared-datasets:
    `/artifacts/{bucket-object-path}` URLs.
 4. Add an authorized backend metadata URL route before exposing private
    metadata sidecars.
-5. Use the TypeScript SDK for browser/private PMTiles work and the Python SDK
+5. Use the TypeScript SDK for browser/restricted PMTiles work and the Python SDK
    for backend data downloads.
 6. Preserve citation, license, access tier, and freshness metadata in consumer
    config where the UI or outputs show provenance.
@@ -290,11 +292,12 @@ Frontend PMTiles:
 
 - Public PMTiles URLs use `https://tiles.skytruth.org/pmtiles/public/...`.
 - Private PMTiles URLs use `https://tiles.skytruth.org/pmtiles/private/...`.
+- Internal PMTiles URLs use `https://tiles.skytruth.org/pmtiles/internal/...`.
 - Catalog-derived PMTiles URLs preserve catalog `access_tier`.
 - Direct shared-dataset browser PMTiles URLs do not point at
   `storage.googleapis.com`.
-- Private layers call the session endpoint before mounting.
-- PMTiles range requests include `credentials: "include"` for private layers.
+- Restricted layers call the session endpoint before mounting.
+- PMTiles range requests include `credentials: "include"` for restricted layers.
 - Public metadata sidecars use `https://tiles.skytruth.org/artifacts/...`.
 - Private metadata URL routes return `Cache-Control: no-store` and never sign
   caller-provided object paths.
@@ -307,11 +310,13 @@ Backend data:
 - Jobs that request `latest` persist `ref.resolved_id`.
 - Cache paths are writable in the runtime environment.
 
-Private cookie signing:
+Restricted cookie signing:
 
 - The signer runtime has access to the configured signing-key secret.
 - The secret value is decoded before HMAC use.
-- The signed prefix is exactly `https://tiles.skytruth.org/pmtiles/private/`.
+- The signed prefix is exactly the requested restricted tier prefix:
+  `https://tiles.skytruth.org/pmtiles/private/` or
+  `https://tiles.skytruth.org/pmtiles/internal/`.
 - The policy fields are ordered `URLPrefix`, `Expires`, `KeyName`,
   `Signature`.
 - Secret material and cookie values are not logged.
@@ -338,4 +343,4 @@ Do:
 - Pin SDK dependencies for production.
 - Record `DatasetRef.resolved_id` for reproducible backend runs.
 - Keep PMTiles browser access on `tiles.skytruth.org`.
-- Scope private cookies to `/pmtiles/private` and a 24-hour TTL.
+- Scope restricted cookies to their tier path and the current SDK default TTL.

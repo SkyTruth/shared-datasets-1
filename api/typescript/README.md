@@ -159,7 +159,7 @@ Each resolved ref includes:
 
 ```ts
 type SharedDatasetCatalogRef = {
-  accessTier: "public" | "private";
+  accessTier: "public" | "private" | "internal";
   url: string;
   title: string | null;
   description: string | null;

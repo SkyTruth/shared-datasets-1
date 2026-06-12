@@ -1111,7 +1111,7 @@ function isFgbDownloadableReference(asset, reference) {
 }
 
 function downloadRequiresSigner(asset) {
-  return String(asset?.access_tier || "").toLowerCase() === "private";
+  return isRestrictedAccessTier(asset?.access_tier);
 }
 
 async function handleFgbDownloadClick(event) {
@@ -1536,7 +1536,7 @@ function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), 
   if (publicFeatureMetadataSidecarUrl(asset, sidecarFile)) {
     return true;
   }
-  return String(asset.access_tier || "public").toLowerCase() === "private" && catalogViewerApiAvailable();
+  return isRestrictedAccessTier(asset.access_tier) && catalogViewerApiAvailable();
 }
 
 function catalogViewerApiAvailable() {
@@ -1600,7 +1600,7 @@ function mapUnavailableMessage(error, mapAssets) {
   if (usedSignedUrl && /\b(401|403)\b|expired|signature/i.test(message)) {
     return `Map unavailable. Signed PMTiles access was rejected or expired. ${message}`;
   }
-  if (/Private PMTiles signer/i.test(message)) {
+  if (/(Private|Restricted) PMTiles signer/i.test(message)) {
     return `Map unavailable. ${message}`;
   }
   return `Map unavailable. Open the PMTiles URL directly. ${message}`;
@@ -2078,10 +2078,15 @@ function appendFeatureTable(container, entries) {
 function featureMetadataUnavailableMessage(feature) {
   const asset = state.assets.find((candidate) => candidate.slug === feature?.assetSlug);
   const accessTier = String(feature?.accessTier || asset?.access_tier || "").toLowerCase();
-  if (accessTier === "private" && !catalogViewerApiAvailable()) {
-    return "Private feature metadata requires an authorized catalog viewer or consuming application backend.";
+  if (isRestrictedAccessTier(accessTier) && !catalogViewerApiAvailable()) {
+    return "Restricted feature metadata requires an authorized catalog viewer or consuming application backend.";
   }
   return "";
+}
+
+function isRestrictedAccessTier(accessTier) {
+  const normalized = String(accessTier || "").toLowerCase();
+  return normalized === "private" || normalized === "internal";
 }
 
 function appendFeaturePair(row, entry, options = {}) {

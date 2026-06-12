@@ -52,6 +52,8 @@ const NUMERIC_RAMPS = {
   map: ["#2166ac", "#f7f7f7", "#b2182b"],
   satellite: ["#00d6ff", "#fff36a", "#ff4b7b"],
 };
+const RESTRICTED_PMTILES_PATH_PREFIXES = ["/pmtiles/private/", "/pmtiles/internal/"];
+const RESTRICTED_ACCESS_TIERS = new Set(["private", "internal"]);
 
 let dependencyPromise = null;
 let pmtilesProtocol = null;
@@ -60,8 +62,7 @@ let activeRenderSerial = 0;
 let activeSelectionBounds = null;
 let activeColorContext = null;
 let activeFeatureMarker = null;
-let privateSessionPromise = null;
-let privateSessionUrl = "";
+let restrictedSessionPromises = new Map();
 let privateSignerUnavailable = false;
 
 export async function renderMapPreview({
@@ -98,15 +99,16 @@ export async function renderMapPreview({
   const resolvedBasemap = BASEMAPS[basemap] ? basemap : "map";
   const singleDataset = mapAssets.length === 1;
   if (mapAssets.some(pmtilesCanUseSigner)) {
-    status.textContent = "Authorizing private PMTiles...";
+    status.textContent = "Authorizing restricted PMTiles...";
     for (let index = 0; index < mapAssets.length; index += 1) {
       mapAssets[index] = await resolvePmtilesAccess(mapAssets[index]);
       if (!renderIsCurrent(renderSerial)) return;
     }
   }
-  if (mapAssets.some(pmtilesNeedsCredentials)) {
-    status.textContent = "Authorizing private PMTiles...";
-    await ensurePrivatePmtilesSession();
+  const credentialTiers = restrictedPmtilesTiers(mapAssets);
+  if (credentialTiers.length) {
+    status.textContent = "Authorizing restricted PMTiles...";
+    await ensureRestrictedPmtilesSessions(credentialTiers);
     if (!renderIsCurrent(renderSerial)) return;
   }
   status.textContent = "Reading PMTiles metadata...";
@@ -492,7 +494,7 @@ function pmtilesArchiveForAsset(asset) {
     return new window.pmtiles.PMTiles(asset.pmtiles_url);
   }
   if (!window.pmtiles.FetchSource) {
-    throw new Error("Private PMTiles require credential-aware PMTiles fetch support.");
+    throw new Error("Restricted PMTiles require credential-aware PMTiles fetch support.");
   }
   const source = new window.pmtiles.FetchSource(asset.pmtiles_url, new Headers(), "include");
   return new window.pmtiles.PMTiles(source);
@@ -502,10 +504,30 @@ function pmtilesNeedsCredentials(asset) {
   const url = String(asset?.pmtiles_url || "");
   if (!url) return false;
   try {
-    return new URL(url, window.location.href).pathname.startsWith("/pmtiles/private/");
+    const pathname = new URL(url, window.location.href).pathname;
+    return RESTRICTED_PMTILES_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   } catch {
-    return url.includes("/pmtiles/private/");
+    return RESTRICTED_PMTILES_PATH_PREFIXES.some((prefix) => url.includes(prefix));
   }
+}
+
+function pmtilesRestrictedTier(asset) {
+  const accessTier = String(asset?.access_tier || "").toLowerCase();
+  if (RESTRICTED_ACCESS_TIERS.has(accessTier)) return accessTier;
+  const url = String(asset?.pmtiles_url || "");
+  try {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (pathname.startsWith("/pmtiles/private/")) return "private";
+    if (pathname.startsWith("/pmtiles/internal/")) return "internal";
+  } catch {
+    if (url.includes("/pmtiles/private/")) return "private";
+    if (url.includes("/pmtiles/internal/")) return "internal";
+  }
+  return "";
+}
+
+function restrictedPmtilesTiers(assets) {
+  return [...new Set(assets.map(pmtilesRestrictedTier).filter(Boolean))];
 }
 
 async function resolvePmtilesAccess(asset) {
@@ -531,7 +553,7 @@ async function resolvePmtilesAccess(asset) {
 
 function pmtilesCanUseSigner(asset) {
   if (!asset?.pmtiles_url || !asset?.slug) return false;
-  return String(asset.access_tier || "").toLowerCase() === "private" || pmtilesNeedsCredentials(asset);
+  return Boolean(pmtilesRestrictedTier(asset)) || pmtilesNeedsCredentials(asset);
 }
 
 async function requestSignedPmtilesUrl(asset, signer) {
@@ -547,12 +569,12 @@ async function requestSignedPmtilesUrl(asset, signer) {
     return null;
   }
   if (!response.ok) {
-    throw new Error(`Private PMTiles signer returned HTTP ${response.status}.`);
+    throw new Error(`Restricted PMTiles signer returned HTTP ${response.status}.`);
   }
   const payload = await response.json();
   const signedUrl = String(payload?.pmtiles_url || "");
   if (!signedUrl) {
-    throw new Error("Private PMTiles signer did not return a PMTiles URL.");
+    throw new Error("Restricted PMTiles signer did not return a PMTiles URL.");
   }
   return {
     pmtiles_url: signedUrl,
@@ -587,36 +609,57 @@ function responseIsJson(response) {
   return String(response.headers.get("content-type") || "").toLowerCase().includes("application/json");
 }
 
-async function ensurePrivatePmtilesSession() {
-  const sessionUrl = privatePmtilesSessionUrl();
-  if (!sessionUrl) return;
-  if (privateSessionPromise && privateSessionUrl === sessionUrl) {
-    return privateSessionPromise;
+async function ensureRestrictedPmtilesSessions(tiers) {
+  for (const tier of tiers) {
+    await ensureRestrictedPmtilesSession(tier);
   }
-  privateSessionUrl = sessionUrl;
-  privateSessionPromise = fetch(sessionUrl, {
+}
+
+async function ensureRestrictedPmtilesSession(tier) {
+  const sessionUrl = privatePmtilesSessionUrl(tier);
+  if (!sessionUrl) return;
+  if (restrictedSessionPromises.has(sessionUrl)) {
+    return restrictedSessionPromises.get(sessionUrl);
+  }
+  const sessionPromise = fetch(sessionUrl, {
     cache: "no-store",
     credentials: "include",
   })
     .then((response) => {
       if (!response.ok) {
-        throw new Error(`Private PMTiles session returned HTTP ${response.status}.`);
+        throw new Error(`Restricted PMTiles session returned HTTP ${response.status}.`);
       }
     })
     .catch((error) => {
-      privateSessionPromise = null;
+      restrictedSessionPromises.delete(sessionUrl);
       throw error;
     });
-  return privateSessionPromise;
+  restrictedSessionPromises.set(sessionUrl, sessionPromise);
+  return sessionPromise;
 }
 
-function privatePmtilesSessionUrl() {
+function privatePmtilesSessionUrl(tier = "") {
   const configured = window.SHARED_DATASETS_PMTILES_SESSION_URL;
+  let url = "";
   if (typeof configured === "string" && configured.trim()) {
-    return configured.trim();
+    url = configured.trim();
+  } else {
+    const meta = document.querySelector('meta[name="shared-datasets-pmtiles-session-url"]');
+    url = meta?.content?.trim() || "";
   }
-  const meta = document.querySelector('meta[name="shared-datasets-pmtiles-session-url"]');
-  return meta?.content?.trim() || "";
+  return url && tier ? withQueryParam(url, "tier", tier) : url;
+}
+
+function withQueryParam(url, key, value) {
+  const hashIndex = url.indexOf("#");
+  const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
+  const queryIndex = base.indexOf("?");
+  const path = queryIndex >= 0 ? base.slice(0, queryIndex) : base;
+  const query = queryIndex >= 0 ? base.slice(queryIndex + 1) : "";
+  const params = new URLSearchParams(query);
+  params.set(key, value);
+  return `${path}?${params.toString()}${hash}`;
 }
 
 function vectorLayerSpecs(metadata, asset) {
