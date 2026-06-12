@@ -1,5 +1,8 @@
 import {
+  normalizeSharedDatasetAssetSlug,
+  resolveAllSharedDatasetPmtilesRefs,
   type SharedDatasetAccessTier,
+  type SharedDatasetCatalogFetchOptions,
   type SharedDatasetCatalogRef,
   SharedDatasetCatalogResolutionError
 } from './catalog.js';
@@ -72,5 +75,79 @@ export const createSharedDatasetAccessTierLookup = (
       );
     }
     return accessTier;
+  };
+};
+
+export type CatalogSharedDatasetAccessTierLookupOptions =
+  SharedDatasetCatalogFetchOptions & {
+    ttlMs?: TtlMs;
+    now?: () => number;
+  };
+
+/**
+ * Creates a cached slug-to-tier lookup backed by the shared datasets catalog.
+ * Convenience wiring of `createSharedDatasetAccessTierLookup` over
+ * `resolveAllSharedDatasetPmtilesRefs` for the common server case.
+ */
+export const createCatalogSharedDatasetAccessTierLookup = ({
+  catalogUrl,
+  fetchJson,
+  now,
+  ttlMs
+}: CatalogSharedDatasetAccessTierLookupOptions = {}) =>
+  createSharedDatasetAccessTierLookup({
+    loadAccessTiers: async () =>
+      getAccessTiersFromSharedDatasetPmtilesRefs(
+        await resolveAllSharedDatasetPmtilesRefs({ catalogUrl, fetchJson })
+      ),
+    now,
+    ttlMs
+  });
+
+export type SharedDatasetRowFilterOptions<T> = {
+  getAccessTier: (slug: string) => Promise<SharedDatasetAccessTier>;
+  getAssetSlug?: (row: T) => string | null | undefined;
+};
+
+export type SharedDatasetRowFilterResult<T> = {
+  rows: T[];
+  tierLookupFailed: boolean;
+};
+
+const defaultGetAssetSlug = <T>(row: T) =>
+  (row as { assetSlug?: string | null }).assetSlug;
+
+/**
+ * Drops rows that belong to non-public shared datasets, for payloads served
+ * to unauthenticated or otherwise untrusted audiences. Fails closed: a row
+ * whose access tier cannot be resolved is dropped rather than exposed, and
+ * `tierLookupFailed` reports the degradation so callers can avoid
+ * long-caching the over-filtered result. Rows without an asset slug are not
+ * shared-dataset rows and pass through unchanged.
+ */
+export const filterPrivateSharedDatasetRows = async <T>(
+  rows: T[],
+  {
+    getAccessTier,
+    getAssetSlug = defaultGetAssetSlug
+  }: SharedDatasetRowFilterOptions<T>
+): Promise<SharedDatasetRowFilterResult<T>> => {
+  let tierLookupFailed = false;
+  const filtered = await Promise.all(
+    rows.map(async (row): Promise<T | null> => {
+      const assetSlug = normalizeSharedDatasetAssetSlug(getAssetSlug(row));
+      if (!assetSlug) return row;
+      try {
+        const accessTier = await getAccessTier(assetSlug);
+        return accessTier === 'public' ? row : null;
+      } catch {
+        tierLookupFailed = true;
+        return null;
+      }
+    })
+  );
+  return {
+    rows: filtered.filter((row): row is Awaited<T> => row !== null),
+    tierLookupFailed
   };
 };
