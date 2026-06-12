@@ -22,7 +22,7 @@ DEFAULT_SITE_PREFIX = "_catalog/web"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 SYNTHETIC_CANONICAL_FORMAT_PREFERENCE = ("fgb", "cog", "zarr", "csv", "geojson", "ndgeojson")
-ACCESS_TIERS = {"public", "private"}
+ACCESS_TIERS = {"public", "private", "internal"}
 LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 REQUIRED_FIELDS = [
     "asset_slug",

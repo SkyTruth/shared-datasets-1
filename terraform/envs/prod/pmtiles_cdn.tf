@@ -293,10 +293,10 @@ resource "google_compute_url_map" "pmtiles_cdn" {
 
         route_action {
           cors_policy {
-            allow_credentials = split("/", path_rule.key)[0] == "private"
+            allow_credentials = split("/", path_rule.key)[0] != "public"
             allow_headers     = ["Range"]
             allow_methods     = ["GET", "HEAD", "OPTIONS"]
-            allow_origins     = split("/", path_rule.key)[0] == "private" ? local.pmtiles_browser_allowed_origins : ["*"]
+            allow_origins     = split("/", path_rule.key)[0] != "public" ? local.pmtiles_browser_allowed_origins : ["*"]
             disabled          = false
             expose_headers    = ["Accept-Ranges", "Cache-Control", "Content-Length", "Content-Range", "ETag"]
             max_age           = 3600

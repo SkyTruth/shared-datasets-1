@@ -24,9 +24,9 @@ class PmtilesCorsTerraformTests(unittest.TestCase):
         self.assertIn('"https://monitor.skytruth.org"', variables_tf)
         self.assertIn("PMTILES_ALLOWED_ORIGIN_REGEXES", pmtiles_cdn_tf)
         self.assertIn("value = join(\",\", var.pmtiles_cdn_allowed_origin_regexes)", pmtiles_cdn_tf)
-        self.assertIn('allow_credentials = split("/", path_rule.key)[0] == "private"', pmtiles_cdn_tf)
+        self.assertIn('allow_credentials = split("/", path_rule.key)[0] != "public"', pmtiles_cdn_tf)
         self.assertIn(
-            'allow_origins     = split("/", path_rule.key)[0] == "private" ? local.pmtiles_browser_allowed_origins : ["*"]',
+            'allow_origins     = split("/", path_rule.key)[0] != "public" ? local.pmtiles_browser_allowed_origins : ["*"]',
             pmtiles_cdn_tf,
         )
         self.assertNotIn("allow_origin_regexes", pmtiles_cdn_tf)

@@ -28,7 +28,7 @@ DEFAULT_ALLOWED_ORIGIN_REGEXES = (
 )
 DEFAULT_CATALOG_TTL_SECONDS = 300.0
 PMTILES_PATH_RE = re.compile(
-    r"^/pmtiles/(?P<access_tier>public|private)/(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.pmtiles$"
+    r"^/pmtiles/(?P<access_tier>public|private|internal)/(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.pmtiles$"
 )
 
 

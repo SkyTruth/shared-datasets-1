@@ -130,6 +130,16 @@ const catalogFixture = {
       has_geojson: false,
       has_pmtiles: true,
       pmtiles_url:
+        'https://tiles.skytruth.org/pmtiles/internal/example-internal-layer.pmtiles',
+      slug: 'example-internal-layer'
+    },
+    {
+      access_tier: 'secret',
+      available_formats: ['pmtiles'],
+      has_csv: false,
+      has_geojson: false,
+      has_pmtiles: true,
+      pmtiles_url:
         'https://tiles.skytruth.org/pmtiles/private/invalid-tier-layer.pmtiles',
       slug: 'invalid-tier-layer'
     }
@@ -209,10 +219,21 @@ test('keeps SkyTruth PMTiles CDN and catalog defaults', () => {
     privatePath: '/pmtiles/private',
     privateUrlPrefix: 'https://tiles.skytruth.org/pmtiles/private/',
     signingKeyName: 'shared-datasets-pmtiles-v1',
-    ttlSeconds: 24 * 60 * 60
+    tierPaths: {
+      private: {
+        path: '/pmtiles/private',
+        urlPrefix: 'https://tiles.skytruth.org/pmtiles/private/'
+      },
+      internal: {
+        path: '/pmtiles/internal',
+        urlPrefix: 'https://tiles.skytruth.org/pmtiles/internal/'
+      }
+    },
+    ttlSeconds: 30 * 24 * 60 * 60
   });
   assert.deepEqual(getExpiredPmtilesCookies(), [
-    'Cloud-CDN-Cookie=; Domain=.skytruth.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    'Cloud-CDN-Cookie=; Domain=.skytruth.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    'Cloud-CDN-Cookie=; Domain=.skytruth.org; Path=/pmtiles/internal; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
   ]);
 
   const privateCookie = getPrivatePmtilesSessionCookies(Buffer.alloc(16, 1), {
@@ -220,7 +241,7 @@ test('keeps SkyTruth PMTiles CDN and catalog defaults', () => {
   })[0];
   assert.match(privateCookie, /^Cloud-CDN-Cookie=/);
   assert.match(privateCookie, /Path=\/pmtiles\/private/);
-  assert.match(privateCookie, /Max-Age=86400/);
+  assert.match(privateCookie, /Max-Age=2592000/);
   assert.match(privateCookie, /KeyName=shared-datasets-pmtiles-v1/);
 });
 
@@ -237,7 +258,8 @@ test('creates signed private PMTiles CDN cookies and clears private cookies', ()
   };
 
   assert.deepEqual(getExpiredPmtilesCookies(config), [
-    'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
+    'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles/private; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    'Test-CDN-Cookie=; Domain=.example.org; Path=/pmtiles/internal; Secure; HttpOnly; SameSite=None; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT'
   ]);
 
   const cookies = getPrivatePmtilesSessionCookies(signingKey, config);
@@ -605,10 +627,13 @@ test('detects private PMTiles URLs and fetch credential mode', () => {
 test('parses PMTiles access tiers', () => {
   assert.equal(getPmtilesTier('public'), 'public');
   assert.equal(getPmtilesTier(['private', 'public']), 'private');
+  assert.equal(getPmtilesTier('internal'), 'internal');
   assert.equal(getPmtilesTier('PRIVATE'), null);
+  assert.equal(getPmtilesTier('grants'), null);
   assert.equal(getPmtilesTier(undefined), null);
   assert.equal(getSharedDatasetAccessTier(' Public '), 'public');
-  assert.equal(getSharedDatasetAccessTier('internal'), null);
+  assert.equal(getSharedDatasetAccessTier(' Internal '), 'internal');
+  assert.equal(getSharedDatasetAccessTier('secret'), null);
 });
 
 test('performs browser PMTiles CDN session handshakes', async () => {
@@ -814,9 +839,11 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
 
   const refs = resolveSharedDatasetPmtilesRefsFromCatalogJson(catalogFixture);
   assert.deepEqual(Object.keys(refs).sort(), [
+    'example-internal-layer',
     'example-private-layer',
     'example-public-layer'
   ]);
+  assert.equal(refs['example-internal-layer'].accessTier, 'internal');
   assert.deepEqual(refs['example-public-layer'], {
     accessTier: 'public',
     citation: 'Example citation',
@@ -927,6 +954,7 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
 test('caches shared dataset access-tier lookups', async () => {
   const refs = resolveSharedDatasetPmtilesRefsFromCatalogJson(catalogFixture);
   assert.deepEqual(getAccessTiersFromSharedDatasetPmtilesRefs(refs), {
+    'example-internal-layer': 'internal',
     'example-private-layer': 'private',
     'example-public-layer': 'public'
   });

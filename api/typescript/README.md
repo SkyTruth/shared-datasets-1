@@ -71,10 +71,10 @@ Node crypto and should stay behind the consumer application's backend boundary.
 | Runtime | Use | Setup |
 |---|---|---|
 | Browser displaying public PMTiles | Catalog helpers and `getPmtilesFetchCredentials` | Resolve `pmtiles_url` from catalog JSON or use a known public URL; no session endpoint is required. |
-| Browser displaying private PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting private layers and use credentialed PMTiles range requests. |
+| Browser displaying private or internal PMTiles | Main entrypoint session and fetch helpers | Call a consumer-owned backend session endpoint before mounting restricted layers and use credentialed PMTiles range requests. |
 | Browser click needs public feature attributes | `resolveSharedDatasetLayer` plus `fetchSharedDatasetMetadataRecords` | Resolve the layer and its release metadata sidecar together, then join clicked features by `feature_id`. |
 | Browser click needs private feature attributes | App backend route to a signed metadata sidecar URL | PMTiles expose `feature_id`; URL workflows should use the same canonical feature ID. The backend authenticates, authorizes, and returns only app-approved metadata access. |
-| Backend PMTiles session route | Server entrypoint signing helpers plus `getPmtilesTier` from the main entrypoint | Authenticate and authorize the user, load the signing key from the consumer secret store, set cookies, and return `204`. |
+| Backend PMTiles session route | `createPmtilesSessionHandler` / `createNextPmtilesSessionHandler` from the server entrypoint | Provide `getViewer` and `getSigningKey`; the handler implements the full tiered session contract. |
 | Backend private metadata URL route | Server entrypoint artifact signing helper | Validate slug, release, locale, asset tier, and entitlement before signing an exact sidecar path. |
 | Backend layer/config API | Catalog helpers or access-tier cache helpers | Resolve catalog JSON once, preserve `accessTier`, `url`, citation, source, release, and release metadata sidecar references in consumer-owned config. |
 
@@ -318,8 +318,9 @@ deliberate deployment-specific CDN route.
 
 ## Browser PMTiles Fetching
 
-Before fetching private PMTiles, call the consumer backend session endpoint.
-Public layers can skip the session call because they do not need a cookie.
+Before fetching private or internal PMTiles, call the consumer backend session
+endpoint. Public layers can skip the session call because they do not need a
+cookie.
 
 ```ts
 const result = await ensurePmtilesCdnSession({
@@ -328,11 +329,26 @@ const result = await ensurePmtilesCdnSession({
 });
 
 if (!result.ok) {
-  reportPmtilesSessionFailure(result);
+  if (result.denied) {
+    hidePmtilesLayer(ref);
+  } else {
+    reportPmtilesSessionFailure(result);
+  }
   return;
 }
 
 renderPmtilesLayer(ref.url);
+```
+
+A `denied: true` result (HTTP 403) means the signed-in viewer is not
+authorized for this tier — hide the layer instead of retrying. To decide which
+layers to offer before mounting anything, probe the viewer's qualifying tiers:
+
+```ts
+const grants = await getPmtilesCdnGrants({ endpoint: "/api/pmtiles/session" });
+if (grants.ok && grants.tiers.includes("internal")) {
+  showInternalDatasetGroup();
+}
 ```
 
 Use `getPmtilesFetchCredentials` anywhere PMTiles bytes are fetched:
@@ -348,12 +364,13 @@ const response = await fetch(ref.url, {
 
 The helper returns:
 
-- `include` for private PMTiles URLs under `/pmtiles/private/`
+- `include` for restricted PMTiles URLs under `/pmtiles/private/` or
+  `/pmtiles/internal/`
 - `same-origin` for public PMTiles URLs
 
 Relative PMTiles URLs are resolved against `https://tiles.skytruth.org` by
-default. Pass `baseUrl` and `privatePathPrefix` only for tests or a deliberate
-consumer-owned PMTiles route.
+default. Pass `baseUrl` and `restrictedPathPrefixes` only for tests or a
+deliberate consumer-owned PMTiles route.
 
 On sign-out, clear CDN cookies through the same consumer endpoint:
 
@@ -368,105 +385,78 @@ warn, retry, hide a layer, redirect to sign-in, or ignore cleanup failures.
 
 ## Backend CDN Session Route
 
-Consumers should expose their own session endpoint, for example:
+Consumers should expose their own session endpoint:
 
 ```text
 GET /api/pmtiles/session?tier=public
 GET /api/pmtiles/session?tier=private
+GET /api/pmtiles/session?tier=internal
+GET /api/pmtiles/session?tier=grants
 DELETE /api/pmtiles/session
 ```
 
-The endpoint should:
-
-1. Set `Cache-Control: no-store`.
-2. Return `204` for public PMTiles access without setting cookies.
-3. Authenticate the user before issuing private PMTiles cookies.
-4. Authorize whether that user may access private shared PMTiles.
-5. Load the CDN signing key from the consumer application's secret store.
-6. Set all cookie headers returned by `getPrivatePmtilesSessionCookies`.
-7. Clear cookies on sign-out using `getExpiredPmtilesCookies`.
-
-Both cookie helpers return arrays. Send each returned string as a separate
-`Set-Cookie` header; do not comma-join the array into one header value.
-
-Example:
+Do not hand-write the contract. `createPmtilesSessionHandler` (and the
+pages-router adapter `createNextPmtilesSessionHandler`) implement all of it:
+`Cache-Control: no-store` on every response, `204` for public, `401` for
+anonymous restricted-tier requests, `403` for authenticated-but-unauthorized
+viewers, one signed cookie per tier the viewer qualifies for, a
+`?tier=grants` probe that reports qualifying tiers without setting cookies,
+`DELETE` expiry of every restricted-tier cookie, and `500` on signing
+failures without leaking the key.
 
 ```ts
-import {
-  decodePmtilesCdnSigningKey,
-  getExpiredPmtilesCookies,
-  getPrivatePmtilesSessionCookies
-} from "@skytruth/shared-datasets/server";
-import { getPmtilesTier } from "@skytruth/shared-datasets";
+// pages/api/pmtiles/session.ts
+import { createNextPmtilesSessionHandler } from "@skytruth/shared-datasets/server";
 
-export async function handlePmtilesSession(req, res) {
-  res.setHeader("Cache-Control", "no-store");
-
-  if (req.method === "DELETE") {
-    res.setHeader("Set-Cookie", getExpiredPmtilesCookies());
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-
-  if (req.method !== "GET") {
-    res.statusCode = 405;
-    res.end("Method not allowed");
-    return;
-  }
-
-  const tier = getPmtilesTier(req.query.tier);
-  if (!tier) {
-    res.statusCode = 400;
-    res.end("Invalid PMTiles tier");
-    return;
-  }
-
-  if (tier === "public") {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-
-  const session = await getCurrentUserSession(req);
-  if (!session) {
-    res.statusCode = 401;
-    res.end("Authentication required");
-    return;
-  }
-
-  const allowed = await canAccessPrivateSharedPmtiles(session);
-  if (!allowed) {
-    res.statusCode = 403;
-    res.end("PMTiles access denied");
-    return;
-  }
-
-  const encodedSigningKey = await readPrivatePmtilesSigningKey();
-  const signingKey = decodePmtilesCdnSigningKey(encodedSigningKey);
-  res.setHeader("Set-Cookie", getPrivatePmtilesSessionCookies(signingKey));
-  res.statusCode = 204;
-  res.end();
-}
+export default createNextPmtilesSessionHandler({
+  getViewer: async req => {
+    const session = await getCurrentUserSession(req);
+    if (!session) return null;
+    return {
+      email: session.user.email,
+      emailVerified: session.user.emailVerified,
+      tierGrants: await getAppTierGrants(session.user)
+    };
+  },
+  getSigningKey: async () =>
+    decodePmtilesCdnSigningKey(await readPmtilesSigningKey())
+});
 ```
+
+Tier authorization is decided by `isViewerAuthorizedForTier` (exported from
+the main entrypoint): `public` allows anyone, `private` allows any
+authenticated viewer, and `internal` requires a verified email in the allowed
+domain list (default `skytruth.org`) or an unexpired app-level `tierGrants`
+entry. Use the same function for API payload filtering and metadata URL
+entitlement checks so cookie issuance and payload gates cannot drift apart.
+Guest-granted cookies are automatically clamped to the grant expiry.
+
+For non-Next runtimes, call the framework-neutral handler directly and apply
+the returned `{ status, headers, cookies, body }` to your response. The
+low-level helpers (`getPmtilesSessionCookiesForTiers`,
+`getExpiredPmtilesCookies`, `decodePmtilesCdnSigningKey`) remain available
+for custom routes. Cookie helpers return arrays; send each returned string as
+a separate `Set-Cookie` header — do not comma-join the array into one header
+value.
 
 The default cookie settings target SkyTruth's PMTiles CDN:
 
 - cookie name: `Cloud-CDN-Cookie`
 - cookie domain: `.skytruth.org`
-- private cookie path: `/pmtiles/private`
-- private URL prefix: `https://tiles.skytruth.org/pmtiles/private/`
+- tier cookie paths: `/pmtiles/private`, `/pmtiles/internal`
+- tier URL prefixes: `https://tiles.skytruth.org/pmtiles/private/`,
+  `https://tiles.skytruth.org/pmtiles/internal/`
 - signing key name: `shared-datasets-pmtiles-v1`
-- TTL: 24 hours
+- TTL: 30 days (clamped to grant expiry for guest-granted internal access)
 
 Override these values only for tests or an explicitly different CDN route by
-passing a partial config to `getPrivatePmtilesSessionCookies` or
-`getExpiredPmtilesCookies`.
+passing a partial config (`tierPaths`, `ttlSeconds`, ...) to the handler or
+cookie helpers.
 
 ## Access-Tier Cache Helpers
 
 Use `createSharedDatasetAccessTierLookup` when a server needs a lightweight
-cached lookup from asset slug to `public` or `private`:
+cached lookup from asset slug to `public`, `private`, or `internal`:
 
 ```ts
 import {
