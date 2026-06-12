@@ -23,6 +23,7 @@ RELEASE_MANIFEST_SCHEMA_VERSION = 2
 METADATA_SIDECAR_SCHEMA_VERSION = 2
 RELEASE_SCHEMA_SCHEMA_VERSION = 2
 FEATURE_IDENTITY_SCHEMA_VERSION = 1
+FEATURE_IDENTITY_RESOLUTION_SCHEMA_VERSION = 1
 FEATURE_ID_ALGORITHM = "shared-datasets-feature-identity:v2"
 HASH_ALGORITHM = "sha256"
 GEOMETRY_HASH_ALGORITHM = "sha256:canonical-geometry:v1"
@@ -31,6 +32,14 @@ FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
+IDENTITY_RESOLUTION_ACTIONS = frozenset({"reuse_previous_feature_id", "assign_new_feature_id"})
+IDENTITY_AMBIGUITY_TYPES = frozenset(
+    {
+        "same_geometry_changed_properties",
+        "same_properties_changed_geometry",
+        "conflicting_partial_matches",
+    }
+)
 REQUIRED_VECTOR_FGB_PROPERTIES = (
     "feature_id",
     "geometry_hash",
@@ -82,11 +91,31 @@ class SidecarRecord:
 
 @dataclass(frozen=True)
 class IdentityAmbiguity:
+    ambiguity_type: str
     identity_key: tuple[str, ...]
     geometry_hash: str
     properties_hash: str
     matching_geometry_feature_ids: tuple[str, ...]
     matching_properties_feature_ids: tuple[str, ...]
+    matching_geometry_properties_hashes: tuple[str, ...] = ()
+    matching_properties_geometry_hashes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IdentityResolution:
+    action: str
+    release: str
+    identity_key: tuple[str, ...]
+    geometry_hash: str
+    properties_hash: str
+    matching_geometry_feature_ids: tuple[str, ...]
+    matching_properties_feature_ids: tuple[str, ...]
+    matching_geometry_properties_hashes: tuple[str, ...]
+    matching_properties_geometry_hashes: tuple[str, ...]
+    rationale: str
+    reviewer: str
+    pr_reference: str
+    reuse_feature_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -222,15 +251,55 @@ def previous_feature_id_mapping(records: Iterable[SidecarRecord | Mapping[str, A
     return mapping
 
 
+def normalize_identity_key(value: Any, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ReleaseFeatureModelError(f"{label} must be a non-empty array")
+    key = tuple(str(part).strip() for part in value)
+    if not key or any(not part for part in key):
+        raise ReleaseFeatureModelError(f"{label} must contain non-empty strings")
+    return key
+
+
+def normalize_feature_id_tuple(value: Any, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ReleaseFeatureModelError(f"{label} must be an array")
+    feature_ids = tuple(sorted({str(part).strip() for part in value if str(part).strip()}))
+    for feature_id in feature_ids:
+        validate_feature_id(feature_id)
+    return feature_ids
+
+
+def normalize_hash_tuple(value: Any, *, label: str) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ReleaseFeatureModelError(f"{label} must be an array")
+    hashes = tuple(sorted({str(part).strip() for part in value if str(part).strip()}))
+    for hash_value in hashes:
+        validate_hash(hash_value, label=label)
+    return hashes
+
+
 def assign_generated_feature_ids(
     identity_keys: Iterable[Sequence[str]],
     *,
     previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
+    feature_id_overrides: Mapping[Sequence[str], str] | None = None,
+    force_new_identity_keys: Iterable[Sequence[str]] = (),
 ) -> dict[tuple[str, ...], str]:
     """Assign monotonic decimal feature IDs while preserving prior mappings."""
     previous = previous_feature_id_mapping(previous_records or ())
+    overrides: dict[tuple[str, ...], str] = {}
+    for raw_key, raw_feature_id in (feature_id_overrides or {}).items():
+        key = tuple(str(part) for part in raw_key)
+        feature_id = str(raw_feature_id).strip()
+        validate_feature_id(feature_id)
+        if key in previous and previous[key] != feature_id:
+            raise ReleaseFeatureModelError(f"feature_id override conflicts with previous mapping for identity key: {key}")
+        if key in overrides and overrides[key] != feature_id:
+            raise ReleaseFeatureModelError(f"duplicate feature_id override for identity key: {key}")
+        overrides[key] = feature_id
+    force_new = {tuple(str(part) for part in raw_key) for raw_key in force_new_identity_keys}
     assigned: dict[tuple[str, ...], str] = {}
-    used_feature_ids = set(previous.values())
+    used_feature_ids = set(previous.values()) | set(overrides.values())
     numeric_feature_ids = [int(feature_id) for feature_id in used_feature_ids if feature_id.isdigit()]
     next_sequence = max(numeric_feature_ids, default=0) + 1
     for raw_key in identity_keys:
@@ -239,7 +308,10 @@ def assign_generated_feature_ids(
             raise ReleaseFeatureModelError("generated feature ID requires a non-empty identity key")
         if key in assigned:
             raise ReleaseFeatureModelError(f"duplicate identity key while assigning feature_id: {key}")
-        if key in previous:
+        if key in overrides:
+            assigned[key] = overrides[key]
+            continue
+        if key in previous and key not in force_new:
             assigned[key] = previous[key]
             continue
         while str(next_sequence) in used_feature_ids:
@@ -258,38 +330,249 @@ def find_identity_ambiguities(
     previous_records: Iterable[SidecarRecord | Mapping[str, Any]],
 ) -> tuple[IdentityAmbiguity, ...]:
     """Find partial hash matches that require maintainer resolution."""
-    by_geometry: dict[str, list[str]] = {}
-    by_properties: dict[str, list[str]] = {}
+    by_geometry: dict[str, list[tuple[str, str]]] = {}
+    by_properties: dict[str, list[tuple[str, str]]] = {}
     for record in previous_records:
         payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
         feature_id = str(payload.get("feature_id") or "").strip()
         geometry_hash_value = str(payload.get("geometry_hash") or "").strip()
         properties_hash_value = str(payload.get("properties_hash") or "").strip()
         if feature_id and geometry_hash_value:
-            by_geometry.setdefault(geometry_hash_value, []).append(feature_id)
+            by_geometry.setdefault(geometry_hash_value, []).append((feature_id, properties_hash_value))
         if feature_id and properties_hash_value:
-            by_properties.setdefault(properties_hash_value, []).append(feature_id)
+            by_properties.setdefault(properties_hash_value, []).append((feature_id, geometry_hash_value))
 
     ambiguities: list[IdentityAmbiguity] = []
     for record in new_records:
         geometry_hash_value = str(record.get("geometry_hash") or "").strip()
         properties_hash_value = str(record.get("properties_hash") or "").strip()
-        geometry_matches = tuple(sorted(set(by_geometry.get(geometry_hash_value, ()))))
-        properties_matches = tuple(sorted(set(by_properties.get(properties_hash_value, ()))))
+        geometry_records = by_geometry.get(geometry_hash_value, ())
+        properties_records = by_properties.get(properties_hash_value, ())
+        geometry_matches = tuple(sorted({feature_id for feature_id, _hash in geometry_records}))
+        properties_matches = tuple(sorted({feature_id for feature_id, _hash in properties_records}))
+        geometry_properties_hashes = tuple(sorted({_hash for _feature_id, _hash in geometry_records if _hash}))
+        properties_geometry_hashes = tuple(sorted({_hash for _feature_id, _hash in properties_records if _hash}))
         if not geometry_matches and not properties_matches:
             continue
         if geometry_matches == properties_matches and len(geometry_matches) == 1:
             continue
+        if geometry_matches and not properties_matches:
+            ambiguity_type = "same_geometry_changed_properties"
+        elif properties_matches and not geometry_matches:
+            ambiguity_type = "same_properties_changed_geometry"
+        else:
+            ambiguity_type = "conflicting_partial_matches"
         ambiguities.append(
             IdentityAmbiguity(
+                ambiguity_type=ambiguity_type,
                 identity_key=identity_key_from_record(record),
                 geometry_hash=geometry_hash_value,
                 properties_hash=properties_hash_value,
                 matching_geometry_feature_ids=geometry_matches,
                 matching_properties_feature_ids=properties_matches,
+                matching_geometry_properties_hashes=geometry_properties_hashes,
+                matching_properties_geometry_hashes=properties_geometry_hashes,
             )
         )
     return tuple(ambiguities)
+
+
+def identity_ambiguity_to_dict(ambiguity: IdentityAmbiguity) -> dict[str, Any]:
+    return {
+        "ambiguity_type": ambiguity.ambiguity_type,
+        "new_identity_key": list(ambiguity.identity_key),
+        "new_geometry_hash": ambiguity.geometry_hash,
+        "new_properties_hash": ambiguity.properties_hash,
+        "matching_geometry_feature_ids": list(ambiguity.matching_geometry_feature_ids),
+        "matching_properties_feature_ids": list(ambiguity.matching_properties_feature_ids),
+        "matching_geometry_properties_hashes": list(ambiguity.matching_geometry_properties_hashes),
+        "matching_properties_geometry_hashes": list(ambiguity.matching_properties_geometry_hashes),
+    }
+
+
+def identity_ambiguities_to_dicts(ambiguities: Iterable[IdentityAmbiguity]) -> list[dict[str, Any]]:
+    return [identity_ambiguity_to_dict(ambiguity) for ambiguity in ambiguities]
+
+
+def matching_feature_ids_for_ambiguity(ambiguity: IdentityAmbiguity) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            set(ambiguity.matching_geometry_feature_ids)
+            | set(ambiguity.matching_properties_feature_ids)
+        )
+    )
+
+
+def load_identity_resolution_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ReleaseFeatureModelError(f"{path}: feature identity resolution JSON is invalid: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ReleaseFeatureModelError(f"{path}: feature identity resolution file must be a JSON object")
+    return payload
+
+
+def load_identity_resolution_decisions(
+    *,
+    asset_slug: str,
+    release: str,
+    repo_root: Path = Path("."),
+) -> tuple[dict[str, Any], ...]:
+    path = repo_root / "catalog" / "feature-identity-resolutions" / f"{asset_slug}.json"
+    payload = load_identity_resolution_file(path)
+    if payload is None:
+        return ()
+    if payload.get("schema_version") != FEATURE_IDENTITY_RESOLUTION_SCHEMA_VERSION:
+        raise ReleaseFeatureModelError(f"{path}: unsupported feature identity resolution schema_version")
+    if payload.get("asset_slug") != asset_slug:
+        raise ReleaseFeatureModelError(f"{path}: asset_slug does not match {asset_slug!r}")
+    raw_decisions = payload.get("decisions")
+    if not isinstance(raw_decisions, list):
+        raise ReleaseFeatureModelError(f"{path}: decisions must be an array")
+    decisions: list[dict[str, Any]] = []
+    for index, decision in enumerate(raw_decisions, start=1):
+        if not isinstance(decision, Mapping):
+            raise ReleaseFeatureModelError(f"{path}: decisions[{index}] must be an object")
+        decision_release = str(decision.get("release") or "").strip()
+        if not decision_release:
+            raise ReleaseFeatureModelError(f"{path}: decisions[{index}].release is required")
+        if decision_release == release:
+            decisions.append(dict(decision))
+    return tuple(decisions)
+
+
+def validate_identity_resolution_decision(
+    decision: Mapping[str, Any],
+    *,
+    release: str,
+    ambiguity: IdentityAmbiguity,
+) -> IdentityResolution:
+    action = str(decision.get("action") or "").strip()
+    if action not in IDENTITY_RESOLUTION_ACTIONS:
+        raise ReleaseFeatureModelError("feature identity resolution action is unsupported")
+    decision_release = str(decision.get("release") or "").strip()
+    if decision_release != release:
+        raise ReleaseFeatureModelError("feature identity resolution release does not match")
+    identity_key = normalize_identity_key(decision.get("new_identity_key"), label="new_identity_key")
+    geometry_hash_value = str(decision.get("new_geometry_hash") or "").strip()
+    properties_hash_value = str(decision.get("new_properties_hash") or "").strip()
+    validate_hash(geometry_hash_value, label="new_geometry_hash")
+    validate_hash(properties_hash_value, label="new_properties_hash")
+    matching_geometry = normalize_feature_id_tuple(
+        decision.get("matching_geometry_feature_ids"),
+        label="matching_geometry_feature_ids",
+    )
+    matching_properties = normalize_feature_id_tuple(
+        decision.get("matching_properties_feature_ids"),
+        label="matching_properties_feature_ids",
+    )
+    matching_geometry_properties_hashes = normalize_hash_tuple(
+        decision.get("matching_geometry_properties_hashes"),
+        label="matching_geometry_properties_hashes",
+    )
+    matching_properties_geometry_hashes = normalize_hash_tuple(
+        decision.get("matching_properties_geometry_hashes"),
+        label="matching_properties_geometry_hashes",
+    )
+    if identity_key != ambiguity.identity_key:
+        raise ReleaseFeatureModelError("feature identity resolution new_identity_key does not match ambiguity")
+    if geometry_hash_value != ambiguity.geometry_hash:
+        raise ReleaseFeatureModelError("feature identity resolution new_geometry_hash does not match ambiguity")
+    if properties_hash_value != ambiguity.properties_hash:
+        raise ReleaseFeatureModelError("feature identity resolution new_properties_hash does not match ambiguity")
+    if matching_geometry != ambiguity.matching_geometry_feature_ids:
+        raise ReleaseFeatureModelError("feature identity resolution matching_geometry_feature_ids do not match ambiguity")
+    if matching_properties != ambiguity.matching_properties_feature_ids:
+        raise ReleaseFeatureModelError("feature identity resolution matching_properties_feature_ids do not match ambiguity")
+    if matching_geometry_properties_hashes != ambiguity.matching_geometry_properties_hashes:
+        raise ReleaseFeatureModelError("feature identity resolution matching_geometry_properties_hashes do not match ambiguity")
+    if matching_properties_geometry_hashes != ambiguity.matching_properties_geometry_hashes:
+        raise ReleaseFeatureModelError("feature identity resolution matching_properties_geometry_hashes do not match ambiguity")
+    normalized: dict[str, Any] = {}
+    for key in ("rationale", "reviewer", "pr_reference"):
+        value = str(decision.get(key) or "").strip()
+        if not value:
+            raise ReleaseFeatureModelError(f"feature identity resolution is missing required field {key!r}")
+        normalized[key] = value
+    reuse_feature_id = None
+    if action == "reuse_previous_feature_id":
+        reuse_feature_id = str(decision.get("reuse_feature_id") or "").strip()
+        validate_feature_id(reuse_feature_id)
+        if reuse_feature_id not in matching_feature_ids_for_ambiguity(ambiguity):
+            raise ReleaseFeatureModelError("reuse_feature_id must be one of the matching previous feature IDs")
+    elif decision.get("reuse_feature_id") not in (None, ""):
+        raise ReleaseFeatureModelError("reuse_feature_id is only valid with reuse_previous_feature_id")
+    return IdentityResolution(
+        action=action,
+        release=release,
+        identity_key=identity_key,
+        geometry_hash=geometry_hash_value,
+        properties_hash=properties_hash_value,
+        matching_geometry_feature_ids=matching_geometry,
+        matching_properties_feature_ids=matching_properties,
+        matching_geometry_properties_hashes=matching_geometry_properties_hashes,
+        matching_properties_geometry_hashes=matching_properties_geometry_hashes,
+        rationale=normalized["rationale"],
+        reviewer=normalized["reviewer"],
+        pr_reference=normalized["pr_reference"],
+        reuse_feature_id=reuse_feature_id,
+    )
+
+
+def validate_identity_resolutions(
+    *,
+    release: str,
+    ambiguities: Iterable[IdentityAmbiguity],
+    decisions: Iterable[Mapping[str, Any]],
+) -> tuple[IdentityResolution, ...]:
+    ambiguities_by_key = {ambiguity.identity_key: ambiguity for ambiguity in ambiguities}
+    resolutions: list[IdentityResolution] = []
+    seen_keys: set[tuple[str, ...]] = set()
+    for index, decision in enumerate(decisions, start=1):
+        if not isinstance(decision, Mapping):
+            raise ReleaseFeatureModelError(f"feature identity resolution decision {index} must be an object")
+        identity_key = normalize_identity_key(decision.get("new_identity_key"), label="new_identity_key")
+        ambiguity = ambiguities_by_key.get(identity_key)
+        if ambiguity is None:
+            raise ReleaseFeatureModelError(f"stale feature identity resolution does not match a current ambiguity: {identity_key}")
+        if identity_key in seen_keys:
+            raise ReleaseFeatureModelError(f"duplicate feature identity resolution for ambiguity: {identity_key}")
+        seen_keys.add(identity_key)
+        resolutions.append(
+            validate_identity_resolution_decision(
+                decision,
+                release=release,
+                ambiguity=ambiguity,
+            )
+        )
+    return tuple(resolutions)
+
+
+def unresolved_identity_ambiguities(
+    ambiguities: Iterable[IdentityAmbiguity],
+    resolutions: Iterable[IdentityResolution],
+) -> tuple[IdentityAmbiguity, ...]:
+    resolved_keys = {resolution.identity_key for resolution in resolutions}
+    return tuple(ambiguity for ambiguity in ambiguities if ambiguity.identity_key not in resolved_keys)
+
+
+def resolved_feature_id_overrides(resolutions: Iterable[IdentityResolution]) -> dict[tuple[str, ...], str]:
+    return {
+        resolution.identity_key: resolution.reuse_feature_id
+        for resolution in resolutions
+        if resolution.action == "reuse_previous_feature_id" and resolution.reuse_feature_id is not None
+    }
+
+
+def resolved_force_new_identity_keys(resolutions: Iterable[IdentityResolution]) -> tuple[tuple[str, ...], ...]:
+    return tuple(
+        resolution.identity_key
+        for resolution in resolutions
+        if resolution.action == "assign_new_feature_id"
+    )
 
 
 def content_hashes(

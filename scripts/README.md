@@ -154,6 +154,22 @@ stored `geometry_hash` and `properties_hash` values. The manifest `identity`
 block records the strategy, source fields or assignment key, hash algorithm,
 canonicalization version, previous release, and next generated ID.
 
+Generated-ID refreshes compare proposed metadata sidecars with the previous
+latest sidecar. Partial matches, such as the same geometry hash with changed
+properties, are feature identity ambiguities. Scheduled jobs post a Slack
+warning and fail before publishing until a reviewed release-scoped decision is
+added under `catalog/feature-identity-resolutions/{asset-slug}.json`. Manual
+publishes can write a nonblocking evidence report with:
+
+```bash
+uv run python scripts/gcs_asset.py publish-release \
+  --asset-slug example-asset \
+  --release-date 2026-05-01 \
+  --publish-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
+  --identity-ambiguity-report "$TMPDIR/shared-datasets-1/vector-assets/example-asset/identity-ambiguities.json" \
+  --dry-run
+```
+
 PMTiles generation exports a WGS84 GeoJSONSeq tile source with GDAL, writes the
 temporary MBTiles with Tippecanoe, and converts that archive with
 `pmtiles convert`. Do not use the old GDAL-based projection path; for

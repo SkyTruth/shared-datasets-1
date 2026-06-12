@@ -31,6 +31,7 @@ class FakeBlob:
         self.metadata = None
         self.content_type = None
         self.text = ""
+        self.data = b""
         self.uploads = []
 
     def reload(self) -> None:
@@ -41,12 +42,18 @@ class FakeBlob:
         self.reload()
         return self.text
 
+    def download_as_bytes(self) -> bytes:
+        self.reload()
+        return self.data
+
     def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
         self._check_generation(if_generation_match)
         self.exists = True
         self.generation += 1
         self.content_type = content_type
         self.size = Path(filename).stat().st_size
+        self.data = Path(filename).read_bytes()
+        self.text = self.data.decode("utf-8", errors="replace")
         self.uploads.append(("filename", if_generation_match, content_type))
 
     def upload_from_string(self, data, *, content_type=None, if_generation_match=None):
@@ -55,7 +62,8 @@ class FakeBlob:
         self.generation += 1
         self.content_type = content_type
         self.text = data
-        self.size = len(data.encode())
+        self.data = data.encode()
+        self.size = len(self.data)
         self.uploads.append(("string", if_generation_match, content_type))
 
     def _check_generation(self, if_generation_match):
@@ -219,6 +227,59 @@ class PublishReleaseTests(unittest.TestCase):
             ],
             7,
         )
+
+    def test_manual_publish_plan_reports_identity_ambiguities_without_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            catalog = write_catalog(tmp_path)
+            publish_dir = tmp_path / "publish"
+            publish_dir.mkdir()
+            write_vector_bundle(publish_dir)
+            previous_metadata = tmp_path / "previous.metadata.ndjson.gz"
+            previous_feature = release_feature_model.FeatureRecord(
+                feature_id="7",
+                geometry_hash="sha256:" + "b" * 64,
+                properties_hash="sha256:" + "b" * 64,
+                geometry=None,
+                properties={"name": "previous"},
+                provenance={"source": "fixture"},
+            )
+            release_feature_model.write_metadata_sidecar(
+                [
+                    release_feature_model.sidecar_record(
+                        asset_slug="example-asset",
+                        release="2026-04-01",
+                        feature=previous_feature,
+                        identity_key=("previous",),
+                    )
+                ],
+                previous_metadata,
+            )
+            report_path = tmp_path / "identity-ambiguities.json"
+            bucket = FakeBucket()
+            latest_metadata = bucket.blob(
+                "100-geographic-reference/110-boundaries/example-asset/latest/example-asset.metadata.ndjson.gz"
+            )
+            latest_metadata.exists = True
+            latest_metadata.data = previous_metadata.read_bytes()
+            latest_metadata.size = len(latest_metadata.data)
+
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset",
+                release_date="2026-05-01",
+                publish_dir=publish_dir,
+                catalog_path=catalog,
+                client=FakeClient(bucket),
+                schema_reader=lambda _path: [{"name": "id", "type": "Integer"}],
+                schema_compatibility_checker=skip_schema_compatibility,
+                identity_ambiguity_report_path=report_path,
+            )
+            written_report = json.loads(report_path.read_text())
+
+            self.assertIsNotNone(plan.identity_ambiguity_report)
+            self.assertEqual(plan.identity_ambiguity_report["ambiguity_count"], 1)
+            self.assertIn("feature identity ambiguities require reviewer attention", plan.checks[-1])
+            self.assertEqual(written_report["ambiguities"][0]["ambiguity_type"], "same_geometry_changed_properties")
 
     def test_plan_includes_release_metadata_sidecar_schema_and_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from ingestion.common import feature_metadata
 from scripts import release_feature_model as model
@@ -114,8 +115,146 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         ambiguities = model.find_identity_ambiguities([new], previous_records=previous)
 
         self.assertEqual(len(ambiguities), 1)
+        self.assertEqual(ambiguities[0].ambiguity_type, "same_geometry_changed_properties")
         self.assertEqual(ambiguities[0].matching_geometry_feature_ids, ("1",))
         self.assertEqual(ambiguities[0].matching_properties_feature_ids, ())
+
+    def test_reviewed_resolution_reuses_previous_feature_id_for_new_identity_key(self):
+        previous = [
+            {"feature_id": "7", "identity_key": ["old"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
+        ]
+        new = {
+            "identity_key": ["new"],
+            "geometry_hash": VALID_HASH_A,
+            "properties_hash": VALID_HASH_B,
+        }
+        ambiguity = model.find_identity_ambiguities([new], previous_records=previous)[0]
+        resolutions = model.validate_identity_resolutions(
+            release="2026-05-01",
+            ambiguities=[ambiguity],
+            decisions=[
+                {
+                    "release": "2026-05-01",
+                    "action": "reuse_previous_feature_id",
+                    "new_identity_key": ["new"],
+                    "new_geometry_hash": VALID_HASH_A,
+                    "new_properties_hash": VALID_HASH_B,
+                    "matching_geometry_feature_ids": ["7"],
+                    "matching_properties_feature_ids": [],
+                    "matching_geometry_properties_hashes": [VALID_HASH_A],
+                    "matching_properties_geometry_hashes": [],
+                    "reuse_feature_id": "7",
+                    "rationale": "Same footprint; source attributes changed.",
+                    "reviewer": "jonaraphael",
+                    "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                }
+            ],
+        )
+
+        assigned = model.assign_generated_feature_ids(
+            [["new"]],
+            previous_records=previous,
+            feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
+        )
+
+        self.assertEqual(assigned[("new",)], "7")
+        self.assertEqual(model.unresolved_identity_ambiguities([ambiguity], resolutions), ())
+
+    def test_reviewed_resolution_assigns_new_feature_id_even_for_previous_key(self):
+        previous = [
+            {"feature_id": "7", "identity_key": ["same"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
+        ]
+        new = {
+            "identity_key": ["same"],
+            "geometry_hash": VALID_HASH_A,
+            "properties_hash": VALID_HASH_B,
+        }
+        ambiguity = model.find_identity_ambiguities([new], previous_records=previous)[0]
+        resolutions = model.validate_identity_resolutions(
+            release="2026-05-01",
+            ambiguities=[ambiguity],
+            decisions=[
+                {
+                    "release": "2026-05-01",
+                    "action": "assign_new_feature_id",
+                    "new_identity_key": ["same"],
+                    "new_geometry_hash": VALID_HASH_A,
+                    "new_properties_hash": VALID_HASH_B,
+                    "matching_geometry_feature_ids": ["7"],
+                    "matching_properties_feature_ids": [],
+                    "matching_geometry_properties_hashes": [VALID_HASH_A],
+                    "matching_properties_geometry_hashes": [],
+                    "rationale": "Same footprint now represents a different logical feature.",
+                    "reviewer": "jonaraphael",
+                    "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                }
+            ],
+        )
+
+        assigned = model.assign_generated_feature_ids(
+            [["same"]],
+            previous_records=previous,
+            force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
+        )
+
+        self.assertEqual(assigned[("same",)], "8")
+
+    def test_stale_resolution_is_rejected(self):
+        ambiguity = model.IdentityAmbiguity(
+            ambiguity_type="same_geometry_changed_properties",
+            identity_key=("new",),
+            geometry_hash=VALID_HASH_A,
+            properties_hash=VALID_HASH_B,
+            matching_geometry_feature_ids=("1",),
+            matching_properties_feature_ids=(),
+            matching_geometry_properties_hashes=(VALID_HASH_A,),
+            matching_properties_geometry_hashes=(),
+        )
+
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "stale"):
+            model.validate_identity_resolutions(
+                release="2026-05-01",
+                ambiguities=[ambiguity],
+                decisions=[
+                    {
+                        "release": "2026-05-01",
+                        "action": "assign_new_feature_id",
+                        "new_identity_key": ["other"],
+                        "new_geometry_hash": VALID_HASH_A,
+                        "new_properties_hash": VALID_HASH_B,
+                        "matching_geometry_feature_ids": ["1"],
+                        "matching_properties_feature_ids": [],
+                        "matching_geometry_properties_hashes": [VALID_HASH_A],
+                        "matching_properties_geometry_hashes": [],
+                        "rationale": "Wrong record.",
+                        "reviewer": "jonaraphael",
+                        "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
+                    }
+                ],
+            )
+
+    def test_unresolved_ambiguities_notify_then_raise(self):
+        ambiguity = model.IdentityAmbiguity(
+            ambiguity_type="same_geometry_changed_properties",
+            identity_key=("new",),
+            geometry_hash=VALID_HASH_A,
+            properties_hash=VALID_HASH_B,
+            matching_geometry_feature_ids=("1",),
+            matching_properties_feature_ids=(),
+            matching_geometry_properties_hashes=(VALID_HASH_A,),
+            matching_properties_geometry_hashes=(),
+        )
+
+        with mock.patch("scripts.slack_notify.notify", return_value=True) as notify:
+            with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash"):
+                feature_metadata.raise_unresolved_identity_ambiguities(
+                    asset_slug="example",
+                    release="2026-05-01",
+                    ambiguities=[ambiguity],
+                )
+
+        notify.assert_called_once()
+        self.assertIn("catalog/feature-identity-resolutions/example.json", notify.call_args.kwargs["body"])
 
     def test_sidecar_round_trip_uses_split_hashes(self):
         feature = model.FeatureRecord(

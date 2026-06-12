@@ -536,6 +536,12 @@ def publish_release(
         dir_okay=False,
         help="Reviewed waiver JSON for otherwise blocked schema compatibility changes.",
     ),
+    identity_ambiguity_report: Optional[Path] = typer.Option(
+        None,
+        "--identity-ambiguity-report",
+        dir_okay=False,
+        help="Optional local JSON path for unresolved feature identity ambiguity evidence.",
+    ),
 ) -> None:
     """Publish prepared local artifacts as an immutable release and latest update."""
     from scripts import publish_release as publish_release_core
@@ -552,6 +558,7 @@ def publish_release(
             readme_path=readme_path,
             remote_catalog_path=remote_catalog_path,
             compatibility_waiver_path=compatibility_waiver,
+            identity_ambiguity_report_path=identity_ambiguity_report,
         )
         if dry_run:
             sys.stdout.write(json.dumps(publish_release_core.plan_to_dict(plan), indent=2, sort_keys=True) + "\n")

@@ -174,7 +174,11 @@ refreshes and never reusing retired sequence values.
 handles. `geometry_hash` is the stable geometry-equivalence key for footprint
 grouping/de-duplication after consumers load the metadata sidecar.
 `properties_hash` supports generated-ID assignment, duplicate collapse, and
-maintainer review of ambiguous refreshes.
+maintainer review of ambiguous refreshes. If a generated-ID refresh partially
+matches prior identity evidence, such as the same `geometry_hash` with a changed
+`properties_hash`, automated jobs must alert maintainers and stop before
+publishing until the resolution is reviewed in
+`catalog/feature-identity-resolutions/{asset-slug}.json`.
 
 Required release artifacts for vector releases:
 
