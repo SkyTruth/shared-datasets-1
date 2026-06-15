@@ -201,6 +201,20 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
             "contents/catalog/shared-datasets-catalog.csv",
             steps["Collect proposed catalog row from PR"]["run"],
         )
+        self.assertIn("has_schema_targets", steps["Detect planned schema compatibility targets"]["run"])
+        self.assertIn("schema_target_count", steps["Detect planned schema compatibility targets"]["run"])
+        self.assertIn(
+            "steps.schema_targets.outputs.has_schema_targets == 'true'",
+            steps["Validate read-only GCP auth configuration"]["if"],
+        )
+        self.assertIn(
+            "steps.schema_targets.outputs.has_schema_targets == 'true'",
+            steps["Authenticate read-only to Google Cloud"]["if"],
+        )
+        self.assertIn(
+            "steps.schema_targets.outputs.has_schema_targets == 'true'",
+            steps["Collect planned schema compatibility results"]["if"],
+        )
         self.assertIn("GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER", steps["Validate read-only GCP auth configuration"]["run"])
         self.assertIn("vars.GCP_READONLY_SERVICE_ACCOUNT", str(steps["Authenticate read-only to Google Cloud"]["with"]))
         self.assertIn("check-schema-compatibility", steps["Collect planned schema compatibility results"]["run"])

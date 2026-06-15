@@ -129,8 +129,63 @@ jobs:
               print(f"No proposed catalog row found for {asset_slug}; skipping catalog contract comparison.")
           PY
 
-      - name: Validate read-only GCP auth configuration
+      - name: Detect planned schema compatibility targets
+        id: schema_targets
         if: ${{ steps.detect.outputs.has_publish_plan == 'true' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import csv
+          import json
+          import os
+          import pathlib
+
+          schema_suffixes = {".fgb", ".geojson", ".ndgeojson", ".csv"}
+          bucket = os.environ["SHARED_DATASETS_BUCKET"]
+
+          def catalog_row(asset_slug):
+              with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
+                  for row in csv.DictReader(file_obj):
+                      if row.get("asset_slug") == asset_slug:
+                          return row
+              return None
+
+          def is_schema_target(asset_slug, destination_uri):
+              prefix = f"gs://{bucket}/"
+              if not destination_uri.startswith(prefix):
+                  return False
+              destination_name = destination_uri.removeprefix(prefix)
+              filename = destination_name.rsplit("/", 1)[-1]
+              suffix = pathlib.Path(filename).suffix.lower()
+              if suffix not in schema_suffixes or not ("/latest/" in destination_name or "/releases/" in destination_name):
+                  return False
+              row = catalog_row(asset_slug)
+              if row:
+                  canonical_path = row.get("canonical_path", "")
+                  canonical_filename = canonical_path.rsplit("/", 1)[-1]
+                  if destination_uri == canonical_path:
+                      return True
+                  if "/latest/" in canonical_path:
+                      asset_root = canonical_path.split("/latest/", 1)[0]
+                      if destination_uri.startswith(f"{asset_root}/releases/") and filename == canonical_filename:
+                          return True
+                  return False
+              return pathlib.Path(filename).stem == asset_slug
+
+          plan = json.load(open("publish-plan.json"))
+          asset_slug = plan["asset_slug"]
+          targets = [
+              promotion["destination_uri"]
+              for promotion in plan["promotions"]
+              if promotion.get("destination_generation")
+              and is_schema_target(asset_slug, promotion["destination_uri"])
+          ]
+          print(f"has_schema_targets={str(bool(targets)).lower()}")
+          print(f"schema_target_count={len(targets)}")
+          PY
+
+      - name: Validate read-only GCP auth configuration
+        if: ${{ steps.detect.outputs.has_publish_plan == 'true' && steps.schema_targets.outputs.has_schema_targets == 'true' }}
         env:
           GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_READONLY_SERVICE_ACCOUNT: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
@@ -147,14 +202,14 @@ jobs:
           fi
 
       - name: Authenticate read-only to Google Cloud
-        if: ${{ steps.detect.outputs.has_publish_plan == 'true' }}
+        if: ${{ steps.detect.outputs.has_publish_plan == 'true' && steps.schema_targets.outputs.has_schema_targets == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_READONLY_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_READONLY_SERVICE_ACCOUNT }}
 
       - name: Collect planned schema compatibility results
-        if: ${{ steps.detect.outputs.has_publish_plan == 'true' }}
+        if: ${{ steps.detect.outputs.has_publish_plan == 'true' && steps.schema_targets.outputs.has_schema_targets == 'true' }}
         run: |
           set -euo pipefail
           mkdir -p schema-results
