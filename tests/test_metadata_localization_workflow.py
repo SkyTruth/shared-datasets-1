@@ -68,6 +68,18 @@ class MetadataLocalizationWorkflowTests(unittest.TestCase):
         self.assertNotIn("scripts/gcs_asset.py upload", run_scripts)
         self.assertNotIn("scripts/gcs_asset.py copy", run_scripts)
 
+    def test_workflow_resolves_pr_when_workflow_run_payload_omits_pull_requests(self):
+        workflow = load_workflow(WORKFLOW)
+        steps = workflow_steps_by_name(workflow, "materialize")
+        prepare_run = steps["Prepare reviewed publish plan"]["run"]
+
+        self.assertIn("resolve-workflow-run-pr", prepare_run)
+        self.assertIn('commits/${HEAD_SHA}/pulls', prepare_run)
+        self.assertIn("gh pr list", prepare_run)
+        self.assertIn("--head \"${HEAD_BRANCH}\"", prepare_run)
+        self.assertIn("No reviewed PR found", prepare_run)
+        self.assertIn("Resolved Approved dataset mutation run to PR", prepare_run)
+
 
 if __name__ == "__main__":
     unittest.main()

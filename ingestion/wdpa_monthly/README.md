@@ -18,6 +18,15 @@ preserved and are null for point rows rather than being dropped or renamed.
 The job intentionally does not rename fields, buffer points, calculate areas,
 build statistics tables, update Strapi, or write database payloads.
 
+Name fields keep the upstream WDPA schema. `NAME` is the protected or conserved
+area name as supplied by WDPA, generally in the original or local language/script
+of the protected area. `NAME_ENG` is the upstream English-name source field in
+canonical FGB and canonical metadata. Localized metadata sidecars preserve the
+source field names, so translated display names are written back to `NAME_ENG`.
+In localized sidecars, `NAME_ENG` is a misleading legacy name; consumers should
+treat it as the active-locale display name, effectively `name_localized`, not as
+an English-only value.
+
 ## Runtime
 
 Entrypoint:

@@ -93,6 +93,150 @@ def pr_api_payload_to_event(
     return {"pull_request": pr}
 
 
+def first_workflow_run_pr_number(event: dict[str, Any]) -> str | None:
+    pull_requests = event.get("workflow_run", {}).get("pull_requests") or []
+    for pull_request in pull_requests:
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if number is not None and str(number).isdigit():
+            return str(number)
+    return None
+
+
+def repository_name_from_payload(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    full_name = payload.get("full_name") or payload.get("nameWithOwner")
+    if full_name:
+        return str(full_name)
+    name = payload.get("name")
+    owner = payload.get("owner")
+    if isinstance(owner, dict):
+        owner_name = owner.get("login") or owner.get("name")
+    else:
+        owner_name = owner
+    if owner_name and name:
+        return f"{owner_name}/{name}"
+    return ""
+
+
+def pr_candidate_number(candidate: dict[str, Any]) -> str | None:
+    number = candidate.get("number")
+    if number is not None and str(number).isdigit():
+        return str(number)
+    return None
+
+
+def pr_candidate_base_ref(candidate: dict[str, Any]) -> str:
+    base = candidate.get("base") if isinstance(candidate.get("base"), dict) else {}
+    return str(base.get("ref") or candidate.get("baseRefName") or "")
+
+
+def pr_candidate_head_ref(candidate: dict[str, Any]) -> str:
+    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
+    return str(head.get("ref") or candidate.get("headRefName") or "")
+
+
+def pr_candidate_head_sha(candidate: dict[str, Any]) -> str:
+    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
+    return str(head.get("sha") or candidate.get("headRefOid") or "")
+
+
+def pr_candidate_merge_sha(candidate: dict[str, Any]) -> str:
+    merge_commit = candidate.get("mergeCommit") if isinstance(candidate.get("mergeCommit"), dict) else {}
+    return str(candidate.get("merge_commit_sha") or merge_commit.get("oid") or "")
+
+
+def pr_candidate_head_repo(candidate: dict[str, Any]) -> str:
+    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
+    return repository_name_from_payload(head.get("repo") or candidate.get("headRepository"))
+
+
+def pr_candidate_base_repo(candidate: dict[str, Any]) -> str:
+    base = candidate.get("base") if isinstance(candidate.get("base"), dict) else {}
+    return repository_name_from_payload(base.get("repo") or candidate.get("baseRepository"))
+
+
+def pr_candidate_is_merged(candidate: dict[str, Any]) -> bool:
+    state = str(candidate.get("state") or "").lower()
+    return (
+        candidate.get("merged") is True
+        or bool(candidate.get("merged_at") or candidate.get("mergedAt"))
+        or state == "merged"
+    )
+
+
+def pr_candidate_is_eligible(
+    candidate: dict[str, Any],
+    *,
+    repository: str,
+    default_branch: str,
+) -> bool:
+    if pr_candidate_number(candidate) is None:
+        return False
+    base_ref = pr_candidate_base_ref(candidate)
+    if base_ref and base_ref != default_branch:
+        return False
+    for repo_name in (pr_candidate_head_repo(candidate), pr_candidate_base_repo(candidate)):
+        if repo_name and repo_name != repository:
+            return False
+    return True
+
+
+def select_workflow_run_pr_candidate(
+    candidates: list[Any],
+    *,
+    repository: str,
+    default_branch: str,
+    head_sha: str,
+    head_branch: str,
+) -> dict[str, Any] | None:
+    eligible = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict)
+        and pr_candidate_is_eligible(candidate, repository=repository, default_branch=default_branch)
+    ]
+    if not eligible:
+        return None
+
+    def score(candidate: dict[str, Any]) -> tuple[int, int, int, int]:
+        sha_values = {pr_candidate_head_sha(candidate), pr_candidate_merge_sha(candidate)}
+        sha_match = int(bool(head_sha and head_sha in sha_values))
+        branch_match = int(bool(head_branch and pr_candidate_head_ref(candidate) == head_branch))
+        merged = int(pr_candidate_is_merged(candidate))
+        return (sha_match, branch_match, merged, int(pr_candidate_number(candidate) or 0))
+
+    return max(eligible, key=score)
+
+
+def resolve_workflow_run_pr_number(
+    event: dict[str, Any],
+    *,
+    repository: str,
+    default_branch: str,
+    commit_prs: list[Any] | None = None,
+    branch_prs: list[Any] | None = None,
+) -> str | None:
+    direct = first_workflow_run_pr_number(event)
+    if direct is not None:
+        return direct
+
+    workflow_run = event.get("workflow_run", {})
+    head_sha = str(workflow_run.get("head_sha") or "")
+    head_branch = str(workflow_run.get("head_branch") or "")
+    for candidates in (commit_prs or [], branch_prs or []):
+        candidate = select_workflow_run_pr_candidate(
+            candidates if isinstance(candidates, list) else [],
+            repository=repository,
+            default_branch=default_branch,
+            head_sha=head_sha,
+            head_branch=head_branch,
+        )
+        if candidate is not None:
+            return pr_candidate_number(candidate)
+    return None
+
+
 def object_name_from_uri(uri: str, *, bucket: str, label: str) -> str:
     prefix = f"gs://{bucket}/"
     if not uri.startswith(prefix):
@@ -440,6 +584,31 @@ def command_event_from_pr(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_json_list(path: str | None, *, label: str) -> list[Any]:
+    if not path:
+        return []
+    payload = json.loads(pathlib.Path(path).read_text())
+    if not isinstance(payload, list):
+        raise PlanValidationError(f"{label} must be a JSON list")
+    return payload
+
+
+def command_resolve_workflow_run_pr(args: argparse.Namespace) -> int:
+    event = json.loads(pathlib.Path(args.event_path).read_text())
+    if not isinstance(event, dict):
+        raise PlanValidationError("workflow_run event payload must be a JSON object")
+    pr_number = resolve_workflow_run_pr_number(
+        event,
+        repository=args.repository,
+        default_branch=args.default_branch,
+        commit_prs=load_json_list(args.commit_prs_json, label="commit PR candidates"),
+        branch_prs=load_json_list(args.branch_prs_json, label="branch PR candidates"),
+    )
+    if pr_number:
+        print(pr_number)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -476,6 +645,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     event_from_pr.add_argument("--output", help="Optional path for wrapped event JSON.")
     event_from_pr.set_defaults(func=command_event_from_pr)
+
+    resolve_workflow_run_pr = subparsers.add_parser(
+        "resolve-workflow-run-pr",
+        help="Resolve the reviewed PR number for a workflow_run event using optional GitHub PR candidates.",
+    )
+    resolve_workflow_run_pr.add_argument("--event-path", required=True, help="Path to the workflow_run event JSON.")
+    resolve_workflow_run_pr.add_argument("--repository", required=True, help="Expected owner/name repository.")
+    resolve_workflow_run_pr.add_argument("--default-branch", required=True, help="Expected base branch.")
+    resolve_workflow_run_pr.add_argument(
+        "--commit-prs-json",
+        help="Optional JSON list from the GitHub commit-associated PR endpoint.",
+    )
+    resolve_workflow_run_pr.add_argument(
+        "--branch-prs-json",
+        help="Optional JSON list from gh pr list for the workflow_run head branch.",
+    )
+    resolve_workflow_run_pr.set_defaults(func=command_resolve_workflow_run_pr)
 
     return parser
 
