@@ -670,26 +670,40 @@ jobs:
           import subprocess
 
           plan = json.load(open("publish-plan.json"))
-          asset_slug = plan["asset_slug"]
+          requested_slugs = [plan["asset_slug"], *plan.get("release_index_asset_slugs", [])]
+          asset_slugs = []
+          seen = set()
           with open("catalog/shared-datasets-catalog.csv", newline="") as file_obj:
-              asset_exists = any(row.get("asset_slug") == asset_slug for row in csv.DictReader(file_obj))
-          if not asset_exists:
-              print(f"Skipping release-index rebuild because {asset_slug!r} is not a catalog asset.")
+              catalog_slugs = {row.get("asset_slug") for row in csv.DictReader(file_obj) if row.get("asset_slug")}
+          for index, asset_slug in enumerate(requested_slugs):
+              if not asset_slug or asset_slug in seen:
+                  continue
+              if asset_slug not in catalog_slugs:
+                  if index == 0:
+                      print(f"Skipping release-index rebuild because {asset_slug!r} is not a catalog asset.")
+                      seen.add(asset_slug)
+                      continue
+                  raise RuntimeError(f"requested release-index rebuild asset is not in catalog: {asset_slug!r}")
+              asset_slugs.append(asset_slug)
+              seen.add(asset_slug)
+          if not asset_slugs:
+              print("No catalog asset release indexes requested for rebuild.")
               raise SystemExit(0)
 
-          subprocess.run(
-              [
-                  "uv",
-                  "run",
-                  "python",
-                  "scripts/gcs_asset.py",
-                  "release-index",
-                  "rebuild",
-                  "--asset-slug",
-                  asset_slug,
-              ],
-              check=True,
-          )
+          for asset_slug in asset_slugs:
+              subprocess.run(
+                  [
+                      "uv",
+                      "run",
+                      "python",
+                      "scripts/gcs_asset.py",
+                      "release-index",
+                      "rebuild",
+                      "--asset-slug",
+                      asset_slug,
+                  ],
+                  check=True,
+              )
           PY
 
       - name: Send breaking change alert

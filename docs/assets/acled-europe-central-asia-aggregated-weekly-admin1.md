@@ -29,9 +29,9 @@ notes: Manual private snapshot from ACLED weekly aggregated Europe and Central A
   point features. The 2026-06-05 same-release metadata-contract repair reused the current release FGB as the authoritative
   source, added composite source-field feature_id values, geometry_hash values, properties_hash values, canonical metadata/schema/manifest
   artifacts, and metadata-lookup PMTiles with only feature_id properties. No localized metadata sidecars are generated for
-  this private repair. FGB sha256 678ed880838379c2830ce2a55774500bb3c68ef5e99836a6b546f8b910daf400; PMTiles sha256 e3adf3e282679521fb1a4bd9db3f2b5c26ce7e90c3416324c0588ff5993528ed;
-  metadata sidecar sha256 f2601a68c2dc714443175b217dd414a5a571aad8e8c215cf1feb750094dd47d1; schema sha256 9a5c85f2eadc61d86379bf8bbc06a209bb6176ecfd36a4969cb50fa044178438;
-  manifest sha256 1abe0a50205976e81b88a57f5f86632c35a85006b3732a3a26c1a5754013f4ec. PMTiles maxzoom 12 with all-point retention
+  this private repair. FGB sha256 80066b83b6ab6ee0d9ea05a7884d519fbbb27c6f41a9cf7c28ec3fd1995a9958; PMTiles sha256 82cd7df1a1100174f932c8bf5005847b20db90c4dc4c9589732f2cfa1aaf5933;
+  metadata sidecar sha256 a6cf8e90dbcce1f4159202d504572bdfc413e76aa57b7b672f67648298b703f2; schema sha256 0f50fd76bc26ed6bfe846b4e94239f0a4c82cfcdca98909c8f4fcb8d54b802d2;
+  manifest sha256 0b3e1dea8d13b0685630fa7dd0228705bf03f554365acf90bcfe71afff322581. PMTiles maxzoom 12 with all-point retention
   verified at zoom 0.
 admission:
   intended_consumers:

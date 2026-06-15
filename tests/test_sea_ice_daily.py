@@ -378,6 +378,7 @@ ice_date: String (0.0)
             mock.patch.object(sea_ice, "require_binary", return_value=None),
             mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
             mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
+            mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
             mock.patch.object(
                 sea_ice,
                 "download_source",
@@ -498,18 +499,44 @@ ice_date: String (0.0)
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            record = sea_ice.publish_outputs(
-                publisher=publisher,
-                asset=asset,
-                outputs=fake_asset_outputs(tmp_path),
-                source=sea_ice.AvailableSource(
-                    filename_date=run_date,
-                    source_url="https://example.test/ims.tif.gz",
-                    source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
-                ),
-            )
+            with mock.patch.object(publisher, "release_metadata_contract_issue", return_value=None):
+                record = sea_ice.publish_outputs(
+                    publisher=publisher,
+                    asset=asset,
+                    outputs=fake_asset_outputs(tmp_path),
+                    source=sea_ice.AvailableSource(
+                        filename_date=run_date,
+                        source_url="https://example.test/ims.tif.gz",
+                        source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
+                    ),
+                )
 
         self.assertEqual(record["status"], "skipped")
+        self.assertFalse(bucket.blob(asset.release_object(run_date, ".fgb")).uploads)
+
+    def test_publish_rejects_existing_success_record_without_metadata_contract(self):
+        bucket = FakeBucket()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        asset = sea_ice.ASSET
+        run_date = dt.date(2026, 4, 28)
+        run_record = bucket.blob(asset.run_record_object(run_date))
+        run_record.exists = True
+        run_record.text = json.dumps({"status": "success", "run_date": run_date.isoformat()})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with self.assertRaisesRegex(RuntimeError, "metadata contract is invalid"):
+                sea_ice.publish_outputs(
+                    publisher=publisher,
+                    asset=asset,
+                    outputs=fake_asset_outputs(tmp_path),
+                    source=sea_ice.AvailableSource(
+                        filename_date=run_date,
+                        source_url="https://example.test/ims.tif.gz",
+                        source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
+                    ),
+                )
+
         self.assertFalse(bucket.blob(asset.release_object(run_date, ".fgb")).uploads)
 
 

@@ -643,7 +643,12 @@ def publish_outputs(
 ) -> dict[str, Any]:
     run_date = source.filename_date
     metadata = metadata_for_source(asset=asset, source=source)
-    if publisher.successful_run_record(asset, run_date):
+    existing_record = load_existing_successful_release(
+        publisher=publisher,
+        asset=asset,
+        run_date=run_date,
+    )
+    if existing_record is not None:
         LOGGER.info("%s already has a successful run record for %s", asset.slug, run_date)
         release_index_info = publisher.record_existing_successful_release(asset, run_date)
         return add_source_request_warnings(
@@ -780,6 +785,27 @@ def publish_outputs(
     return record
 
 
+def load_existing_successful_release(
+    *,
+    publisher: GcsPublisher,
+    asset: AssetSpec,
+    run_date: dt.date,
+) -> dict[str, Any] | None:
+    loaded = publisher.load_successful_run_record(asset, run_date)
+    if loaded is None:
+        return None
+    record, _run_record_info = loaded
+    issue = publisher.release_metadata_contract_issue(asset, record)
+    if issue:
+        raise RuntimeError(
+            f"{asset.slug} already has a successful run record for {run_date.isoformat()}, "
+            f"but the release metadata contract is invalid: {issue}. "
+            "Repair the release through a reviewed dataset publish plan before refreshing "
+            "the release index."
+        )
+    return record
+
+
 def metadata_for_source(
     *,
     asset: AssetSpec,
@@ -851,7 +877,12 @@ def run() -> dict[str, Any]:
         return record
 
     available_source = lookup.source
-    if publisher.successful_run_record(ASSET, available_source.filename_date):
+    existing_record = load_existing_successful_release(
+        publisher=publisher,
+        asset=ASSET,
+        run_date=available_source.filename_date,
+    )
+    if existing_record is not None:
         LOGGER.info(
             "%s already has a successful run record for %s",
             ASSET.slug,
