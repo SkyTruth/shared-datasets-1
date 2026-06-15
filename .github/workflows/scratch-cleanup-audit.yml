@@ -80,7 +80,6 @@ jobs:
       - name: Audit and clean scratch pending publishes
         env:
           DRY_RUN_INPUT: ${{ inputs.dry_run || 'false' }}
-          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
 
@@ -90,9 +89,9 @@ jobs:
           )
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DRY_RUN_INPUT}" == "true" ]]; then
-            args+=(--dry-run --no-send-slack)
+            args+=(--dry-run)
           else
-            args+=(--apply --send-slack --strict-slack)
+            args+=(--apply)
           fi
 
           uv run python scripts/scratch_cleanup.py "${args[@]}"

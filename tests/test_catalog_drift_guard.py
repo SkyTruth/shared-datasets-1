@@ -171,8 +171,10 @@ class CatalogDriftGuardTests(unittest.TestCase):
         self.assertIn("GCP_WORKLOAD_IDENTITY_PROVIDER", workflow)
         self.assertIn("shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com", workflow)
         self.assertIn("scripts/scratch_cleanup.py", workflow)
-        self.assertIn("--apply --send-slack --strict-slack", workflow)
-        self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", workflow)
+        self.assertIn("--apply", workflow)
+        self.assertNotIn("--send-slack", workflow)
+        self.assertNotIn("--strict-slack", workflow)
+        self.assertNotIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", workflow)
 
 
 if __name__ == "__main__":
