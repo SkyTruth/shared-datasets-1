@@ -22,6 +22,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         workflow = load_workflow(DEPLOY_WORKFLOW)
         trigger = workflow_triggers(workflow)
         deploy = workflow["jobs"]["deploy"]
+        env = workflow["env"]
         steps = workflow_steps_by_name(workflow, "deploy")
         step_names = list(steps)
         bootstrap_plan_run = steps["Terraform plan Secret Manager IAM bootstrap"]["run"]
@@ -39,6 +40,8 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
             deploy["concurrency"],
             {"group": "prod-terraform-state", "cancel-in-progress": False},
         )
+        self.assertEqual(env["TF_REGISTRY_CLIENT_TIMEOUT"], "60")
+        self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
 
         build_run = steps["Build catalog-viewer image"]["run"]
