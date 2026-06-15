@@ -135,6 +135,59 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 
+      - name: Terraform plan PMTiles managed-folder IAM bootstrap
+        run: |
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -refresh=false \
+            -out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" \
+            -target=google_project_iam_custom_role.pmtiles_managed_folder_sync \
+            -target=google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync \
+            -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
+            -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
+            -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
+
+      - name: Export PMTiles managed-folder IAM bootstrap plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
+
+      - name: Enforce PMTiles managed-folder IAM bootstrap allowlist
+        run: |
+          python - "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          allowed_exact = {
+              "google_project_iam_custom_role.pmtiles_managed_folder_sync",
+              "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync",
+          }
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if "delete" in actions:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              if address in allowed_exact:
+                  continue
+              blocked.append(f"{'/'.join(actions)} {address}")
+
+          if blocked:
+              print("Refusing automatic PMTiles managed-folder IAM bootstrap because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply PMTiles managed-folder IAM bootstrap
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"
+
+      - name: Wait for PMTiles managed-folder IAM propagation
+        run: sleep 30
+
       - name: Terraform plan
         run: |
           terraform -chdir=terraform/envs/prod plan \
@@ -163,6 +216,7 @@ jobs:
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
           }
+          managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
           allowed_for_each_prefixes = {
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
@@ -179,6 +233,12 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
+              if (
+                  (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}["))
+                  and "delete" in actions
+              ):
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
               if is_allowed_address(address):
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")

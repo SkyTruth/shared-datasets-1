@@ -54,13 +54,40 @@ locals {
   ))
 }
 
+resource "google_project_iam_custom_role" "pmtiles_managed_folder_sync" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsPmtilesManagedFolderSync"
+  title       = "Shared Datasets PMTiles Managed Folder Sync"
+  description = "Allows approved GitHub Actions Terraform to create and manage IAM on PMTiles CDN managed folders."
+  permissions = [
+    "storage.managedFolders.create",
+    "storage.managedFolders.get",
+    "storage.managedFolders.getIamPolicy",
+    "storage.managedFolders.list",
+    "storage.managedFolders.setIamPolicy",
+  ]
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_storage_bucket_iam_member" "github_actions_pmtiles_managed_folder_sync" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.pmtiles_managed_folder_sync.name
+  member = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
 resource "google_storage_managed_folder" "shared_bucket_public_prefixes" {
   for_each = local.shared_bucket_managed_folder_names
 
   bucket = google_storage_bucket.shared_bucket.name
   name   = each.value
 
-  depends_on = [google_project_service.required]
+  depends_on = [
+    google_project_service.required,
+    google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync,
+  ]
 }
 
 resource "google_storage_managed_folder_iam_member" "shared_bucket_public_object_viewers" {
@@ -74,6 +101,10 @@ resource "google_storage_managed_folder_iam_member" "shared_bucket_public_object
   managed_folder = each.value.name
   role           = "roles/storage.objectViewer"
   member         = "allUsers"
+
+  depends_on = [
+    google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync,
+  ]
 }
 
 moved {

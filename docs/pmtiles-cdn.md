@@ -488,8 +488,11 @@ and asset-documentation changes trigger PMTiles CDN sync only after the catalog
 web deploy workflow completes, so route verification sees the refreshed
 `_catalog/web/` objects. The protected sync plan covers both the PMTiles URL
 map and the catalog-driven public managed-folder IAM resources needed when an
-asset changes access tier. PMTiles Terraform-file changes still trigger the
-protected sync workflow directly after merge. Workflow-only changes to
+asset changes access tier. The workflow first applies a narrow managed-folder
+bootstrap grant for the GitHub Actions Terraform service account, limited to
+creating PMTiles managed folders and managing IAM on them; it does not grant
+object access or managed-folder deletion. PMTiles Terraform-file changes still
+trigger the protected sync workflow directly after merge. Workflow-only changes to
 `.github/workflows/pmtiles-cdn-sync.yml` trigger the consolidated
 `Protected Terraform readiness` workflow on PRs, but do not trigger the
 protected apply workflow after merge. Dispatch `PMTiles CDN sync` manually from

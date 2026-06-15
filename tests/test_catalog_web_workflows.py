@@ -273,8 +273,39 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             (PMTILES_CDN_SYNC).read_text(encoding="utf-8"),
         )
         steps = workflow_steps_by_name(workflow, "sync")
+        step_names = [
+            step["name"]
+            for step in workflow["jobs"]["sync"]["steps"]
+            if "name" in step
+        ]
         verify_run = steps["Verify catalog CDN routes"]["run"]
         enforce_run = steps["Enforce PMTiles resource-change allowlist"]["run"]
+        bootstrap_targets = {
+            "google_project_iam_custom_role.pmtiles_managed_folder_sync",
+            "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync",
+        }
+        bootstrap_plan = steps["Terraform plan PMTiles managed-folder IAM bootstrap"]["run"]
+        bootstrap_enforce = steps["Enforce PMTiles managed-folder IAM bootstrap allowlist"]["run"]
+
+        self.assertLess(
+            step_names.index("Terraform apply PMTiles managed-folder IAM bootstrap"),
+            step_names.index("Terraform plan"),
+        )
+        self.assertLess(
+            step_names.index("Wait for PMTiles managed-folder IAM propagation"),
+            step_names.index("Terraform plan"),
+        )
+        self.assertEqual(terraform_targets(bootstrap_plan), bootstrap_targets)
+        self.assertIn("-refresh=false", bootstrap_plan)
+        self.assertIn('out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"', bootstrap_plan)
+        self.assertIn("unused-by-pmtiles-cdn-sync", bootstrap_plan)
+        self.assertEqual(python_literal_string_set(bootstrap_enforce, "allowed_exact"), bootstrap_targets)
+        self.assertIn('"delete" in actions', bootstrap_enforce)
+        self.assertIn(
+            "terraform -chdir=terraform/envs/prod apply -input=false",
+            steps["Terraform apply PMTiles managed-folder IAM bootstrap"]["run"],
+        )
+        self.assertEqual(steps["Wait for PMTiles managed-folder IAM propagation"]["run"], "sleep 30")
 
         self.assertEqual(
             python_literal_string_set(enforce_run, "allowed_for_each_prefixes"),
@@ -284,6 +315,8 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             },
         )
         self.assertIn('address.startswith(f"{prefix}[")', enforce_run)
+        self.assertIn('managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"', enforce_run)
+        self.assertIn('"delete" in actions', enforce_run)
 
         self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])
         self.assertIn('--path="/_catalog/*"', steps["Invalidate catalog CDN cache"]["run"])

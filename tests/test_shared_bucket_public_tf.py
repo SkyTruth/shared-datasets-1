@@ -42,6 +42,43 @@ class SharedBucketPublicTerraformTests(unittest.TestCase):
         self.assertIn("origin          = local.pmtiles_browser_allowed_origins", shared_bucket_tf)
         self.assertIn('shared_bucket_public_managed_folders', outputs_tf)
 
+    def test_pmtiles_managed_folder_sync_role_is_narrow(self):
+        shared_bucket_tf = (REPO_ROOT / "terraform/envs/prod/shared_bucket_public.tf").read_text()
+        role_start = shared_bucket_tf.index(
+            'resource "google_project_iam_custom_role" "pmtiles_managed_folder_sync"'
+        )
+        role_end = shared_bucket_tf.index(
+            'resource "google_storage_bucket_iam_member" "github_actions_pmtiles_managed_folder_sync"'
+        )
+        role_block = shared_bucket_tf[role_start:role_end]
+
+        self.assertIn('role_id     = "sharedDatasetsPmtilesManagedFolderSync"', role_block)
+        for permission in (
+            "storage.managedFolders.create",
+            "storage.managedFolders.get",
+            "storage.managedFolders.getIamPolicy",
+            "storage.managedFolders.list",
+            "storage.managedFolders.setIamPolicy",
+        ):
+            self.assertIn(permission, role_block)
+        self.assertNotIn("storage.objects", role_block)
+        self.assertNotIn("storage.managedFolders.delete", role_block)
+
+        self.assertIn(
+            'role   = google_project_iam_custom_role.pmtiles_managed_folder_sync.name',
+            shared_bucket_tf,
+        )
+        self.assertIn(
+            'member = "serviceAccount:${var.github_actions_terraform_service_account_email}"',
+            shared_bucket_tf,
+        )
+        self.assertGreaterEqual(
+            shared_bucket_tf.count(
+                "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync"
+            ),
+            2,
+        )
+
     def test_current_catalog_has_private_roots_outside_public_folder_set(self):
         folders = public_catalog_folder_names()
 
