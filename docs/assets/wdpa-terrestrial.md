@@ -27,9 +27,11 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2
   v2 contract; feature_id values are generated decimal sequence handles keyed by SITE_PID, geometry_hash and properties_hash
   replace feature_hash, and the v1 id, ext_id, and feature_hash columns are removed. PMTiles are lightweight metadata-lookup
   tiles with feature_id only, built at maxzoom 12. The 2026-06-09 release was later expanded with a complete translation set
-  for 17 descriptive fields in es, fr, id, pt, pt_br, and sw, including localized metadata sidecars for each locale. The release
-  preserves 2,661 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release history,
-  source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+  for 17 descriptive fields in es, fr, id, pt, pt_br, and sw, including localized metadata sidecars for each locale. WDPA
+  NAME is the original/local protected-area name; NAME_ENG is a misleading legacy source field retained for source-schema
+  compatibility, but in localized sidecars it should be read as the active-locale display name, effectively name_localized.
+  The release preserves 2,661 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied. Release
+  history, source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 304572
 data_profile:
   field_count: 33
@@ -239,6 +241,15 @@ replace `feature_hash`. Consumers that stored v1 feature_id or ext_id handles
 should re-resolve features through `SITE_PID` in the metadata sidecar. Source
 fields, row count, and geometry are unchanged from the Jun2026 source release.
 
+Name-field semantics are important for localized consumers. `NAME` is the
+protected or conserved area name as supplied by WDPA, generally in the original
+or local language/script of the protected area. `NAME_ENG` is the upstream
+English-name source field in the canonical FGB and canonical metadata sidecar.
+Localized metadata sidecars preserve the source schema, so translated display
+names are still stored in `NAME_ENG`. In localized sidecars, `NAME_ENG` is a
+misleading legacy name; consumers should treat it as the active-locale display
+name, effectively `name_localized`, not as an English-only value.
+
 ## Properties / columns
 
 Definitions are inherited from the Protected Planet WDPA/WDOECM source and need
@@ -251,8 +262,8 @@ releases add `feature_id`, `geometry_hash`, and `properties_hash` fields.
 | `SITE_ID` | integer | Source numeric site identifier. |
 | `SITE_PID` | string | Source persistent site identifier. |
 | `SITE_TYPE` | string | WDPA/WDOECM source site type. |
-| `NAME_ENG` | string | Protected or conserved area name in English. |
-| `NAME` | string | Protected or conserved area name as supplied by the source. |
+| `NAME_ENG` | string | Legacy upstream English-name field. In localized metadata sidecars, this field name is misleading: it contains the active-locale display name and is effectively `name_localized`. |
+| `NAME` | string | Protected or conserved area name as supplied by the source, generally in the original or local language/script of the protected area. |
 | `DESIG` | string | Source designation text. |
 | `DESIG_ENG` | string | Designation text in English. |
 | `DESIG_TYPE` | string | Designation type or authority class. |
@@ -325,7 +336,11 @@ service and imported from per-language spreadsheets
 `imported_from=pending-translations-zip`); 7,107 `NAME_ENG` es values and
 6,095 `DESIG_ENG` unique values were machine translated with
 deep-translator/Google (`provider=google`). `pt` and `pt_br` rows carry
-identical values, matching the wdpa-marine convention. Localization validation
+identical values, matching the wdpa-marine convention. The `NAME_ENG`
+translation rows are localized display-name values for the active sidecar
+locale; in localized sidecars the field name is a misleading legacy
+source-schema label and would be better understood as `name_localized`.
+Localization validation
 applied 5,177,724 rows per locale with no stale or orphaned translations.
 Expanded artifact SHA-256 values are metadata-translations CSV
 `0c71507f9e9244d2fcdb3be633fc2e78b391195b9cf37a26bb98bff5128bab86`,

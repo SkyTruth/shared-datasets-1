@@ -53,6 +53,92 @@ class FeatureMetadataTranslationPipelineTests(unittest.TestCase):
             ],
         )
 
+    def test_publish_plan_detects_release_and_latest_translation_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = Path(tmp) / "publish-plan.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "asset_slug": "example-asset",
+                        "proposal_id": "pr-123",
+                        "promotions": [
+                            {
+                                "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.metadata-translations.csv",
+                                "source_generation": "111",
+                                "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.metadata-translations.csv",
+                                "destination_generation": "222",
+                                "content_type": "text/csv",
+                                "cache_control": "",
+                            },
+                            {
+                                "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.metadata-translations.csv",
+                                "source_generation": "111",
+                                "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.metadata-translations.csv",
+                                "destination_generation": "333",
+                                "content_type": "text/csv",
+                                "cache_control": "no-cache, max-age=0, must-revalidate",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            uris = feature_metadata_translation_pipeline.translation_source_uris_from_publish_plan(
+                plan,
+                bucket="skytruth-shared-datasets-1",
+            )
+
+        self.assertEqual(
+            uris,
+            [
+                "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/releases/2026-05-01/example-asset.metadata-translations.csv",
+                "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.metadata-translations.csv",
+            ],
+        )
+
+    def test_non_translation_publish_plan_is_noop_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / "publish-plan.json"
+            report = root / "summary.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "asset_slug": "example-asset",
+                        "proposal_id": "pr-123",
+                        "promotions": [
+                            {
+                                "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
+                                "source_generation": "111",
+                                "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
+                                "destination_generation": "222",
+                                "content_type": "application/octet-stream",
+                                "cache_control": "",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            code = feature_metadata_translation_pipeline.main(
+                [
+                    "--publish-plan",
+                    str(plan),
+                    "--work-dir",
+                    str(root / "work"),
+                    "--report",
+                    str(report),
+                ]
+            )
+
+            payload = json.loads(report.read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["translation_source_count"], 0)
+        self.assertEqual(payload["translation_sources"], [])
+
     def test_sibling_and_localized_uris_follow_release_metadata_naming(self):
         translation_uri = (
             "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/"

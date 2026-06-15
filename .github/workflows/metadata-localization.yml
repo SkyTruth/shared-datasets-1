@@ -92,22 +92,80 @@ jobs:
         run: |
           set -euo pipefail
 
-          PR_NUMBER="$(python - <<'PY'
-          import json
-          import os
-
-          event = json.load(open(os.environ["GITHUB_EVENT_PATH"]))
-          pull_requests = event.get("workflow_run", {}).get("pull_requests") or []
-          if pull_requests:
-              print(pull_requests[0]["number"])
-          PY
+          PR_NUMBER="$(python scripts/reviewed_dataset_plan.py resolve-workflow-run-pr \
+            --event-path "${GITHUB_EVENT_PATH}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --default-branch "${DEFAULT_BRANCH}"
           )"
 
           if [[ -z "${PR_NUMBER}" ]]; then
+            HEAD_SHA="$(python - <<'PY'
+          import json
+          import os
+
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+          print(event.get("workflow_run", {}).get("head_sha") or "")
+          PY
+            )"
+            HEAD_BRANCH="$(python - <<'PY'
+          import json
+          import os
+
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+          print(event.get("workflow_run", {}).get("head_branch") or "")
+          PY
+            )"
+            RUN_URL="$(python - <<'PY'
+          import json
+          import os
+
+          event = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))
+          print(event.get("workflow_run", {}).get("html_url") or "")
+          PY
+            )"
+
+            if [[ -n "${HEAD_SHA}" ]]; then
+              if gh api \
+                -H "Accept: application/vnd.github+json" \
+                "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" > commit-prs.json; then
+                PR_NUMBER="$(python scripts/reviewed_dataset_plan.py resolve-workflow-run-pr \
+                  --event-path "${GITHUB_EVENT_PATH}" \
+                  --repository "${GITHUB_REPOSITORY}" \
+                  --default-branch "${DEFAULT_BRANCH}" \
+                  --commit-prs-json commit-prs.json
+                )"
+              else
+                echo "::notice title=Commit PR lookup failed::Could not query pull requests associated with ${HEAD_SHA}."
+              fi
+            fi
+
+            if [[ -z "${PR_NUMBER}" && -n "${HEAD_BRANCH}" ]]; then
+              if gh pr list \
+                --repo "${GITHUB_REPOSITORY}" \
+                --state all \
+                --head "${HEAD_BRANCH}" \
+                --base "${DEFAULT_BRANCH}" \
+                --json number,headRefName,headRefOid,headRepository,baseRefName,mergeCommit,state,mergedAt \
+                --limit 20 > branch-prs.json; then
+                PR_NUMBER="$(python scripts/reviewed_dataset_plan.py resolve-workflow-run-pr \
+                  --event-path "${GITHUB_EVENT_PATH}" \
+                  --repository "${GITHUB_REPOSITORY}" \
+                  --default-branch "${DEFAULT_BRANCH}" \
+                  --branch-prs-json branch-prs.json
+                )"
+              else
+                echo "::notice title=Branch PR lookup failed::Could not query pull requests for head branch ${HEAD_BRANCH}."
+              fi
+            fi
+          fi
+
+          if [[ -z "${PR_NUMBER}" ]]; then
             echo "publish_plan=" >> "${GITHUB_OUTPUT}"
-            echo "No pull request attached to the completed Approved dataset mutation run."
+            echo "::notice title=No reviewed PR found::Could not resolve a same-repo PR for Approved dataset mutation run ${RUN_URL:-unknown}; head_sha=${HEAD_SHA:-unknown}; head_branch=${HEAD_BRANCH:-unknown}."
             exit 0
           fi
+
+          echo "Resolved Approved dataset mutation run to PR #${PR_NUMBER}."
 
           gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > pr.json
           python scripts/reviewed_dataset_plan.py event-from-pr \

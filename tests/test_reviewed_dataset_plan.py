@@ -515,6 +515,98 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
 
         self.assertEqual(event["pull_request"]["body"], "reviewed plan")
 
+    def test_workflow_run_pr_resolution_uses_commit_associated_prs_when_event_list_is_empty(self):
+        event = {
+            "workflow_run": {
+                "pull_requests": [],
+                "head_sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
+                "head_branch": "codex/wdpa-name-eng-mutation",
+            }
+        }
+        commit_prs = [
+            {
+                "number": 88,
+                "state": "closed",
+                "merged_at": "2026-06-15T17:00:33Z",
+                "head": {
+                    "ref": "codex/wdpa-name-eng-mutation",
+                    "sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
+                    "repo": {"full_name": "SkyTruth/shared-datasets-1"},
+                },
+                "base": {
+                    "ref": "main",
+                    "repo": {"full_name": "SkyTruth/shared-datasets-1"},
+                },
+            }
+        ]
+
+        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
+            event,
+            repository="SkyTruth/shared-datasets-1",
+            default_branch="main",
+            commit_prs=commit_prs,
+        )
+
+        self.assertEqual(pr_number, "88")
+
+    def test_workflow_run_pr_resolution_falls_back_to_head_branch_candidates(self):
+        event = {
+            "workflow_run": {
+                "pull_requests": [],
+                "head_sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
+                "head_branch": "codex/wdpa-name-eng-mutation",
+            }
+        }
+        branch_prs = [
+            {
+                "number": 88,
+                "baseRefName": "main",
+                "headRefName": "codex/wdpa-name-eng-mutation",
+                "headRefOid": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
+                "headRepository": {"nameWithOwner": "SkyTruth/shared-datasets-1"},
+                "mergeCommit": {"oid": "d59b5bce28998d3e1f0003c27fa327884cbead37"},
+                "mergedAt": "2026-06-15T17:00:33Z",
+                "state": "MERGED",
+            }
+        ]
+
+        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
+            event,
+            repository="SkyTruth/shared-datasets-1",
+            default_branch="main",
+            branch_prs=branch_prs,
+        )
+
+        self.assertEqual(pr_number, "88")
+
+    def test_workflow_run_pr_resolution_keeps_non_translation_runs_noop_when_no_pr_matches(self):
+        event = {
+            "workflow_run": {
+                "pull_requests": [],
+                "head_sha": "abc123",
+                "head_branch": "docs-only",
+            }
+        }
+        branch_prs = [
+            {
+                "number": 77,
+                "baseRefName": "other-branch",
+                "headRefName": "docs-only",
+                "headRefOid": "abc123",
+                "headRepository": {"nameWithOwner": "SkyTruth/shared-datasets-1"},
+                "state": "MERGED",
+            }
+        ]
+
+        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
+            event,
+            repository="SkyTruth/shared-datasets-1",
+            default_branch="main",
+            branch_prs=branch_prs,
+        )
+
+        self.assertIsNone(pr_number)
+
     def test_pr_api_payload_to_event_rejects_closed_unmerged_pr_when_allowing_merged(self):
         with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "open or merged"):
             reviewed_dataset_plan.pr_api_payload_to_event(
