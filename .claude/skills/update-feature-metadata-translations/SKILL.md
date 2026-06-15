@@ -101,6 +101,11 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    document shards, then import the translated values back into
    `{asset-slug}.metadata-translations.csv` while preserving the original
    `feature_id`, `field`, `locale`, and `source_value_hash` keys.
+   Treat an estimated direct machine-translation run longer than 30 minutes as
+   too large for the local helper. Use
+   `scripts/feature_metadata_document_translate.py export` to create the
+   two-column `hash,text` workbook shard(s) and manifest, and use its `import`
+   command to ingest returned translated workbooks by manifest row order.
 4. Keep one row per `feature_id`, field, locale, and source-value hash. Duplicate
    translation keys fail validation.
 5. Generate every localized sidecar represented in the CSV:
