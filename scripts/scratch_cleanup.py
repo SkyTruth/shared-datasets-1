@@ -24,7 +24,6 @@ from google.cloud import storage
 from rich import print
 
 from scripts.gcs_asset import APPROVED_DATA_EXTENSIONS, get_client
-from scripts.slack_notify import notify
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -264,61 +263,6 @@ def release_records_for_proposals(
     return records
 
 
-def format_bytes(size: int) -> str:
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
-    value = float(size)
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
-        value /= 1024
-    return f"{size} B"
-
-
-def warning_body(
-    warnings: list[dict[str, object]],
-    *,
-    warn_age_days: int,
-    delete_age_days: int,
-    limit: int = 10,
-) -> str:
-    lines = [
-        "The following `_scratch/pending-publishes/` prefixes are at least "
-        f"{warn_age_days} days old. They will be deleted after "
-        f"{delete_age_days} days unless a file in the prefix is changed."
-    ]
-    for item in warnings[:limit]:
-        lines.append(
-            "- `{prefix}`: {age_days} days old, {object_count} objects, {size}; delete after `{delete_after}`".format(
-                prefix=item["prefix"],
-                age_days=item["age_days"],
-                object_count=item["object_count"],
-                size=format_bytes(int(item["total_size"])),
-                delete_after=item["delete_after"],
-            )
-        )
-    remaining = len(warnings) - limit
-    if remaining > 0:
-        lines.append(f"- plus {remaining} more prefix(es)")
-    return "\n".join(lines)
-
-
-def deletion_body(deletions: list[dict[str, object]], *, limit: int = 10) -> str:
-    lines = ["Deleted eligible `_scratch/pending-publishes/` prefixes."]
-    for item in deletions[:limit]:
-        lines.append(
-            "- `{prefix}`: {reason}, {object_count} objects, {size}".format(
-                prefix=item["prefix"],
-                reason=item["reason"],
-                object_count=item["object_count"],
-                size=format_bytes(int(item["total_size"])),
-            )
-        )
-    remaining = len(deletions) - limit
-    if remaining > 0:
-        lines.append(f"- plus {remaining} more prefix(es)")
-    return "\n".join(lines)
-
-
 def write_warning_marker(
     client: storage.Client,
     *,
@@ -399,8 +343,6 @@ def run_cleanup(
     warn_age_days: int,
     delete_age_days: int,
     apply_changes: bool,
-    send_slack: bool,
-    strict_slack: bool,
     summary_path: Path | None = None,
 ) -> dict[str, object]:
     pending_blobs = list_records(client, bucket=bucket, prefix=PENDING_PREFIX)
@@ -434,17 +376,6 @@ def run_cleanup(
     kept = [decision for decision in decisions if decision["action"] == "keep"]
 
     if apply_changes:
-        if send_slack and warnings:
-            notify(
-                title="Scratch cleanup warning",
-                body=warning_body(
-                    warnings,
-                    warn_age_days=warn_age_days,
-                    delete_age_days=delete_age_days,
-                ),
-                status="warning",
-                strict=strict_slack,
-            )
         for warning in warnings:
             proposal = proposals_by_key[(str(warning["asset_slug"]), str(warning["proposal_id"]))]
             marker = warning_markers.get((proposal.asset_slug, proposal.proposal_id))
@@ -469,13 +400,6 @@ def run_cleanup(
                 client,
                 bucket=bucket,
                 marker=warning_markers.get((proposal.asset_slug, proposal.proposal_id)),
-            )
-        if send_slack and deletions:
-            notify(
-                title="Scratch cleanup completed",
-                body=deletion_body(deletions),
-                status="info",
-                strict=strict_slack,
             )
     else:
         deleted_object_count = 0
@@ -513,8 +437,6 @@ def run_command(
         help="Delete stale prefixes after this age, but only after a matching warning marker.",
     ),
     apply_changes: bool = typer.Option(False, "--apply/--dry-run", help="Apply warning markers and deletions."),
-    send_slack: bool = typer.Option(False, "--send-slack/--no-send-slack", help="Send Slack warning/deletion alerts."),
-    strict_slack: bool = typer.Option(False, help="Fail if Slack delivery fails."),
     summary_path: Optional[Path] = typer.Option(None, help="Append a Markdown summary to this path."),
 ) -> None:
     """Audit pending-publish scratch prefixes and optionally clean eligible ones."""
@@ -528,8 +450,6 @@ def run_command(
         warn_age_days=warn_age_days,
         delete_age_days=delete_age_days,
         apply_changes=apply_changes,
-        send_slack=send_slack,
-        strict_slack=strict_slack,
         summary_path=summary_path,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))

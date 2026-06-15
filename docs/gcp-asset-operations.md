@@ -226,7 +226,7 @@ publisher identity. Prefix deletes, wildcards, and generation-less deletes are
 invalid.
 
 The scheduled `Scratch cleanup audit` workflow is the only standing automated
-prefix cleanup. It warns Slack at 60 days of no object changes in a
+prefix cleanup. It writes a warning marker at 60 days of no object changes in a
 `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` prefix, deletes warned
 prefixes after 90 unchanged days, and deletes prefixes that contain a staged data
 file matching a canonical release object by filename, size, and CRC32C.
