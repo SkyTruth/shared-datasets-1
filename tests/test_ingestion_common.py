@@ -12,6 +12,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common import release_index
 from ingestion.common.gcs import GcsPublisher
+from scripts import release_feature_model
 
 
 class FakeBlob:
@@ -114,6 +115,125 @@ class FakeAsset:
 
     def run_record_object(self, run_date: dt.date) -> str:
         return f"asset/runs/{run_date.isoformat()}.json"
+
+
+def valid_metadata_contract_record(asset: FakeAsset, release: str) -> dict:
+    release_prefix = f"asset/releases/{release}"
+    return {
+        "schema_version": 1,
+        "asset_slug": asset.slug,
+        "run_date": release,
+        "release_date": release,
+        "status": "success",
+        "release_path": f"gs://test-bucket/{release_prefix}/",
+        "release_paths": [
+            {"path": f"gs://test-bucket/{release_prefix}/asset.fgb", "generation": 2},
+            {"path": f"gs://test-bucket/{release_prefix}/asset.pmtiles", "generation": 3},
+            {"path": f"gs://test-bucket/{release_prefix}/asset.metadata.ndjson.gz", "generation": 4},
+            {"path": f"gs://test-bucket/{release_prefix}/asset.schema.json", "generation": 5},
+            {"path": f"gs://test-bucket/{release_prefix}/asset.manifest.json", "generation": 6},
+        ],
+        "row_count": 1,
+        "sha256": {
+            "fgb": "a" * 64,
+            "pmtiles": "b" * 64,
+            "metadata": "c" * 64,
+            "schema": "d" * 64,
+            "manifest": "e" * 64,
+        },
+    }
+
+
+def seed_valid_metadata_contract(bucket: FakeBucket, asset: FakeAsset, release: str) -> dict:
+    record = valid_metadata_contract_record(asset, release)
+    metadata = bucket.blob(f"asset/releases/{release}/asset.metadata.ndjson.gz")
+    metadata.exists = True
+    metadata.content = gzip.compress(
+        json.dumps(
+            {
+                "schema_version": release_feature_model.METADATA_SIDECAR_SCHEMA_VERSION,
+                "asset_slug": asset.slug,
+                "release": release,
+                "feature_id": "1",
+                "geometry_hash": "sha256:" + "a" * 64,
+                "properties_hash": "sha256:" + "b" * 64,
+                "identity_key": ["1"],
+                "properties": {"OBJECTID": 1},
+                "provenance": {},
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+    schema_payload = {
+        "schema_version": release_feature_model.RELEASE_SCHEMA_SCHEMA_VERSION,
+        "asset_slug": asset.slug,
+        "release": release,
+        "fields": [
+            {
+                "name": "OBJECTID",
+                "type": "Integer",
+                "nullable": False,
+                "projectable": True,
+            }
+        ],
+    }
+    schema = bucket.blob(f"asset/releases/{release}/asset.schema.json")
+    schema.exists = True
+    schema.text = json.dumps(schema_payload)
+
+    manifest = bucket.blob(f"asset/releases/{release}/asset.manifest.json")
+    manifest.exists = True
+    manifest.text = json.dumps(
+        {
+            "schema_version": release_feature_model.RELEASE_MANIFEST_SCHEMA_VERSION,
+            "asset_slug": asset.slug,
+            "release": release,
+            "release_feature_model_schema_version": release_feature_model.RELEASE_FEATURE_MODEL_SCHEMA_VERSION,
+            "source_inputs": [],
+            "artifacts": [
+                {
+                    "role": "fgb",
+                    "path": f"gs://test-bucket/asset/releases/{release}/asset.fgb",
+                    "sha256": "a" * 64,
+                    "generation": 2,
+                },
+                {
+                    "role": "pmtiles",
+                    "path": f"gs://test-bucket/asset/releases/{release}/asset.pmtiles",
+                    "sha256": "b" * 64,
+                    "generation": 3,
+                },
+                {
+                    "role": "metadata",
+                    "path": f"gs://test-bucket/asset/releases/{release}/asset.metadata.ndjson.gz",
+                    "sha256": "c" * 64,
+                    "generation": 4,
+                },
+                {
+                    "role": "schema",
+                    "path": f"gs://test-bucket/asset/releases/{release}/asset.schema.json",
+                    "sha256": "d" * 64,
+                    "generation": 5,
+                },
+                {
+                    "role": "manifest",
+                    "path": f"gs://test-bucket/asset/releases/{release}/asset.manifest.json",
+                },
+            ],
+            "schema": schema_payload,
+            "identity": release_feature_model.build_identity_metadata(
+                strategy="source_field",
+                source_fields=["OBJECTID"],
+            ),
+            "hashes": {},
+            "validation": {},
+            "index_load_status": "Firestore metadata serving is inactive",
+            "index_status_policy": {"mode": "inactive_firestore_serving", "path": None},
+        }
+    )
+    return record
 
 
 class GcsPublisherTests(unittest.TestCase):
@@ -358,6 +478,33 @@ class GcsPublisherTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "refusing to reset generated sequence feature_id values"):
             publisher.load_latest_metadata_records(asset)
+
+    def test_release_metadata_contract_issue_accepts_valid_contract(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        record = seed_valid_metadata_contract(bucket, asset, "2026-05-01")
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+
+        self.assertIsNone(publisher.release_metadata_contract_issue(asset, record))
+
+    def test_release_metadata_contract_issue_reports_invalid_schema(self):
+        bucket = FakeBucket()
+        asset = FakeAsset()
+        record = seed_valid_metadata_contract(bucket, asset, "2026-05-01")
+        bucket.blob("asset/releases/2026-05-01/asset.schema.json").text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": asset.slug,
+                "release": "2026-05-01",
+                "fields": [],
+            }
+        )
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+
+        issue = publisher.release_metadata_contract_issue(asset, record)
+
+        self.assertIsNotNone(issue)
+        self.assertIn("unsupported schema_version", issue)
 
     def test_write_success_run_record_updates_release_index(self):
         bucket = FakeBucket()

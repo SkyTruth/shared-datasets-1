@@ -6,7 +6,7 @@ import datetime as dt
 import json
 import logging
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
@@ -19,6 +19,11 @@ from scripts import release_feature_model
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_RELEASE_SUFFIXES = VECTOR_BUNDLE_SUFFIXES
+METADATA_CONTRACT_SUFFIXES = (
+    ".metadata.ndjson.gz",
+    ".schema.json",
+    ".manifest.json",
+)
 
 
 class ReleaseAsset(Protocol):
@@ -113,6 +118,89 @@ class GcsPublisher:
 
     def successful_run_record(self, asset: ReleaseAsset, run_date: dt.date) -> bool:
         return self.load_successful_run_record(asset, run_date) is not None
+
+    def release_metadata_contract_issue(
+        self,
+        asset: ReleaseAsset,
+        record: Mapping[str, Any] | None,
+    ) -> str | None:
+        if not record:
+            return "run record is missing"
+        release = str(record.get("release_date") or record.get("run_date") or "").strip()
+        if not release:
+            return "run record is missing release_date/run_date"
+
+        paths_by_suffix: dict[str, str] = {}
+        for value in record.get("release_paths") or []:
+            path = release_index.path_from_info(value)
+            if not path:
+                continue
+            for suffix in METADATA_CONTRACT_SUFFIXES:
+                if path.endswith(suffix):
+                    paths_by_suffix[suffix] = path
+
+        missing = [suffix for suffix in METADATA_CONTRACT_SUFFIXES if suffix not in paths_by_suffix]
+        if missing:
+            return "release_paths missing metadata contract object(s): " + ", ".join(missing)
+
+        try:
+            metadata_blob = self._contract_blob(paths_by_suffix[".metadata.ndjson.gz"])
+            schema_blob = self._contract_blob(paths_by_suffix[".schema.json"])
+            manifest_blob = self._contract_blob(paths_by_suffix[".manifest.json"])
+
+            metadata_records = list(
+                release_feature_model.read_metadata_sidecar_bytes(
+                    metadata_blob.download_as_bytes(),
+                    label=paths_by_suffix[".metadata.ndjson.gz"],
+                )
+            )
+            metadata_validation = release_feature_model.validate_sidecar_records(
+                metadata_records,
+                expected_asset_slug=asset.slug,
+                expected_release=release,
+            )
+            if not metadata_validation.valid:
+                return "metadata sidecar is invalid: " + "; ".join(metadata_validation.errors)
+
+            schema_payload = json.loads(schema_blob.download_as_text())
+            release_feature_model.validate_release_schema(
+                schema_payload,
+                expected_asset_slug=asset.slug,
+                expected_release=release,
+            )
+
+            manifest_payload = json.loads(manifest_blob.download_as_text())
+            release_feature_model.validate_release_manifest(
+                manifest_payload,
+                expected_asset_slug=asset.slug,
+                expected_release=release,
+                require_generations=True,
+            )
+        except (
+            NotFound,
+            json.JSONDecodeError,
+            release_index.ReleaseIndexError,
+            release_feature_model.ReleaseFeatureModelError,
+        ) as exc:
+            return str(exc)
+        return None
+
+    def release_metadata_contract_is_valid(
+        self,
+        asset: ReleaseAsset,
+        record: Mapping[str, Any] | None,
+    ) -> bool:
+        return self.release_metadata_contract_issue(asset, record) is None
+
+    def _contract_blob(self, uri: str):
+        bucket_name, object_name = release_index.split_gs_uri(uri)
+        if bucket_name != self.bucket.name:
+            raise release_feature_model.ReleaseFeatureModelError(
+                f"metadata contract object is outside publisher bucket: {uri}"
+            )
+        blob = self.bucket.blob(object_name)
+        blob.reload()
+        return blob
 
     def record_existing_successful_release(
         self,

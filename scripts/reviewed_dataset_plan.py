@@ -14,6 +14,7 @@ from typing import Any
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 MAX_MUTATIONS = 50
+MAX_RELEASE_INDEX_REBUILDS = 10
 SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 PROPOSAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WILDCARD_CHARS = set("*?[]{}")
@@ -340,6 +341,23 @@ def normalize_string_list(value: Any, *, label: str) -> list[str]:
     return values
 
 
+def normalize_slug_list(raw: Any, *, label: str) -> list[str]:
+    if raw in (None, ""):
+        return []
+    values = normalize_string_list(raw, label=label)
+    if len(values) > MAX_RELEASE_INDEX_REBUILDS:
+        raise PlanValidationError(f"{label} may contain at most {MAX_RELEASE_INDEX_REBUILDS} asset slugs")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(values, start=1):
+        if not SLUG_RE.fullmatch(value):
+            raise PlanValidationError(f"{label}[{index}] must be lowercase kebab-case")
+        if value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
 def normalize_breaking_changes(raw: Any, *, label: str = "breaking_changes") -> list[dict[str, Any]]:
     if raw in (None, ""):
         return []
@@ -405,6 +423,10 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
         "proposal_id": proposal_id,
         "promotions": [],
         "breaking_changes": normalize_breaking_changes(plan.get("breaking_changes")),
+        "release_index_asset_slugs": normalize_slug_list(
+            plan.get("release_index_asset_slugs"),
+            label="release_index_asset_slugs",
+        ),
     }
 
     for index, raw in enumerate(promotions, start=1):
@@ -520,6 +542,7 @@ def compact_plan_summary(plan_type: str, normalized: dict[str, Any]) -> dict[str
                 "replacement_count": sum(1 for item in promotions if item.get("destination_generation")),
                 "compatibility_waiver_count": sum(1 for item in promotions if item.get("compatibility_waiver")),
                 "breaking_change_count": len(normalized.get("breaking_changes", [])),
+                "release_index_rebuild_count": len(normalized.get("release_index_asset_slugs", [])),
             }
         )
     else:

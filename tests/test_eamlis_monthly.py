@@ -333,12 +333,13 @@ class EamlisMonthlyTests(unittest.TestCase):
 
         with (
             mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
-            mock.patch.object(eamlis, "require_binary", lambda _binary: None),
-            mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
-            mock.patch.object(eamlis, "fetch_source_state", return_value=source),
-            mock.patch.object(eamlis, "download_source_geojson") as download,
-        ):
-            records = eamlis.run()
+                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
+                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
+                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
+                mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
+                mock.patch.object(eamlis, "download_source_geojson") as download,
+            ):
+                records = eamlis.run()
 
         self.assertEqual(records[0]["status"], "skipped")
         self.assertEqual(records[0]["reason"], "source fingerprint unchanged")
@@ -510,6 +511,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 mock.patch.object(eamlis, "require_binary", lambda _binary: None),
                 mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
                 mock.patch.object(eamlis, "fetch_source_state", return_value=source),
+                mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
                 mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
                 mock.patch.object(eamlis, "build_asset_output", return_value=output),
             ):

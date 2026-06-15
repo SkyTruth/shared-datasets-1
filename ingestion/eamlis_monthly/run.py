@@ -49,11 +49,6 @@ ASSET_SLUG = "eamlis-abandoned-mine-land-inventory"
 LAYER_NAME = "eamlis_abandoned_mine_land_inventory"
 RUN_RECORD_VERSION = 1
 RELEASE_SUFFIXES = feature_metadata.VECTOR_BUNDLE_SUFFIXES
-METADATA_CONTRACT_SUFFIXES = (
-    ".metadata.ndjson.gz",
-    ".schema.json",
-    ".manifest.json",
-)
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 8
 PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
@@ -855,17 +850,21 @@ def assert_current_record_allows_run(
     )
 
 
-def release_record_has_suffixes(record: dict[str, Any], suffixes: tuple[str, ...]) -> bool:
-    paths = [
-        release_index.path_from_info(value)
-        for value in record.get("release_paths") or []
-        if isinstance(value, dict)
-    ]
-    return all(any(path.endswith(suffix) for path in paths) for suffix in suffixes)
-
-
-def needs_metadata_contract_refresh(record: dict[str, Any] | None) -> bool:
-    return bool(record and not release_record_has_suffixes(record, METADATA_CONTRACT_SUFFIXES))
+def needs_metadata_contract_refresh(
+    publisher: GcsPublisher,
+    record: dict[str, Any] | None,
+) -> bool:
+    if not record:
+        return False
+    issue = publisher.release_metadata_contract_issue(ASSET, record)
+    if issue:
+        LOGGER.info(
+            "%s previous release metadata contract needs refresh: %s",
+            ASSET.slug,
+            issue,
+        )
+        return True
+    return False
 
 
 def run() -> list[dict[str, Any]]:
@@ -906,7 +905,7 @@ def run() -> list[dict[str, Any]]:
         return [existing_record]
 
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
-    contract_refresh = needs_metadata_contract_refresh(previous_record)
+    contract_refresh = needs_metadata_contract_refresh(publisher, previous_record)
     if previous_record and previous_record.get("source_fingerprint_hash") == source.fingerprint_hash:
         if contract_refresh:
             LOGGER.info(
