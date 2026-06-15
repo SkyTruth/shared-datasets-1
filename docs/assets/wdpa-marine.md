@@ -26,7 +26,8 @@ notes: Monthly job preserves source fields and publishes FGB plus PMTiles. The 2
   geometry_hash values, properties_hash values, canonical metadata/schema/manifest artifacts, metadata-translations CSV, and
   localized metadata sidecars for es, fr, id, pt, pt_br, and sw. PMTiles are lightweight metadata-lookup tiles with feature_id
   only. The release preserves 331 upstream invalid geometries from the Jun2026 source FGB; no geometry repair was applied.
-  Release history, source versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
+  A 2026-06-15 translation-only update completes NAME_ENG rows for the six localized metadata sidecars. Release history, source
+  versions, row counts, and file hashes are recorded in the bucket release index and per-run records.
 row_count: 17657
 data_profile:
   field_count: 33
@@ -320,6 +321,22 @@ and metadata.sw `1259f97f12d07524fd227a7db0327f6cd768bca475b7a741f4448fdc965451e
 The PMTiles companion was rebuilt at maxzoom 12 with Tippecanoe v2.79.0 and
 validated with `pmtiles verify`, `pmtiles show`, and decoded z0/z12 tile
 property checks.
+
+A 2026-06-15 translation-only follow-up completes `NAME_ENG` rows for `es`,
+`fr`, `id`, `pt`, `pt_br`, and `sw` using Google Translate document output
+keyed back to the current source-value hashes. The provided `pt-br` document
+output was applied to both `pt` and `pt_br`. The updated metadata-translations
+CSV contains 1,801,014 rows, with 17,657 `NAME_ENG` rows per locale.
+Localization validation applied 300,169 rows for each locale, with no stale,
+orphaned, missing-field, or untranslated features. Translation-only artifact
+SHA-256 values are metadata-translations CSV
+`fb35204e7b28a9f441aa086aac180fccbe23d926a5fb9ec7c4ee8c4569f2d7f9`,
+metadata.es `83d56835a4ffc36961098b4b6f8ee58ebd2782f8d5f551c52e91246a30fa1252`,
+metadata.fr `70d0b42fd962f82d66f93c43dd5fd43217023ac4e334df22bdcdebb12ada0088`,
+metadata.id `61e9c6677060c084e284a972fe1c79decd1fbf76a9800a69be8f955085e2ba84`,
+metadata.pt `79f989ef8c79ecd5e138b6fd7f5874367b15941ec54aeebb821c73c09a8e32c4`,
+metadata.pt_br `79f989ef8c79ecd5e138b6fd7f5874367b15941ec54aeebb821c73c09a8e32c4`,
+and metadata.sw `249ae7007fe8cc931882f31cca075d91981c67624e2bcaa1423379b2b300ef59`.
 
 ## Known caveats
 
