@@ -1,0 +1,418 @@
+name: Sea ice daily deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sea-ice-daily-deploy.yml"
+      - "ingestion/common/**"
+      - "ingestion/sea_ice_daily/**"
+      - "scripts/pmtiles_zoom.py"
+      - "scripts/release_feature_model.py"
+      - "scripts/vector_asset.py"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/sea_ice_daily.tf"
+      - "terraform/envs/prod/sea_ice_daily_variables.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+      - "terraform/modules/cloud_run_job/**"
+      - "terraform/modules/scheduler_job/**"
+  workflow_dispatch:
+    inputs:
+      resume_scheduler:
+        description: "Resume sea-ice-daily after deploy, canary, and validation pass."
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  IMAGE_NAME: sea-ice-daily
+  JOB_NAME: sea-ice-daily
+  ASSET_SLUG: ims-sea-ice-extent
+  BUCKET: skytruth-shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy:
+    name: Build image and apply sea-ice-daily Terraform
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Sea ice daily deploy may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build sea-ice-daily image
+        run: |
+          set -euo pipefail
+
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          docker build \
+            --platform linux/amd64 \
+            -f ingestion/sea_ice_daily/Dockerfile \
+            -t "${image_tag}" \
+            .
+          echo "SEA_ICE_DAILY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+
+      - name: Smoke-test native tools in image
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm "${SEA_ICE_DAILY_IMAGE_TAG}" sh -c \
+            'gdal_calc.py --help >/tmp/gdal_calc_help.txt && gdal_polygonize.py --help >/tmp/gdal_polygonize_help.txt && ogr2ogr --version && tippecanoe --version && pmtiles version'
+
+      - name: Smoke-test synthetic sea-ice build path in image
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm -i "${SEA_ICE_DAILY_IMAGE_TAG}" python - <<'PY'
+          import datetime as dt
+          import tempfile
+          from pathlib import Path
+
+          from ingestion.sea_ice_daily import run as sea_ice
+
+          tmp = Path(tempfile.mkdtemp(prefix="ims-synthetic-"))
+          source_tif = tmp / "source.tif"
+          sea_ice.run_command([
+              "gdal_create",
+              "-of",
+              "GTiff",
+              "-outsize",
+              "4",
+              "4",
+              "-bands",
+              "1",
+              "-burn",
+              "3",
+              "-ot",
+              "Byte",
+              "-a_srs",
+              "EPSG:3857",
+              "-a_ullr",
+              "-100000",
+              "100000",
+              "100000",
+              "-100000",
+              str(source_tif),
+          ])
+          outputs = sea_ice.build_outputs(
+              source_tif=source_tif,
+              source_date=dt.date(2026, 4, 28),
+              workdir=tmp,
+          )
+          assert outputs.row_count > 0
+          assert outputs.fgb.exists()
+          assert outputs.pmtiles.exists()
+          assert outputs.metadata.exists()
+          assert outputs.schema.exists()
+          print({
+              "row_count": outputs.row_count,
+              "fgb_size": outputs.fgb.stat().st_size,
+              "pmtiles_size": outputs.pmtiles.stat().st_size,
+              "metadata_size": outputs.metadata.stat().st_size,
+              "schema_size": outputs.schema.stat().st_size,
+          })
+          PY
+
+      - name: Push sea-ice-daily image
+        run: |
+          set -euo pipefail
+
+          docker push "${SEA_ICE_DAILY_IMAGE_TAG}"
+          image_digest="$(docker buildx imagetools inspect "${SEA_ICE_DAILY_IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+          if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
+            image_digest="$(docker buildx imagetools inspect "${SEA_ICE_DAILY_IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')"
+          fi
+          if [[ -z "${image_digest}" || "${image_digest}" != sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${SEA_ICE_DAILY_IMAGE_TAG}" >&2
+            exit 1
+          fi
+          image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
+          echo "SEA_ICE_DAILY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
+
+      - name: Read current scheduled-ingestion image vars
+        run: |
+          set -euo pipefail
+
+          wdpa_image="$(gcloud run jobs describe wdpa-monthly --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          eamlis_image="$(gcloud run jobs describe eamlis-monthly --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          if [[ -z "${wdpa_image}" || -z "${eamlis_image}" ]]; then
+            echo "Could not resolve current scheduled-ingestion image vars." >&2
+            exit 1
+          fi
+          echo "WDPA_MONTHLY_IMAGE=${wdpa_image}" >> "${GITHUB_ENV}"
+          echo "EAMLIS_MONTHLY_IMAGE=${eamlis_image}" >> "${GITHUB_ENV}"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/prod init -input=false
+
+      - name: Terraform plan
+        run: |
+          set -euo pipefail
+
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -out="${RUNNER_TEMP}/sea-ice-daily.tfplan" \
+            -target=module.sea_ice_daily_job.google_cloud_run_v2_job.this \
+            -var="wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}" \
+            -var="eamlis_monthly_image=${EAMLIS_MONTHLY_IMAGE}" \
+            -var="sea_ice_daily_image=${SEA_ICE_DAILY_IMAGE}"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/sea-ice-daily.tfplan" > "${RUNNER_TEMP}/sea-ice-daily.tfplan.json"
+
+      - name: Enforce sea-ice-daily resource-change allowlist
+        run: |
+          set -euo pipefail
+
+          python - "${RUNNER_TEMP}/sea-ice-daily.tfplan.json" "${SEA_ICE_DAILY_IMAGE}" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          expected_image = sys.argv[2]
+          allowed_exact = {
+              "module.sea_ice_daily_job.google_cloud_run_v2_job.this",
+          }
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address not in allowed_exact:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              if actions != ["update"]:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              after = resource.get("change", {}).get("after", {})
+              containers = (
+                  after.get("template", [{}])[0]
+                  .get("template", [{}])[0]
+                  .get("containers", [{}])
+              )
+              image = containers[0].get("image") if containers else None
+              if image != expected_image:
+                  blocked.append(f"unexpected image for {address}: {image!r}")
+
+          if blocked:
+              print("Refusing sea-ice-daily deploy because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/sea-ice-daily.tfplan"
+
+      - name: Confirm deployed digest
+        run: |
+          set -euo pipefail
+
+          deployed_image="$(gcloud run jobs describe "${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          echo "Deployed image: ${deployed_image}"
+          if [[ "${deployed_image}" != "${SEA_ICE_DAILY_IMAGE}" ]]; then
+            echo "Cloud Run job image does not match expected digest." >&2
+            exit 1
+          fi
+
+      - name: Execute sea-ice-daily canary
+        run: |
+          set -euo pipefail
+
+          gcloud run jobs execute "${JOB_NAME}" \
+            --region="${REGION}" \
+            --project="${GOOGLE_CLOUD_PROJECT}" \
+            --wait
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync Python dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Validate latest IMS release contract
+        run: |
+          set -euo pipefail
+
+          uv run python - <<'PY'
+          import gzip
+          import json
+          import struct
+          import subprocess
+
+          from scripts.release_feature_model import (
+              read_metadata_sidecar_bytes,
+              validate_release_manifest,
+              validate_release_schema,
+              validate_sidecar_records,
+          )
+
+          bucket = "skytruth-shared-datasets-1"
+          asset_slug = "ims-sea-ice-extent"
+          asset_root = "200-imagery-derived/250-weather-climate/ims-sea-ice-extent"
+          index_uri = f"gs://{bucket}/_catalog/releases/{asset_slug}.json"
+          index = json.loads(subprocess.check_output(["gcloud", "storage", "cat", index_uri]))
+          release = index["latest_release"]["date"]
+          base = f"gs://{bucket}/{asset_root}/releases/{release}/{asset_slug}"
+
+          manifest = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".manifest.json"]))
+          validate_release_manifest(
+              manifest,
+              expected_asset_slug=asset_slug,
+              expected_release=release,
+              require_generations=True,
+          )
+
+          schema = json.loads(subprocess.check_output(["gcloud", "storage", "cat", base + ".schema.json"]))
+          validate_release_schema(schema, expected_asset_slug=asset_slug, expected_release=release)
+
+          metadata_bytes = subprocess.check_output(["gcloud", "storage", "cat", base + ".metadata.ndjson.gz"])
+          records = list(read_metadata_sidecar_bytes(metadata_bytes, label=base + ".metadata.ndjson.gz"))
+          sidecar = validate_sidecar_records(
+              records,
+              expected_asset_slug=asset_slug,
+              expected_release=release,
+          )
+          if not sidecar.valid:
+              raise RuntimeError("; ".join(sidecar.errors))
+
+          fgb = subprocess.check_output(["gcloud", "storage", "cat", base + ".fgb"])
+          fgb_fields = {
+              key: key.encode() in fgb
+              for key in ("feature_id", "geometry_hash", "properties_hash")
+          }
+          if not all(fgb_fields.values()):
+              raise RuntimeError(f"FGB missing required fields: {fgb_fields}")
+
+          raw_header = subprocess.check_output(["gcloud", "storage", "cat", "--range=0-126", base + ".pmtiles"])
+          _root_offset, _root_length, metadata_offset, metadata_length = struct.unpack("<QQQQ", raw_header[8:40])
+          metadata_raw = subprocess.check_output([
+              "gcloud",
+              "storage",
+              "cat",
+              f"--range={metadata_offset}-{metadata_offset + metadata_length - 1}",
+              base + ".pmtiles",
+          ])
+          pmtiles_metadata = json.loads(gzip.decompress(metadata_raw).decode("utf-8"))
+          layers = [
+              {"id": layer.get("id"), "fields": sorted((layer.get("fields") or {}).keys())}
+              for layer in pmtiles_metadata.get("vector_layers") or []
+          ]
+          if not layers or any(layer["fields"] != ["feature_id"] for layer in layers):
+              raise RuntimeError(f"PMTiles metadata fields are not feature_id-only: {layers}")
+
+          print(json.dumps({
+              "latest_release": release,
+              "sidecar_count": sidecar.feature_count,
+              "fgb_required_fields": fgb_fields,
+              "pmtiles_layers": layers,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Run IMS bucket hygiene audit
+        run: |
+          set -euo pipefail
+
+          uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py \
+            --bucket "${BUCKET}" \
+            --format json > "${RUNNER_TEMP}/bucket-hygiene.json"
+          uv run python - "${RUNNER_TEMP}/bucket-hygiene.json" <<'PY'
+          import json
+          import sys
+
+          payload = json.load(open(sys.argv[1]))
+          findings = payload.get("findings", [])
+          ims_findings = [
+              finding for finding in findings
+              if "ims-sea-ice-extent" in json.dumps(finding, sort_keys=True)
+              and "feature-metadata" in json.dumps(finding, sort_keys=True).lower()
+          ]
+          if ims_findings:
+              print(json.dumps(ims_findings, indent=2, sort_keys=True))
+              raise SystemExit("IMS feature-metadata hygiene findings remain")
+          print("No ims-sea-ice-extent feature-metadata hygiene findings remain.")
+          PY
+
+      - name: Resume sea-ice-daily scheduler
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.resume_scheduler }}
+        run: |
+          set -euo pipefail
+
+          gcloud scheduler jobs resume "${JOB_NAME}" \
+            --location="${REGION}" \
+            --project="${GOOGLE_CLOUD_PROJECT}"
+          gcloud scheduler jobs describe "${JOB_NAME}" \
+            --location="${REGION}" \
+            --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format='value(state,schedule,timeZone)'
