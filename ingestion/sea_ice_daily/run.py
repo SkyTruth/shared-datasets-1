@@ -574,6 +574,8 @@ def build_outputs(
         provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
         previous_records=previous_records,
         identity_resolution_decisions=identity_resolution_decisions,
+        identity_excluded_properties=("ice_date",),
+        identity_ambiguity_match_properties=False,
     )
     if ambiguities:
         feature_metadata.raise_unresolved_identity_ambiguities(
@@ -716,6 +718,7 @@ def publish_outputs(
             identity=feature_metadata.release_feature_model.build_identity_metadata(
                 strategy="generated_sequence_content_hash",
                 assignment_key=["geometry_hash", "properties_hash"],
+                properties_hash_excluded_properties=["ice_date"],
                 next_generated_feature_id_after_release=next_generated_feature_id(outputs.sidecar_records),
             ),
             feature_count=outputs.row_count,

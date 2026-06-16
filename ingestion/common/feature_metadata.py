@@ -61,8 +61,50 @@ def source_field_feature_id(field_name: str, value: Any) -> str:
         raise RuntimeError(str(exc)) from exc
 
 
-def content_hashes(*, geometry: Mapping[str, Any] | None, properties: Mapping[str, Any]) -> tuple[str, str]:
-    return release_feature_model.content_hashes(geometry=geometry, properties=properties)
+def content_hashes(
+    *,
+    geometry: Mapping[str, Any] | None,
+    properties: Mapping[str, Any],
+    exclude_properties: Sequence[str] = (),
+) -> tuple[str, str]:
+    return release_feature_model.content_hashes(
+        geometry=geometry,
+        properties=properties,
+        exclude_properties=exclude_properties,
+    )
+
+
+def records_with_identity_properties_hash(
+    records: Iterable[Mapping[str, Any]],
+    *,
+    exclude_properties: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Return records with properties_hash/identity_key recalculated for identity-only properties."""
+
+    if not exclude_properties:
+        return [dict(record) for record in records]
+    normalized: list[dict[str, Any]] = []
+    for record in records:
+        payload = dict(record)
+        properties = payload.get("properties")
+        if not isinstance(properties, Mapping):
+            normalized.append(payload)
+            continue
+        properties_hash = release_feature_model.properties_hash(
+            properties,
+            exclude_properties=exclude_properties,
+        )
+        payload["properties_hash"] = properties_hash
+        geometry_hash = str(payload.get("geometry_hash") or "")
+        if geometry_hash:
+            payload["identity_key"] = list(
+                release_feature_model.content_identity_key(
+                    geometry_hash_value=geometry_hash,
+                    properties_hash_value=properties_hash,
+                )
+            )
+        normalized.append(payload)
+    return normalized
 
 
 def assign_generated_feature_ids(
@@ -130,8 +172,13 @@ def _feature_record(
     source_properties: Mapping[str, Any],
     provenance: Mapping[str, Any],
     identity_key: Sequence[str],
+    identity_excluded_properties: Sequence[str] = (),
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    geometry_hash, properties_hash = content_hashes(geometry=geometry, properties=source_properties)
+    geometry_hash, properties_hash = content_hashes(
+        geometry=geometry,
+        properties=source_properties,
+        exclude_properties=identity_excluded_properties,
+    )
     metadata_properties = dict(source_properties)
     published_properties = {
         **metadata_properties,
@@ -199,13 +246,23 @@ def enrich_features_with_generated_ids(
     source_fields: Sequence[str] = (),
     previous_records: Iterable[Mapping[str, Any]] | None = None,
     identity_resolution_decisions: Iterable[Mapping[str, Any]] | None = None,
+    identity_excluded_properties: Sequence[str] = (),
+    identity_ambiguity_match_properties: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[release_feature_model.IdentityAmbiguity, ...]]:
     prepared: list[dict[str, Any]] = []
     seen_identity_keys: dict[tuple[str, ...], dict[str, Any]] = {}
+    normalized_previous_records = records_with_identity_properties_hash(
+        previous_records or (),
+        exclude_properties=identity_excluded_properties,
+    )
     for ordinal, feature in enumerate(features, start=1):
         source_properties = dict(feature.get("properties") or {})
         geometry = feature.get("geometry")
-        geometry_hash, properties_hash = content_hashes(geometry=geometry, properties=source_properties)
+        geometry_hash, properties_hash = content_hashes(
+            geometry=geometry,
+            properties=source_properties,
+            exclude_properties=identity_excluded_properties,
+        )
         if source_fields:
             identity_key = release_feature_model.source_fields_identity_key(source_properties, source_fields)
         else:
@@ -244,7 +301,8 @@ def enrich_features_with_generated_ids(
     ]
     ambiguities = release_feature_model.find_identity_ambiguities(
         provisional_records,
-        previous_records=previous_records or (),
+        previous_records=normalized_previous_records,
+        match_properties=identity_ambiguity_match_properties,
     )
     try:
         resolutions = release_feature_model.validate_identity_resolutions(
@@ -257,7 +315,7 @@ def enrich_features_with_generated_ids(
     unresolved_ambiguities = release_feature_model.unresolved_identity_ambiguities(ambiguities, resolutions)
     ids_by_key = assign_generated_feature_ids(
         (item["identity_key"] for item in prepared),
-        previous_records=previous_records,
+        previous_records=normalized_previous_records,
         feature_id_overrides=release_feature_model.resolved_feature_id_overrides(resolutions),
         force_new_identity_keys=release_feature_model.resolved_force_new_identity_keys(resolutions),
     )
@@ -279,6 +337,7 @@ def enrich_features_with_generated_ids(
             source_properties=item["source_properties"],
             provenance=provenance_payload,
             identity_key=identity_key,
+            identity_excluded_properties=identity_excluded_properties,
         )
         enriched.append(next_feature)
         sidecar_records.append(sidecar)

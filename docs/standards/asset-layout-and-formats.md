@@ -150,7 +150,9 @@ before publication. That model must assign:
   sidecar to group or de-duplicate footprints that carry equivalent geometry,
   even when their `feature_id` or non-geometry properties differ.
 - `properties_hash`: content fingerprint over published non-geometry
-  attributes. Hashes change when feature content changes and must not be used as
+  attributes, excluding explicitly documented volatile fields that are not
+  identity evidence, such as release timestamps on daily generated assets.
+  Hashes change when feature identity content changes and must not be used as
   the feature lookup ID.
 
 Identity strategy priority:

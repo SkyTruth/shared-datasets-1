@@ -328,6 +328,7 @@ def find_identity_ambiguities(
     new_records: Iterable[Mapping[str, Any]],
     *,
     previous_records: Iterable[SidecarRecord | Mapping[str, Any]],
+    match_properties: bool = True,
 ) -> tuple[IdentityAmbiguity, ...]:
     """Find partial hash matches that require maintainer resolution."""
     by_geometry: dict[str, list[tuple[str, str]]] = {}
@@ -339,7 +340,7 @@ def find_identity_ambiguities(
         properties_hash_value = str(payload.get("properties_hash") or "").strip()
         if feature_id and geometry_hash_value:
             by_geometry.setdefault(geometry_hash_value, []).append((feature_id, properties_hash_value))
-        if feature_id and properties_hash_value:
+        if match_properties and feature_id and properties_hash_value:
             by_properties.setdefault(properties_hash_value, []).append((feature_id, geometry_hash_value))
 
     ambiguities: list[IdentityAmbiguity] = []
@@ -352,6 +353,24 @@ def find_identity_ambiguities(
         properties_matches = tuple(sorted({feature_id for feature_id, _hash in properties_records}))
         geometry_properties_hashes = tuple(sorted({_hash for _feature_id, _hash in geometry_records if _hash}))
         properties_geometry_hashes = tuple(sorted({_hash for _feature_id, _hash in properties_records if _hash}))
+        if not match_properties:
+            if not geometry_matches:
+                continue
+            if len(geometry_matches) == 1 and geometry_properties_hashes == (properties_hash_value,):
+                continue
+            ambiguities.append(
+                IdentityAmbiguity(
+                    ambiguity_type="same_geometry_changed_properties",
+                    identity_key=identity_key_from_record(record),
+                    geometry_hash=geometry_hash_value,
+                    properties_hash=properties_hash_value,
+                    matching_geometry_feature_ids=geometry_matches,
+                    matching_properties_feature_ids=(),
+                    matching_geometry_properties_hashes=geometry_properties_hashes,
+                    matching_properties_geometry_hashes=(),
+                )
+            )
+            continue
         if not geometry_matches and not properties_matches:
             continue
         if geometry_matches == properties_matches and len(geometry_matches) == 1:
@@ -814,11 +833,13 @@ def build_identity_metadata(
     strategy: str,
     source_fields: Sequence[str] = (),
     assignment_key: Sequence[str] = (),
+    properties_hash_excluded_properties: Sequence[str] = (),
     previous_release: str | None = None,
     next_generated_feature_id_after_release: int | None = None,
 ) -> dict[str, Any]:
     clean_source_fields = [str(field) for field in source_fields]
     clean_assignment_key = [str(part) for part in assignment_key]
+    clean_excluded_properties = [str(field) for field in properties_hash_excluded_properties]
     if strategy == "generated_sequence_source_fields" and clean_source_fields and not clean_assignment_key:
         clean_assignment_key = list(clean_source_fields)
     if strategy == "generated_sequence_content_hash" and not clean_assignment_key:
@@ -834,6 +855,8 @@ def build_identity_metadata(
     if strategy.startswith("generated_sequence"):
         identity["generated_id_type"] = "monotonic_integer_string"
         identity["assignment_key"] = clean_assignment_key
+        if clean_excluded_properties:
+            identity["properties_hash_excluded_properties"] = clean_excluded_properties
         identity["previous_release"] = previous_release
         identity["next_generated_feature_id_after_release"] = next_generated_feature_id_after_release
     validate_identity_metadata(identity)
@@ -877,6 +900,12 @@ def validate_identity_metadata(identity: Any) -> None:
         raise ReleaseFeatureModelError("manifest identity hash_algorithm is unsupported")
     if identity.get("canonicalization") != FEATURE_ID_ALGORITHM:
         raise ReleaseFeatureModelError("manifest identity canonicalization is unsupported")
+    excluded_properties = identity.get("properties_hash_excluded_properties", [])
+    if not isinstance(excluded_properties, Sequence) or isinstance(excluded_properties, (str, bytes, bytearray)):
+        raise ReleaseFeatureModelError("manifest identity properties_hash_excluded_properties must be an array")
+    clean_excluded_properties = [str(field).strip() for field in excluded_properties if str(field).strip()]
+    if clean_excluded_properties != list(excluded_properties):
+        raise ReleaseFeatureModelError("manifest identity properties_hash_excluded_properties must contain non-empty strings")
 
 
 def validate_release_manifest(
