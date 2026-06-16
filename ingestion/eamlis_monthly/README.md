@@ -48,26 +48,48 @@ source fingerprint from:
 - max `DATE_REVISED`
 - source field schema hash
 
-If that fingerprint matches the latest successful run record, the job writes a
-skipped run record and does not download the source. If the fingerprint changed,
-the job downloads the filtered layer with paginated ArcGIS queries, converts it
-to FlatGeobuf and PMTiles, validates row count and geometry type, and compares
-the generated FGB SHA-256 to the latest successful run. Matching output hashes
-are also skipped.
+If that fingerprint matches the latest successful run record, the job checks the
+latest release metadata contract. A valid unchanged release writes a skipped run
+record and does not download the source. If the source changed, or if the latest
+successful release lacks the current metadata contract, the job downloads the
+filtered layer with paginated ArcGIS queries and rebuilds the release.
+
+The release feature identity is copied directly from the source `OBJECTID`
+field. Published `feature_id` values are plain alphanumeric strings such as
+`1`, not legacy `src:OBJECTID:1` handles. The canonical FlatGeobuf includes all
+source fields plus `feature_id`, `geometry_hash`, and `properties_hash`; PMTiles
+are metadata-lookup tiles containing geometry and `feature_id` only.
 
 When changed, the job writes:
 
 ```text
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.fgb
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.pmtiles
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.schema.json
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/YYYY-MM-DD/eamlis-abandoned-mine-land-inventory.manifest.json
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.fgb
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.pmtiles
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.metadata.ndjson.gz
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.schema.json
+300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.manifest.json
 300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/runs/YYYY-MM-DD.json
+_catalog/releases/eamlis-abandoned-mine-land-inventory.json
 ```
 
 The PMTiles artifact is built by writing GDAL MBTiles at zooms 0 through 8 and
 then converting that archive with `pmtiles convert`. The canonical FGB remains
 the analytical source.
+
+Spanish metadata is maintained as a derived localization layer outside the core
+job output. When a repair release changes `feature_id` shape, migrate
+`eamlis-abandoned-mine-land-inventory.metadata-translations.csv` keys from
+legacy `src:OBJECTID:<value>` to plain `<value>`, then materialize
+`eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz` from the new
+canonical sidecar and schema with `scripts/feature_metadata_localization.py`.
+Promote the migrated CSV and generated Spanish sidecar through the reviewed
+dataset mutation workflow, or rely on the feature metadata localization
+materialization workflow after a reviewed translation-source publish plan.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the observed generation. If release objects exist without a run
