@@ -162,6 +162,9 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn("current-catalog-row.json", delete_alert_run)
         self.assertIn("proposed-catalog-row.json", delete_alert_run)
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", self.apply_steps["Send deletion breaking change alert"]["env"])
+        self.assertIn("send_args = list(args)", delete_alert_run)
+        self.assertIn('send_args.remove("--dry-run")', delete_alert_run)
+        self.assertNotIn('part not in {"--dry-run", "delete-breaking-alert.json"}', delete_alert_run)
 
     def test_catalog_json_publish_plan_can_skip_when_destination_already_matches(self):
         promote_run = self.apply_steps["Promote approved staged objects"]["run"]

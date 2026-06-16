@@ -1091,10 +1091,8 @@ jobs:
               if any(marker in str(comment.get("body") or "") for comment in comments):
                   print(f"Breaking alert already sent for marker {marker}; skipping Slack.")
                   raise SystemExit(0)
-          send_args = [
-              part for part in args
-              if part not in {"--dry-run", "delete-breaking-alert.json"}
-          ]
+          send_args = list(args)
+          send_args.remove("--dry-run")
           summary_index = send_args.index("--summary-json")
           del send_args[summary_index:summary_index + 2]
           subprocess.run(send_args, check=True)
