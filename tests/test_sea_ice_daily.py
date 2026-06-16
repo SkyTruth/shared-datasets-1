@@ -474,6 +474,7 @@ ice_date: String (0.0)
         manifest = json.loads(manifest_blob.text)
         self.assertEqual(manifest["identity"]["strategy"], "generated_sequence_content_hash")
         self.assertEqual(manifest["identity"]["assignment_key"], ["geometry_hash", "properties_hash"])
+        self.assertEqual(manifest["identity"]["properties_hash_excluded_properties"], ["ice_date"])
         artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
         release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
         latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))

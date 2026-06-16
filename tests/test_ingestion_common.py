@@ -11,6 +11,7 @@ from unittest import mock
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common import release_index
+from ingestion.common import feature_metadata
 from ingestion.common.gcs import GcsPublisher
 from scripts import release_feature_model
 
@@ -237,6 +238,129 @@ def seed_valid_metadata_contract(bucket: FakeBucket, asset: FakeAsset, release: 
 
 
 class GcsPublisherTests(unittest.TestCase):
+    def test_generated_ids_can_exclude_volatile_properties_from_identity_hashes(self):
+        geometry = {"type": "Point", "coordinates": [0, 0]}
+        previous_properties = {"DN": 3, "ice_date": "2026-06-14"}
+        previous_geometry_hash, previous_properties_hash = feature_metadata.content_hashes(
+            geometry=geometry,
+            properties=previous_properties,
+        )
+        new_feature = {
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {"DN": 3, "ice_date": "2026-06-15"},
+        }
+        previous_records = [
+            {
+                "feature_id": "7",
+                "geometry_hash": previous_geometry_hash,
+                "properties_hash": previous_properties_hash,
+                "identity_key": [previous_geometry_hash, previous_properties_hash],
+                "properties": previous_properties,
+                "provenance": {},
+            }
+        ]
+
+        enriched, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+            [new_feature],
+            asset_slug="ims-sea-ice-extent",
+            release="2026-06-15",
+            provenance={"source_date": "2026-06-15"},
+            previous_records=previous_records,
+            identity_excluded_properties=("ice_date",),
+            identity_ambiguity_match_properties=False,
+        )
+
+        self.assertEqual(ambiguities, ())
+        self.assertEqual(enriched[0]["properties"]["feature_id"], "7")
+        self.assertEqual(sidecar_records[0]["feature_id"], "7")
+        self.assertEqual(sidecar_records[0]["properties"]["ice_date"], "2026-06-15")
+        expected_geometry_hash, expected_properties_hash = feature_metadata.content_hashes(
+            geometry=geometry,
+            properties={"DN": 3, "ice_date": "2026-06-15"},
+            exclude_properties=("ice_date",),
+        )
+        self.assertEqual(sidecar_records[0]["geometry_hash"], expected_geometry_hash)
+        self.assertEqual(sidecar_records[0]["properties_hash"], expected_properties_hash)
+        self.assertEqual(sidecar_records[0]["identity_key"], [expected_geometry_hash, expected_properties_hash])
+
+    def test_generated_ids_can_ignore_low_cardinality_property_partial_matches(self):
+        previous_records = []
+        for index, x_coordinate in enumerate((0, 1), start=1):
+            geometry = {"type": "Point", "coordinates": [x_coordinate, 0]}
+            geometry_hash, properties_hash = feature_metadata.content_hashes(
+                geometry=geometry,
+                properties={"DN": 3, "ice_date": "2026-06-14"},
+                exclude_properties=("ice_date",),
+            )
+            previous_records.append(
+                {
+                    "feature_id": str(index),
+                    "geometry_hash": geometry_hash,
+                    "properties_hash": properties_hash,
+                    "identity_key": [geometry_hash, properties_hash],
+                    "properties": {"DN": 3, "ice_date": "2026-06-14"},
+                    "provenance": {},
+                }
+            )
+        new_geometry = {"type": "Point", "coordinates": [2, 0]}
+        new_feature = {
+            "type": "Feature",
+            "geometry": new_geometry,
+            "properties": {"DN": 3, "ice_date": "2026-06-15"},
+        }
+
+        enriched, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+            [new_feature],
+            asset_slug="ims-sea-ice-extent",
+            release="2026-06-15",
+            provenance={"source_date": "2026-06-15"},
+            previous_records=previous_records,
+            identity_excluded_properties=("ice_date",),
+            identity_ambiguity_match_properties=False,
+        )
+
+        self.assertEqual(ambiguities, ())
+        self.assertEqual(enriched[0]["properties"]["feature_id"], "3")
+        self.assertEqual(sidecar_records[0]["feature_id"], "3")
+
+    def test_generated_ids_still_flag_same_geometry_stable_property_changes(self):
+        geometry = {"type": "Point", "coordinates": [0, 0]}
+        previous_geometry_hash, previous_properties_hash = feature_metadata.content_hashes(
+            geometry=geometry,
+            properties={"DN": 3, "ice_date": "2026-06-14"},
+            exclude_properties=("ice_date",),
+        )
+        previous_records = [
+            {
+                "feature_id": "7",
+                "geometry_hash": previous_geometry_hash,
+                "properties_hash": previous_properties_hash,
+                "identity_key": [previous_geometry_hash, previous_properties_hash],
+                "properties": {"DN": 3, "ice_date": "2026-06-14"},
+                "provenance": {},
+            }
+        ]
+        new_feature = {
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": {"DN": 4, "ice_date": "2026-06-15"},
+        }
+
+        _enriched, _sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+            [new_feature],
+            asset_slug="ims-sea-ice-extent",
+            release="2026-06-15",
+            provenance={"source_date": "2026-06-15"},
+            previous_records=previous_records,
+            identity_excluded_properties=("ice_date",),
+            identity_ambiguity_match_properties=False,
+        )
+
+        self.assertEqual(len(ambiguities), 1)
+        self.assertEqual(ambiguities[0].ambiguity_type, "same_geometry_changed_properties")
+        self.assertEqual(ambiguities[0].matching_geometry_feature_ids, ("7",))
+
     def test_release_upload_uses_no_clobber(self):
         bucket = FakeBucket()
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
