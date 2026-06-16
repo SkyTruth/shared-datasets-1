@@ -98,11 +98,6 @@ README_REQUIRED_SNIPPETS = {
 RASTER_README_REQUIRED_SNIPPETS = {
     "raster_metadata": "## Raster metadata",
 }
-LEGACY_ASSET_ROOT_ALIASES = {
-    "200-imagery-derived/210-satellite-indexes/sentinel-1-footprints": "cerulean-s1-envelope",
-}
-
-
 @dataclass
 class BlobInfo:
     name: str
@@ -1227,10 +1222,6 @@ def validate_asset_roots(
             )
         if root:
             roots.setdefault(root, []).append(blob)
-
-    for root in list(roots):
-        if root in LEGACY_ASSET_ROOT_ALIASES:
-            del roots[root]
 
     for root, root_blobs in sorted(roots.items()):
         category, subcategory, slug = root.split("/")

@@ -20,17 +20,16 @@ source: SkyTruth internal derived Cerulean Sentinel-1 envelope WKT extract
 license: SkyTruth internal use; upstream source and redistribution terms need confirmation
 citation: SkyTruth (2026). Cerulean S1 Envelope. Internal derived Sentinel-1 envelope extract; upstream source citation needs
   confirmation.
-notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage; the legacy remote prefix sentinel-1-footprints
-  is a deprecated pre-rename location and is intentionally not an active catalog slug. Release 2026-05-01 is the initial upload
-  (source features 1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11). Release 2026-05-04 is
-  a canonical-file repair and PMTiles rebuild with zooms 0-6, no simplification, and a synthetic source_layer property (pmtiles
-  sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d). A 2026-06-05 v1 metadata-contract release was
-  documented here but never promoted; no sidecar, schema, manifest, or releases/2026-06-05/ objects exist in the bucket and
-  the hashes previously recorded for it are retracted. The 2026-06-10 corrective schema-contract release publishes the asset's
-  first promoted metadata contract directly under release feature identity v2, built from the unchanged latest FGB generation
-  1777669295802653, with generated monotonic decimal feature_id assigned from the geometry_hash+properties_hash identity key,
-  geometry_hash and properties_hash columns, schema_version 2 metadata/schema/manifest artifacts, and metadata-lookup PMTiles
-  rebuilt at maxzoom 6 with only feature_id. Hashes for the 2026-06-10 candidates are fgb d658c6ee78c9c81510baf3b479f471c936f494bfc4ee06f83c57e30eec3ccf33;
+notes: Named as a Cerulean envelope to avoid implying complete Sentinel-1 footprint coverage. Release 2026-05-01 is the initial
+  upload (source features 1; fgb sha256 4fd635807aa544d8a0019f54ff663a639816cc7b2726d7a935fb7d8780924b11). Release 2026-05-04
+  is a canonical-file repair and PMTiles rebuild with zooms 0-6, no simplification, and a synthetic source_layer property
+  (pmtiles sha256 33f080e73a6ea2f5dc78b7174abbaf61c6d3c52165615f69ff1d8510ac225e6d). A 2026-06-05 v1 metadata-contract release
+  was documented here but never promoted; no sidecar, schema, manifest, or releases/2026-06-05/ objects exist in the bucket
+  and the hashes previously recorded for it are retracted. The 2026-06-10 corrective schema-contract release publishes the
+  asset's first promoted metadata contract directly under release feature identity v2, built from the unchanged latest FGB
+  generation 1777669295802653, with generated monotonic decimal feature_id assigned from the geometry_hash+properties_hash
+  identity key, geometry_hash and properties_hash columns, schema_version 2 metadata/schema/manifest artifacts, and metadata-lookup
+  PMTiles rebuilt at maxzoom 6 with only feature_id. Hashes for the 2026-06-10 candidates are fgb d658c6ee78c9c81510baf3b479f471c936f494bfc4ee06f83c57e30eec3ccf33;
   pmtiles 014d5bed6a28e15dade63d5b64fc620e479f380d3be8e7876b95d9e3994737c2; metadata ad1631c356a2bb71edeb75233185520fc678da683a20985b85610cd8ea95936b;
   schema 7901582ecaadf2d260646be9e46a8694be6e423c9c494e163e64f5b643f01185; manifest a4995e460e781cb915db747c5140f8d6cda6c923b398048d38aad0efaee9626f.
   Canonical FGB preserves the source WKT geometry as an envelope only
@@ -190,11 +189,6 @@ removed or retyped.
 The PMTiles artifact is a metadata-lookup derivative with zooms 0 through 6,
 keeping the accepted coarse envelope display from the 2026-05-04 rebuild.
 PMTiles feature properties are intentionally limited to `feature_id`.
-
-The remote prefix `200-imagery-derived/210-satellite-indexes/sentinel-1-footprints/`
-was an initial name for this dataset before the framing was corrected. It is
-treated as a deprecated legacy prefix for audit purposes, not as a separate
-catalog asset and not as the canonical publishing location.
 
 ## Properties / columns
 
