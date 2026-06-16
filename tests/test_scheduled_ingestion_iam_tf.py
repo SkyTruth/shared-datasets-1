@@ -3,9 +3,20 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from workflow_helpers import (
+    load_workflow,
+    python_literal_string_set,
+    terraform_targets,
+    workflow_steps_by_name,
+    workflow_triggers,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TF_DIR = REPO_ROOT / "terraform/envs/prod"
+SCHEDULED_INGESTION_DEPLOY_IAM_SYNC_WORKFLOW = (
+    REPO_ROOT / ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
+)
 GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
 
 
@@ -215,6 +226,82 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         )
         self.assertIn("member = module.shared_datasets_publisher_service_account.member", binding_block)
         self.assertNotIn("condition {", binding_block)
+
+    def test_scheduled_ingestion_deploy_role_is_limited_to_job_deploy_actions(self):
+        iam_tf = (PROD_TF_DIR / "scheduled_ingestion_deploy_iam.tf").read_text()
+        role_block = terraform_resource_block(
+            iam_tf,
+            "google_project_iam_custom_role",
+            "scheduled_ingestion_deployer",
+        )
+        binding_block = terraform_resource_block(
+            iam_tf,
+            "google_project_iam_member",
+            "github_actions_scheduled_ingestion_deployer",
+        )
+
+        self.assertIn('role_id     = "sharedDatasetsScheduledIngestionDeployer"', role_block)
+        for permission in (
+            "cloudscheduler.jobs.enable",
+            "cloudscheduler.jobs.get",
+            "run.executions.get",
+            "run.executions.list",
+            "run.jobs.get",
+            "run.jobs.run",
+            "run.jobs.update",
+            "run.operations.get",
+            "run.operations.list",
+            "run.tasks.get",
+            "run.tasks.list",
+        ):
+            with self.subTest(permission=permission):
+                self.assertIn(f'"{permission}"', role_block)
+        self.assertNotIn("run.jobs.create", role_block)
+        self.assertNotIn("run.jobs.delete", role_block)
+        self.assertNotIn("cloudscheduler.jobs.create", role_block)
+        self.assertNotIn("cloudscheduler.jobs.delete", role_block)
+        self.assertIn(
+            "role    = google_project_iam_custom_role.scheduled_ingestion_deployer.name",
+            binding_block,
+        )
+        self.assertIn(
+            'member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"',
+            binding_block,
+        )
+
+    def test_scheduled_ingestion_deploy_iam_sync_workflow_is_protected_and_allowlisted(self):
+        workflow = load_workflow(SCHEDULED_INGESTION_DEPLOY_IAM_SYNC_WORKFLOW)
+        trigger = workflow_triggers(workflow)
+        steps = workflow_steps_by_name(workflow, "sync")
+        plan_run = steps["Terraform plan"]["run"]
+        enforce_run = steps["Enforce scheduled ingestion deploy IAM resource-change allowlist"]["run"]
+
+        self.assertEqual(workflow["name"], "Scheduled ingestion deploy IAM sync")
+        self.assertEqual(trigger["push"]["branches"], ["main"])
+        self.assertIn("workflow_dispatch", trigger)
+        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
+        self.assertEqual(workflow["jobs"]["sync"]["environment"], "shared-datasets-production")
+        self.assertEqual(
+            workflow["jobs"]["sync"]["concurrency"],
+            {"group": "prod-terraform-state", "cancel-in-progress": False},
+        )
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertIn("-refresh=false", plan_run)
+        self.assertEqual(
+            terraform_targets(plan_run),
+            {
+                "google_project_iam_custom_role.scheduled_ingestion_deployer",
+                "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+            },
+        )
+        self.assertEqual(
+            python_literal_string_set(enforce_run, "allowed_exact"),
+            {
+                "google_project_iam_custom_role.scheduled_ingestion_deployer",
+                "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+            },
+        )
+        self.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
 
 
 if __name__ == "__main__":
