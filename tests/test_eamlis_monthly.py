@@ -394,6 +394,59 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertTrue(release.uploads)
         self.assertTrue(release_metadata.uploads)
 
+    def test_contract_refresh_does_not_load_incompatible_latest_sidecar(self):
+        bucket = FakeBucket()
+        previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
+        previous.exists = True
+        previous.text = json.dumps(
+            {
+                "run_date": "2026-04-02",
+                "status": "success",
+                "source_fingerprint_hash": "same",
+                "release_path": "gs://test-bucket/release/",
+                "release_paths": [
+                    {"path": "gs://test-bucket/release/asset.fgb"},
+                    {"path": "gs://test-bucket/release/asset.metadata.ndjson.gz"},
+                    {"path": "gs://test-bucket/release/asset.schema.json"},
+                    {"path": "gs://test-bucket/release/asset.manifest.json"},
+                ],
+                "latest_paths": [{"path": "gs://test-bucket/latest.fgb"}],
+                "sha256": {"fgb": "same-sha"},
+            }
+        )
+        release_index = bucket.blob(f"_catalog/releases/{eamlis.ASSET.slug}.json")
+        release_index.exists = True
+        release_index.text = json.dumps(
+            {
+                "schema_version": 1,
+                "asset_slug": eamlis.ASSET.slug,
+                "latest_release": {
+                    "date": "2026-04-02",
+                    "run_record_path": f"gs://test-bucket/{previous.name}",
+                },
+            }
+        )
+        source = sample_source_state(fingerprint_hash="same")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
+            with (
+                mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
+                mock.patch.object(eamlis, "require_binary", lambda _binary: None),
+                mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
+                mock.patch.object(eamlis, "fetch_source_state", return_value=source),
+                mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value="metadata sidecar is invalid"),
+                mock.patch.object(
+                    GcsPublisher,
+                    "load_latest_metadata_records",
+                    side_effect=AssertionError("source-field EAMLIS refresh must not load old sidecar mappings"),
+                ),
+                mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
+                mock.patch.object(eamlis, "build_asset_output", return_value=output),
+            ):
+                records = eamlis.run()
+
+        self.assertEqual(records[0]["status"], "success")
+
     def test_download_source_geojson_pages_until_expected_count(self):
         source = sample_source_state(feature_count=3)
         pages = [
@@ -547,6 +600,28 @@ DATE_REVISED: Date (0.0)
         self.assertEqual(summary["feature_count"], 2)
         self.assertEqual(summary["geometry_type"], "Point")
         self.assertEqual(summary["fields"], ["AMLIS_KEY", "LAT_DEG", "DATE_REVISED"])
+
+    def test_source_field_metadata_records_use_plain_objectid_feature_ids(self):
+        features = [self._feature(1, 1777546800000)]
+
+        enriched, records = eamlis.feature_metadata.enrich_features_with_source_field_ids(
+            features,
+            asset_slug=eamlis.ASSET.slug,
+            release="2026-06-16",
+            id_field="OBJECTID",
+            provenance={"source": "https://example.test/layer", "where": eamlis.DEFAULT_WHERE},
+        )
+
+        self.assertEqual(records[0]["schema_version"], 2)
+        self.assertEqual(records[0]["feature_id"], "1")
+        self.assertRegex(records[0]["geometry_hash"], r"^sha256:[0-9a-f]{64}$")
+        self.assertRegex(records[0]["properties_hash"], r"^sha256:[0-9a-f]{64}$")
+        self.assertNotIn("feature_hash", records[0])
+        self.assertNotIn("ext_id", records[0]["properties"])
+        self.assertEqual(enriched[0]["properties"]["feature_id"], "1")
+        self.assertIn("geometry_hash", enriched[0]["properties"])
+        self.assertIn("properties_hash", enriched[0]["properties"])
+        self.assertNotIn("ext_id", enriched[0]["properties"])
 
     @staticmethod
     def _feature(objectid: int, date_revised: int | None) -> dict:

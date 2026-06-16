@@ -938,7 +938,11 @@ def run() -> list[dict[str, Any]]:
             extract=extract,
             workdir=workdir,
             release_date=run_date,
-            previous_records=publisher.load_latest_metadata_records(ASSET),
+            # EAMLIS feature IDs are copied directly from the source OBJECTID
+            # field, so prior generated-ID mappings are not needed. Older live
+            # EAMLIS sidecars used a retired feature_id shape and must not block
+            # a source-field contract refresh.
+            previous_records=None,
         )
         previous_sha = ((previous_record or {}).get("sha256") or {}).get("fgb")
         if previous_sha and previous_sha == output.sha256["fgb"] and not contract_refresh:
