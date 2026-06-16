@@ -59,8 +59,11 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
             {"module.sea_ice_daily_job.google_cloud_run_v2_job.this"},
         )
         self.assertIn("sea_ice_daily_image=${SEA_ICE_DAILY_IMAGE}", plan_run)
-        self.assertIn("wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}", plan_run)
-        self.assertIn("eamlis_monthly_image=${EAMLIS_MONTHLY_IMAGE}", plan_run)
+        self.assertIn("wdpa_monthly_image=unused-by-sea-ice-daily-deploy", plan_run)
+        self.assertIn("eamlis_monthly_image=unused-by-sea-ice-daily-deploy", plan_run)
+        all_step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
+        self.assertNotIn("gcloud run jobs describe wdpa-monthly", all_step_runs)
+        self.assertNotIn("gcloud run jobs describe eamlis-monthly", all_step_runs)
 
         enforce_run = steps["Enforce sea-ice-daily resource-change allowlist"]["run"]
         self.assertEqual(

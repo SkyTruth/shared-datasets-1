@@ -185,19 +185,6 @@ jobs:
           image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
           echo "SEA_ICE_DAILY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
 
-      - name: Read current scheduled-ingestion image vars
-        run: |
-          set -euo pipefail
-
-          wdpa_image="$(gcloud run jobs describe wdpa-monthly --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
-          eamlis_image="$(gcloud run jobs describe eamlis-monthly --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
-          if [[ -z "${wdpa_image}" || -z "${eamlis_image}" ]]; then
-            echo "Could not resolve current scheduled-ingestion image vars." >&2
-            exit 1
-          fi
-          echo "WDPA_MONTHLY_IMAGE=${wdpa_image}" >> "${GITHUB_ENV}"
-          echo "EAMLIS_MONTHLY_IMAGE=${eamlis_image}" >> "${GITHUB_ENV}"
-
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -214,8 +201,8 @@ jobs:
             -input=false \
             -out="${RUNNER_TEMP}/sea-ice-daily.tfplan" \
             -target=module.sea_ice_daily_job.google_cloud_run_v2_job.this \
-            -var="wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}" \
-            -var="eamlis_monthly_image=${EAMLIS_MONTHLY_IMAGE}" \
+            -var="wdpa_monthly_image=unused-by-sea-ice-daily-deploy" \
+            -var="eamlis_monthly_image=unused-by-sea-ice-daily-deploy" \
             -var="sea_ice_daily_image=${SEA_ICE_DAILY_IMAGE}"
 
       - name: Export Terraform plan JSON
