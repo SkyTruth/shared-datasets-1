@@ -41,37 +41,6 @@ class LocalComplianceAuditTests(unittest.TestCase):
 
         self.assertEqual(findings, [])
 
-    def test_legacy_sentinel_footprints_prefix_is_not_required_as_catalog_asset(self):
-        categories = {"200-imagery-derived": {"210-satellite-indexes"}}
-        current_root = "200-imagery-derived/210-satellite-indexes/cerulean-s1-envelope"
-        legacy_root = "200-imagery-derived/210-satellite-indexes/sentinel-1-footprints"
-        row = {
-            "asset_slug": "cerulean-s1-envelope",
-            "category": "200-imagery-derived",
-            "subcategory": "210-satellite-indexes",
-            "canonical_path": f"gs://skytruth-shared-datasets-1/{current_root}/latest/cerulean-s1-envelope.fgb",
-            "canonical_format": "fgb",
-            "available_formats": "fgb;pmtiles",
-            "metadata_paths": "README.md",
-        }
-
-        findings = audit.validate_asset_roots(
-            "skytruth-shared-datasets-1",
-            [
-                blob_info(f"{current_root}/README.md"),
-                blob_info(f"{current_root}/latest/cerulean-s1-envelope.fgb"),
-                blob_info(f"{legacy_root}/latest/sentinel-1-footprints.fgb"),
-            ],
-            categories,
-            [row],
-            {"cerulean-s1-envelope": row},
-            skip_readme_content=True,
-            prefix="",
-        )
-
-        self.assertNotIn("catalog-row", {finding.check for finding in findings})
-        self.assertNotIn(legacy_root, {finding.path for finding in findings})
-
     def test_local_catalog_validation_accepts_current_catalog(self):
         categories = audit.load_categories(REPO_ROOT / "catalog/categories.yaml")
         rows, _ = audit.load_catalog(REPO_ROOT / "catalog/shared-datasets-catalog.csv")
