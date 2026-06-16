@@ -41,5 +41,8 @@ COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir google-cloud-storage
 
 COPY ingestion ./ingestion
+COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
+COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
+COPY scripts/vector_asset.py ./scripts/vector_asset.py
 
 CMD ["python", "-m", "ingestion.sea_ice_daily.run"]
