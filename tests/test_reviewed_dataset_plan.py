@@ -107,6 +107,30 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                 }
             )
 
+    def test_normalize_publish_plan_accepts_empty_release_index_asset_slugs(self):
+        normalized = reviewed_dataset_plan.normalize_publish_plan(
+            {
+                "asset_slug": "example-asset",
+                "proposal_id": "pr-123",
+                "release_index_asset_slugs": [],
+                "promotions": [
+                    {
+                        "source_uri": (
+                            f"gs://{BUCKET}/_scratch/pending-publishes/"
+                            "example-asset/pr-123/example-asset.fgb"
+                        ),
+                        "source_generation": "123",
+                        "destination_uri": (
+                            f"gs://{BUCKET}/100-geographic-reference/130-protected-areas/"
+                            "example-asset/latest/example-asset.fgb"
+                        ),
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(normalized["release_index_asset_slugs"], [])
+
     def test_normalize_publish_plan_rejects_malformed_breaking_change(self):
         base_plan = {
             "asset_slug": "example-asset",

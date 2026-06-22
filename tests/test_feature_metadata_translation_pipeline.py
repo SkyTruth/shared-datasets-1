@@ -139,6 +139,49 @@ class FeatureMetadataTranslationPipelineTests(unittest.TestCase):
         self.assertEqual(payload["translation_source_count"], 0)
         self.assertEqual(payload["translation_sources"], [])
 
+    def test_normalized_publish_plan_with_empty_release_index_slugs_is_noop_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / "publish-plan.json"
+            report = root / "summary.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "asset_slug": "example-asset",
+                        "proposal_id": "pr-123",
+                        "release_index_asset_slugs": [],
+                        "promotions": [
+                            {
+                                "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
+                                "source_generation": "111",
+                                "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
+                                "destination_generation": "222",
+                                "content_type": "application/octet-stream",
+                                "cache_control": "",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            code = feature_metadata_translation_pipeline.main(
+                [
+                    "--publish-plan",
+                    str(plan),
+                    "--work-dir",
+                    str(root / "work"),
+                    "--report",
+                    str(report),
+                ]
+            )
+
+            payload = json.loads(report.read_text(encoding="utf-8"))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["translation_source_count"], 0)
+        self.assertEqual(payload["translation_sources"], [])
+
     def test_sibling_and_localized_uris_follow_release_metadata_naming(self):
         translation_uri = (
             "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/"
