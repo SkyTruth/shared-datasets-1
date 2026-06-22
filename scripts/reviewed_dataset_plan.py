@@ -342,7 +342,7 @@ def normalize_string_list(value: Any, *, label: str) -> list[str]:
 
 
 def normalize_slug_list(raw: Any, *, label: str) -> list[str]:
-    if raw in (None, ""):
+    if raw in (None, "") or raw == []:
         return []
     values = normalize_string_list(raw, label=label)
     if len(values) > MAX_RELEASE_INDEX_REBUILDS:
