@@ -31,7 +31,8 @@ notes: Initial upload from gfw_infra_2026-04-30; release 2026-04-30; source rows
   the FGB and metadata sidecar. Releases dated before 2026-06-10 contain only FGB and full-property PMTiles. Rebuilds must
   use the repo-standard GeoJSONSeq to Tippecanoe MBTiles to PMTiles conversion path. 2026-06-10 hashes are fgb sha256 b6bf5f12650f77ab50724f8c09a145642ec29400a6891323fa105f4b8edfe2a4;
   pmtiles sha256 f877b80f3a1bb835c7749a4563162a15f9b4f2dffcfcdbb760ab8601f4aab1db; metadata sha256 2510a2524e855d86562d0ca821c358871fdf6dd437196294df5b73d38078df8b;
-  schema sha256 1fb57139a5ce0ac3fbc35d9c9f13bbea9691827ec1d3a2468d1c398d2b77a1e7; manifest sha256 7a0c5f8be94e9c8d009df5095e39fa48575b1789925df65abbe299ac0a175222
+  schema sha256 1fb57139a5ce0ac3fbc35d9c9f13bbea9691827ec1d3a2468d1c398d2b77a1e7; manifest sha256 b2beab3e0ff85f8a7a79af40399b7c9b0cedc0c1d88607c11508d75d854ed1bc
+  after same-release manifest-generation repair
 row_count: 57681
 data_profile:
   field_count: 10
@@ -201,7 +202,7 @@ Output summary for the 2026-06-10 release:
 - PMTiles SHA-256: `f877b80f3a1bb835c7749a4563162a15f9b4f2dffcfcdbb760ab8601f4aab1db`
 - Metadata sidecar SHA-256: `2510a2524e855d86562d0ca821c358871fdf6dd437196294df5b73d38078df8b`
 - Schema SHA-256: `1fb57139a5ce0ac3fbc35d9c9f13bbea9691827ec1d3a2468d1c398d2b77a1e7`
-- Manifest SHA-256: `7a0c5f8be94e9c8d009df5095e39fa48575b1789925df65abbe299ac0a175222`
+- Manifest SHA-256: `b2beab3e0ff85f8a7a79af40399b7c9b0cedc0c1d88607c11508d75d854ed1bc` after same-release manifest-generation repair
 - PMTiles zoom 0 decoded features: 57,681 with only the `feature_id` property
 - No localized metadata: the asset has no schema-projectable display-name field; `label` and `label_confidence` are enum codes (recorded no-translation decision)
 
