@@ -104,6 +104,11 @@ returns one signed `/private/{bucket-object-path}` URL when CDN signing is
 configured. The browser never fetches a separate translation overlay and does
 not merge translation rows over canonical metadata. Metadata sidecars must be
 `.ndjson.gz`; the browser expects gzip-compressed NDJSON.
+When no release index is present yet, the generator emits the latest metadata
+sidecar, schema, and manifest declared by `feature_metadata` as top-level
+`files[]` entries so local previews and first-upload PR catalogs can hydrate
+clicked PMTiles features by `feature_id`. Once a release index is available, the
+release-index file list takes precedence.
 `feature_identity` records the policy and counts for a native
 `feature_id` feature property when an asset needs generated group IDs or a
 last-resort row address. These fields are additive so existing CSV and JSON

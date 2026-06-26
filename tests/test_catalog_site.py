@@ -226,6 +226,58 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(payload["assets"][0]["feature_identity"]["strategy"], "source_field")
         self.assertEqual(payload["assets"][0]["feature_identity"]["source_fields"], ["WDPAID"])
 
+    def test_doc_declared_feature_metadata_emits_latest_files_without_release_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs_dir = root / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            (docs_dir / "example-asset.md").write_text(DOC)
+            categories_path = root / "categories.yaml"
+            self._write_categories(categories_path)
+            catalog_path = root / "catalog.csv"
+            with catalog_path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=catalog_site.REQUIRED_FIELDS + ["feature_identity"])
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "asset_slug": "example-asset",
+                        "title": "Example Asset",
+                        "category": "100-geographic-reference",
+                        "subcategory": "110-boundaries",
+                        "status": "active",
+                        "access_tier": "public",
+                        "owner": "SkyTruth",
+                        "update_cadence": "manual",
+                        "canonical_path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
+                        "canonical_format": "fgb",
+                        "available_formats": "fgb",
+                        "metadata_paths": "README.md",
+                        "source": "Example source",
+                        "license": "Example license",
+                        "citation": "Example citation",
+                        "feature_identity": "source_field:WDPAID",
+                    }
+                )
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                release_index_dir=None,
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        asset = payload["assets"][0]
+        files = {file["path"]: file for file in asset["files"]}
+        expected_prefix = "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest"
+        self.assertIn(f"{expected_prefix}/example-asset.fgb", files)
+        self.assertEqual(files[f"{expected_prefix}/example-asset.metadata.ndjson.gz"]["format"], "metadata")
+        self.assertEqual(files[f"{expected_prefix}/example-asset.metadata.ndjson.gz"]["role"], "metadata")
+        self.assertEqual(files[f"{expected_prefix}/example-asset.schema.json"]["format"], "schema")
+        self.assertEqual(files[f"{expected_prefix}/example-asset.manifest.json"]["format"], "manifest")
+
     def test_release_index_only_preview_asset_requires_explicit_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

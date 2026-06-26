@@ -202,6 +202,7 @@ function applyReleaseIndex(asset, releaseIndex) {
   if (latestVersion) {
     asset.canonical_sha256 = latestVersion.canonical_sha256 || "";
     asset.pmtiles_sha256 = latestVersion.pmtiles_sha256 || "";
+    asset.files = Array.isArray(latestVersion.files) ? latestVersion.files : [];
   }
   if (latestDate) {
     asset.last_updated = latestDate;
@@ -1694,10 +1695,10 @@ function availableMetadataLocales(asset) {
 }
 
 function metadataSidecarFiles(asset) {
-  const files = Array.isArray(asset?.files)
-    ? asset.files
-    : Array.isArray(asset?.latest_release?.files)
-      ? asset.latest_release.files
+  const files = Array.isArray(asset?.latest_release?.files)
+    ? asset.latest_release.files
+    : Array.isArray(asset?.files)
+      ? asset.files
       : [];
   return files.filter((file) => {
     const path = releaseFilePath(file);
