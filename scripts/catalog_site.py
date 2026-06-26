@@ -55,6 +55,7 @@ FEATURE_METADATA_STORAGE = "metadata_sidecar_v1"
 FEATURE_METADATA_FEATURE_ID_COLUMN = "feature_id"
 FEATURE_METADATA_GEOMETRY_HASH_COLUMN = "geometry_hash"
 FEATURE_METADATA_PROPERTIES_HASH_COLUMN = "properties_hash"
+COLORIZER_METADATA_SCHEMA_VERSION = 1
 
 
 class CatalogSiteError(ValueError):
@@ -115,6 +116,7 @@ class CatalogAsset:
     data_profile: dict[str, Any] | None
     search_fields: list[dict[str, Any]]
     feature_metadata: dict[str, Any] | None
+    colorizer_metadata: dict[str, Any]
     source_url: str | None
     public_url: str
     pmtiles_path: str | None
@@ -477,6 +479,32 @@ def optional_feature_metadata(metadata: dict[str, Any], *, asset_slug: str, doc_
         raise CatalogSiteError(f"{doc_path}: feature_metadata.provenance_default must be true")
     normalized["provenance_default"] = True
     return normalized
+
+
+def colorizer_metadata_for_asset(
+    *,
+    has_pmtiles: bool,
+    feature_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not has_pmtiles:
+        return {
+            "schema_version": COLORIZER_METADATA_SCHEMA_VERSION,
+            "source": "none",
+            "field_source": "none",
+        }
+    if feature_metadata:
+        return {
+            "schema_version": COLORIZER_METADATA_SCHEMA_VERSION,
+            "source": "metadata_sidecar_schema",
+            "field_source": "feature_metadata.schema_file",
+            "schema_file": str(feature_metadata["schema_file"]),
+            "feature_id_property": FEATURE_METADATA_FEATURE_ID_COLUMN,
+        }
+    return {
+        "schema_version": COLORIZER_METADATA_SCHEMA_VERSION,
+        "source": "pmtiles_vector_layers",
+        "field_source": "pmtiles.vector_layers.fields",
+    }
 
 
 def optional_data_profile(metadata: dict[str, Any], *, row_count: int | None, doc_path: Path) -> dict[str, Any] | None:
@@ -946,6 +974,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         raise CatalogSiteError(f"{doc_path}: feature_identity is required when feature_metadata is declared")
     feature_identity = optional_feature_identity(doc_metadata, doc_path=doc_path)
     feature_metadata = optional_feature_metadata(doc_metadata, asset_slug=slug, doc_path=doc_path)
+    has_pmtiles = "pmtiles" in formats
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -970,7 +999,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
             doc_path=doc_path,
         ),
         feature_identity=feature_identity,
-        has_pmtiles="pmtiles" in formats,
+        has_pmtiles=has_pmtiles,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,
         last_updated=effective_last_updated,
@@ -987,6 +1016,10 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
         feature_metadata=feature_metadata,
+        colorizer_metadata=colorizer_metadata_for_asset(
+            has_pmtiles=has_pmtiles,
+            feature_metadata=feature_metadata,
+        ),
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,
@@ -1047,6 +1080,7 @@ def synthetic_asset_from_release_index(release_index: dict[str, Any]) -> Catalog
     ]
     row_count = latest_version.rows
     title = humanize_slug(slug)
+    has_pmtiles = bool(latest_version.pmtiles_path)
     return CatalogAsset(
         slug=slug,
         title=title,
@@ -1066,7 +1100,7 @@ def synthetic_asset_from_release_index(release_index: dict[str, Any]) -> Catalog
         metadata_paths=metadata_paths,
         files=latest_version.files,
         feature_identity=None,
-        has_pmtiles=bool(latest_version.pmtiles_path),
+        has_pmtiles=has_pmtiles,
         has_geojson="geojson" in available_formats,
         has_csv="csv" in available_formats,
         last_updated=latest_release_date,
@@ -1083,6 +1117,10 @@ def synthetic_asset_from_release_index(release_index: dict[str, Any]) -> Catalog
         data_profile=None,
         search_fields=[],
         feature_metadata=None,
+        colorizer_metadata=colorizer_metadata_for_asset(
+            has_pmtiles=has_pmtiles,
+            feature_metadata=None,
+        ),
         source_url=None,
         public_url=latest_version.public_url,
         pmtiles_path=latest_version.pmtiles_path,
@@ -1120,18 +1158,23 @@ def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | 
     if latest_version is None:
         return None
     formats = latest_version.available_formats or asset.available_formats
-    pmtiles_path = latest_version.pmtiles_path if "pmtiles" in formats else None
+    has_pmtiles = "pmtiles" in formats
+    pmtiles_path = latest_version.pmtiles_path if has_pmtiles else None
     return replace(
         asset,
         canonical_path=latest_version.canonical_path,
         available_formats=formats,
         files=latest_version.files,
-        has_pmtiles="pmtiles" in formats,
+        has_pmtiles=has_pmtiles,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,
         public_url=latest_version.public_url,
         pmtiles_path=pmtiles_path,
         pmtiles_url=pmtiles_cdn_url(asset.slug, asset.access_tier) if pmtiles_path else None,
+        colorizer_metadata=colorizer_metadata_for_asset(
+            has_pmtiles=has_pmtiles,
+            feature_metadata=asset.feature_metadata,
+        ),
         canonical_sha256=latest_version.canonical_sha256 or asset.canonical_sha256,
         pmtiles_sha256=latest_version.pmtiles_sha256 or asset.pmtiles_sha256,
         row_count=latest_version.rows if latest_version.rows is not None else asset.row_count,

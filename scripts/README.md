@@ -103,12 +103,17 @@ The build sequence is standardized as:
    measured geometry detail.
 3. Export a WGS84 GeoJSONSeq tile source from the generated FGB with GDAL.
 4. Build temporary MBTiles from that GeoJSONSeq with Tippecanoe using explicit
-   min/max zoom metadata and any compact property filters such as `feature_id`
-   and `feature_id`.
+   min/max zoom metadata and any compact property filters such as `feature_id`.
 5. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
 6. Local validation with `ogrinfo`, PMTiles v3 magic-byte checks,
    `pmtiles verify`, `pmtiles show`, and a decoded PMTiles property sample when
    those tools exist.
+
+The static catalog generator emits `colorizer_metadata` for each asset. For
+release-oriented feature metadata assets, the colorizer source is the published
+schema sidecar; for ordinary PMTiles assets, it is PMTiles `vector_layers`
+metadata. Do not add viewer code that discovers color fields by sampling tiles
+or hydrating the full metadata sidecar.
 
 `--maxzoom auto` is the default. Auto maxzoom generates the canonical FGB first,
 profiles the FGB, and writes `pmtiles-profile.json` next to the generated

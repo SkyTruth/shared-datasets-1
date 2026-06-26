@@ -85,7 +85,7 @@ publication or authoritative dataset release. Optional discovery fields in
 asset-doc frontmatter are emitted when present: `bounds` as
 `[min_lon, min_lat, max_lon, max_lat]`, `geometry_type`, `row_count`,
 `data_profile`, `search_fields`, `feature_metadata`, `feature_identity`,
-`source_url`, and frontmatter `license_flags` merged with
+`colorizer_metadata`, `source_url`, and frontmatter `license_flags` merged with
 license-text-derived flags.
 `data_profile` carries curated at-a-glance profiling facts such as column count,
 provider identity-field candidates, distinct values, duplicate counts, and short
@@ -93,6 +93,10 @@ profile notes. `search_fields` surfaces curator-selected high-value filter
 fields that are not source field IDs. `feature_metadata` records the canonical
 metadata sidecar, schema, manifest, and optional localized sidecars recorded in
 release metadata.
+`colorizer_metadata` records the bounded source of display color fields for each
+asset: `metadata_sidecar_schema` for release-oriented feature metadata assets,
+`pmtiles_vector_layers` for ordinary PMTiles assets whose fields are declared in
+the PMTiles archive metadata, and `none` for assets without PMTiles.
 Release-oriented vector assets may also publish canonical and localized feature
 metadata sidecars in the release index. The static public viewer resolves
 public sidecars from the hydrated release index and fetches them directly from

@@ -186,8 +186,8 @@ Minimum contract for consumer layer/config code:
 - Use `slug`, `title`, `status`, `access_tier`, `available_formats`,
   `canonical_format`, `has_pmtiles`, `pmtiles_url`, `docs_url`,
   `release_index_url`, `latest_release`, `last_updated`, `citation`, `license`,
-  `bounds`, `geometry_type`, `feature_metadata`, and `feature_identity` when
-  present.
+  `bounds`, `geometry_type`, `feature_metadata`, `feature_identity`, and
+  `colorizer_metadata` when present.
 - Use only `status="active"` for default production layer lists.
 - If a UI intentionally shows non-active assets, display `consumer_guidance`.
 - Resolve relative docs and release-index URLs against

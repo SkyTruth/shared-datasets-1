@@ -666,15 +666,30 @@ function withQueryParam(url, key, value) {
 
 function vectorLayerSpecs(metadata, asset) {
   const layers = Array.isArray(metadata?.vector_layers) ? metadata.vector_layers : [];
+  const colorizerSource = colorizerMetadataSource(asset);
   if (layers.length) {
     return layers
       .map((layer) => ({
         sourceLayer: String(layer?.id || layer?.name || ""),
-        fields: fieldNamesFromMetadata(layer?.fields),
+        fields: colorizerSource === "pmtiles_vector_layers" ? fieldNamesFromMetadata(layer?.fields) : [],
       }))
       .filter((layer) => layer.sourceLayer);
   }
   return [{ sourceLayer: asset.slug.replaceAll("-", "_"), fields: [] }];
+}
+
+function colorizerMetadataSource(asset) {
+  const source = String(asset?.colorizer_metadata?.source || "").trim();
+  if (source === "metadata_sidecar_schema" || source === "pmtiles_vector_layers" || source === "none") {
+    return source;
+  }
+  if (asset?.feature_metadata) {
+    return "metadata_sidecar_schema";
+  }
+  if (asset?.pmtiles_url) {
+    return "pmtiles_vector_layers";
+  }
+  return "none";
 }
 
 function fieldNamesFromMetadata(fields) {
