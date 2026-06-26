@@ -48,6 +48,15 @@ PUBLIC_METADATA_ES_RELEASE_PATH = (
     "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
     "wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz"
 )
+PUBLIC_SCHEMA_RELEASE_PATH = (
+    "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/"
+    "wdpa-marine/releases/2026-05-01/wdpa-marine.schema.json"
+)
+PRIVATE_SCHEMA_RELEASE_PATH = (
+    "gs://skytruth-shared-datasets-1/400-events-observations/430-alerts-notices/"
+    "acled-europe-central-asia-aggregated-weekly-admin1/releases/2026-05-01/"
+    "acled-europe-central-asia-aggregated-weekly-admin1.schema.json"
+)
 
 
 class FakeStore:
@@ -66,6 +75,7 @@ class FakeStore:
                                 {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
                                 {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
                                 {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
+                                {"format": "schema", "path": PUBLIC_SCHEMA_RELEASE_PATH, "generation": 1002},
                                 {
                                     "format": "metadata",
                                     "role": "metadata",
@@ -82,6 +92,7 @@ class FakeStore:
                                     {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
                                     {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
                                     {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
+                                    {"format": "schema", "path": PUBLIC_SCHEMA_RELEASE_PATH, "generation": 1002},
                                     {
                                         "format": "metadata",
                                         "role": "metadata",
@@ -89,6 +100,34 @@ class FakeStore:
                                         "path": PUBLIC_METADATA_ES_RELEASE_PATH,
                                         "generation": 1004,
                                     },
+                                ],
+                            }
+                        ],
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8"),
+                "application/json; charset=utf-8",
+            ),
+            "releases/acled-europe-central-asia-aggregated-weekly-admin1.json": StaticObject(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "asset_slug": "acled-europe-central-asia-aggregated-weekly-admin1",
+                        "latest_release": {
+                            "date": "2026-05-01",
+                            "files": [
+                                {"format": "fgb", "path": PRIVATE_FGB_PATH},
+                                {"format": "pmtiles", "path": PRIVATE_PATH},
+                                {"format": "schema", "path": PRIVATE_SCHEMA_RELEASE_PATH, "generation": 1002},
+                            ],
+                        },
+                        "releases": [
+                            {
+                                "date": "2026-05-01",
+                                "files": [
+                                    {"format": "fgb", "path": PRIVATE_FGB_PATH},
+                                    {"format": "pmtiles", "path": PRIVATE_PATH},
+                                    {"format": "schema", "path": PRIVATE_SCHEMA_RELEASE_PATH, "generation": 1002},
                                 ],
                             }
                         ],
@@ -525,6 +564,34 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(response.body)["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
+
+    def test_public_schema_download_uses_release_schema(self):
+        response, signer = download_url_request("wdpa-marine", version="2026-05-01", fmt="schema")
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["gs_uri"], PUBLIC_SCHEMA_RELEASE_PATH)
+        self.assertEqual(
+            payload["download_url"],
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.schema.json",
+        )
+        self.assertEqual(payload["filename"], "wdpa-marine.schema.json")
+        self.assertEqual(signer.calls, [])
+
+    def test_private_schema_download_returns_signed_url(self):
+        response, signer = download_url_request(
+            "acled-europe-central-asia-aggregated-weekly-admin1",
+            fmt="schema",
+            headers={"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/"))
+        self.assertEqual(payload["expires_at"], "2026-05-09T12:15:00Z")
+        self.assertEqual(payload["gs_uri"], PRIVATE_SCHEMA_RELEASE_PATH)
+        self.assertEqual(payload["filename"], "acled-europe-central-asia-aggregated-weekly-admin1.schema.json")
+        self.assertEqual(signer.calls[0][0], PRIVATE_SCHEMA_RELEASE_PATH)
 
     def test_metadata_download_uses_locale_sidecar_when_available(self):
         response, _signer = download_url_request("wdpa-marine", fmt="metadata", locale="es")

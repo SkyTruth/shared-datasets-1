@@ -506,7 +506,7 @@ def handle_download_url(
 
     public_url = (
         gs_to_public_artifact_url(gs_uri, bucket_name=bucket_name)
-        if format_name == "metadata"
+        if format_name in {"metadata", "schema"}
         else gs_to_https(gs_uri)
     )
     payload = {
@@ -530,8 +530,10 @@ def resolve_download_gs_uri(
 ) -> str:
     if format_name == "metadata":
         return resolve_metadata_sidecar_gs_uri(asset, version, locale=locale, object_store=object_store)
+    if format_name == "schema":
+        return resolve_schema_gs_uri(asset, version, object_store=object_store)
     if format_name != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb or metadata")
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb, metadata, or schema")
     if str(asset.get("canonical_format") or "").strip() != "fgb":
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
     if version != "latest" and not DATE_RE.fullmatch(version):
@@ -576,6 +578,33 @@ def resolve_metadata_sidecar_gs_uri(
             return gs_uri
 
     raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a metadata sidecar")
+
+
+def resolve_schema_gs_uri(
+    asset: Mapping[str, Any],
+    version: str,
+    *,
+    object_store: ObjectStore,
+) -> str:
+    if version != "latest" and not DATE_RE.fullmatch(version):
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
+    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
+    if release_index is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    if version == "latest":
+        latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
+        latest_date = str(latest.get("date") or "") if latest else ""
+        if not DATE_RE.fullmatch(latest_date):
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest_release.date is invalid")
+        release = release_index_release(release_index, latest_date) or latest
+    else:
+        release = release_index_release(release_index, version)
+    if release:
+        gs_uri = release_file_for_role(release.get("files"), "schema", ".schema.json")
+        if gs_uri:
+            return gs_uri
+
+    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a schema")
 
 
 def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:

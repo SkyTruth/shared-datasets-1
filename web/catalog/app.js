@@ -17,6 +17,8 @@ const state = {
   metadataLocale: "",
   featureMetadataCache: new Map(),
   featureMetadataRequests: new Map(),
+  featureMetadataSchemaCache: new Map(),
+  featureMetadataSchemaRequests: new Map(),
 };
 
 function createZoomSelectionButton() {
@@ -1421,14 +1423,20 @@ async function loadFeatureMetadataColorValues(asset, field) {
   const release = featureMetadataRelease(asset);
   const locale = state.metadataLocale || activeMetadataLocale();
   const selectedField = String(field || "").trim();
-  if (!selectedField || !assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
+  if (!assetSlug || !release) {
     return { fields: [], valuesByFeatureId: new Map() };
   }
-  const index = await featureMetadataIndex(assetSlug, release, locale);
-  const fields = featureMetadataColorFields(index);
+  if (!selectedField) {
+    return { fields: await featureMetadataSchemaFields(asset, release), valuesByFeatureId: new Map() };
+  }
+  const fields = await featureMetadataSchemaFields(asset, release);
   if (!fields.includes(selectedField)) {
     return { fields, valuesByFeatureId: new Map() };
   }
+  if (!featureMetadataCanLoad(asset, release, locale)) {
+    return { fields: [], valuesByFeatureId: new Map() };
+  }
+  const index = await featureMetadataIndex(assetSlug, release, locale);
   const valuesByFeatureId = new Map();
   for (const [featureId, item] of index.entries()) {
     const properties = item?.properties && typeof item.properties === "object" ? item.properties : {};
@@ -1443,15 +1451,55 @@ async function loadFeatureMetadataColorValues(asset, field) {
   return { fields, valuesByFeatureId };
 }
 
-function featureMetadataColorFields(index) {
-  const fields = new Set();
-  for (const item of index.values()) {
-    const properties = item?.properties && typeof item.properties === "object" ? item.properties : {};
-    for (const field of Object.keys(properties)) {
-      fields.add(field);
-    }
+async function featureMetadataSchemaFields(asset, release = featureMetadataRelease(asset)) {
+  const assetSlug = String(asset?.slug || "").trim();
+  const releaseDate = String(release || "latest").trim();
+  if (!assetSlug || !releaseDate || !featureMetadataSchemaCanLoad(asset)) {
+    return [];
   }
-  return [...fields].sort(collator.compare);
+  const key = `${assetSlug}\n${releaseDate}`;
+  if (state.featureMetadataSchemaCache.has(key)) {
+    return state.featureMetadataSchemaCache.get(key);
+  }
+  if (!state.featureMetadataSchemaRequests.has(key)) {
+    const request = downloadFeatureMetadataSchemaFields(assetSlug, releaseDate)
+      .then((fields) => {
+        state.featureMetadataSchemaCache.set(key, fields);
+        return fields;
+      })
+      .finally(() => {
+        state.featureMetadataSchemaRequests.delete(key);
+      });
+    state.featureMetadataSchemaRequests.set(key, request);
+  }
+  return state.featureMetadataSchemaRequests.get(key);
+}
+
+async function downloadFeatureMetadataSchemaFields(assetSlug, release) {
+  const reference = assetReferenceForRelease(assetSlug, release);
+  const schemaFile = releaseSchemaFileForReference(reference);
+  const downloadUrl =
+    publicFeatureMetadataSchemaUrl(reference, schemaFile) || (await privateFeatureMetadataSchemaUrl(assetSlug, release));
+  if (!downloadUrl) {
+    throw new Error("feature metadata schema is unavailable for this catalog viewer");
+  }
+  const response = await fetch(downloadUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`feature metadata schema returned HTTP ${response.status}`);
+  }
+  return featureMetadataSchemaColorFields(await response.json());
+}
+
+function featureMetadataSchemaColorFields(schema) {
+  const fields = Array.isArray(schema?.fields) ? schema.fields : [];
+  return fields
+    .filter((field) => field && typeof field === "object")
+    .filter((field) => field.projectable !== false)
+    .filter((field) => !["feature_id", "geometry_hash", "properties_hash"].includes(String(field.name || "")))
+    .filter((field) => String(field.type || "").trim() !== "JSON")
+    .map((field) => String(field.name || "").trim())
+    .filter(Boolean)
+    .sort(collator.compare);
 }
 
 function featureMetadataValueIsEmpty(value) {
@@ -1465,10 +1513,18 @@ function featureMetadataValueIsEmpty(value) {
 }
 
 async function privateFeatureMetadataSidecarUrl(assetSlug, release, locale = state.metadataLocale) {
+  return privateFeatureMetadataDownloadUrl(assetSlug, release, "metadata", locale);
+}
+
+async function privateFeatureMetadataSchemaUrl(assetSlug, release) {
+  return privateFeatureMetadataDownloadUrl(assetSlug, release, "schema");
+}
+
+async function privateFeatureMetadataDownloadUrl(assetSlug, release, format, locale = state.metadataLocale) {
   if (!catalogViewerApiAvailable()) {
     return "";
   }
-  const response = await fetch(featureMetadataApiDownloadUrl(assetSlug, release, locale), {
+  const response = await fetch(featureMetadataApiDownloadUrl(assetSlug, release, format, locale), {
     cache: "no-store",
     credentials: "include",
     headers: { Accept: "application/json" },
@@ -1484,10 +1540,10 @@ async function privateFeatureMetadataSidecarUrl(assetSlug, release, locale = sta
   return downloadUrl;
 }
 
-function featureMetadataApiDownloadUrl(assetSlug, release, locale = state.metadataLocale) {
+function featureMetadataApiDownloadUrl(assetSlug, release, format = "metadata", locale = state.metadataLocale) {
   const params = new URLSearchParams({
     slug: assetSlug,
-    format: "metadata",
+    format,
     version: release || "latest",
   });
   const normalizedLocale = normalizeMetadataLocale(locale);
@@ -1504,6 +1560,13 @@ function publicFeatureMetadataSidecarUrl(asset, sidecarFile) {
   return gsToArtifactUrl(releaseFilePath(sidecarFile));
 }
 
+function publicFeatureMetadataSchemaUrl(asset, schemaFile) {
+  if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
+    return "";
+  }
+  return gsToArtifactUrl(releaseFilePath(schemaFile));
+}
+
 function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
   if (!asset) {
     return false;
@@ -1513,6 +1576,20 @@ function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), 
     return false;
   }
   if (publicFeatureMetadataSidecarUrl(asset, sidecarFile)) {
+    return true;
+  }
+  return isRestrictedAccessTier(asset.access_tier) && catalogViewerApiAvailable();
+}
+
+function featureMetadataSchemaCanLoad(asset) {
+  if (!asset) {
+    return false;
+  }
+  const schemaFile = releaseSchemaFileForReference(asset);
+  if (!schemaFile) {
+    return false;
+  }
+  if (publicFeatureMetadataSchemaUrl(asset, schemaFile)) {
     return true;
   }
   return isRestrictedAccessTier(asset.access_tier) && catalogViewerApiAvailable();
@@ -1673,17 +1750,32 @@ function availableMetadataLocales(asset) {
 }
 
 function metadataSidecarFiles(asset) {
-  const files = Array.isArray(asset?.latest_release?.files)
-    ? asset.latest_release.files
-    : Array.isArray(asset?.files)
-      ? asset.files
-      : [];
-  return files.filter((file) => {
+  return releaseFilesForReference(asset).filter((file) => {
     const path = releaseFilePath(file);
     const role = String(file?.role || "").trim();
     const format = String(file?.format || "").trim();
     return path.endsWith(".ndjson.gz") && (role === "metadata" || format === "metadata") && path.includes(".metadata");
   });
+}
+
+function releaseFilesForReference(asset) {
+  const files = Array.isArray(asset?.latest_release?.files)
+    ? asset.latest_release.files
+    : Array.isArray(asset?.files)
+      ? asset.files
+      : [];
+  return files;
+}
+
+function releaseSchemaFileForReference(asset) {
+  return (
+    releaseFilesForReference(asset).find((file) => {
+      const path = releaseFilePath(file);
+      const role = String(file?.role || "").trim();
+      const format = String(file?.format || "").trim();
+      return path.endsWith(".schema.json") && (role === "schema" || format === "schema");
+    }) || null
+  );
 }
 
 function metadataFileLocale(file) {

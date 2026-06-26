@@ -153,15 +153,22 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "asset.files = Array.isArray(latestVersion.files) ? latestVersion.files : []",
                 "Array.isArray(asset?.latest_release?.files)",
                 "featureMetadataCache",
+                "featureMetadataSchemaCache",
                 "availableMetadataLocales",
                 "metadataLocaleCandidates",
                 'const baseLocale = normalized.split("_", 1)[0]',
                 "metadataSidecarFileForReference",
-                'format: "metadata"',
+                "releaseSchemaFileForReference",
+                'privateFeatureMetadataDownloadUrl(assetSlug, release, "metadata", locale)',
+                'privateFeatureMetadataDownloadUrl(assetSlug, release, "schema")',
                 'params.set("locale", normalizedLocale)',
                 'releaseFilePath(file).endsWith(".metadata.ndjson.gz")',
+                'path.endsWith(".schema.json")',
                 'path.endsWith(`.metadata.${normalizedLocale}.ndjson.gz`)',
                 "parseFeatureMetadataSidecar",
+                "featureMetadataSchemaColorFields",
+                "privateFeatureMetadataSchemaUrl(assetSlug, release)",
+                "publicFeatureMetadataSchemaUrl(reference, schemaFile)",
                 "DecompressionStream",
                 "item.properties",
                 "feature_id: featureId",
@@ -193,6 +200,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             ),
         )
         self.assertNotIn("querySourceLayerFeatures(context.map, source, layer).slice", map_preview)
+        self.assertNotIn("featureMetadataColorFields", app)
         self.assertNotIn("TextDecoder", app)
         self.assertNotIn(":lookup", app)
         self.assertNotIn("translation overlay", app.lower())
