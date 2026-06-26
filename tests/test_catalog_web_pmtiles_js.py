@@ -169,6 +169,23 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "featureMetadataSchemaColorFields",
                 "privateFeatureMetadataSchemaUrl(assetSlug, release)",
                 "publicFeatureMetadataSchemaUrl(reference, schemaFile)",
+                "const FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES = 5 * 1024 * 1024",
+                "featureMetadataCanLoad(asset, group.release, group.locale)",
+                "lookupFeatureMetadataFromIndex(group.ids, index)",
+                "featureMetadataLookupCanLoad(asset)",
+                "lookupFeatureMetadataViaApi(group)",
+                "featureMetadataLookupApiUrl(group.assetSlug, group.release)",
+                "emptyFeatureMetadataLookup(group.ids)",
+                "featureMetadataLookupUnavailableStatus(response.status)",
+                "return [401, 403, 404, 405, 409, 501].includes(Number(status))",
+                'method: "POST"',
+                "body: JSON.stringify({ ids: [...group.ids], include_provenance: true })",
+                'return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`',
+                "featureMetadataSidecarWithinBrowserLimit(sidecarFile)",
+                "featureMetadataSidecarSize(sidecarFile)",
+                "featureMetadataSidecarUnavailableReason(asset, locale)",
+                "return size !== null && size <= FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES",
+                "unavailable: true",
                 "DecompressionStream",
                 "item.properties",
                 "feature_id: featureId",
@@ -178,6 +195,9 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "function compactGeometryHash",
                 "loadFeatureMetadataColorValues",
                 "valuesByFeatureId.set(String(featureId), value)",
+                "onColorFieldUnavailable: (field) => clearUnavailableColorField(colorizeAsset, field)",
+                "function clearUnavailableColorField",
+                "delete state.colorFieldByReference[key]",
             ),
         )
         self.assertLess(
@@ -197,12 +217,21 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "promoteId: FEATURE_ID_PROPERTY",
                 "metadataColorExpressionForMode",
                 "featureIdForProperties",
+                "result?.unavailable",
+                "resetMetadataColorMode(context, { clearField: true })",
+                "context.onColorFieldUnavailable(field, result.unavailableReason || \"\")",
+                "function resetMetadataColorMode",
+                "context.colorField = \"\"",
             ),
         )
         self.assertNotIn("querySourceLayerFeatures(context.map, source, layer).slice", map_preview)
         self.assertNotIn("featureMetadataColorFields", app)
+        lookup_start = app.index("async function lookupFeatureMetadata(group)")
+        index_start = app.index("async function featureMetadataIndex")
+        lookup_slice = app[lookup_start:index_start]
+        self.assertLess(lookup_slice.index("featureMetadataCanLoad"), lookup_slice.index("lookupFeatureMetadataViaApi"))
+        self.assertLess(lookup_slice.index("featureMetadataIndex"), lookup_slice.index("lookupFeatureMetadataViaApi"))
         self.assertNotIn("TextDecoder", app)
-        self.assertNotIn(":lookup", app)
         self.assertNotIn("translation overlay", app.lower())
 
 

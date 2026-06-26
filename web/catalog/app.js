@@ -132,6 +132,7 @@ const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
 const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
 const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
+const FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES = 5 * 1024 * 1024;
 
 function activeMetadataLocale() {
   const params = new URLSearchParams(window.location.search);
@@ -870,6 +871,22 @@ function formatInteger(value) {
   return Number.isFinite(numeric) ? new Intl.NumberFormat("en").format(numeric) : String(value);
 }
 
+function formatBytes(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return "unknown size";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let size = numeric;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = size >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 function effectiveRowCount(asset, reference) {
   if (reference?.rows !== null && reference?.rows !== undefined && reference?.rows !== "") {
     return reference.rows;
@@ -1240,6 +1257,7 @@ async function renderPmtiles(assets) {
       selectedLayer,
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
+      onColorFieldUnavailable: (field) => clearUnavailableColorField(colorizeAsset, field),
       onColorLegendChange: renderColorLegend,
       onFeatureSelect: handleFeatureSelect,
       loadFeatureMetadataColorValues,
@@ -1329,16 +1347,75 @@ function featureLookupGroups(features) {
 
 async function lookupFeatureMetadata(group) {
   const asset = assetReferenceForRelease(group.assetSlug, group.release);
-  if (!featureMetadataCanLoad(asset, group.release, group.locale)) {
-    return new Map();
+  if (featureMetadataCanLoad(asset, group.release, group.locale)) {
+    const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
+    return lookupFeatureMetadataFromIndex(group.ids, index);
   }
-  const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
+  if (featureMetadataLookupCanLoad(asset)) {
+    return lookupFeatureMetadataViaApi(group);
+  }
+  return emptyFeatureMetadataLookup(group.ids);
+}
+
+function lookupFeatureMetadataFromIndex(ids, index) {
   const lookup = new Map();
-  for (const featureId of group.ids) {
+  for (const featureId of ids) {
     const item = index.get(featureId);
     lookup.set(featureId, item || { feature_id: featureId, found: false });
   }
   return lookup;
+}
+
+async function lookupFeatureMetadataViaApi(group) {
+  const response = await fetch(featureMetadataLookupApiUrl(group.assetSlug, group.release), {
+    method: "POST",
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ids: [...group.ids], include_provenance: true }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (featureMetadataLookupUnavailableStatus(response.status)) {
+    return emptyFeatureMetadataLookup(group.ids);
+  }
+  if (!response.ok) {
+    throw new Error(payload.error || payload.message || `feature metadata lookup returned HTTP ${response.status}`);
+  }
+  const lookup = new Map();
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  for (const item of items) {
+    const featureId = String(item?.feature_id || "").trim();
+    if (featureId) {
+      lookup.set(featureId, item);
+    }
+  }
+  for (const featureId of group.ids) {
+    if (!lookup.has(featureId)) {
+      lookup.set(featureId, { feature_id: featureId, found: false });
+    }
+  }
+  return lookup;
+}
+
+function emptyFeatureMetadataLookup(ids) {
+  const lookup = new Map();
+  for (const featureId of ids || []) {
+    lookup.set(featureId, { feature_id: featureId, found: false });
+  }
+  return lookup;
+}
+
+function featureMetadataLookupUnavailableStatus(status) {
+  return [401, 403, 404, 405, 409, 501].includes(Number(status));
+}
+
+function featureMetadataLookupApiUrl(assetSlug, release) {
+  const safeAssetSlug = encodeURIComponent(assetSlug);
+  const safeRelease = encodeURIComponent(release || "latest");
+  return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`;
 }
 
 async function featureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
@@ -1434,7 +1511,12 @@ async function loadFeatureMetadataColorValues(asset, field) {
     return { fields, valuesByFeatureId: new Map() };
   }
   if (!featureMetadataCanLoad(asset, release, locale)) {
-    return { fields: [], valuesByFeatureId: new Map() };
+    return {
+      fields,
+      valuesByFeatureId: new Map(),
+      unavailable: true,
+      unavailableReason: featureMetadataSidecarUnavailableReason(asset, locale),
+    };
   }
   const index = await featureMetadataIndex(assetSlug, release, locale);
   const valuesByFeatureId = new Map();
@@ -1575,10 +1657,44 @@ function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), 
   if (!sidecarFile) {
     return false;
   }
+  if (!featureMetadataSidecarWithinBrowserLimit(sidecarFile)) {
+    return false;
+  }
   if (publicFeatureMetadataSidecarUrl(asset, sidecarFile)) {
     return true;
   }
   return isRestrictedAccessTier(asset.access_tier) && catalogViewerApiAvailable();
+}
+
+function featureMetadataLookupCanLoad(asset) {
+  return Boolean(asset?.feature_metadata) && catalogViewerApiAvailable();
+}
+
+function featureMetadataSidecarWithinBrowserLimit(sidecarFile) {
+  const size = featureMetadataSidecarSize(sidecarFile);
+  return size !== null && size <= FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES;
+}
+
+function featureMetadataSidecarSize(sidecarFile) {
+  const size = Number(sidecarFile?.size);
+  return Number.isFinite(size) && size >= 0 ? size : null;
+}
+
+function featureMetadataSidecarUnavailableReason(asset, locale = state.metadataLocale) {
+  const sidecarFile = metadataSidecarFileForReference(asset, locale);
+  if (!sidecarFile) {
+    return "feature metadata sidecar is unavailable for this catalog viewer";
+  }
+  const size = featureMetadataSidecarSize(sidecarFile);
+  if (size === null) {
+    return "feature metadata sidecar size is unknown; browser hydration is disabled";
+  }
+  if (size > FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES) {
+    return `feature metadata sidecar is ${formatBytes(size)}; browser hydration limit is ${formatBytes(
+      FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES
+    )}`;
+  }
+  return "feature metadata sidecar is unavailable for this catalog viewer";
 }
 
 function featureMetadataSchemaCanLoad(asset) {
@@ -1933,6 +2049,19 @@ function updateColorizeFields(asset, fields) {
   if (elements.colorize.value !== previous && state.mapModule?.setColorizeField) {
     state.mapModule.setColorizeField(elements.colorize.value);
   }
+}
+
+function clearUnavailableColorField(asset, field) {
+  if (!asset) return;
+  const key = colorReferenceKey(asset);
+  const fieldName = String(field || "");
+  if (state.colorFieldByReference[key] === fieldName) {
+    delete state.colorFieldByReference[key];
+  }
+  if (elements.colorize.value === fieldName) {
+    elements.colorize.value = "";
+  }
+  clearColorLegend();
 }
 
 function renderColorizeOptions(asset, fields, options = {}) {
