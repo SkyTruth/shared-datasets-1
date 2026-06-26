@@ -179,6 +179,16 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "emptyFeatureMetadataLookup(group.ids)",
                 "featureMetadataLookupUnavailableStatus(response.status)",
                 "return [401, 403, 404, 405, 409, 501].includes(Number(status))",
+                "if (lookup) {\n      return lookup;\n    }",
+                "publicFeatureMetadataLookupCanLoad(asset, group.locale)",
+                "lookupFeatureMetadataFromPublicSidecar(group, asset)",
+                "async function lookupFeatureMetadataFromPublicSidecar",
+                "async function parseFeatureMetadataSidecarLookup",
+                "response.body.pipeThrough(new DecompressionStream(\"gzip\"))",
+                "new TextDecoder()",
+                "addFeatureMetadataLookupLine",
+                "function parseFeatureMetadataRecord",
+                "function featureMetadataItem",
                 'method: "POST"',
                 "body: JSON.stringify({ ids: [...group.ids], include_provenance: true })",
                 'return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`',
@@ -238,8 +248,8 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             lookup_slice.index("catalogViewerShouldAutoloadFeatureMetadata"),
             lookup_slice.index("lookupFeatureMetadataViaApi"),
         )
+        self.assertLess(lookup_slice.index("lookupFeatureMetadataViaApi"), lookup_slice.index("lookupFeatureMetadataFromPublicSidecar"))
         self.assertLess(lookup_slice.index("featureMetadataIndex"), lookup_slice.index("lookupFeatureMetadataViaApi"))
-        self.assertNotIn("TextDecoder", app)
         self.assertNotIn("translation overlay", app.lower())
 
 

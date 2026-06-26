@@ -125,7 +125,10 @@ setting `window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES` or a
 runs. When a sidecar is larger than the configured budget or has no declared
 size, clicked feature inspection falls back to the bounded
 `POST /v1/assets/{asset-slug}/releases/{release}:lookup` API when the viewer API
-is available, and otherwise shows the compact PMTiles feature properties.
+is available. Public static previews without that API stream the public sidecar
+only until the clicked `feature_id` values are found, without building a full
+browser-side metadata index. If neither lookup path is available, the inspector
+shows the compact PMTiles feature properties.
 Metadata-backed color fields remain discoverable from the schema, but the
 catalog viewer does not hydrate sidecars outside its budget to compute full-map
 color values; it keeps dataset coloring until a bounded value source is

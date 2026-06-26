@@ -1353,7 +1353,13 @@ async function lookupFeatureMetadata(group) {
     return lookupFeatureMetadataFromIndex(group.ids, index);
   }
   if (featureMetadataLookupCanLoad(asset)) {
-    return lookupFeatureMetadataViaApi(group);
+    const lookup = await lookupFeatureMetadataViaApi(group);
+    if (lookup) {
+      return lookup;
+    }
+  }
+  if (publicFeatureMetadataLookupCanLoad(asset, group.locale)) {
+    return lookupFeatureMetadataFromPublicSidecar(group, asset);
   }
   return emptyFeatureMetadataLookup(group.ids);
 }
@@ -1380,7 +1386,7 @@ async function lookupFeatureMetadataViaApi(group) {
   });
   const payload = await response.json().catch(() => ({}));
   if (featureMetadataLookupUnavailableStatus(response.status)) {
-    return emptyFeatureMetadataLookup(group.ids);
+    return null;
   }
   if (!response.ok) {
     throw new Error(payload.error || payload.message || `feature metadata lookup returned HTTP ${response.status}`);
@@ -1399,6 +1405,80 @@ async function lookupFeatureMetadataViaApi(group) {
     }
   }
   return lookup;
+}
+
+async function lookupFeatureMetadataFromPublicSidecar(group, asset) {
+  const sidecarFile = metadataSidecarFileForReference(asset, group.locale);
+  const downloadUrl = publicFeatureMetadataSidecarUrl(asset, sidecarFile);
+  if (!downloadUrl) {
+    return emptyFeatureMetadataLookup(group.ids);
+  }
+  const response = await fetch(downloadUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`feature metadata sidecar returned HTTP ${response.status}`);
+  }
+  return parseFeatureMetadataSidecarLookup(response, group.ids);
+}
+
+async function parseFeatureMetadataSidecarLookup(response, ids) {
+  const lookup = emptyFeatureMetadataLookup(ids);
+  const pending = new Set([...ids].map((id) => String(id || "").trim()).filter(Boolean));
+  if (!pending.size) {
+    return lookup;
+  }
+  if (!response.body || !("DecompressionStream" in window) || !("TextDecoder" in window)) {
+    throw new Error("streaming feature metadata lookup requires ReadableStream, DecompressionStream, and TextDecoder support");
+  }
+
+  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lineNumber = 0;
+  try {
+    while (pending.size) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        lineNumber += 1;
+        addFeatureMetadataLookupLine({ line, lineNumber, pending, lookup });
+        if (!pending.size) {
+          await reader.cancel().catch(() => {});
+          break;
+        }
+      }
+    }
+    const tail = buffer + decoder.decode();
+    if (pending.size && tail.trim()) {
+      addFeatureMetadataLookupLine({ line: tail, lineNumber: lineNumber + 1, pending, lookup });
+    }
+  } finally {
+    if (!pending.size) {
+      await reader.cancel().catch(() => {});
+    }
+  }
+  return lookup;
+}
+
+function addFeatureMetadataLookupLine({ line, lineNumber, pending, lookup }) {
+  if (!String(line || "").trim()) {
+    return;
+  }
+  const record = parseFeatureMetadataRecord(line, lineNumber);
+  const featureId = String(record?.feature_id || "").trim();
+  if (!pending.has(featureId)) {
+    return;
+  }
+  if (lookup.get(featureId)?.found) {
+    throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
+  }
+  lookup.set(featureId, featureMetadataItem(record, featureId));
+  pending.delete(featureId);
 }
 
 function emptyFeatureMetadataLookup(ids) {
@@ -1469,12 +1549,7 @@ function parseFeatureMetadataSidecar(text) {
     if (!line.trim()) {
       continue;
     }
-    let record;
-    try {
-      record = JSON.parse(line);
-    } catch (error) {
-      throw new Error(`feature metadata sidecar line ${index + 1} is not valid JSON`);
-    }
+    const record = parseFeatureMetadataRecord(line, index + 1);
     const featureId = String(record?.feature_id || "").trim();
     if (!featureId) {
       throw new Error(`feature metadata sidecar line ${index + 1} is missing feature_id`);
@@ -1482,18 +1557,29 @@ function parseFeatureMetadataSidecar(text) {
     if (lookup.has(featureId)) {
       throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
     }
-    const properties = record.properties && typeof record.properties === "object" ? record.properties : {};
-    const item = {
-      feature_id: featureId,
-      found: true,
-      geometry_hash: record.geometry_hash || "",
-      properties_hash: record.properties_hash || "",
-      properties,
-      provenance: record.provenance && typeof record.provenance === "object" ? record.provenance : {},
-    };
-    lookup.set(featureId, item);
+    lookup.set(featureId, featureMetadataItem(record, featureId));
   }
   return lookup;
+}
+
+function parseFeatureMetadataRecord(line, lineNumber) {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    throw new Error(`feature metadata sidecar line ${lineNumber} is not valid JSON`);
+  }
+}
+
+function featureMetadataItem(record, featureId) {
+  const properties = record.properties && typeof record.properties === "object" ? record.properties : {};
+  return {
+    feature_id: featureId,
+    found: true,
+    geometry_hash: record.geometry_hash || "",
+    properties_hash: record.properties_hash || "",
+    properties,
+    provenance: record.provenance && typeof record.provenance === "object" ? record.provenance : {},
+  };
 }
 
 async function loadFeatureMetadataColorValues(asset, field) {
@@ -1669,6 +1755,11 @@ function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMeta
 
 function featureMetadataLookupCanLoad(asset) {
   return Boolean(asset?.feature_metadata) && catalogViewerApiAvailable();
+}
+
+function publicFeatureMetadataLookupCanLoad(asset, locale = state.metadataLocale) {
+  const sidecarFile = metadataSidecarFileForReference(asset, locale);
+  return Boolean(publicFeatureMetadataSidecarUrl(asset, sidecarFile));
 }
 
 function featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile) {
