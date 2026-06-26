@@ -35,6 +35,7 @@
 |---|---|---|---|---|---|
 | [ACLED Europe and Central Asia Weekly Admin 1 Aggregated Events](acled-europe-central-asia-aggregated-weekly-admin1.md) | 430-alerts-notices | active | private | `fgb;pmtiles` | `latest/acled-europe-central-asia-aggregated-weekly-admin1.fgb` |
 | [ACLED Middle East Weekly Admin 1 Aggregated Events](acled-middle-east-aggregated-weekly-admin1.md) | 430-alerts-notices | active | private | `fgb;pmtiles` | `latest/acled-middle-east-aggregated-weekly-admin1.fgb` |
+| [UCDP Georeferenced Event Dataset Global 26.1](ucdp-ged-events.md) | 440-field-observations | active | public | `fgb;pmtiles` | `latest/ucdp-ged-events.fgb` |
 
 ## 500-conservation-ecosystems
 
