@@ -74,6 +74,7 @@ where relevant:
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
 | `feature_metadata` | Metadata sidecar, schema, manifest, and optional localized metadata sidecars for assets that publish feature-level metadata. Firestore-backed lookup is available only when serving is enabled. |
+| `colorizer_metadata` | Declared source of browser color fields: release metadata schema, PMTiles vector-layer metadata, or none. |
 
 Localized display-name consumers should resolve labels through a materialized
 locale-specific metadata sidecar such as

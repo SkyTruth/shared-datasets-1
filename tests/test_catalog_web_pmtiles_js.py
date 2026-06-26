@@ -237,6 +237,11 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "context.onColorFieldUnavailable(field, result.unavailableReason || \"\")",
                 "function resetMetadataColorMode",
                 "context.colorField = \"\"",
+                "asset?.colorizer_metadata?.source",
+                'source === "metadata_sidecar_schema"',
+                'source === "pmtiles_vector_layers"',
+                'source === "none"',
+                'fields: colorizerSource === "pmtiles_vector_layers" ? fieldNamesFromMetadata(layer?.fields) : []',
             ),
         )
         self.assertNotIn("querySourceLayerFeatures(context.map, source, layer).slice", map_preview)

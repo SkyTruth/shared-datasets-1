@@ -478,6 +478,11 @@ class PublishingConciergeTests(unittest.TestCase):
                             {
                                 "slug": "example",
                                 "feature_metadata": {"storage": "metadata_sidecar_v1"},
+                                "colorizer_metadata": {
+                                    "source": "metadata_sidecar_schema",
+                                    "field_source": "feature_metadata.schema_file",
+                                    "feature_id_property": "feature_id",
+                                },
                                 "files": [
                                     {
                                         "path": (
@@ -494,6 +499,41 @@ class PublishingConciergeTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(publishing_concierge.WorkflowError, "missing runtime feature metadata"):
+                publishing_concierge.validate_catalog_web(
+                    state,
+                    {
+                        "built": True,
+                        "catalog_json_path": str(catalog_json),
+                        "content_type": "application/json",
+                        "cache_control": publishing_concierge.no_cache_control(),
+                    },
+                )
+
+    def test_catalog_web_requires_colorizer_metadata_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            catalog_json = root / "catalog-web/catalog.json"
+            catalog_json.parent.mkdir(parents=True)
+            feature_files = [
+                {"path": uri}
+                for uri in publishing_concierge.expected_latest_feature_metadata_uris(state).values()
+            ]
+            catalog_json.write_text(
+                json.dumps(
+                    {
+                        "assets": [
+                            {
+                                "slug": "example",
+                                "feature_metadata": {"storage": "metadata_sidecar_v1"},
+                                "files": feature_files,
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with self.assertRaisesRegex(publishing_concierge.WorkflowError, "missing colorizer_metadata"):
                 publishing_concierge.validate_catalog_web(
                     state,
                     {
@@ -521,6 +561,11 @@ class PublishingConciergeTests(unittest.TestCase):
                             {
                                 "slug": "example",
                                 "feature_metadata": {"storage": "metadata_sidecar_v1"},
+                                "colorizer_metadata": {
+                                    "source": "metadata_sidecar_schema",
+                                    "field_source": "feature_metadata.schema_file",
+                                    "feature_id_property": "feature_id",
+                                },
                                 "files": feature_files,
                             }
                         ]

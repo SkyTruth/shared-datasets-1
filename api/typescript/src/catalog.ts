@@ -59,6 +59,13 @@ export type SharedDatasetsCatalogAsset = {
   access_tier?: string | null;
   available_formats: string[];
   citation?: string | null;
+  colorizer_metadata?: {
+    schema_version?: number;
+    source?: 'metadata_sidecar_schema' | 'pmtiles_vector_layers' | 'none' | string;
+    field_source?: string;
+    schema_file?: string;
+    feature_id_property?: string;
+  } | null;
   consumer_guidance?: string | null;
   description?: string | null;
   docs_url?: string | null;

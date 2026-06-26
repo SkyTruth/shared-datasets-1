@@ -34,6 +34,12 @@ Rules:
 - Release-oriented PMTiles should be intentionally lightweight: geometry plus
   stable `feature_id` properties only. Full attributes, hashes, and display
   labels belong in the FGB and metadata sidecar/API.
+- The generated web `catalog.json` declares `colorizer_metadata` for every
+  asset. Release-oriented feature metadata assets use
+  `source: metadata_sidecar_schema`, ordinary PMTiles assets use
+  `source: pmtiles_vector_layers`, and non-PMTiles assets use `source: none`.
+  Do not rely on browser-side tile sampling or whole-sidecar hydration to
+  discover color fields.
 - Shared vector `.pmtiles` display artifacts should use the repo vector
   helper's auto maxzoom policy: generate the canonical FGB first, profile the
   FGB, then choose maxzoom from source scale/resolution metadata and measured

@@ -262,7 +262,7 @@ class CatalogSiteTests(unittest.TestCase):
                         "update_cadence": "manual",
                         "canonical_path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
                         "canonical_format": "fgb",
-                        "available_formats": "fgb",
+                        "available_formats": "fgb;pmtiles",
                         "metadata_paths": "README.md",
                         "source": "Example source",
                         "license": "Example license",
@@ -289,6 +289,83 @@ class CatalogSiteTests(unittest.TestCase):
         self.assertEqual(files[f"{expected_prefix}/example-asset.metadata.ndjson.gz"]["role"], "metadata")
         self.assertEqual(files[f"{expected_prefix}/example-asset.schema.json"]["format"], "schema")
         self.assertEqual(files[f"{expected_prefix}/example-asset.manifest.json"]["format"], "manifest")
+        self.assertEqual(
+            asset["colorizer_metadata"],
+            {
+                "schema_version": 1,
+                "source": "metadata_sidecar_schema",
+                "field_source": "feature_metadata.schema_file",
+                "schema_file": "latest/example-asset.schema.json",
+                "feature_id_property": "feature_id",
+            },
+        )
+
+    def test_pmtiles_asset_without_feature_metadata_uses_vector_layer_colorizer_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs_dir = root / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            doc = DOC.replace(
+                "available_formats:\n- fgb\n",
+                "available_formats:\n- fgb\n- pmtiles\n",
+            )
+            doc = doc.replace(
+                "feature_metadata:\n"
+                "  storage: metadata_sidecar_v1\n"
+                "  feature_id_column: feature_id\n"
+                "  geometry_hash_column: geometry_hash\n"
+                "  properties_hash_column: properties_hash\n"
+                "  sidecar_file: latest/example-asset.metadata.ndjson.gz\n"
+                "  schema_file: latest/example-asset.schema.json\n"
+                "  manifest_file: latest/example-asset.manifest.json\n"
+                "  provenance_default: true\n",
+                "",
+            )
+            (docs_dir / "example-asset.md").write_text(doc)
+            categories_path = root / "categories.yaml"
+            self._write_categories(categories_path)
+            catalog_path = root / "catalog.csv"
+            with catalog_path.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=catalog_site.REQUIRED_FIELDS)
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "asset_slug": "example-asset",
+                        "title": "Example Asset",
+                        "category": "100-geographic-reference",
+                        "subcategory": "110-boundaries",
+                        "status": "active",
+                        "access_tier": "public",
+                        "owner": "SkyTruth",
+                        "update_cadence": "manual",
+                        "canonical_path": "gs://example-bucket/100-geographic-reference/110-boundaries/example-asset/latest/example-asset.fgb",
+                        "canonical_format": "fgb",
+                        "available_formats": "fgb;pmtiles",
+                        "metadata_paths": "README.md",
+                        "source": "Example source",
+                        "license": "Example license",
+                        "citation": "Example citation",
+                    }
+                )
+
+            payload = catalog_site.build_catalog_payload(
+                catalog_path=catalog_path,
+                categories_path=categories_path,
+                docs_dir=docs_dir,
+                bucket="example-bucket",
+                site_prefix="_catalog/web",
+                release_index_dir=None,
+                generated_at="2026-05-01T00:00:00Z",
+            )
+
+        self.assertEqual(
+            payload["assets"][0]["colorizer_metadata"],
+            {
+                "schema_version": 1,
+                "source": "pmtiles_vector_layers",
+                "field_source": "pmtiles.vector_layers.fields",
+            },
+        )
 
     def test_release_index_only_preview_asset_requires_explicit_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -454,6 +531,15 @@ class CatalogSiteTests(unittest.TestCase):
         )
 
         self.assertGreater(len(payload["assets"]), 0)
+        for asset in payload["assets"]:
+            with self.subTest(slug=asset["slug"]):
+                self.assertIn("colorizer_metadata", asset)
+                if asset["has_pmtiles"] and asset.get("feature_metadata"):
+                    self.assertEqual(asset["colorizer_metadata"]["source"], "metadata_sidecar_schema")
+                elif asset["has_pmtiles"]:
+                    self.assertEqual(asset["colorizer_metadata"]["source"], "pmtiles_vector_layers")
+                else:
+                    self.assertEqual(asset["colorizer_metadata"]["source"], "none")
 
 
 if __name__ == "__main__":

@@ -1783,6 +1783,15 @@ def validate_catalog_runtime_feature_metadata(catalog_json: Path, state: dict[st
         raise WorkflowError(f"{catalog_json}: catalog asset is missing feature_metadata")
     if feature_metadata.get("storage") != "metadata_sidecar_v1":
         raise WorkflowError(f"{catalog_json}: catalog asset feature_metadata.storage must be metadata_sidecar_v1")
+    colorizer_metadata = asset.get("colorizer_metadata")
+    if not isinstance(colorizer_metadata, dict):
+        raise WorkflowError(f"{catalog_json}: catalog asset is missing colorizer_metadata")
+    if colorizer_metadata.get("source") != "metadata_sidecar_schema":
+        raise WorkflowError(f"{catalog_json}: catalog asset colorizer_metadata.source must be metadata_sidecar_schema")
+    if colorizer_metadata.get("field_source") != "feature_metadata.schema_file":
+        raise WorkflowError(f"{catalog_json}: catalog asset colorizer_metadata.field_source must be feature_metadata.schema_file")
+    if colorizer_metadata.get("feature_id_property") != "feature_id":
+        raise WorkflowError(f"{catalog_json}: catalog asset colorizer_metadata.feature_id_property must be feature_id")
     runtime_paths = runtime_catalog_file_paths(asset, str(plan.get("release_date") or ""))
     expected_uris = expected_latest_feature_metadata_uris(state)
     missing = sorted(uri for uri in expected_uris.values() if uri not in runtime_paths)
