@@ -49,6 +49,18 @@ files:
   format: fgb
   role: canonical
   purpose: Canonical vector dataset
+- path: latest/example-asset.metadata.ndjson.gz
+  format: ndjson_gzip
+  role: metadata
+  purpose: Canonical feature metadata sidecar keyed by feature_id
+- path: latest/example-asset.schema.json
+  format: json
+  role: metadata
+  purpose: Release feature metadata schema for field projection
+- path: latest/example-asset.manifest.json
+  format: json
+  role: metadata
+  purpose: Release manifest tying source inputs, artifacts, checksums, IDs, validation, and index-load policy
 ---
 # Example Asset
 

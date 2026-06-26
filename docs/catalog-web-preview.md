@@ -109,6 +109,31 @@ sidecar, schema, and manifest declared by `feature_metadata` as top-level
 `files[]` entries so local previews and first-upload PR catalogs can hydrate
 clicked PMTiles features by `feature_id`. Once a release index is available, the
 release-index file list takes precedence.
+The PMTiles colorizer discovers metadata-backed fields from the release
+`{asset-slug}.schema.json` artifact, not by scanning the full metadata sidecar
+or loaded vector-tile features. Public schema files resolve through the same
+artifact CDN path as public sidecars. The authenticated catalog viewer can sign
+restricted schema files through `/api/download-url?format=schema`. This keeps
+colorizer field discovery bounded to a small JSON contract.
+
+Whole-sidecar hydration is a consumer policy decision, not a producer-granted
+permission. Release file entries expose enough information, including sidecar
+size when known, for each consumer to choose a strategy. The catalog viewer's
+browser policy follows a 5 MiB default autoload budget and can be configured by
+setting `window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES` or a
+`shared-datasets-metadata-sidecar-autoload-max-bytes` meta tag before `app.js`
+runs. When a sidecar is larger than the configured budget or has no declared
+size, clicked feature inspection falls back to the bounded
+`POST /v1/assets/{asset-slug}/releases/{release}:lookup` API when the viewer API
+is available. Public static previews without that API stream the public sidecar
+only until the clicked `feature_id` values are found, without building a full
+browser-side metadata index. If neither lookup path is available, the inspector
+shows the compact PMTiles feature properties.
+Metadata-backed color fields remain discoverable from the schema, but the
+catalog viewer does not hydrate sidecars outside its budget to compute full-map
+color values; it keeps dataset coloring until a bounded value source is
+available. Other consumers may choose different thresholds or always use the
+sidecar/API path that best fits their runtime.
 `feature_identity` records the policy and counts for a native
 `feature_id` feature property when an asset needs generated group IDs or a
 last-resort row address. These fields are additive so existing CSV and JSON

@@ -59,10 +59,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "metadataLanguage.addEventListener(\"change\"",
                 "renderFgbDownload(asset, reference)",
                 "renderMetadataSidecarPath(selectedMetadataLanguageAsset())",
-                "warmFeatureMetadataCaches(selectedMapReferences())",
                 "refreshFeatureInspectorMetadata()",
             ),
         )
+        self.assertNotIn("warmFeatureMetadataCaches", app)
         self.assertIn(".metadata-language-control", styles)
 
     def test_private_pmtiles_and_fgb_downloads_use_server_authorized_urls(self):
@@ -142,7 +142,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "function gsToArtifactUrl",
                 "publicFeatureMetadataSidecarUrl(reference, sidecarFile)",
                 "privateFeatureMetadataSidecarUrl(assetSlug, release, locale)",
-                "function featureMetadataCanLoad",
+                "function catalogViewerShouldAutoloadFeatureMetadata",
                 "function catalogViewerApiAvailable",
                 "Restricted feature metadata requires an authorized catalog viewer or consuming application backend.",
                 "files: releaseFiles(files)",
@@ -153,15 +153,54 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "asset.files = Array.isArray(latestVersion.files) ? latestVersion.files : []",
                 "Array.isArray(asset?.latest_release?.files)",
                 "featureMetadataCache",
+                "featureMetadataSchemaCache",
                 "availableMetadataLocales",
                 "metadataLocaleCandidates",
                 'const baseLocale = normalized.split("_", 1)[0]',
                 "metadataSidecarFileForReference",
-                'format: "metadata"',
+                "releaseSchemaFileForReference",
+                'privateFeatureMetadataDownloadUrl(assetSlug, release, "metadata", locale)',
+                'privateFeatureMetadataDownloadUrl(assetSlug, release, "schema")',
                 'params.set("locale", normalizedLocale)',
                 'releaseFilePath(file).endsWith(".metadata.ndjson.gz")',
+                'path.endsWith(".schema.json")',
                 'path.endsWith(`.metadata.${normalizedLocale}.ndjson.gz`)',
                 "parseFeatureMetadataSidecar",
+                "featureMetadataSchemaColorFields",
+                "privateFeatureMetadataSchemaUrl(assetSlug, release)",
+                "publicFeatureMetadataSchemaUrl(reference, schemaFile)",
+                "const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024",
+                'const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes"',
+                "catalogViewerShouldAutoloadFeatureMetadata(asset, group.release, group.locale)",
+                "lookupFeatureMetadataFromIndex(group.ids, index)",
+                "featureMetadataLookupCanLoad(asset)",
+                "lookupFeatureMetadataViaApi(group)",
+                "featureMetadataLookupApiUrl(group.assetSlug, group.release)",
+                "emptyFeatureMetadataLookup(group.ids)",
+                "featureMetadataLookupUnavailableStatus(response.status)",
+                "return [401, 403, 404, 405, 409, 501].includes(Number(status))",
+                "if (lookup) {\n      return lookup;\n    }",
+                "publicFeatureMetadataLookupCanLoad(asset, group.locale)",
+                "lookupFeatureMetadataFromPublicSidecar(group, asset)",
+                "async function lookupFeatureMetadataFromPublicSidecar",
+                "async function parseFeatureMetadataSidecarLookup",
+                "response.body.pipeThrough(new DecompressionStream(\"gzip\"))",
+                "new TextDecoder()",
+                "addFeatureMetadataLookupLine",
+                "function parseFeatureMetadataRecord",
+                "function featureMetadataItem",
+                'method: "POST"',
+                "body: JSON.stringify({ ids: [...group.ids], include_provenance: true })",
+                'return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`',
+                "featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile)",
+                "featureMetadataSidecarSize(sidecarFile)",
+                "featureMetadataSidecarAutoloadUnavailableReason(asset, locale)",
+                "return size !== null && size <= catalogViewerMetadataSidecarAutoloadMaxBytes()",
+                "function catalogViewerMetadataSidecarAutoloadMaxBytes",
+                "function configuredCatalogViewerMetadataSidecarAutoloadMaxBytes",
+                "window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES",
+                'document.querySelector(`meta[name="${CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META}"]`)',
+                "unavailable: true",
                 "DecompressionStream",
                 "item.properties",
                 "feature_id: featureId",
@@ -171,7 +210,14 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "function compactGeometryHash",
                 "loadFeatureMetadataColorValues",
                 "valuesByFeatureId.set(String(featureId), value)",
+                "onColorFieldUnavailable: (field) => clearUnavailableColorField(colorizeAsset, field)",
+                "function clearUnavailableColorField",
+                "delete state.colorFieldByReference[key]",
             ),
+        )
+        self.assertLess(
+            app.index('const selectedField = String(field || "").trim()'),
+            app.index("featureMetadataIndex(assetSlug, release, locale)"),
         )
         assert_contains_all(
             self,
@@ -186,10 +232,24 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "promoteId: FEATURE_ID_PROPERTY",
                 "metadataColorExpressionForMode",
                 "featureIdForProperties",
+                "result?.unavailable",
+                "resetMetadataColorMode(context, { clearField: true })",
+                "context.onColorFieldUnavailable(field, result.unavailableReason || \"\")",
+                "function resetMetadataColorMode",
+                "context.colorField = \"\"",
             ),
         )
-        self.assertNotIn("TextDecoder", app)
-        self.assertNotIn(":lookup", app)
+        self.assertNotIn("querySourceLayerFeatures(context.map, source, layer).slice", map_preview)
+        self.assertNotIn("featureMetadataColorFields", app)
+        lookup_start = app.index("async function lookupFeatureMetadata(group)")
+        index_start = app.index("async function featureMetadataIndex")
+        lookup_slice = app[lookup_start:index_start]
+        self.assertLess(
+            lookup_slice.index("catalogViewerShouldAutoloadFeatureMetadata"),
+            lookup_slice.index("lookupFeatureMetadataViaApi"),
+        )
+        self.assertLess(lookup_slice.index("lookupFeatureMetadataViaApi"), lookup_slice.index("lookupFeatureMetadataFromPublicSidecar"))
+        self.assertLess(lookup_slice.index("featureMetadataIndex"), lookup_slice.index("lookupFeatureMetadataViaApi"))
         self.assertNotIn("translation overlay", app.lower())
 
 

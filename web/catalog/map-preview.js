@@ -75,6 +75,7 @@ export async function renderMapPreview({
   selectedLayer = "",
   onLayerOptionsChange = () => {},
   onColorFieldsChange = () => {},
+  onColorFieldUnavailable = () => {},
   onColorLegendChange = () => {},
   onFeatureSelect = () => {},
   loadFeatureMetadataColorValues = null,
@@ -194,6 +195,7 @@ export async function renderMapPreview({
     metadataColorValuesByFeatureId: new Map(),
     metadataColorValueSource: typeof loadFeatureMetadataColorValues === "function" ? loadFeatureMetadataColorValues : null,
     onColorFieldsChange: singleDataset ? onColorFieldsChange : () => {},
+    onColorFieldUnavailable: singleDataset ? onColorFieldUnavailable : () => {},
     onColorLegendChange: singleDataset ? onColorLegendChange : () => {},
   };
   refreshAvailableFields(activeColorContext);
@@ -818,11 +820,6 @@ function refreshAvailableFields(context) {
       for (const field of layer.fields) {
         fields.add(field);
       }
-      for (const feature of querySourceLayerFeatures(context.map, source, layer).slice(0, SAMPLE_LIMIT)) {
-        for (const field of Object.keys(feature.properties || {})) {
-          fields.add(field);
-        }
-      }
     }
   }
   context.tileColorFields = uniqueStrings([...fields]);
@@ -922,6 +919,11 @@ function refreshMetadataColorSample(context, field) {
       context.metadataColorFields = normalizedMetadataFields(result);
       context.metadataColorFieldsLoaded = true;
       notifyAvailableFields(context);
+      if (result?.unavailable) {
+        resetMetadataColorMode(context, { clearField: true });
+        context.onColorFieldUnavailable(field, result.unavailableReason || "");
+        return;
+      }
       const valuesByFeatureId = normalizedMetadataValues(result);
       context.metadataColorField = field;
       context.metadataColorValuesLoaded = true;
@@ -933,13 +935,23 @@ function refreshMetadataColorSample(context, field) {
         return;
       }
       console.warn(`Could not load feature metadata color field ${field}:`, error);
-      context.colorMode = { type: "dataset" };
-      context.colorSignature = "";
-      context.focusedLegendValue = "";
-      applyDatasetColors(context);
-      applyFocusFilters(context);
-      notifyColorLegend(context);
+      resetMetadataColorMode(context);
     });
+}
+
+function resetMetadataColorMode(context, options = {}) {
+  if (options.clearField) {
+    context.colorField = "";
+    context.metadataColorField = "";
+    context.metadataColorValuesLoaded = false;
+    context.metadataColorValuesByFeatureId = new Map();
+  }
+  context.colorMode = { type: "dataset" };
+  context.colorSignature = "";
+  context.focusedLegendValue = "";
+  applyDatasetColors(context);
+  applyFocusFilters(context);
+  notifyColorLegend(context);
 }
 
 function applyMetadataColorValues(context, field, valuesByFeatureId) {
