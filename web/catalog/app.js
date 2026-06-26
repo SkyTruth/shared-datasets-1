@@ -375,7 +375,6 @@ function wireEvents() {
   elements.metadataLanguage.addEventListener("change", () => {
     state.metadataLocale = normalizeMetadataLocale(elements.metadataLanguage.value);
     renderMetadataSidecarPath(selectedMetadataLanguageAsset());
-    warmFeatureMetadataCaches(selectedMapReferences());
     state.mapModule?.refreshColorizeMetadata?.();
     refreshFeatureInspectorMetadata();
   });
@@ -1224,7 +1223,6 @@ async function renderPmtiles(assets) {
   elements.mapStatus.textContent = mapAssets.length === 1 ? "Loading map..." : `Loading ${mapAssets.length} maps...`;
   clearColorLegend();
   clearFeatureInspector();
-  warmFeatureMetadataCaches(rawMapAssets);
 
   try {
     if (!state.mapModule) {
@@ -1341,26 +1339,6 @@ async function lookupFeatureMetadata(group) {
   return lookup;
 }
 
-function warmFeatureMetadataCaches(assets) {
-  const seen = new Set();
-  const locale = state.metadataLocale || activeMetadataLocale();
-  for (const asset of assets) {
-    const assetSlug = String(asset?.slug || "").trim();
-    const release = featureMetadataRelease(asset);
-    if (!assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
-      continue;
-    }
-    const key = featureMetadataCacheKey(assetSlug, release, locale);
-    if (seen.has(key) || state.featureMetadataCache.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    featureMetadataIndex(assetSlug, release, locale).catch((error) => {
-      console.warn(`Could not warm feature metadata cache for ${assetSlug}:`, error);
-    });
-  }
-}
-
 async function featureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
   const key = featureMetadataCacheKey(assetSlug, release, locale);
   if (state.featureMetadataCache.has(key)) {
@@ -1442,13 +1420,13 @@ async function loadFeatureMetadataColorValues(asset, field) {
   const assetSlug = String(asset?.slug || "").trim();
   const release = featureMetadataRelease(asset);
   const locale = state.metadataLocale || activeMetadataLocale();
-  if (!assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
+  const selectedField = String(field || "").trim();
+  if (!selectedField || !assetSlug || !release || !featureMetadataCanLoad(asset, release, locale)) {
     return { fields: [], valuesByFeatureId: new Map() };
   }
   const index = await featureMetadataIndex(assetSlug, release, locale);
   const fields = featureMetadataColorFields(index);
-  const selectedField = String(field || "").trim();
-  if (!selectedField || !fields.includes(selectedField)) {
+  if (!fields.includes(selectedField)) {
     return { fields, valuesByFeatureId: new Map() };
   }
   const valuesByFeatureId = new Map();

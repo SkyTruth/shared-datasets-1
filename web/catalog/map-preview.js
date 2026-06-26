@@ -818,11 +818,6 @@ function refreshAvailableFields(context) {
       for (const field of layer.fields) {
         fields.add(field);
       }
-      for (const feature of querySourceLayerFeatures(context.map, source, layer).slice(0, SAMPLE_LIMIT)) {
-        for (const field of Object.keys(feature.properties || {})) {
-          fields.add(field);
-        }
-      }
     }
   }
   context.tileColorFields = uniqueStrings([...fields]);

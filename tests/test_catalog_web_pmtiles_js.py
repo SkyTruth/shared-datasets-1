@@ -59,10 +59,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "metadataLanguage.addEventListener(\"change\"",
                 "renderFgbDownload(asset, reference)",
                 "renderMetadataSidecarPath(selectedMetadataLanguageAsset())",
-                "warmFeatureMetadataCaches(selectedMapReferences())",
                 "refreshFeatureInspectorMetadata()",
             ),
         )
+        self.assertNotIn("warmFeatureMetadataCaches", app)
         self.assertIn(".metadata-language-control", styles)
 
     def test_private_pmtiles_and_fgb_downloads_use_server_authorized_urls(self):
@@ -173,6 +173,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "valuesByFeatureId.set(String(featureId), value)",
             ),
         )
+        self.assertLess(
+            app.index('const selectedField = String(field || "").trim()'),
+            app.index("featureMetadataIndex(assetSlug, release, locale)"),
+        )
         assert_contains_all(
             self,
             map_preview,
@@ -188,6 +192,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "featureIdForProperties",
             ),
         )
+        self.assertNotIn("querySourceLayerFeatures(context.map, source, layer).slice", map_preview)
         self.assertNotIn("TextDecoder", app)
         self.assertNotIn(":lookup", app)
         self.assertNotIn("translation overlay", app.lower())
