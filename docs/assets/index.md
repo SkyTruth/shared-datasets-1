@@ -6,6 +6,7 @@
 
 | Asset | Subcategory | Status | Access tier | Formats | Canonical file |
 |---|---|---|---|---|---|
+| [Large Scale International Boundaries](lsib.md) | 110-boundaries | active | public | `fgb;pmtiles` | `latest/lsib.fgb` |
 | [Natural Earth 10m Land](natural-earth-10m-land.md) | 110-boundaries | active | public | `fgb;pmtiles` | `latest/natural-earth-10m-land.fgb` |
 | [IHO World Seas](iho-world-seas.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/iho-world-seas.fgb` |
 | [Marine Regions EEZs and High Seas](marine-regions-eez.md) | 120-marine-boundaries | active | public | `fgb;pmtiles` | `latest/marine-regions-eez.fgb` |
