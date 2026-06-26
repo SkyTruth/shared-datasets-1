@@ -653,13 +653,18 @@ def doc_latest_files(
             ("schema_file", "schema", "metadata"),
             ("manifest_file", "manifest", "metadata"),
         )
-        existing_paths = {entry["path"] for entry in normalized}
+        entries_by_path = {entry["path"]: entry for entry in normalized}
         for key, format_name, role in required:
             relative_path = str(feature_metadata[key]).strip()
             full_path = f"gs://{bucket}/{root_prefix}/{relative_path}"
-            if full_path not in existing_paths:
-                normalized.append({"path": full_path, "format": format_name, "role": role})
-                existing_paths.add(full_path)
+            existing_entry = entries_by_path.get(full_path)
+            if existing_entry is not None:
+                existing_entry["format"] = format_name
+                existing_entry["role"] = role
+            else:
+                new_entry = {"path": full_path, "format": format_name, "role": role}
+                normalized.append(new_entry)
+                entries_by_path[full_path] = new_entry
 
     return normalized
 
