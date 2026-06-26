@@ -96,6 +96,7 @@ class CatalogAsset:
     canonical_format: str
     available_formats: list[str]
     metadata_paths: list[str]
+    files: list[dict[str, Any]]
     feature_identity: dict[str, Any] | None
     has_pmtiles: bool
     has_geojson: bool
@@ -612,6 +613,57 @@ def release_files(files: list[Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def doc_latest_files(
+    metadata: dict[str, Any],
+    *,
+    canonical_path: str,
+    feature_metadata: dict[str, Any] | None,
+    doc_path: Path,
+) -> list[dict[str, Any]]:
+    bucket, object_name = split_gs_uri(canonical_path)
+    root_prefix = object_name.rsplit("/latest/", 1)[0]
+    if not root_prefix or root_prefix == object_name:
+        raise CatalogSiteError(f"{doc_path}: canonical_file must be under latest/")
+
+    raw_files = metadata.get("files") or []
+    if not isinstance(raw_files, list):
+        raise CatalogSiteError(f"{doc_path}: files must be a list")
+
+    normalized: list[dict[str, Any]] = []
+    for file_entry in raw_files:
+        if not isinstance(file_entry, dict):
+            raise CatalogSiteError(f"{doc_path}: files entries must be mappings")
+        path = str(file_entry.get("path") or "").strip()
+        if path.startswith("gs://"):
+            file_bucket, file_object = split_gs_uri(path)
+            if file_bucket != bucket or not file_object.startswith(f"{root_prefix}/latest/"):
+                continue
+            full_path = path
+        elif path.startswith("latest/"):
+            full_path = f"gs://{bucket}/{root_prefix}/{path}"
+        else:
+            continue
+        normalized_entry = {str(key): value for key, value in file_entry.items() if str(key)}
+        normalized_entry["path"] = full_path
+        normalized.append(normalized_entry)
+
+    if feature_metadata:
+        required = (
+            ("sidecar_file", "metadata", "metadata"),
+            ("schema_file", "schema", "metadata"),
+            ("manifest_file", "manifest", "metadata"),
+        )
+        existing_paths = {entry["path"] for entry in normalized}
+        for key, format_name, role in required:
+            relative_path = str(feature_metadata[key]).strip()
+            full_path = f"gs://{bucket}/{root_prefix}/{relative_path}"
+            if full_path not in existing_paths:
+                normalized.append({"path": full_path, "format": format_name, "role": role})
+                existing_paths.add(full_path)
+
+    return normalized
+
+
 def basename(path: str) -> str:
     return next(reversed([part for part in path.split("/") if part]), "")
 
@@ -888,6 +940,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
     if doc_metadata.get("feature_metadata") not in (None, "") and doc_metadata.get("feature_identity") in (None, ""):
         raise CatalogSiteError(f"{doc_path}: feature_identity is required when feature_metadata is declared")
     feature_identity = optional_feature_identity(doc_metadata, doc_path=doc_path)
+    feature_metadata = optional_feature_metadata(doc_metadata, asset_slug=slug, doc_path=doc_path)
     return CatalogAsset(
         slug=slug,
         title=row["title"].strip(),
@@ -905,6 +958,12 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         canonical_format=canonical_format,
         available_formats=formats,
         metadata_paths=metadata_paths,
+        files=doc_latest_files(
+            doc_metadata,
+            canonical_path=canonical_path,
+            feature_metadata=feature_metadata,
+            doc_path=doc_path,
+        ),
         feature_identity=feature_identity,
         has_pmtiles="pmtiles" in formats,
         has_geojson="geojson" in formats,
@@ -922,7 +981,7 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         row_count=row_count,
         data_profile=optional_data_profile(doc_metadata, row_count=row_count, doc_path=doc_path),
         search_fields=optional_search_fields(doc_metadata, row_count=row_count, doc_path=doc_path),
-        feature_metadata=optional_feature_metadata(doc_metadata, asset_slug=slug, doc_path=doc_path),
+        feature_metadata=feature_metadata,
         source_url=optional_text(doc_metadata, "source_url", doc_path=doc_path),
         public_url=gs_to_https(canonical_path),
         pmtiles_path=pmtiles_path,
@@ -1000,6 +1059,7 @@ def synthetic_asset_from_release_index(release_index: dict[str, Any]) -> Catalog
         canonical_format=canonical_format,
         available_formats=latest_version.available_formats or available_formats,
         metadata_paths=metadata_paths,
+        files=latest_version.files,
         feature_identity=None,
         has_pmtiles=bool(latest_version.pmtiles_path),
         has_geojson="geojson" in available_formats,
@@ -1060,6 +1120,7 @@ def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | 
         asset,
         canonical_path=latest_version.canonical_path,
         available_formats=formats,
+        files=latest_version.files,
         has_pmtiles="pmtiles" in formats,
         has_geojson="geojson" in formats,
         has_csv="csv" in formats,

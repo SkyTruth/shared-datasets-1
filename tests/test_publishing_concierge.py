@@ -81,6 +81,99 @@ class PublishingConciergeTests(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         return Path(payload["state_file"])
 
+    def _release_metadata_state(self, root: Path) -> dict:
+        return {
+            "bucket": publishing_concierge.DEFAULT_BUCKET,
+            "proposal_id": "pr-123",
+            "plan": {
+                "asset_slug": "example",
+                "title": "Example",
+                "category": "300-infrastructure-industrial",
+                "subcategory": "330-offshore-platforms",
+                "canonical_format": "fgb",
+                "available_formats": ["fgb", "pmtiles"],
+                "asset_root": "300-infrastructure-industrial/330-offshore-platforms/example",
+                "canonical_path": (
+                    "gs://skytruth-shared-datasets-1/"
+                    "300-infrastructure-industrial/330-offshore-platforms/example/latest/example.fgb"
+                ),
+                "asset_doc_path": str(root / "docs/assets/example.md"),
+                "release_date": "2026-05-01",
+            },
+        }
+
+    def _release_metadata_doc(self, root: Path, *, include_feature_files: bool = True) -> Path:
+        doc = root / "docs/assets/example.md"
+        doc.parent.mkdir(parents=True)
+        files = [
+            {
+                "path": "latest/example.fgb",
+                "format": "fgb",
+                "role": "canonical",
+                "purpose": "Canonical dataset",
+            },
+            {
+                "path": "latest/example.pmtiles",
+                "format": "pmtiles",
+                "role": "companion",
+                "purpose": "Web map tiles",
+            },
+        ]
+        if include_feature_files:
+            files.extend(
+                [
+                    {
+                        "path": "latest/example.metadata.ndjson.gz",
+                        "format": "ndjson_gzip",
+                        "role": "metadata",
+                        "purpose": "Canonical feature metadata sidecar keyed by feature_id",
+                    },
+                    {
+                        "path": "latest/example.schema.json",
+                        "format": "json",
+                        "role": "metadata",
+                        "purpose": "Feature metadata schema",
+                    },
+                    {
+                        "path": "latest/example.manifest.json",
+                        "format": "json",
+                        "role": "metadata",
+                        "purpose": "Feature metadata release manifest",
+                    },
+                ]
+            )
+        metadata = {
+            "asset_slug": "example",
+            "title": "Example",
+            "category": "300-infrastructure-industrial",
+            "subcategory": "330-offshore-platforms",
+            "status": "active",
+            "access_tier": "private",
+            "owner": "SkyTruth",
+            "update_cadence": "manual",
+            "canonical_format": "fgb",
+            "canonical_file": "latest/example.fgb",
+            "available_formats": ["fgb", "pmtiles"],
+            "metadata_paths": ["README.md"],
+            "source": "Example source",
+            "license": "Example license",
+            "citation": "Example citation",
+            "feature_metadata": {
+                "storage": "metadata_sidecar_v1",
+                "index_backend": "firestore",
+                "feature_id_column": "feature_id",
+                "geometry_hash_column": "geometry_hash",
+                "properties_hash_column": "properties_hash",
+                "sidecar_file": "latest/example.metadata.ndjson.gz",
+                "schema_file": "latest/example.schema.json",
+                "manifest_file": "latest/example.manifest.json",
+                "provenance_default": True,
+            },
+            "files": files,
+        }
+        doc.write_text("---\n" + publishing_concierge.yaml.safe_dump(metadata, sort_keys=False) + "---\n\n# Example\n")
+        return doc
+
     def _complete_preview_csv_workflow_through_validate(self, root: Path, state_file: Path) -> None:
         self.assertEqual(
             self._confirm(
@@ -334,6 +427,142 @@ class PublishingConciergeTests(unittest.TestCase):
             if artifact["role"] == "localized-metadata-sidecar"
         )
         self.assertEqual(locales, ["es", "fr"])
+
+    def test_document_asset_requires_feature_metadata_files_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            doc = self._release_metadata_doc(root, include_feature_files=False)
+
+            with self.assertRaisesRegex(publishing_concierge.WorkflowError, "files must include"):
+                publishing_concierge.validate_document_asset(
+                    state,
+                    {
+                        "asset_doc_path": str(doc),
+                        "admission_complete": True,
+                        "source_license_citation_complete": True,
+                        "schema_or_properties_complete": True,
+                        "data_profile_complete": True,
+                    },
+                )
+
+    def test_document_asset_accepts_feature_metadata_files_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            doc = self._release_metadata_doc(root)
+
+            normalized = publishing_concierge.validate_document_asset(
+                state,
+                {
+                    "asset_doc_path": str(doc),
+                    "admission_complete": True,
+                    "source_license_citation_complete": True,
+                    "schema_or_properties_complete": True,
+                    "data_profile_complete": True,
+                },
+            )
+
+        self.assertEqual(normalized["asset_doc_path"], str(doc))
+
+    def test_catalog_web_requires_runtime_feature_metadata_files_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            catalog_json = root / "catalog-web/catalog.json"
+            catalog_json.parent.mkdir(parents=True)
+            catalog_json.write_text(
+                json.dumps(
+                    {
+                        "assets": [
+                            {
+                                "slug": "example",
+                                "feature_metadata": {"storage": "metadata_sidecar_v1"},
+                                "files": [
+                                    {
+                                        "path": (
+                                            "gs://skytruth-shared-datasets-1/"
+                                            "300-infrastructure-industrial/330-offshore-platforms/"
+                                            "example/latest/example.fgb"
+                                        )
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with self.assertRaisesRegex(publishing_concierge.WorkflowError, "missing runtime feature metadata"):
+                publishing_concierge.validate_catalog_web(
+                    state,
+                    {
+                        "built": True,
+                        "catalog_json_path": str(catalog_json),
+                        "content_type": "application/json",
+                        "cache_control": publishing_concierge.no_cache_control(),
+                    },
+                )
+
+    def test_catalog_web_accepts_runtime_feature_metadata_files_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            catalog_json = root / "catalog-web/catalog.json"
+            catalog_json.parent.mkdir(parents=True)
+            feature_files = [
+                {"path": uri}
+                for uri in publishing_concierge.expected_latest_feature_metadata_uris(state).values()
+            ]
+            catalog_json.write_text(
+                json.dumps(
+                    {
+                        "assets": [
+                            {
+                                "slug": "example",
+                                "feature_metadata": {"storage": "metadata_sidecar_v1"},
+                                "files": feature_files,
+                            }
+                        ]
+                    }
+                )
+            )
+
+            normalized = publishing_concierge.validate_catalog_web(
+                state,
+                {
+                    "built": True,
+                    "catalog_json_path": str(catalog_json),
+                    "content_type": "application/json",
+                    "cache_control": publishing_concierge.no_cache_control(),
+                },
+            )
+
+        self.assertTrue(normalized["feature_metadata_runtime_files_verified"])
+
+    def test_stage_scratch_requires_feature_metadata_destinations_for_release_fgb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            prefix = publishing_concierge.pending_publish_prefix(state)
+
+            with self.assertRaisesRegex(publishing_concierge.WorkflowError, "missing staged feature metadata"):
+                publishing_concierge.validate_stage_scratch(
+                    state,
+                    {
+                        "staged_objects": [
+                            {
+                                "source_uri": f"{prefix}example.fgb",
+                                "source_generation": "111",
+                                "destination_uri": (
+                                    "gs://skytruth-shared-datasets-1/"
+                                    "300-infrastructure-industrial/330-offshore-platforms/"
+                                    "example/latest/example.fgb"
+                                ),
+                            }
+                        ]
+                    },
+                )
 
     def _fgb_validation_payload(self, *, include_gdal: bool = True) -> dict:
         payload = {
@@ -2445,6 +2674,9 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertIn("access_tier: public", text)
         self.assertIn("citation: Example citation", text)
         self.assertIn("latest/example-asset.pmtiles", text)
+        self.assertIn("feature_metadata:", text)
+        self.assertIn("sidecar_file: latest/example-asset.metadata.ndjson.gz", text)
+        self.assertIn("path: latest/example-asset.metadata.ndjson.gz", text)
 
     def test_pmtiles_hints_are_included_in_vector_command_and_draft_doc(self):
         with tempfile.TemporaryDirectory() as tmp:

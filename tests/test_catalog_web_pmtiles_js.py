@@ -150,6 +150,8 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "row_count: release.rows ?? asset.row_count ?? null",
                 "function latestVersionForAsset",
                 "return latestVersion ? { ...asset, ...latestVersion } : asset",
+                "asset.files = Array.isArray(latestVersion.files) ? latestVersion.files : []",
+                "Array.isArray(asset?.latest_release?.files)",
                 "featureMetadataCache",
                 "availableMetadataLocales",
                 "metadataLocaleCandidates",
