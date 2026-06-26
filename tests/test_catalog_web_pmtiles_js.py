@@ -142,7 +142,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "function gsToArtifactUrl",
                 "publicFeatureMetadataSidecarUrl(reference, sidecarFile)",
                 "privateFeatureMetadataSidecarUrl(assetSlug, release, locale)",
-                "function featureMetadataCanLoad",
+                "function catalogViewerShouldAutoloadFeatureMetadata",
                 "function catalogViewerApiAvailable",
                 "Restricted feature metadata requires an authorized catalog viewer or consuming application backend.",
                 "files: releaseFiles(files)",
@@ -169,8 +169,9 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "featureMetadataSchemaColorFields",
                 "privateFeatureMetadataSchemaUrl(assetSlug, release)",
                 "publicFeatureMetadataSchemaUrl(reference, schemaFile)",
-                "const FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES = 5 * 1024 * 1024",
-                "featureMetadataCanLoad(asset, group.release, group.locale)",
+                "const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024",
+                'const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes"',
+                "catalogViewerShouldAutoloadFeatureMetadata(asset, group.release, group.locale)",
                 "lookupFeatureMetadataFromIndex(group.ids, index)",
                 "featureMetadataLookupCanLoad(asset)",
                 "lookupFeatureMetadataViaApi(group)",
@@ -181,10 +182,14 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 'method: "POST"',
                 "body: JSON.stringify({ ids: [...group.ids], include_provenance: true })",
                 'return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`',
-                "featureMetadataSidecarWithinBrowserLimit(sidecarFile)",
+                "featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile)",
                 "featureMetadataSidecarSize(sidecarFile)",
-                "featureMetadataSidecarUnavailableReason(asset, locale)",
-                "return size !== null && size <= FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES",
+                "featureMetadataSidecarAutoloadUnavailableReason(asset, locale)",
+                "return size !== null && size <= catalogViewerMetadataSidecarAutoloadMaxBytes()",
+                "function catalogViewerMetadataSidecarAutoloadMaxBytes",
+                "function configuredCatalogViewerMetadataSidecarAutoloadMaxBytes",
+                "window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES",
+                'document.querySelector(`meta[name="${CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META}"]`)',
                 "unavailable: true",
                 "DecompressionStream",
                 "item.properties",
@@ -229,7 +234,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
         lookup_start = app.index("async function lookupFeatureMetadata(group)")
         index_start = app.index("async function featureMetadataIndex")
         lookup_slice = app[lookup_start:index_start]
-        self.assertLess(lookup_slice.index("featureMetadataCanLoad"), lookup_slice.index("lookupFeatureMetadataViaApi"))
+        self.assertLess(
+            lookup_slice.index("catalogViewerShouldAutoloadFeatureMetadata"),
+            lookup_slice.index("lookupFeatureMetadataViaApi"),
+        )
         self.assertLess(lookup_slice.index("featureMetadataIndex"), lookup_slice.index("lookupFeatureMetadataViaApi"))
         self.assertNotIn("TextDecoder", app)
         self.assertNotIn("translation overlay", app.lower())

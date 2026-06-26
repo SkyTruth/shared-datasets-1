@@ -132,7 +132,8 @@ const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
 const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
 const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
-const FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES = 5 * 1024 * 1024;
+const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024;
+const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
 
 function activeMetadataLocale() {
   const params = new URLSearchParams(window.location.search);
@@ -1347,7 +1348,7 @@ function featureLookupGroups(features) {
 
 async function lookupFeatureMetadata(group) {
   const asset = assetReferenceForRelease(group.assetSlug, group.release);
-  if (featureMetadataCanLoad(asset, group.release, group.locale)) {
+  if (catalogViewerShouldAutoloadFeatureMetadata(asset, group.release, group.locale)) {
     const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
     return lookupFeatureMetadataFromIndex(group.ids, index);
   }
@@ -1510,12 +1511,12 @@ async function loadFeatureMetadataColorValues(asset, field) {
   if (!fields.includes(selectedField)) {
     return { fields, valuesByFeatureId: new Map() };
   }
-  if (!featureMetadataCanLoad(asset, release, locale)) {
+  if (!catalogViewerShouldAutoloadFeatureMetadata(asset, release, locale)) {
     return {
       fields,
       valuesByFeatureId: new Map(),
       unavailable: true,
-      unavailableReason: featureMetadataSidecarUnavailableReason(asset, locale),
+      unavailableReason: featureMetadataSidecarAutoloadUnavailableReason(asset, locale),
     };
   }
   const index = await featureMetadataIndex(assetSlug, release, locale);
@@ -1649,7 +1650,7 @@ function publicFeatureMetadataSchemaUrl(asset, schemaFile) {
   return gsToArtifactUrl(releaseFilePath(schemaFile));
 }
 
-function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
+function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
   if (!asset) {
     return false;
   }
@@ -1657,7 +1658,7 @@ function featureMetadataCanLoad(asset, release = featureMetadataRelease(asset), 
   if (!sidecarFile) {
     return false;
   }
-  if (!featureMetadataSidecarWithinBrowserLimit(sidecarFile)) {
+  if (!featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile)) {
     return false;
   }
   if (publicFeatureMetadataSidecarUrl(asset, sidecarFile)) {
@@ -1670,9 +1671,9 @@ function featureMetadataLookupCanLoad(asset) {
   return Boolean(asset?.feature_metadata) && catalogViewerApiAvailable();
 }
 
-function featureMetadataSidecarWithinBrowserLimit(sidecarFile) {
+function featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile) {
   const size = featureMetadataSidecarSize(sidecarFile);
-  return size !== null && size <= FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES;
+  return size !== null && size <= catalogViewerMetadataSidecarAutoloadMaxBytes();
 }
 
 function featureMetadataSidecarSize(sidecarFile) {
@@ -1680,21 +1681,36 @@ function featureMetadataSidecarSize(sidecarFile) {
   return Number.isFinite(size) && size >= 0 ? size : null;
 }
 
-function featureMetadataSidecarUnavailableReason(asset, locale = state.metadataLocale) {
+function featureMetadataSidecarAutoloadUnavailableReason(asset, locale = state.metadataLocale) {
   const sidecarFile = metadataSidecarFileForReference(asset, locale);
   if (!sidecarFile) {
     return "feature metadata sidecar is unavailable for this catalog viewer";
   }
   const size = featureMetadataSidecarSize(sidecarFile);
   if (size === null) {
-    return "feature metadata sidecar size is unknown; browser hydration is disabled";
+    return "feature metadata sidecar size is unknown; catalog-viewer autoload is disabled";
   }
-  if (size > FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES) {
-    return `feature metadata sidecar is ${formatBytes(size)}; browser hydration limit is ${formatBytes(
-      FEATURE_METADATA_BROWSER_SIDECAR_MAX_BYTES
+  const maxBytes = catalogViewerMetadataSidecarAutoloadMaxBytes();
+  if (size > maxBytes) {
+    return `feature metadata sidecar is ${formatBytes(size)}; catalog-viewer autoload budget is ${formatBytes(
+      maxBytes
     )}`;
   }
   return "feature metadata sidecar is unavailable for this catalog viewer";
+}
+
+function catalogViewerMetadataSidecarAutoloadMaxBytes() {
+  const configured = configuredCatalogViewerMetadataSidecarAutoloadMaxBytes();
+  return configured ?? CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES;
+}
+
+function configuredCatalogViewerMetadataSidecarAutoloadMaxBytes() {
+  const globalValue = Number(window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES);
+  if (Number.isFinite(globalValue) && globalValue >= 0) {
+    return globalValue;
+  }
+  const metaValue = Number(document.querySelector(`meta[name="${CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META}"]`)?.content);
+  return Number.isFinite(metaValue) && metaValue >= 0 ? metaValue : null;
 }
 
 function featureMetadataSchemaCanLoad(asset) {
