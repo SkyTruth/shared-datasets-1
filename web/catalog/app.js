@@ -1490,7 +1490,7 @@ function emptyFeatureMetadataLookup(ids) {
 }
 
 function featureMetadataLookupUnavailableStatus(status) {
-  return [401, 403, 404, 405, 409, 413, 501].includes(Number(status));
+  return [401, 403, 404, 405, 409, 413, 503, 501].includes(Number(status));
 }
 
 function featureMetadataLookupApiUrl(assetSlug, release) {
