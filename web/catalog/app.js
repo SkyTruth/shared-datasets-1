@@ -775,7 +775,7 @@ function selectedReference(asset) {
   const selected = selectedVersionValue(asset);
   if (selected === "latest") {
     const latestVersion = latestVersionForAsset(asset);
-    return latestVersion ? { ...asset, ...latestVersion } : asset;
+    return latestVersion ? { ...asset, ...latestVersion, pmtiles_url: asset.pmtiles_url || latestVersion.pmtiles_url } : asset;
   }
   const version = asset.versions.find((candidate) => candidate.date === selected);
   return version ? { ...asset, ...version } : asset;
@@ -1490,7 +1490,7 @@ function emptyFeatureMetadataLookup(ids) {
 }
 
 function featureMetadataLookupUnavailableStatus(status) {
-  return [401, 403, 404, 405, 409, 501].includes(Number(status));
+  return [401, 403, 404, 405, 409, 413, 501].includes(Number(status));
 }
 
 function featureMetadataLookupApiUrl(assetSlug, release) {
@@ -1754,7 +1754,7 @@ function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMeta
 }
 
 function featureMetadataLookupCanLoad(asset) {
-  return Boolean(asset?.feature_metadata) && catalogViewerApiAvailable();
+  return Boolean(metadataSidecarFileForReference(asset, "")) && catalogViewerApiAvailable();
 }
 
 function publicFeatureMetadataLookupCanLoad(asset, locale = state.metadataLocale) {
