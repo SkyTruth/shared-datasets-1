@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import unittest
 
@@ -67,6 +68,9 @@ class FakeGcsBlob:
         if isinstance(self.payload, bytes):
             return self.payload
         return json.dumps(self.payload).encode("utf-8")
+
+    def open(self, _mode: str = "rb", **kwargs):
+        return io.BytesIO(self.download_as_bytes(**kwargs))
 
 
 class FakeGcsBucket:
@@ -361,8 +365,35 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(payload["items"][2]["feature_id"], "1")
         self.assertEqual(sidecar_blob.download_count, 1)
 
-    def test_sidecar_cache_reuses_loaded_release(self):
-        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record()]), generation=1001)
+    def test_sidecar_cache_reuses_loaded_feature_ids(self):
+        second_record = sidecar_record("2", name="B")
+        second_record["geometry_hash"] = "sha256:" + "c" * 64
+        second_record["properties_hash"] = "sha256:" + "d" * 64
+        sidecar_blob = FakeGcsBlob(
+            SIDECAR_OBJECT,
+            sidecar_bytes([sidecar_record("1"), second_record]),
+            generation=1001,
+        )
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        for feature_id in ("1", "1", "2"):
+            response = run.handle_request(
+                "POST",
+                "/v1/assets/wdpa-marine/releases/latest:lookup",
+                {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+                json.dumps({"ids": [feature_id]}).encode("utf-8"),
+                release_resolver=FakeResolver(),
+                feature_index=index,
+            )
+            self.assertEqual(response.status, 200)
+
+        self.assertEqual(sidecar_blob.download_count, 2)
+
+    def test_sidecar_cache_reuses_missing_feature_ids(self):
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1")]), generation=1001)
         index = run.GcsSidecarFeatureIndex(
             bucket_name=PREVIEW_BUCKET,
             client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
@@ -373,7 +404,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
                 "POST",
                 "/v1/assets/wdpa-marine/releases/latest:lookup",
                 {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-                json.dumps({"ids": ["1"]}).encode("utf-8"),
+                json.dumps({"ids": ["2"]}).encode("utf-8"),
                 release_resolver=FakeResolver(),
                 feature_index=index,
             )
@@ -489,7 +520,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
                     "POST",
                     "/v1/assets/wdpa-marine/releases/latest:lookup",
                     {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-                    b'{"ids":["1"]}',
+                    b'{"ids":["999"]}',
                     release_resolver=FakeResolver(),
                     feature_index=index,
                 )

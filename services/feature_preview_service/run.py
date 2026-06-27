@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 import json
 import os
 import re
@@ -144,7 +145,7 @@ class GcsSidecarFeatureIndex:
     def __init__(self, *, bucket_name: str, client: Any = None) -> None:
         self.bucket_name = bucket_name
         self._client = client
-        self._cache: dict[tuple[str, str, str, int], dict[str, dict[str, Any]]] = {}
+        self._cache: dict[tuple[str, str, str, int], dict[str, dict[str, Any] | None]] = {}
         self._lock = threading.RLock()
 
     @property
@@ -165,78 +166,219 @@ class GcsSidecarFeatureIndex:
         sidecar_uri: str,
         sidecar_generation: int | None,
     ) -> dict[str, dict[str, Any]]:
-        records = self._release_records(
+        records = self._lookup_sidecar_records(
             asset_slug=asset_slug,
             release=release,
+            feature_ids=feature_ids,
             sidecar_uri=sidecar_uri,
             sidecar_generation=sidecar_generation,
         )
-        return {feature_id: records[feature_id] for feature_id in feature_ids if feature_id in records}
+        return {feature_id: record for feature_id in feature_ids if (record := records.get(feature_id)) is not None}
 
-    def _release_records(
+    def _lookup_sidecar_records(
         self,
         *,
         asset_slug: str,
         release: str,
+        feature_ids: list[str],
         sidecar_uri: str,
         sidecar_generation: int | None,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> dict[str, dict[str, Any] | None]:
         if not sidecar_uri or sidecar_generation is None:
             raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not indexed")
         cache_key = (asset_slug, release, sidecar_uri, sidecar_generation)
+        unique_ids = list(dict.fromkeys(feature_ids))
         with self._lock:
-            cached = self._cache.get(cache_key)
-            if cached is not None:
-                return cached
-            records = self._load_sidecar(
-                asset_slug=asset_slug,
-                release=release,
-                sidecar_uri=sidecar_uri,
-                sidecar_generation=sidecar_generation,
-            )
-            self._cache[cache_key] = records
-            return records
+            cached = self._cache.setdefault(cache_key, {})
+            missing_ids = [feature_id for feature_id in unique_ids if feature_id not in cached]
+            if missing_ids:
+                cached.update(
+                    self._load_sidecar_records(
+                        asset_slug=asset_slug,
+                        release=release,
+                        sidecar_uri=sidecar_uri,
+                        sidecar_generation=sidecar_generation,
+                        feature_ids=missing_ids,
+                    )
+                )
+            return {feature_id: cached.get(feature_id) for feature_id in unique_ids}
 
-    def _load_sidecar(
+    def _load_sidecar_records(
         self,
         *,
         asset_slug: str,
         release: str,
         sidecar_uri: str,
         sidecar_generation: int,
-    ) -> dict[str, dict[str, Any]]:
+        feature_ids: list[str],
+    ) -> dict[str, dict[str, Any] | None]:
+        requested = set(feature_ids)
+        found: dict[str, dict[str, Any] | None] = {feature_id: None for feature_id in requested}
+        with self._open_sidecar(
+            asset_slug=asset_slug,
+            release=release,
+            sidecar_uri=sidecar_uri,
+            sidecar_generation=sidecar_generation,
+        ) as payload:
+            found.update(
+                stream_matching_sidecar_records(
+                    payload,
+                    requested,
+                    asset_slug=asset_slug,
+                    release=release,
+                )
+            )
+        return found
+
+    def _open_sidecar(
+        self,
+        *,
+        asset_slug: str,
+        release: str,
+        sidecar_uri: str,
+        sidecar_generation: int,
+    ):
+        return open_sidecar_blob(
+            client=self.client,
+            expected_bucket_name=self.bucket_name,
+            asset_slug=asset_slug,
+            release=release,
+            sidecar_uri=sidecar_uri,
+            sidecar_generation=sidecar_generation,
+        )
+
+
+def open_sidecar_blob(
+    *,
+    client: Any,
+    expected_bucket_name: str,
+    asset_slug: str,
+    release: str,
+    sidecar_uri: str,
+    sidecar_generation: int,
+):
+    try:
+        bucket_name, object_name = split_gs_uri(sidecar_uri)
+    except ValueError as exc:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar URI is invalid") from exc
+    if bucket_name != expected_bucket_name:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is outside the configured bucket")
+
+    blob = client.bucket(bucket_name).blob(object_name)
+    try:
+        blob.reload()
+    except Exception as exc:
+        if exc.__class__.__name__ == "NotFound":
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
+        raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar metadata lookup failed") from exc
+
+    actual_generation = as_int(getattr(blob, "generation", None))
+    if actual_generation is not None and actual_generation != sidecar_generation:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed")
+
+    try:
         try:
-            bucket_name, object_name = split_gs_uri(sidecar_uri)
-        except ValueError as exc:
-            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar URI is invalid") from exc
-        if bucket_name != self.bucket_name:
-            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is outside the configured bucket")
+            return blob.open("rb", if_generation_match=sidecar_generation)
+        except TypeError:
+            return blob.open("rb")
+    except AttributeError:
+        return legacy_sidecar_blob_bytes(
+            blob,
+            asset_slug=asset_slug,
+            release=release,
+            sidecar_generation=sidecar_generation,
+        )
+    except Exception as exc:
+        if exc.__class__.__name__ == "NotFound":
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
+        if exc.__class__.__name__ == "PreconditionFailed":
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed") from exc
+        raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar download failed") from exc
 
-        blob = self.client.bucket(bucket_name).blob(object_name)
+
+def legacy_sidecar_blob_bytes(blob: Any, *, asset_slug: str, release: str, sidecar_generation: int) -> io.BytesIO:
+    try:
         try:
-            blob.reload()
-        except Exception as exc:
-            if exc.__class__.__name__ == "NotFound":
-                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
-            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar metadata lookup failed") from exc
+            payload = blob.download_as_bytes(if_generation_match=sidecar_generation)
+        except TypeError:
+            payload = blob.download_as_bytes()
+    except Exception as exc:
+        if exc.__class__.__name__ == "NotFound":
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
+        if exc.__class__.__name__ == "PreconditionFailed":
+            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed") from exc
+        raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar download failed") from exc
+    return io.BytesIO(payload)
 
-        actual_generation = as_int(getattr(blob, "generation", None))
-        if actual_generation is not None and actual_generation != sidecar_generation:
-            raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed")
 
-        try:
-            try:
-                payload = blob.download_as_bytes(if_generation_match=sidecar_generation)
-            except TypeError:
-                payload = blob.download_as_bytes()
-        except Exception as exc:
-            if exc.__class__.__name__ == "NotFound":
-                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
-            if exc.__class__.__name__ == "PreconditionFailed":
-                raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed") from exc
-            raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "index_unavailable", "feature preview sidecar download failed") from exc
+def stream_matching_sidecar_records(
+    payload,
+    feature_ids: set[str],
+    *,
+    asset_slug: str,
+    release: str,
+) -> dict[str, dict[str, Any]]:
+    pending = set(feature_ids)
+    records: dict[str, dict[str, Any]] = {}
+    if not pending:
+        return records
+    try:
+        with gzip.GzipFile(fileobj=payload, mode="rb") as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8") as reader:
+                seen_feature_ids: set[str] = set()
+                seen_identity_keys: dict[tuple[str, ...], str] = {}
+                for line_number, line in enumerate(reader, start=1):
+                    if not line.strip():
+                        continue
+                    record = parse_sidecar_record(line, line_number=line_number, asset_slug=asset_slug, release=release)
+                    feature_id = str(record.get("feature_id") or "")
+                    if feature_id in seen_feature_ids:
+                        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"duplicate feature_id: {feature_id}")
+                    seen_feature_ids.add(feature_id)
+                    identity_key = release_feature_model.identity_key_from_record(record)
+                    previous_feature_id = seen_identity_keys.get(identity_key)
+                    if previous_feature_id and previous_feature_id != feature_id:
+                        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"duplicate identity key: {identity_key}")
+                    seen_identity_keys[identity_key] = feature_id
+                    if feature_id not in pending:
+                        continue
+                    records[feature_id] = record
+                    pending.remove(feature_id)
+                    if not pending:
+                        break
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not valid gzip NDJSON") from exc
+    return records
 
-        return parse_sidecar_records(payload, asset_slug=asset_slug, release=release)
+
+def parse_sidecar_record(line: str, *, line_number: int, asset_slug: str, release: str) -> dict[str, Any]:
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"line {line_number} is not valid JSON") from exc
+    if not isinstance(record, Mapping):
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"line {line_number} is not a JSON object")
+
+    validation = release_feature_model.validate_sidecar_records(
+        [record],
+        expected_asset_slug=asset_slug,
+        expected_release=release,
+    )
+    if not validation.valid:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "; ".join(validation.errors[:10]))
+    properties = record.get("properties")
+    provenance = record.get("provenance", {})
+    return {
+        "schema_version": record.get("schema_version"),
+        "asset_slug": record.get("asset_slug"),
+        "release": record.get("release"),
+        "feature_id": str(record.get("feature_id") or ""),
+        "identity_key": record.get("identity_key"),
+        "geometry_hash": record.get("geometry_hash"),
+        "properties_hash": record.get("properties_hash"),
+        "properties": dict(properties),
+        "provenance": dict(provenance),
+    }
 
 
 class FirestoreFeatureIndex:

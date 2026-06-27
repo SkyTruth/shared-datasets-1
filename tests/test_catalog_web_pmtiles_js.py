@@ -178,7 +178,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "featureMetadataLookupApiUrl(group.assetSlug, group.release)",
                 "emptyFeatureMetadataLookup(group.ids)",
                 "featureMetadataLookupUnavailableStatus(response.status)",
-                "return [401, 403, 404, 405, 409, 413, 501].includes(Number(status))",
+                "return [401, 403, 404, 405, 409, 413, 503, 501].includes(Number(status))",
                 "if (lookup) {\n      return lookup;\n    }",
                 "publicFeatureMetadataLookupCanLoad(asset, group.locale)",
                 "lookupFeatureMetadataFromPublicSidecar(group, asset)",
