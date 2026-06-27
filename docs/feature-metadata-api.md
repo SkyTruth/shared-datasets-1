@@ -138,16 +138,24 @@ repeat requests.
 
 ## Locale-Specific Sidecar Downloads
 
-For static catalog feature inspection, the browser does not call the lookup API
-or fetch a translation overlay. Public assets resolve the sidecar from the
-hydrated release index and fetch it directly from:
+For API-backed catalog feature inspection, the browser first calls the
+same-origin lookup API for the clicked `feature_id` values:
+
+```http
+POST /v1/assets/{slug}/releases/{release_or_latest}:lookup
+```
+
+This keeps click inspection bounded for large sidecars such as event feeds. If
+that endpoint is not available, the static public catalog viewer falls back to
+the release sidecar. Public assets resolve the sidecar from the hydrated release
+index and fetch it directly from:
 
 ```text
 https://tiles.skytruth.org/artifacts/{bucket-object-path}
 ```
 
-For authorized private inspection through the IAP-protected catalog viewer, the
-browser calls the download resolver for one metadata sidecar URL:
+For authorized private sidecar inspection through the IAP-protected catalog
+viewer, the browser calls the download resolver for one metadata sidecar URL:
 
 ```http
 GET /api/download-url?slug={slug}&format=metadata&version={release_or_latest}&locale=es
@@ -182,6 +190,11 @@ Catalog web deployment is chained after this materialization step so catalog
 release metadata is rebuilt from the post-localization release indexes.
 
 ## Operations
+
+The catalog viewer and feature-preview viewer can serve same-origin lookups by
+reading the selected release sidecar through their sidecar-backed index. The
+standalone Firestore-backed metadata service remains inactive unless explicitly
+deployed and loaded.
 
 Firestore metadata serving is inactive for this refactor. Release manifests and
 release indexes should record:
