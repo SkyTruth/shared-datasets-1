@@ -428,6 +428,33 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         self.assertEqual(second["2"]["properties"]["name"], "B")
         self.assertEqual(sidecar_blob.download_count, 2)
 
+    def test_sidecar_lookup_skips_nonmatching_rows_without_full_parse(self):
+        raw_sidecar = gzip.compress(
+            (
+                '{"feature_id":"skip","asset_slug":"wdpa-marine",bad}\n'
+                + json.dumps(sidecar_record("1"), sort_keys=True, separators=(",", ":"))
+                + "\n"
+            ).encode("utf-8")
+        )
+        sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, raw_sidecar, generation=1001)
+        index = run.GcsSidecarFeatureIndex(
+            bucket_name=PREVIEW_BUCKET,
+            client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})),
+        )
+
+        response = run.handle_request(
+            "POST",
+            "/v1/assets/wdpa-marine/releases/latest:lookup",
+            {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
+            b'{"ids":["1"],"fields":["name"]}',
+            release_resolver=FakeResolver(),
+            feature_index=index,
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.body)["items"][0]["properties"], {"name": "A"})
+        self.assertEqual(sidecar_blob.download_count, 1)
+
     def test_missing_metadata_sidecar_file_returns_not_ready(self):
         resolver = run.CatalogReleaseResolver(
             bucket_name=PREVIEW_BUCKET,
@@ -497,18 +524,18 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         duplicate_identity_b = sidecar_record("2")
         duplicate_identity_b["identity_key"] = ["same-source"]
         cases = {
-            "bad gzip": b"not gzip",
-            "bad ndjson": gzip.compress(b"{bad\n"),
-            "duplicate feature_id": sidecar_bytes([duplicate, duplicate]),
-            "invalid feature_id": sidecar_bytes([unsafe_feature_id]),
-            "duplicate feature_id second pass": sidecar_bytes([sidecar_record("1"), duplicate_feature_id]),
-            "malformed hash": sidecar_bytes([malformed_hash]),
-            "missing asset_slug": sidecar_bytes([missing_asset_slug]),
-            "missing release": sidecar_bytes([missing_release]),
-            "duplicate identity_key": sidecar_bytes([duplicate_identity_a, duplicate_identity_b]),
+            "bad gzip": (b"not gzip", ["999"]),
+            "bad ndjson": (gzip.compress(b"{bad\n"), ["999"]),
+            "duplicate feature_id": (sidecar_bytes([duplicate, duplicate]), ["1", "2"]),
+            "invalid feature_id": (sidecar_bytes([unsafe_feature_id]), ["999"]),
+            "duplicate feature_id second pass": (sidecar_bytes([sidecar_record("1"), duplicate_feature_id]), ["1", "2"]),
+            "malformed hash": (sidecar_bytes([malformed_hash]), ["2"]),
+            "missing asset_slug": (sidecar_bytes([missing_asset_slug]), ["2"]),
+            "missing release": (sidecar_bytes([missing_release]), ["2"]),
+            "duplicate identity_key": (sidecar_bytes([duplicate_identity_a, duplicate_identity_b]), ["1", "2"]),
         }
 
-        for label, payload in cases.items():
+        for label, (payload, ids) in cases.items():
             with self.subTest(label=label):
                 sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, payload, generation=1001)
                 index = run.GcsSidecarFeatureIndex(
@@ -520,7 +547,7 @@ class FeaturePreviewServiceTests(unittest.TestCase):
                     "POST",
                     "/v1/assets/wdpa-marine/releases/latest:lookup",
                     {"X-Goog-Authenticated-User-Email": "accounts.google.com:jona@skytruth.org"},
-                    b'{"ids":["999"]}',
+                    json.dumps({"ids": ids}).encode("utf-8"),
                     release_resolver=FakeResolver(),
                     feature_index=index,
                 )

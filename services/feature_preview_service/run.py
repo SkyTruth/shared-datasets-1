@@ -30,6 +30,9 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
 FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
+SIDECAR_FEATURE_ID_RE = re.compile(
+    r'"feature_id"\s*:\s*(?P<value>"[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)'
+)
 LOOKUP_RE = re.compile(
     r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
 )
@@ -325,16 +328,16 @@ def stream_matching_sidecar_records(
     try:
         with gzip.GzipFile(fileobj=payload, mode="rb") as compressed:
             with io.TextIOWrapper(compressed, encoding="utf-8") as reader:
-                seen_feature_ids: set[str] = set()
                 seen_identity_keys: dict[tuple[str, ...], str] = {}
                 for line_number, line in enumerate(reader, start=1):
                     if not line.strip():
                         continue
-                    record = parse_sidecar_record(line, line_number=line_number, asset_slug=asset_slug, release=release)
-                    feature_id = str(record.get("feature_id") or "")
-                    if feature_id in seen_feature_ids:
+                    feature_id = feature_id_from_sidecar_line(line, line_number=line_number)
+                    if feature_id in records:
                         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"duplicate feature_id: {feature_id}")
-                    seen_feature_ids.add(feature_id)
+                    if feature_id not in pending:
+                        continue
+                    record = parse_sidecar_record(line, line_number=line_number, asset_slug=asset_slug, release=release)
                     identity_key = release_feature_model.identity_key_from_record(record)
                     previous_feature_id = seen_identity_keys.get(identity_key)
                     if previous_feature_id and previous_feature_id != feature_id:
@@ -349,6 +352,29 @@ def stream_matching_sidecar_records(
     except (OSError, UnicodeDecodeError) as exc:
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not valid gzip NDJSON") from exc
     return records
+
+
+def feature_id_from_sidecar_line(line: str, *, line_number: int) -> str:
+    match = SIDECAR_FEATURE_ID_RE.search(line)
+    if not match:
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"line {line_number} is missing a valid feature_id")
+    raw_value = match.group("value")
+    if raw_value.startswith('"'):
+        try:
+            feature_id = json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ApiError(
+                HTTPStatus.CONFLICT,
+                "index_not_ready",
+                f"line {line_number} is missing a valid feature_id",
+            ) from exc
+    elif raw_value.isdecimal():
+        feature_id = raw_value
+    else:
+        feature_id = ""
+    if not isinstance(feature_id, str) or not FEATURE_ID_RE.fullmatch(feature_id):
+        raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", f"line {line_number} is missing a valid feature_id")
+    return feature_id
 
 
 def parse_sidecar_record(line: str, *, line_number: int, asset_slug: str, release: str) -> dict[str, Any]:

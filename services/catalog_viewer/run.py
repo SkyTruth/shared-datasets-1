@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -153,6 +154,32 @@ class GcsCatalogWebStore:
         return json.loads(static_object.body.decode("utf-8"))
 
 
+class LocalCatalogWebStore:
+    def __init__(self, root: Path | str, *, fallback: ObjectStore | None = None) -> None:
+        self._root = Path(root).resolve()
+        self._fallback = fallback
+
+    def read_static(self, object_name: str) -> StaticObject:
+        target = (self._root / object_name).resolve()
+        try:
+            target.relative_to(self._root)
+        except ValueError as exc:
+            raise StaticObjectNotFound(object_name) from exc
+        if not target.is_file():
+            if self._fallback is not None:
+                return self._fallback.read_static(object_name)
+            raise StaticObjectNotFound(object_name)
+        return StaticObject(
+            body=target.read_bytes(),
+            content_type=content_type_for_name(object_name),
+            cache_control=NO_CACHE,
+        )
+
+    def read_catalog_json(self) -> dict[str, Any]:
+        static_object = self.read_static("catalog.json")
+        return json.loads(static_object.body.decode("utf-8"))
+
+
 class GcsV4UrlSigner:
     def __init__(
         self,
@@ -276,6 +303,7 @@ def handle_request(
     feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
+    feature_require_iap: bool = True,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
     method = method.upper()
@@ -296,6 +324,7 @@ def handle_request(
             feature_max_ids=feature_max_ids,
             feature_max_fields=feature_max_fields,
             feature_max_response_bytes=feature_max_response_bytes,
+            feature_require_iap=feature_require_iap,
         )
     if request_path == "/api/pmtiles/signed-url":
         return handle_signed_url(
@@ -341,8 +370,9 @@ def handle_feature_lookup(
     feature_max_ids: int,
     feature_max_fields: int,
     feature_max_response_bytes: int,
+    feature_require_iap: bool,
 ) -> Response:
-    if method != "OPTIONS":
+    if feature_require_iap and method != "OPTIONS":
         email = authenticated_user_email(headers)
         if not email:
             return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
@@ -358,7 +388,7 @@ def handle_feature_lookup(
         release_resolver=resolver,
         feature_index=index,
         allowed_email_domains=allowed_email_domains,
-        require_iap=True,
+        require_iap=feature_require_iap,
         max_ids=feature_max_ids,
         max_fields=feature_max_fields,
         max_response_bytes=feature_max_response_bytes,
@@ -771,7 +801,7 @@ def static_object_name(request_path: str) -> str | None:
     if normalized in ROOT_STATIC_FILES:
         return normalized
     if normalized.startswith("releases/") and normalized.endswith(".json"):
-        slug = normalized.removeprefix("releases/").removesuffix(".json")
+        slug = normalized[len("releases/") : -len(".json")]
         return normalized if SLUG_RE.fullmatch(slug) else None
     if normalized.startswith("docs/assets/") and normalized.endswith(".md"):
         return normalized
@@ -894,6 +924,14 @@ def site_prefix_from_env() -> str:
     return os.environ.get("SHARED_DATASETS_SITE_PREFIX", DEFAULT_SITE_PREFIX).strip("/")
 
 
+def object_store_from_env(*, bucket_name: str, site_prefix: str) -> ObjectStore:
+    gcs_store = GcsCatalogWebStore(bucket_name=bucket_name, site_prefix=site_prefix)
+    local_web_dir = os.environ.get("CATALOG_VIEWER_LOCAL_WEB_DIR", "").strip()
+    if local_web_dir:
+        return LocalCatalogWebStore(local_web_dir, fallback=gcs_store)
+    return gcs_store
+
+
 def catalog_cache_ttl_from_env() -> float:
     raw = os.environ.get("CATALOG_VIEWER_CATALOG_TTL_SECONDS", "")
     try:
@@ -927,6 +965,15 @@ def int_env(name: str, default: int) -> int:
         return max(1, int(raw)) if raw else default
     except ValueError:
         return default
+
+
+def bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def metadata_cdn_signed_url_ttl_from_env(default: int) -> int:
@@ -1006,6 +1053,7 @@ def make_handler(
     feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
+    feature_require_iap: bool = True,
 ):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -1050,6 +1098,7 @@ def make_handler(
             feature_max_ids=feature_max_ids,
             feature_max_fields=feature_max_fields,
             feature_max_response_bytes=feature_max_response_bytes,
+            feature_require_iap=feature_require_iap,
         )
 
     return Handler
@@ -1058,7 +1107,7 @@ def make_handler(
 def main() -> None:
     bucket_name = bucket_from_env()
     site_prefix = site_prefix_from_env()
-    object_store = GcsCatalogWebStore(bucket_name=bucket_name, site_prefix=site_prefix)
+    object_store = object_store_from_env(bucket_name=bucket_name, site_prefix=site_prefix)
     catalog_cache = CatalogJsonCache(loader=object_store.read_catalog_json, ttl_seconds=catalog_cache_ttl_from_env())
     signed_url_ttl_seconds = signed_url_ttl_from_env()
     signer = GcsV4UrlSigner(
@@ -1088,6 +1137,7 @@ def main() -> None:
             "FEATURE_PREVIEW_MAX_RESPONSE_BYTES",
             feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
         ),
+        feature_require_iap=bool_env("CATALOG_VIEWER_FEATURE_LOOKUP_REQUIRE_IAP", True),
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()
