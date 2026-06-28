@@ -134,6 +134,9 @@ const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
 const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
 const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024;
 const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
+const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 5;
+const FEATURE_METADATA_LINE_ID_RE = /"feature_id"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)/;
+const FEATURE_METADATA_ID_VALUE_RE = /^[A-Za-z0-9]{1,64}$/;
 
 function activeMetadataLocale() {
   const params = new URLSearchParams(window.location.search);
@@ -1300,7 +1303,8 @@ async function refreshFeatureInspectorMetadata() {
 }
 
 async function enrichFeatureMetadata(features) {
-  const groups = featureLookupGroups(features);
+  const lookupFeatures = features.slice(0, FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT);
+  const groups = featureLookupGroups(lookupFeatures);
   if (!groups.length) {
     return features;
   }
@@ -1322,7 +1326,16 @@ async function enrichFeatureMetadata(features) {
       }
     })
   );
-  return features.map((feature) => enrichedByKey.get(featureLookupKey(feature)) || feature);
+  return features.map((feature, index) => {
+    const enriched = enrichedByKey.get(featureLookupKey(feature));
+    if (enriched) {
+      return enriched;
+    }
+    if (index >= FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT && featureIdFor(feature)) {
+      return { ...feature, metadataLookupSkipped: true };
+    }
+    return feature;
+  });
 }
 
 function featureLookupGroups(features) {
@@ -1469,16 +1482,36 @@ function addFeatureMetadataLookupLine({ line, lineNumber, pending, lookup }) {
   if (!String(line || "").trim()) {
     return;
   }
-  const record = parseFeatureMetadataRecord(line, lineNumber);
-  const featureId = String(record?.feature_id || "").trim();
+  const featureId = featureIdFromMetadataLine(line, lineNumber);
   if (!pending.has(featureId)) {
     return;
   }
   if (lookup.get(featureId)?.found) {
     throw new Error(`feature metadata sidecar contains duplicate feature_id: ${featureId}`);
   }
+  const record = parseFeatureMetadataRecord(line, lineNumber);
   lookup.set(featureId, featureMetadataItem(record, featureId));
   pending.delete(featureId);
+}
+
+function featureIdFromMetadataLine(line, lineNumber) {
+  const match = FEATURE_METADATA_LINE_ID_RE.exec(String(line || ""));
+  const rawValue = match ? match[1] || "" : "";
+  let featureId = "";
+  if (rawValue.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(rawValue);
+      featureId = typeof parsed === "string" ? parsed : "";
+    } catch (_error) {
+      featureId = "";
+    }
+  } else if (/^[0-9]+$/.test(rawValue)) {
+    featureId = rawValue;
+  }
+  if (!FEATURE_METADATA_ID_VALUE_RE.test(featureId)) {
+    throw new Error(`feature metadata sidecar line ${lineNumber} is missing a valid feature_id`);
+  }
+  return featureId;
 }
 
 function emptyFeatureMetadataLookup(ids) {
@@ -2383,6 +2416,9 @@ function appendFeatureTable(container, entries) {
 }
 
 function featureMetadataUnavailableMessage(feature) {
+  if (feature?.metadataLookupSkipped) {
+    return "Metadata lookup skipped for this overlapping hit; zoom in or click a more precise point.";
+  }
   const asset = state.assets.find((candidate) => candidate.slug === feature?.assetSlug);
   const accessTier = String(feature?.accessTier || asset?.access_tier || "").toLowerCase();
   if (isRestrictedAccessTier(accessTier) && !catalogViewerApiAvailable()) {

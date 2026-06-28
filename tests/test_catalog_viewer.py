@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
 from services.catalog_viewer.run import (
     CatalogJsonCache,
     CloudCdnSignedUrlSigner,
+    LocalCatalogWebStore,
     StaticObject,
     StaticObjectNotFound,
     decode_cdn_signing_key,
@@ -293,7 +296,7 @@ def download_url_request(
     ), signer
 
 
-def feature_lookup_request(body, headers=None, resolver=None, index=None):
+def feature_lookup_request(body, headers=None, resolver=None, index=None, feature_require_iap=True):
     store = FakeStore(catalog_payload())
     resolver = resolver or FakeFeatureReleaseResolver()
     index = index or FakeFeatureIndex()
@@ -311,6 +314,7 @@ def feature_lookup_request(body, headers=None, resolver=None, index=None):
         feature_max_ids=10,
         feature_max_fields=10,
         feature_max_response_bytes=100_000,
+        feature_require_iap=feature_require_iap,
     )
     return response, resolver, index
 
@@ -418,6 +422,22 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(response.headers["Content-Type"], "application/json; charset=utf-8")
         self.assertIn(b'"asset_slug":"wdpa-marine"', response.body)
+
+    def test_local_catalog_web_store_serves_generated_bundle_files(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "releases").mkdir()
+            (root / "index.html").write_text("<html>local</html>", encoding="utf-8")
+            (root / "catalog.json").write_text('{"assets":[]}', encoding="utf-8")
+            (root / "releases" / "wdpa-marine.json").write_text('{"asset_slug":"wdpa-marine"}', encoding="utf-8")
+
+            store = LocalCatalogWebStore(root)
+            index_object = store.read_static("index.html")
+            release_object = store.read_static("releases/wdpa-marine.json")
+
+            self.assertEqual(index_object.body, b"<html>local</html>")
+            self.assertEqual(release_object.content_type, "application/json; charset=utf-8")
+            self.assertEqual(store.read_catalog_json(), {"assets": []})
 
     def test_release_index_route_rejects_path_traversal(self):
         store = FakeStore(catalog_payload())
@@ -818,6 +838,18 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 401)
         self.assertEqual(resolver.calls, [])
         self.assertEqual(index.calls, [])
+
+    def test_feature_metadata_lookup_can_disable_iap_for_local_development(self):
+        response, resolver, index = feature_lookup_request(
+            {"ids": ["48943"], "include_provenance": True},
+            feature_require_iap=False,
+        )
+
+        self.assertEqual(response.status, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["items"][0]["properties"]["GEONAME"], "Overlapping claim: Canada / United States")
+        self.assertEqual(resolver.calls, [("wdpa-marine", "latest")])
+        self.assertEqual(index.calls[0][2], ["48943"])
 
     def test_feature_metadata_lookup_delegates_to_preview_sidecar_index(self):
         response, resolver, index = feature_lookup_request(
