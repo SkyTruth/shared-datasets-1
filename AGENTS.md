@@ -64,6 +64,7 @@ Current repo-local skills:
 - `.claude/skills/deploy-scheduled-ingestion/SKILL.md`
 - `.claude/skills/feature-preview/SKILL.md`
 - `.claude/skills/gcp-shared-datasets/SKILL.md`
+- `.claude/skills/invariant-first-engineering/SKILL.md`
 - `.claude/skills/publish-shared-dataset/SKILL.md`
 - `.claude/skills/protected-terraform-apply/SKILL.md`
 - `.claude/skills/repo-alert-commit-messages/SKILL.md`
@@ -93,6 +94,10 @@ High-priority triggers:
   shared-datasets prod infrastructure deployment.
 - Use `align-virtual-environment` before creating, repairing, changing, or
   documenting Python environments.
+- Use `invariant-first-engineering` before implementing, reviewing,
+  refactoring, simplifying, or iterating on code where correctness depends on
+  strong invariants, persisted formats, schemas, state machines,
+  infrastructure behavior, shared abstractions, or core domain logic.
 - Use `repo-alert-commit-messages` before committing staged changes or preparing
   repo-alert commit-message blocks.
 - Use `shared-datasets-compliance-audit` for read-only bucket/repo compliance
@@ -174,6 +179,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Remote GCS object safety and commands | `.claude/skills/gcp-shared-datasets/SKILL.md` |
 | Scheduled ingestion deployment | `.claude/skills/deploy-scheduled-ingestion/SKILL.md` |
 | Feature preview deploys and test data loads | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md` |
+| Invariant-first code/design simplification | `.claude/skills/invariant-first-engineering/SKILL.md` |
 | Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md` |
 | Code/docs alignment | `.claude/skills/sync-docs-with-code/SKILL.md` |

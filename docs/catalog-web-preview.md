@@ -218,9 +218,12 @@ as an explicit user-selected option.
 
 PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
 `https://tiles.skytruth.org/pmtiles/{public|private|internal}/{slug}.pmtiles` URL for
-latest releases. The public `tiles.skytruth.org/_catalog/web/` entry point is a
-static/public viewer: public PMTiles fetch anonymously, and restricted PMTiles
-may rely on an already-authorized `tiles.skytruth.org` setup when one exists.
+latest releases. Even when release indexes hydrate `versions[]` with dated GCS
+PMTiles URLs, the `Latest` map preview keeps using the catalog CDN URL; the
+dated version selector can still point at the release-specific GCS object. The
+public `tiles.skytruth.org/_catalog/web/` entry point is a static/public viewer:
+public PMTiles fetch anonymously, and restricted PMTiles may rely on an
+already-authorized `tiles.skytruth.org` setup when one exists.
 
 When the app is served from the authenticated Cloud Run viewer, restricted
 PMTiles are resolved through the same-origin signer endpoint:
