@@ -27,7 +27,6 @@
 |---|---|---|---|---|---|
 | [Global Oil & Gas Features Database](gogi.md) | 310-energy | active | public | `fgb;csv;pmtiles` | `latest/gogi-pipelines.fgb` |
 | [PETRODATA Petroleum Fields](petrodata.md) | 310-energy | active | public | `fgb;pmtiles` | `latest/petrodata.fgb` |
-| [DRC CAMI Mining Cadastre](drc-cami-mining-cadastre.md) | 320-mining | active | private | `fgb;pmtiles` | `latest/drc-cami-mining-cadastre.fgb` |
 | [OSMRE e-AMLIS Abandoned Mine Land Inventory](eamlis-abandoned-mine-land-inventory.md) | 320-mining | active | public | `fgb;pmtiles` | `latest/eamlis-abandoned-mine-land-inventory.fgb` |
 | [IPIS DRC Artisanal Mining Sites](ipis-drc-artisanal-mining-sites.md) | 320-mining | active | public | `fgb;pmtiles` | `latest/ipis-drc-artisanal-mining-sites.fgb` |
 | [WRI Forest Atlas DRC Mining Permits](wri-forest-atlas-drc-mining-permits.md) | 320-mining | active | internal | `fgb;pmtiles` | `latest/wri-forest-atlas-drc-mining-permits.fgb` |
