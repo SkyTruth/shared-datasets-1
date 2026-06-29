@@ -17,7 +17,9 @@ Current skills:
 - `deploy-scheduled-ingestion`
 - `feature-preview`
 - `gcp-shared-datasets`
+- `invariant-first-engineering`
 - `publish-shared-dataset`
+- `protected-terraform-apply`
 - `repo-alert-commit-messages`
 - `shared-datasets-compliance-audit`
 - `static-catalog-web-preview`

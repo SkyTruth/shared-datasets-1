@@ -1,0 +1,4 @@
+interface:
+  display_name: "Invariant-First Engineering"
+  short_description: "Favor invariants over defensive patches."
+  default_prompt: "Use $invariant-first-engineering to review this change with a bias toward enforcing invariants and deleting redundant defenses."
