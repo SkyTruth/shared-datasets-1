@@ -43,6 +43,33 @@ body {
   letter-spacing: 0;
 }
 
+.app-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1000;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: var(--ink);
+  box-shadow: var(--shadow);
+  color: #ffffff;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.app-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 body.docs-open {
   overflow: hidden;
 }

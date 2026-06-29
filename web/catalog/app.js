@@ -13,6 +13,7 @@ const state = {
   colorFieldsByReference: {},
   docsRequestSerial: 0,
   featureLookupSerial: 0,
+  toastTimer: null,
   inspectedFeatures: [],
   metadataLocale: "",
   featureMetadataCache: new Map(),
@@ -31,6 +32,17 @@ function createZoomSelectionButton() {
   button.textContent = "Zoom to selection";
   button.title = "Select a legend item to enable zoom";
   return button;
+}
+
+function createToastElement() {
+  const toast = document.createElement("div");
+  toast.id = "app-toast";
+  toast.className = "app-toast";
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+  toast.hidden = true;
+  document.body.append(toast);
+  return toast;
 }
 
 const elements = {
@@ -124,6 +136,7 @@ const elements = {
   docsCopyMarkdown: document.querySelector("#docs-copy-markdown"),
   docsBody: document.querySelector("#docs-body"),
   docsClose: document.querySelector("#docs-close"),
+  toast: createToastElement(),
 };
 
 const collator = new Intl.Collator("en", { sensitivity: "base" });
@@ -134,7 +147,7 @@ const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
 const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
 const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024;
 const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
-const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 5;
+const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 100;
 const FEATURE_METADATA_LINE_ID_RE = /"feature_id"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)/;
 const FEATURE_METADATA_ID_VALUE_RE = /^[A-Za-z0-9]{1,64}$/;
 
@@ -1304,6 +1317,10 @@ async function refreshFeatureInspectorMetadata() {
 
 async function enrichFeatureMetadata(features) {
   const lookupFeatures = features.slice(0, FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT);
+  const skippedLookupCount = featureMetadataSkippedLookupCount(features);
+  if (skippedLookupCount) {
+    showFeatureMetadataLimitToast(features.length, skippedLookupCount);
+  }
   const groups = featureLookupGroups(lookupFeatures);
   if (!groups.length) {
     return features;
@@ -1336,6 +1353,36 @@ async function enrichFeatureMetadata(features) {
     }
     return feature;
   });
+}
+
+function featureMetadataSkippedLookupCount(features) {
+  return features
+    .slice(FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT)
+    .filter((feature) => featureIdFor(feature)).length;
+}
+
+function showFeatureMetadataLimitToast(totalCount, skippedCount) {
+  showToast(
+    `Showing metadata for the first ${FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT} of ${totalCount} overlapping hits. ${skippedCount} additional hits were skipped.`
+  );
+}
+
+function showToast(message) {
+  const text = String(message || "").trim();
+  if (!text) {
+    return;
+  }
+  if (state.toastTimer) {
+    window.clearTimeout(state.toastTimer);
+  }
+  elements.toast.textContent = text;
+  elements.toast.hidden = false;
+  elements.toast.classList.add("is-visible");
+  state.toastTimer = window.setTimeout(() => {
+    elements.toast.classList.remove("is-visible");
+    elements.toast.hidden = true;
+    state.toastTimer = null;
+  }, 5000);
 }
 
 function featureLookupGroups(features) {
