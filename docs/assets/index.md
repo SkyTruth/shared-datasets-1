@@ -53,3 +53,9 @@
 | Asset | Subcategory | Status | Access tier | Formats | Canonical file |
 |---|---|---|---|---|---|
 | [Global Fishing Watch Anchorages](gfw-anchorages.md) | 640-ocean-activity | active | public | `fgb;pmtiles` | `latest/gfw-anchorages.fgb` |
+
+## 800-derived-ml-products
+
+| Asset | Subcategory | Status | Access tier | Formats | Canonical file |
+|---|---|---|---|---|---|
+| [DRC ASM Mask Polygons](drc-asm-mask-polygons.md) | 810-labels | active | public | `fgb;pmtiles` | `latest/drc-asm-mask-polygons.fgb` |
