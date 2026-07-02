@@ -297,7 +297,7 @@ jobs:
           check_catalog_url "https://tiles.skytruth.org/_catalog/web/catalog.json" "application/json"
           check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"
 
-          wdpa_metadata_path="$(
+          public_metadata_path="$(
             python3 <<'PY'
           import json
           import urllib.request
@@ -306,20 +306,32 @@ jobs:
           with urllib.request.urlopen(release_index_url, timeout=30) as response:
               release_index = json.load(response)
 
+          def canonical_metadata_path(release):
+              for file_entry in release.get("files") or []:
+                  file_path = str(file_entry.get("path") or "")
+                  file_format = str(file_entry.get("format") or "").lower()
+                  file_role = str(file_entry.get("role") or "").lower()
+                  if (
+                      (file_format == "metadata" or file_role == "metadata")
+                      and file_path.startswith("gs://skytruth-shared-datasets-1/")
+                      and file_path.endswith(".metadata.ndjson.gz")
+                  ):
+                      return file_path.removeprefix("gs://skytruth-shared-datasets-1/")
+              return None
+
+          candidate_releases = []
           latest_release = release_index.get("latest_release") or {}
-          for file_entry in latest_release.get("files") or []:
-              file_path = str(file_entry.get("path") or "")
-              file_format = str(file_entry.get("format") or "").lower()
-              file_role = str(file_entry.get("role") or "").lower()
-              if (
-                  (file_format == "metadata" or file_role == "metadata")
-                  and file_path.startswith("gs://skytruth-shared-datasets-1/")
-                  and file_path.endswith(".metadata.ndjson.gz")
-              ):
-                  print(file_path.removeprefix("gs://skytruth-shared-datasets-1/"))
+          if latest_release:
+              candidate_releases.append(latest_release)
+          candidate_releases.extend(release_index.get("releases") or [])
+
+          for release in candidate_releases:
+              metadata_path = canonical_metadata_path(release)
+              if metadata_path:
+                  print(metadata_path)
                   break
           else:
-              raise SystemExit("WDPA marine latest release does not include a canonical metadata sidecar")
+              raise SystemExit("WDPA marine release index does not include a canonical metadata sidecar in any release")
           PY
           )"
 
@@ -352,4 +364,4 @@ jobs:
             return 1
           }
 
-          check_public_artifact_url "https://tiles.skytruth.org/artifacts/${wdpa_metadata_path}"
+          check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"
