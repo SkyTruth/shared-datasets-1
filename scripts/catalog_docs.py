@@ -13,6 +13,12 @@ from typing import Any, Sequence
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts import catalog_csv
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 SCHEMA_VERSION = 1
@@ -113,6 +119,17 @@ LIFECYCLE_FIELDS = [
     "successor_asset_slug",
     "consumer_guidance",
 ]
+ADMISSION_FIELDS = {
+    "intended_consumers",
+    "shared_rationale",
+    "steward",
+    "update_expectations",
+    "estimated_published_size_gb",
+    "large_data_exception",
+    "alternatives_considered",
+    "deprecation_policy",
+    "source_license_citation_status",
+}
 LIFECYCLE_STATUSES = {"active", "deprecated", "superseded", "retired"}
 NON_ACTIVE_LIFECYCLE_REQUIRED_FIELDS = ["lifecycle_reason", "lifecycle_date", "consumer_guidance"]
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -189,10 +206,7 @@ def load_categories(path: Path) -> dict[str, set[str]]:
 
 
 def load_catalog_rows(path: Path) -> dict[str, dict[str, str]]:
-    if not path.exists():
-        return {}
-    with path.open(newline="") as handle:
-        return {row["asset_slug"]: row for row in csv.DictReader(handle) if row.get("asset_slug")}
+    return catalog_csv.load_catalog(path, missing_ok=True)
 
 
 def split_frontmatter(text: str, path: Path) -> tuple[dict[str, Any], str]:
@@ -295,6 +309,38 @@ def normalize_file_entries(raw_files: Any, canonical_file: str, canonical_format
     return normalized
 
 
+KNOWN_TOP_LEVEL_FIELDS = (
+    set(REQUIRED_SCALAR_FIELDS)
+    | set(OPTIONAL_DISCOVERY_FIELDS)
+    | set(LIFECYCLE_FIELDS)
+    | {
+        "schema_version",
+        "notes",
+        "admission",
+        "available_formats",
+        "metadata_paths",
+        "files",
+    }
+)
+
+
+def validate_known_fields(path: Path, raw: dict[str, Any]) -> None:
+    unknown = sorted(set(raw) - KNOWN_TOP_LEVEL_FIELDS)
+    if unknown:
+        raise CatalogDocsError(
+            f"{path}: unknown frontmatter fields: {', '.join(unknown)}; "
+            "use the canonical field names from templates/dataset_README.template.md"
+        )
+    admission = raw.get("admission")
+    if isinstance(admission, dict):
+        unknown_admission = sorted(set(admission) - ADMISSION_FIELDS)
+        if unknown_admission:
+            raise CatalogDocsError(
+                f"{path}: unknown admission fields: {', '.join(unknown_admission)}; "
+                "use the canonical admission field names from templates/dataset_README.template.md"
+            )
+
+
 def normalize_metadata(
     *,
     path: Path,
@@ -305,6 +351,7 @@ def normalize_metadata(
     metadata: dict[str, Any] = {}
     warnings: list[str] = []
 
+    validate_known_fields(path, raw)
     metadata["schema_version"] = raw.get("schema_version")
 
     for key in REQUIRED_SCALAR_FIELDS:

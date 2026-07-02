@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
 import hashlib
 import json
@@ -15,6 +14,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common import release_index
 from ingestion.common.runtime import content_type_for
+from scripts import catalog_csv
 from scripts import release_feature_model
 from scripts import vector_asset
 from scripts.raster_asset import validate_cog
@@ -100,9 +100,8 @@ class PublishResult:
     warnings: tuple[str, ...]
 
 
-def load_catalog(path: Path = Path("catalog/shared-datasets-catalog.csv")) -> dict[str, dict[str, str]]:
-    with path.open(newline="") as file_obj:
-        return {row["asset_slug"]: row for row in csv.DictReader(file_obj) if row.get("asset_slug")}
+def load_catalog(path: Path = catalog_csv.DEFAULT_CATALOG_CSV) -> dict[str, dict[str, str]]:
+    return catalog_csv.load_catalog(path)
 
 
 def parse_release_date(value: str) -> dt.date:

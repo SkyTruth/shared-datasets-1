@@ -19,7 +19,12 @@ FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 ASSET_DOC_RE = re.compile(r"^docs/assets/([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
 INGESTION_JOB_FILE_RE = re.compile(r"^ingestion/([^/]+)/(README\.md|Dockerfile|run\.py)$")
 PLACEHOLDER_BRACES_RE = re.compile(r"^\{[^{}]*\}$")
-FOOTPRINT_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+FOOTPRINT_UNIT_RE = re.compile(
+    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kb|mb|gb|tb|kib|mib|gib|tib)\b",
+    re.IGNORECASE,
+)
+FOOTPRINT_BINARY_UNITS_GB = {"kib": 1 / (1024 * 1024), "mib": 1 / 1024, "gib": 1.0, "tib": 1024.0}
+FOOTPRINT_DECIMAL_UNITS_GB = {"kb": 1 / 1_000_000, "mb": 1 / 1000, "gb": 1.0, "tb": 1000.0}
 
 MISSING_TEXT_VALUES = {
     "n/a",
@@ -126,15 +131,26 @@ def is_missing_text(value: Any) -> bool:
 
 
 def parse_footprint_gb(value: Any) -> float | None:
+    """Parse a footprint into GB. Unit-suffixed sizes are converted and summed;
+    bare numbers are taken as GB."""
     if is_missing_text(value):
         return None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         footprint = float(value)
     else:
-        match = FOOTPRINT_RE.search(str(value))
-        if match is None:
-            return None
-        footprint = float(match.group(0))
+        text = str(value)
+        matches = list(FOOTPRINT_UNIT_RE.finditer(text))
+        if matches:
+            footprint = 0.0
+            for match in matches:
+                unit = match.group("unit").lower()
+                scale = FOOTPRINT_BINARY_UNITS_GB.get(unit) or FOOTPRINT_DECIMAL_UNITS_GB[unit]
+                footprint += float(match.group("value")) * scale
+        else:
+            try:
+                footprint = float(text.strip())
+            except ValueError:
+                return None
     if not math.isfinite(footprint) or footprint < 0:
         return None
     return footprint

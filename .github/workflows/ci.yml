@@ -15,8 +15,50 @@ env:
   UV_VERSION: "0.11.8"
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
+  TERRAFORM_VERSION: "1.8.5"
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run ruff lint
+        run: uv run ruff check .
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Validate Terraform configurations
+        run: |
+          set -euo pipefail
+          for env_dir in terraform/envs/prod terraform/envs/preview; do
+            echo "Validating ${env_dir}"
+            terraform -chdir="${env_dir}" init -backend=false -input=false >/dev/null
+            terraform -chdir="${env_dir}" validate
+          done
+
   tests:
     runs-on: ubuntu-latest
     steps:

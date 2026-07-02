@@ -447,6 +447,34 @@ the reviewed breaking-change alert path instead. Local `check-schema` runs are
 read-only by default and skip snapshot upload unless the explicit flag is used
 from a runtime with `SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1`.
 
+The approved dataset mutation workflow steps live in:
+
+```text
+scripts/publish_workflow.py
+```
+
+Each subcommand implements one step of the `Approved dataset mutation` or
+`Dataset breaking change alert` GitHub workflow: reviewer acceptance checks,
+catalog row collection, plan path validation, schema compatibility checks,
+staged object promotion, release-index rebuilds, breaking-change alerts,
+upload summaries, and generation-verified deletions. The workflows call these
+subcommands instead of embedding inline Python, so the promotion logic is unit
+tested in `tests/test_publish_workflow.py`. The module is stdlib-only at import
+time; only the `promote` subcommand needs `uv run`.
+
+Shared internal modules:
+
+```text
+scripts/catalog_csv.py
+scripts/concierge_profiling.py
+```
+
+`catalog_csv.py` is the single owner of `catalog/shared-datasets-catalog.csv`
+parsing; script code should load catalog rows through it rather than reading
+the CSV directly. `concierge_profiling.py` owns the field profiling and curator
+recommendation engine used by the publishing concierge's identity decision
+table.
+
 Production Terraform mutations must land through reviewed PRs and protected
 GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is
 reserved for explicitly approved break-glass emergencies.

@@ -4,17 +4,23 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import json
 import re
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import quote
 
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts import catalog_csv
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -147,11 +153,10 @@ def load_categories(path: Path) -> dict[str, dict[str, str]]:
 
 
 def load_catalog_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            raise CatalogSiteError(f"{path}: catalog has no header row")
-        return [dict(row) for row in reader]
+    try:
+        return catalog_csv.read_catalog_rows(path)
+    except catalog_csv.CatalogCsvError as exc:
+        raise CatalogSiteError(str(exc)) from exc
 
 
 def split_semicolon(value: str) -> list[str]:
@@ -403,17 +408,6 @@ def optional_search_fields(metadata: dict[str, Any], *, row_count: int | None, d
         normalize_search_field(value, index=index, doc_path=doc_path, row_count=row_count)
         for index, value in enumerate(raw_fields, start=1)
     ]
-
-
-def normalize_locale_code(value: Any, *, context: str, doc_path: Path) -> str:
-    locale_code = str(value or "").strip()
-    if not locale_code:
-        raise CatalogSiteError(f"{doc_path}: {context} is required")
-    if locale_code != locale_code.lower() or "-" in locale_code or not FIELD_SAFE_LOCALE_RE.fullmatch(locale_code):
-        raise CatalogSiteError(
-            f"{doc_path}: {context} must be a field-safe BCP 47 locale code such as en, pt_br, or zh_hans"
-        )
-    return locale_code
 
 
 def optional_feature_identity(metadata: dict[str, Any], *, doc_path: Path) -> dict[str, Any] | None:
@@ -876,9 +870,9 @@ def validate_row(
     docs_dir: Path,
 ) -> None:
     prefix = f"catalog row {row_number}"
-    for field in REQUIRED_FIELDS:
-        if not (row.get(field) or "").strip():
-            raise CatalogSiteError(f"{prefix}: missing required field {field!r}")
+    for field_name in REQUIRED_FIELDS:
+        if not (row.get(field_name) or "").strip():
+            raise CatalogSiteError(f"{prefix}: missing required field {field_name!r}")
     slug = row["asset_slug"].strip()
     if slug in seen:
         raise CatalogSiteError(f"{prefix}: duplicate asset_slug {slug!r}")
@@ -889,9 +883,9 @@ def validate_row(
         allowed = ", ".join(sorted(LIFECYCLE_STATUSES))
         raise CatalogSiteError(f"{prefix}: status must be one of: {allowed}")
     if status != "active":
-        for field in ("lifecycle_reason", "lifecycle_date", "consumer_guidance"):
-            if not (row.get(field) or "").strip():
-                raise CatalogSiteError(f"{prefix}: non-active assets require {field!r}")
+        for field_name in ("lifecycle_reason", "lifecycle_date", "consumer_guidance"):
+            if not (row.get(field_name) or "").strip():
+                raise CatalogSiteError(f"{prefix}: non-active assets require {field_name!r}")
         lifecycle_date = (row.get("lifecycle_date") or "").strip()
         if not DATE_RE.fullmatch(lifecycle_date):
             raise CatalogSiteError(f"{prefix}: lifecycle_date must be YYYY-MM-DD")

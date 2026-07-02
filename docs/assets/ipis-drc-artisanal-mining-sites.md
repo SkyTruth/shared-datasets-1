@@ -37,8 +37,8 @@ admission:
     metadata; project-local storage would duplicate a broadly reusable public dataset.
   steward: SkyTruth shared-datasets maintainers; upstream steward IPIS
   update_expectations: Manual refresh from IPIS open-data downloads unless a scheduled ingestion is added later.
-  estimated_published_footprint: Below 1 GB for canonical and companion artifacts.
-  deprecation_exit_policy: If IPIS withdraws or supersedes the table, mark this asset deprecated or superseded, retain existing
+  estimated_published_size_gb: 1
+  deprecation_policy: If IPIS withdraws or supersedes the table, mark this asset deprecated or superseded, retain existing
     releases for citation, and point consumers to the successor source or service.
 bounds:
 - 23.2714776

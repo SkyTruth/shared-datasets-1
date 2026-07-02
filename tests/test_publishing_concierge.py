@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import publishing_concierge
+from scripts import concierge_profiling, publishing_concierge
 
 
 CATEGORIES_YAML = """categories:
@@ -1264,7 +1264,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
 
     def test_field_profile_reports_decision_table_statistics(self):
-        options = publishing_concierge.profile_rows(
+        options = concierge_profiling.profile_rows(
             [
                 {"source_id": "A1", "NAME": "North Reef", "DISC": "-9999"},
                 {"source_id": "A2", "NAME": "North Reef", "DISC": "1999"},
@@ -1364,7 +1364,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 }
             )
 
-        options = publishing_concierge.profile_rows(rows)
+        options = concierge_profiling.profile_rows(rows)
 
         provider = options.id_field_candidates[0]
         self.assertEqual(provider.field, "PRIMKEY")
@@ -1393,7 +1393,7 @@ class PublishingConciergeTests(unittest.TestCase):
             + [{"NAME": f"Reef {index}", "ORIG_NAME": f"Original Reef {index}"} for index in range(100)]
         )
 
-        options = publishing_concierge.profile_rows(rows)
+        options = concierge_profiling.profile_rows(rows)
 
         by_field = {candidate.field: candidate for candidate in options.group_field_candidates}
         self.assertIn("NAME", by_field)
@@ -1438,7 +1438,7 @@ class PublishingConciergeTests(unittest.TestCase):
     def test_profile_row_iter_uses_deterministic_random_sample_not_first_rows(self):
         rows = [{"source_id": f"A{index}", "NAME": f"Name {index}"} for index in range(25)]
 
-        sample, total_rows, profile_scope = publishing_concierge.profile_row_iter(rows, sample_size=10, random_seed=7)
+        sample, total_rows, profile_scope = concierge_profiling.profile_row_iter(rows, sample_size=10, random_seed=7)
 
         self.assertEqual(total_rows, 25)
         self.assertEqual(profile_scope, "random_sample")
@@ -1454,11 +1454,11 @@ class PublishingConciergeTests(unittest.TestCase):
             source.write_text("placeholder")
 
             with mock.patch.dict(publishing_concierge.os.environ, {"SHARED_DATASETS_PROFILE_WITH_GDAL": "1"}), mock.patch.object(
-                publishing_concierge.shutil,
+                concierge_profiling.shutil,
                 "which",
                 return_value="/usr/bin/ogr2ogr",
             ), mock.patch.object(
-                publishing_concierge.subprocess,
+                concierge_profiling.subprocess,
                 "run",
                 return_value=mock.Mock(
                     returncode=0,
@@ -1487,7 +1487,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
         self.assertEqual(run.call_args.args[0][:3], ["ogr2ogr", "-f", "CSV"])
         self.assertNotIn("-limit", run.call_args.args[0])
-        self.assertEqual(run.call_args.kwargs["timeout"], publishing_concierge.OGR_PROFILE_TIMEOUT_SECONDS)
+        self.assertEqual(run.call_args.kwargs["timeout"], concierge_profiling.OGR_PROFILE_TIMEOUT_SECONDS)
         self.assertEqual(plan.curator_field_options.profile_scope, "full")
         self.assertTrue(plan.curator_field_options.generated_feature_id_option.available)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
@@ -1503,7 +1503,7 @@ class PublishingConciergeTests(unittest.TestCase):
             source.write_text("placeholder")
 
             with mock.patch.dict(publishing_concierge.os.environ, {}, clear=True), mock.patch.object(
-                publishing_concierge.subprocess,
+                concierge_profiling.subprocess,
                 "run",
             ) as run:
                 plan = publishing_concierge.build_plan(
@@ -1538,8 +1538,8 @@ class PublishingConciergeTests(unittest.TestCase):
             source = root / "example.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}' + (" " * 32))
 
-            with mock.patch.object(publishing_concierge, "MAX_IN_MEMORY_GEOJSON_BYTES", 16), mock.patch.object(
-                publishing_concierge,
+            with mock.patch.object(concierge_profiling, "MAX_IN_MEMORY_GEOJSON_BYTES", 16), mock.patch.object(
+                concierge_profiling,
                 "read_geojson_rows",
             ) as read_rows:
                 plan = publishing_concierge.build_plan(

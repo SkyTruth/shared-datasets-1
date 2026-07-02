@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 from ingestion.common import feature_metadata

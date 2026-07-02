@@ -150,6 +150,40 @@ class CatalogDocsTests(unittest.TestCase):
                     categories={"100-geographic-reference": {"110-boundaries"}},
                 )
 
+    def test_unknown_top_level_frontmatter_field_is_rejected(self):
+        bad = DOC.replace("citation: Example citation\n", "citation: Example citation\nestimated_footprint: 2\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp) / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            (docs_dir / "example-asset.md").write_text(bad)
+
+            with self.assertRaisesRegex(catalog_docs.CatalogDocsError, "unknown frontmatter fields: estimated_footprint"):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories={"100-geographic-reference": {"110-boundaries"}},
+                )
+
+    def test_unknown_admission_field_is_rejected(self):
+        bad = DOC.replace(
+            "citation: Example citation\n",
+            "citation: Example citation\n"
+            "admission:\n"
+            "  steward: SkyTruth\n"
+            "  estimated_published_footprint: Below 1 GB\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            docs_dir = Path(tmp) / "docs/assets"
+            docs_dir.mkdir(parents=True)
+            (docs_dir / "example-asset.md").write_text(bad)
+
+            with self.assertRaisesRegex(
+                catalog_docs.CatalogDocsError, "unknown admission fields: estimated_published_footprint"
+            ):
+                catalog_docs.read_asset_docs(
+                    docs_dir=docs_dir,
+                    categories={"100-geographic-reference": {"110-boundaries"}},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

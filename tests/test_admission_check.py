@@ -153,5 +153,24 @@ class AdmissionCheckTests(unittest.TestCase):
 
         self.assertEqual(result.errors, ())
 
+class ParseFootprintGbTests(unittest.TestCase):
+    def test_numeric_values_are_gb(self):
+        self.assertEqual(admission_check.parse_footprint_gb(0.17), 0.17)
+        self.assertEqual(admission_check.parse_footprint_gb(3), 3.0)
+        self.assertEqual(admission_check.parse_footprint_gb("0.5"), 0.5)
+
+    def test_unit_suffixes_are_converted_not_read_as_gb(self):
+        self.assertAlmostEqual(admission_check.parse_footprint_gb("Roughly 90 MB of artifacts"), 0.09)
+        self.assertAlmostEqual(admission_check.parse_footprint_gb("Below 50 MB"), 0.05)
+        self.assertAlmostEqual(admission_check.parse_footprint_gb("Roughly 3.2 GB"), 3.2)
+        self.assertAlmostEqual(admission_check.parse_footprint_gb("2 GB of FGB plus 500 MB of tiles"), 2.5)
+
+    def test_missing_or_unparseable_values_are_none(self):
+        self.assertIsNone(admission_check.parse_footprint_gb("unknown"))
+        self.assertIsNone(admission_check.parse_footprint_gb(""))
+        self.assertIsNone(admission_check.parse_footprint_gb("small"))
+        self.assertIsNone(admission_check.parse_footprint_gb(-1))
+
+
 if __name__ == "__main__":
     unittest.main()
