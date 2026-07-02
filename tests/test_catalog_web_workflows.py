@@ -340,7 +340,13 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertIn('check_catalog_url "https://tiles.skytruth.org/_catalog/web/index.html" "text/html"', verify_run)
         self.assertIn('release_index_url = "https://tiles.skytruth.org/_catalog/releases/wdpa-marine.json"', verify_run)
-        self.assertIn('check_public_artifact_url "https://tiles.skytruth.org/artifacts/${wdpa_metadata_path}"', verify_run)
+        self.assertIn("candidate_releases.extend(release_index.get(\"releases\") or [])", verify_run)
+        self.assertIn(
+            "WDPA marine release index does not include a canonical metadata sidecar in any release",
+            verify_run,
+        )
+        self.assertIn('check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"', verify_run)
+        self.assertNotIn("latest release does not include a canonical metadata sidecar", verify_run)
         self.assertIn("expected 200 without redirect", verify_run)
         self.assertNotIn("curl -L", verify_run)
         self.assertNotIn("--location", verify_run)
