@@ -147,6 +147,7 @@ jobs:
             --summary-json delete-breaking-alert.json
 
       - name: Send planned breaking alerts
+        if: ${{ steps.detect.outputs.has_publish_plan == 'true' || steps.detect.outputs.has_delete_plan == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
