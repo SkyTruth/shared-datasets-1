@@ -26,6 +26,7 @@ from scripts import catalog_csv
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
+METADATA_SIDECAR_AUTOLOAD_META_NAME = "shared-datasets-metadata-sidecar-autoload-max-bytes"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 SYNTHETIC_CANONICAL_FORMAT_PREFERENCE = ("fgb", "cog", "zarr", "csv", "geojson", "ndgeojson")
 ACCESS_TIERS = {"public", "private", "internal"}
@@ -1250,6 +1251,19 @@ def copy_static_files(source_dir: Path, out_dir: Path) -> list[Path]:
     return copied
 
 
+def inject_metadata_sidecar_autoload_meta(index_html: Path, max_bytes: int) -> None:
+    if max_bytes < 0:
+        raise CatalogSiteError("metadata sidecar autoload max bytes must be >= 0")
+    html = index_html.read_text(encoding="utf-8")
+    if METADATA_SIDECAR_AUTOLOAD_META_NAME in html:
+        raise CatalogSiteError(f"index.html already declares {METADATA_SIDECAR_AUTOLOAD_META_NAME}")
+    marker = "</head>"
+    if html.count(marker) != 1:
+        raise CatalogSiteError("index.html must contain exactly one </head> tag")
+    meta = f'    <meta name="{METADATA_SIDECAR_AUTOLOAD_META_NAME}" content="{max_bytes}" />\n'
+    index_html.write_text(html.replace(marker, f"{meta}  {marker}"), encoding="utf-8")
+
+
 def copy_docs(docs_dir: Path, out_dir: Path) -> list[Path]:
     copied: list[Path] = []
     target_dir = out_dir / "docs/assets"
@@ -1276,6 +1290,7 @@ def build_site(
     allow_release_index_only_assets: bool = False,
     force_access_tier: str | None = None,
     generated_at: str | None = None,
+    metadata_sidecar_autoload_max_bytes: int | None = None,
 ) -> list[Path]:
     payload = build_catalog_payload(
         catalog_path=catalog_path,
@@ -1292,6 +1307,8 @@ def build_site(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     written = copy_static_files(static_dir, out_dir)
+    if metadata_sidecar_autoload_max_bytes is not None:
+        inject_metadata_sidecar_autoload_meta(out_dir / "index.html", metadata_sidecar_autoload_max_bytes)
     written.extend(copy_docs(docs_dir, out_dir))
     catalog_json = out_dir / "catalog.json"
     catalog_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -1335,6 +1352,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Override emitted asset access_tier values, for private preview deployments.",
     )
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
+    parser.add_argument(
+        "--metadata-sidecar-autoload-max-bytes",
+        type=int,
+        help=(
+            "Preview-only: inject the catalog-viewer metadata sidecar autoload budget meta tag "
+            f"({METADATA_SIDECAR_AUTOLOAD_META_NAME}) into the generated index.html."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1354,6 +1379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         allow_release_index_only_assets=args.allow_release_index_only_assets,
         force_access_tier=args.force_access_tier,
         generated_at=args.generated_at,
+        metadata_sidecar_autoload_max_bytes=args.metadata_sidecar_autoload_max_bytes,
     )
     print(json.dumps({"output": str(args.out), "files": [str(path) for path in written]}, indent=2))
     return 0

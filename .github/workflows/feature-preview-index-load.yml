@@ -279,6 +279,7 @@ jobs:
             --release-index-assets-only \
             --latest-from-release-index \
             --force-access-tier private \
+            --metadata-sidecar-autoload-max-bytes 33554432 \
             --out "${RUNNER_TEMP}/preview-catalog-web"
         working-directory: preview-source
 

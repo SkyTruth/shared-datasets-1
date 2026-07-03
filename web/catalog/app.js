@@ -59,6 +59,7 @@ const elements = {
   detail: document.querySelector("#detail-view"),
   taxonomy: document.querySelector("#detail-taxonomy"),
   title: document.querySelector("#detail-title"),
+  slug: document.querySelector("#detail-slug"),
   description: document.querySelector("#detail-description"),
   selectionLegend: document.querySelector("#selection-legend"),
   docs: document.querySelector("#detail-docs"),
@@ -145,7 +146,7 @@ const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
 const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
 const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
-const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024;
+const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 24 * 1024 * 1024;
 const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
 const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 100;
 const FEATURE_METADATA_LINE_ID_RE = /"feature_id"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)/;
@@ -660,6 +661,8 @@ function renderDetail(asset) {
   renderSelectionLegend([]);
   elements.taxonomy.textContent = `${asset.category} / ${asset.subcategory}`;
   elements.title.textContent = asset.title;
+  elements.slug.hidden = false;
+  elements.slug.textContent = asset.slug || "";
   elements.description.textContent = asset.description || asset.notes || "No description is available yet.";
   renderDocsLink(asset);
   elements.updated.textContent = asset.latest_release?.date || asset.last_updated || "Unknown";
@@ -705,6 +708,8 @@ function renderMultiDetail(assets) {
   elements.sourceSection.hidden = true;
   elements.taxonomy.textContent = "Map comparison";
   elements.title.textContent = `${assets.length} datasets selected`;
+  elements.slug.hidden = true;
+  elements.slug.textContent = "";
   elements.description.textContent =
     mapAssets.length === assets.length
       ? "Rendering selected map-ready datasets together. Cmd-click rows to add or remove datasets."
@@ -1274,7 +1279,7 @@ async function renderPmtiles(assets) {
       selectedLayer,
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
-      onColorFieldUnavailable: (field) => clearUnavailableColorField(colorizeAsset, field),
+      onColorFieldUnavailable: (field, reason) => clearUnavailableColorField(colorizeAsset, field, reason),
       onColorLegendChange: renderColorLegend,
       onFeatureSelect: handleFeatureSelect,
       loadFeatureMetadataColorValues,
@@ -2238,7 +2243,7 @@ function updateColorizeFields(asset, fields) {
   }
 }
 
-function clearUnavailableColorField(asset, field) {
+function clearUnavailableColorField(asset, field, reason = "") {
   if (!asset) return;
   const key = colorReferenceKey(asset);
   const fieldName = String(field || "");
@@ -2248,7 +2253,19 @@ function clearUnavailableColorField(asset, field) {
   if (elements.colorize.value === fieldName) {
     elements.colorize.value = "";
   }
+  renderColorizeUnavailableNote(fieldName, reason);
+}
+
+function renderColorizeUnavailableNote(field, reason) {
   clearColorLegend();
+  const fieldName = String(field || "").trim();
+  if (!fieldName) return;
+  const detail = String(reason || "").trim() || "field values could not be loaded";
+  const note = document.createElement("div");
+  note.className = "color-legend-note";
+  note.textContent = `Colorize by ${fieldName} is unavailable: ${detail}.`;
+  elements.colorLegend.replaceChildren(note);
+  elements.colorLegend.hidden = false;
 }
 
 function renderColorizeOptions(asset, fields, options = {}) {
