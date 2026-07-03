@@ -609,6 +609,58 @@ class PublishingConciergeTests(unittest.TestCase):
                     },
                 )
 
+    def test_stage_scratch_metadata_error_uses_json_index_and_destination_uri(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            prefix = publishing_concierge.pending_publish_prefix(state)
+            pmtiles_destination = (
+                "gs://skytruth-shared-datasets-1/"
+                "300-infrastructure-industrial/330-offshore-platforms/"
+                "example/latest/example.pmtiles"
+            )
+
+            with self.assertRaisesRegex(
+                publishing_concierge.WorkflowError,
+                r"staged_objects\[1\] \(gs://.*example\.pmtiles\)\.cache_control",
+            ):
+                publishing_concierge.validate_stage_scratch(
+                    state,
+                    {
+                        "staged_objects": [
+                            {
+                                "source_uri": f"{prefix}example.fgb",
+                                "source_generation": "111",
+                                "destination_uri": (
+                                    "gs://skytruth-shared-datasets-1/"
+                                    "300-infrastructure-industrial/330-offshore-platforms/"
+                                    "example/latest/example.fgb"
+                                ),
+                            },
+                            {
+                                "source_uri": f"{prefix}example.pmtiles",
+                                "source_generation": "222",
+                                "destination_uri": pmtiles_destination,
+                                "content_type": "application/vnd.pmtiles",
+                            },
+                        ]
+                    },
+                )
+
+    def test_metadata_rule_step_templates_document_enforced_fields(self):
+        by_id = {step.step_id: step for step in publishing_concierge.STEP_DEFINITIONS}
+
+        validate_schema = by_id["validate-artifacts"].evidence_schema
+        self.assertIn("tool_versions", validate_schema)
+
+        staged_template = by_id["stage-scratch"].evidence_schema["staged_objects"][0]
+        self.assertIn("application/vnd.pmtiles", staged_template["content_type"])
+        self.assertIn(publishing_concierge.no_cache_control(), staged_template["cache_control"])
+
+        uploaded_template = by_id["preview-upload"].evidence_schema["uploaded_objects"][0]
+        self.assertIn("application/x-ndjson", uploaded_template["content_type"])
+        self.assertIn(publishing_concierge.no_cache_control(), uploaded_template["cache_control"])
+
     def _fgb_validation_payload(self, *, include_gdal: bool = True) -> dict:
         payload = {
             "commands_run": [

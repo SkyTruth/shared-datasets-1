@@ -1080,6 +1080,13 @@ def commands_for_preview_upload(state: dict[str, Any]) -> list[str]:
         f"Confirm every planned destination starts with gs://{PREVIEW_BUCKET}/.",
         f"Upload release artifacts under {release_prefix} with no-clobber generation preconditions.",
         (
+            "Set object metadata at upload time; the evidence validator enforces it per role: "
+            "pmtiles requires application/vnd.pmtiles, feature-metadata-sidecar and localized sidecars require "
+            "application/x-ndjson, metadata-translations requires text/csv, and schema/manifest/release-index/run-record "
+            f"require application/json; every one of those roles also requires cache_control {no_cache_control()!r}. "
+            "Only the canonical artifact has no fixed metadata requirement."
+        ),
+        (
             "GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BUCKET="
             f"{PREVIEW_BUCKET} SHARED_DATASETS_ALLOW_CANONICAL_MUTATION=1 UV_CACHE_DIR=.uv-cache "
             "uv run python scripts/gcs_asset.py upload LOCAL_PATH "
@@ -1183,6 +1190,12 @@ def commands_for_stage_scratch(state: dict[str, Any]) -> list[str]:
     commands = [
         f"Stage every publish candidate under {prefix} with no-clobber uploads.",
         "Use `UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload LOCAL_PATH SCRATCH_URI --content-type TYPE --cache-control CACHE_CONTROL` where metadata is required.",
+        (
+            "Set object metadata at upload time; the evidence validator enforces it per destination: "
+            "`.pmtiles` destinations require content_type application/vnd.pmtiles and cache_control "
+            f"{no_cache_control()!r}; the `_catalog/web/catalog.json` destination requires content_type "
+            f"application/json and cache_control {no_cache_control()!r}."
+        ),
         "Record each staged source URI and generation in evidence JSON.",
     ]
     if release_metadata_contract_required(state):
@@ -1392,7 +1405,7 @@ def validate_build_artifacts(state: dict[str, Any], evidence: dict[str, Any]) ->
         raise WorkflowError("evidence.artifacts must be a non-empty list")
     seen_formats: set[str] = set()
     normalized = []
-    for index, artifact in enumerate(artifacts, start=1):
+    for index, artifact in enumerate(artifacts):
         if not isinstance(artifact, dict):
             raise WorkflowError(f"evidence.artifacts[{index}] must be an object")
         path = Path(require_non_empty_string(artifact, "path"))
@@ -1554,27 +1567,28 @@ def expected_preview_upload_uri(state: dict[str, Any], role: str) -> str:
     raise WorkflowError(f"unsupported preview upload role: {role}")
 
 
-def validate_preview_upload_metadata(index: int, role: str, content_type: str, cache_control: str) -> None:
+def validate_preview_upload_metadata(index: int, role: str, content_type: str, cache_control: str, *, uri: str = "") -> None:
+    where = f"evidence.uploaded_objects[{index}]" + (f" ({uri})" if uri else "")
     if role == "pmtiles":
         if content_type != "application/vnd.pmtiles":
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be application/vnd.pmtiles")
+            raise WorkflowError(f"{where}.content_type must be application/vnd.pmtiles")
         if cache_control != no_cache_control():
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+            raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
     if role == "feature-metadata-sidecar" or role.startswith("localized-metadata-sidecar:"):
         if content_type != "application/x-ndjson":
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be application/x-ndjson")
+            raise WorkflowError(f"{where}.content_type must be application/x-ndjson")
         if cache_control != no_cache_control():
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+            raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
     if role == "metadata-translations":
         if content_type != "text/csv":
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be text/csv")
+            raise WorkflowError(f"{where}.content_type must be text/csv")
         if cache_control != no_cache_control():
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+            raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
     if role in {"schema", "manifest", "release-index", "run-record"}:
         if content_type != "application/json":
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].content_type must be application/json")
+            raise WorkflowError(f"{where}.content_type must be application/json")
         if cache_control != no_cache_control():
-            raise WorkflowError(f"evidence.uploaded_objects[{index}].cache_control must be {no_cache_control()!r}")
+            raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
 
 
 def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
@@ -1586,7 +1600,7 @@ def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> 
     normalized = []
     seen_uris = set()
     seen_roles = set()
-    for index, obj in enumerate(objects, start=1):
+    for index, obj in enumerate(objects):
         if not isinstance(obj, dict):
             raise WorkflowError(f"evidence.uploaded_objects[{index}] must be an object")
         uri = require_non_empty_string(obj, "uri")
@@ -1613,7 +1627,7 @@ def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> 
         )
         content_type = str(obj.get("content_type", "") or "")
         cache_control = str(obj.get("cache_control", "") or "")
-        validate_preview_upload_metadata(index, role, content_type, cache_control)
+        validate_preview_upload_metadata(index, role, content_type, cache_control, uri=uri)
         normalized.append(
             {
                 "uri": uri,
@@ -1876,7 +1890,7 @@ def validate_stage_scratch(state: dict[str, Any], evidence: dict[str, Any]) -> d
         raise WorkflowError("evidence.staged_objects must be a non-empty list")
     normalized = []
     destinations = set()
-    for index, obj in enumerate(objects, start=1):
+    for index, obj in enumerate(objects):
         if not isinstance(obj, dict):
             raise WorkflowError(f"evidence.staged_objects[{index}] must be an object")
         source_uri = require_non_empty_string(obj, "source_uri")
@@ -1893,16 +1907,17 @@ def validate_stage_scratch(state: dict[str, Any], evidence: dict[str, Any]) -> d
         destinations.add(destination_uri)
         content_type = str(obj.get("content_type", "") or "")
         cache_control = str(obj.get("cache_control", "") or "")
+        where = f"evidence.staged_objects[{index}] ({destination_uri})"
         if destination_uri.endswith(".pmtiles"):
             if content_type != "application/vnd.pmtiles":
-                raise WorkflowError(f"evidence.staged_objects[{index}].content_type must be application/vnd.pmtiles")
+                raise WorkflowError(f"{where}.content_type must be application/vnd.pmtiles")
             if cache_control != no_cache_control():
-                raise WorkflowError(f"evidence.staged_objects[{index}].cache_control must be {no_cache_control()!r}")
+                raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
         if destination_uri.endswith("_catalog/web/catalog.json") or destination_uri.endswith("/_catalog/web/catalog.json"):
             if content_type != "application/json":
-                raise WorkflowError(f"evidence.staged_objects[{index}].content_type must be application/json")
+                raise WorkflowError(f"{where}.content_type must be application/json")
             if cache_control != no_cache_control():
-                raise WorkflowError(f"evidence.staged_objects[{index}].cache_control must be {no_cache_control()!r}")
+                raise WorkflowError(f"{where}.cache_control must be {no_cache_control()!r}")
         normalized_item = {
             "source_uri": source_uri,
             "source_generation": source_generation,
@@ -1932,7 +1947,7 @@ def validate_stat_destinations(state: dict[str, Any], evidence: dict[str, Any]) 
         raise WorkflowError("evidence.destinations must be a non-empty list")
     normalized = []
     seen = set()
-    for index, destination in enumerate(destinations, start=1):
+    for index, destination in enumerate(destinations):
         if not isinstance(destination, dict):
             raise WorkflowError(f"evidence.destinations[{index}] must be an object")
         uri = require_non_empty_string(destination, "destination_uri")
@@ -2270,6 +2285,7 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "commands_run": ["string"],
             "validation_summary": "string",
             "all_passed": True,
+            "tool_versions": {"tool-name": "resolved path and version, or explicit not-applicable note"},
             "gdal": {
                 "ogr2ogr": "resolved path and version",
                 "ogrinfo": "resolved path and version",
@@ -2299,8 +2315,8 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
                     "uri": f"gs://{PREVIEW_BUCKET}/...",
                     "generation": "numeric string",
                     "role": "canonical|pmtiles|feature-metadata-sidecar|schema|manifest|release-index|run-record",
-                    "content_type": "optional string",
-                    "cache_control": "optional string",
+                    "content_type": "required per role: pmtiles=application/vnd.pmtiles, sidecars=application/x-ndjson, metadata-translations=text/csv, schema/manifest/release-index/run-record=application/json; canonical has no fixed requirement",
+                    "cache_control": "required 'no-cache, max-age=0, must-revalidate' for every role except canonical",
                 }
             ]
         },
@@ -2422,8 +2438,8 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
                     "source_uri": "gs://bucket/_scratch/pending-publishes/{asset_slug}/{proposal_id}/object",
                     "source_generation": "numeric string",
                     "destination_uri": "gs://bucket/canonical/object",
-                    "content_type": "optional string",
-                    "cache_control": "optional string",
+                    "content_type": "required application/vnd.pmtiles for .pmtiles destinations and application/json for _catalog/web/catalog.json; otherwise optional",
+                    "cache_control": "required 'no-cache, max-age=0, must-revalidate' for .pmtiles and _catalog/web/catalog.json destinations; otherwise optional",
                 }
             ]
         },
