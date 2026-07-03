@@ -85,6 +85,10 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/reviewed_dataset_plan.py extract delete", all_apply_runs)
         self.assertNotIn("gsutil", all_apply_runs)
         self.assertNotIn("gcloud storage", all_apply_runs)
+        all_apply_text = str(apply_job)
+        self.assertNotIn("Single-object fallback", all_apply_text)
+        self.assertNotIn("Promote staged object manually", all_apply_text)
+        self.assertNotIn("github.event.inputs.pr_number == ''", all_apply_text)
 
     def test_publish_plan_promotes_then_rebuilds_summarizes_and_cleans_up(self):
         names = step_names(self.workflow, "apply-approved-pr-plans")

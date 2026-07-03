@@ -1072,7 +1072,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"exported {path}")
             print(f"exported README files for {len(docs)} asset doc(s)")
             return 0
-    except CatalogDocsError as exc:
+    except (CatalogDocsError, catalog_csv.CatalogCsvError) as exc:
         print(f"catalog-docs: {exc}", file=sys.stderr)
         return 1
     parser.error(f"unknown command: {args.command}")

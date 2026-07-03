@@ -188,10 +188,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Disposable preview load for catalog QA.",
+                    "shared_rationale": "Disposable preview load for catalog QA.",
                     "alternatives_considered": "Production publish path.",
-                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -282,10 +282,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Disposable vector preview load for catalog QA.",
+                    "shared_rationale": "Disposable vector preview load for catalog QA.",
                     "alternatives_considered": "Production publish path.",
-                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -873,10 +873,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                    "shared_rationale": "Reusable reference table for multiple projects.",
                     "alternatives_considered": "Project storage and direct upstream access.",
-                    "deprecation_exit_policy": "Deprecate with a successor if source support ends.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Deprecate with a successor if source support ends.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -1866,10 +1866,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                        "shared_rationale": "Reusable reference table for multiple projects.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "1 MB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "1 MB",
                     },
                 ),
                 0,
@@ -1955,10 +1955,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                        "shared_rationale": "Reusable reference table for multiple projects.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "12 GB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "12 GB",
                     },
                 ),
                 0,
@@ -2009,10 +2009,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table.",
+                        "shared_rationale": "Reusable reference table.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "1 MB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "1 MB",
                     },
                 ),
                 0,
@@ -2767,6 +2767,29 @@ class PublishingConciergeTests(unittest.TestCase):
         )
         self.assertIn("source_scale_denominator: 10000000", text)
         self.assertIn("pmtiles_detail_hint: medium", text)
+
+
+class ResolveMetadataLegacyKeysTests(unittest.TestCase):
+    def test_legacy_evidence_keys_normalize_to_canonical(self):
+        evidence = {
+            "source_name": "Example source",
+            "license": "Example license",
+            "citation": "Example citation",
+            "steward": "Data Steward",
+            "source_version_date": "2026-01-01",
+            "update_cadence": "manual",
+            "intended_consumers": ["test"],
+            "shared_datasets_rationale": "Legacy rationale.",
+            "alternatives_considered": "None.",
+            "deprecation_exit_policy": "Legacy policy.",
+            "estimated_published_footprint": "12 GB",
+        }
+        normalized = publishing_concierge.validate_resolve_metadata({}, evidence)
+        self.assertEqual(normalized["shared_rationale"], "Legacy rationale.")
+        self.assertEqual(normalized["deprecation_policy"], "Legacy policy.")
+        self.assertEqual(normalized["estimated_published_size_gb"], "12 GB")
+        for legacy_key in publishing_concierge.LEGACY_RESOLVE_METADATA_KEYS:
+            self.assertNotIn(legacy_key, normalized)
 
 
 if __name__ == "__main__":

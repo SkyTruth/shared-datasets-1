@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import catalog_csv
 from scripts.admission_check import parse_footprint_gb
 from scripts.concierge_profiling import (
     CuratorFieldOptions,
@@ -943,10 +944,6 @@ def workflow_state_payload(
     }
 
 
-def estimated_footprint_gb(text: str) -> float | None:
-    return parse_footprint_gb(text)
-
-
 def detect_existing_asset(plan: ConciergePlan, *, catalog_path: Path = Path("catalog/shared-datasets-catalog.csv")) -> list[str]:
     matches = []
     doc_path = Path(plan.asset_doc_path)
@@ -954,12 +951,9 @@ def detect_existing_asset(plan: ConciergePlan, *, catalog_path: Path = Path("cat
         matches.append(str(doc_path))
     if catalog_path.exists():
         try:
-            with catalog_path.open(newline="") as handle:
-                for row in csv.DictReader(handle):
-                    if row.get("asset_slug") == plan.asset_slug:
-                        matches.append(str(catalog_path))
-                        break
-        except csv.Error as exc:
+            if catalog_csv.catalog_row(plan.asset_slug, catalog_path) is not None:
+                matches.append(str(catalog_path))
+        except (csv.Error, catalog_csv.CatalogCsvError) as exc:
             raise WorkflowError(f"could not inspect catalog for duplicate asset slug: {exc}") from exc
     return matches
 
@@ -1216,7 +1210,22 @@ def commands_for_post_merge(_state: dict[str, Any]) -> list[str]:
     return ["After merge/promotion, verify promoted objects, catalog freshness, PMTiles access, alert state, and retained temp directories."]
 
 
+# Temporary bridge for workflow states and evidence recorded before the
+# resolve-metadata contract adopted the canonical admission field names used
+# by templates/ and catalog_docs.py. Remove once no pre-rename states remain.
+LEGACY_RESOLVE_METADATA_KEYS = {
+    "shared_datasets_rationale": "shared_rationale",
+    "deprecation_exit_policy": "deprecation_policy",
+    "estimated_published_footprint": "estimated_published_size_gb",
+}
+
+
+def canonical_resolve_metadata(record: dict[str, Any]) -> dict[str, Any]:
+    return {LEGACY_RESOLVE_METADATA_KEYS.get(key, key): value for key, value in record.items()}
+
+
 def validate_resolve_metadata(_state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    evidence = canonical_resolve_metadata(evidence)
     normalized = {
         "source_name": require_non_empty_string(evidence, "source_name"),
         "license": require_non_empty_string(evidence, "license"),
@@ -1225,10 +1234,10 @@ def validate_resolve_metadata(_state: dict[str, Any], evidence: dict[str, Any]) 
         "source_version_date": require_non_empty_string(evidence, "source_version_date"),
         "update_cadence": require_non_empty_string(evidence, "update_cadence"),
         "intended_consumers": require_string_list(evidence, "intended_consumers"),
-        "shared_datasets_rationale": require_non_empty_string(evidence, "shared_datasets_rationale"),
+        "shared_rationale": require_non_empty_string(evidence, "shared_rationale"),
         "alternatives_considered": require_non_empty_string(evidence, "alternatives_considered"),
-        "deprecation_exit_policy": require_non_empty_string(evidence, "deprecation_exit_policy"),
-        "estimated_published_footprint": require_non_empty_string(evidence, "estimated_published_footprint"),
+        "deprecation_policy": require_non_empty_string(evidence, "deprecation_policy"),
+        "estimated_published_size_gb": require_non_empty_string(evidence, "estimated_published_size_gb"),
     }
     return normalized
 
@@ -1276,8 +1285,8 @@ def validate_settle_contract(state: dict[str, Any], evidence: dict[str, Any]) ->
         normalized_flags[flag] = value
     if access_tier == "public" and not normalized_flags["public_access_approved"]:
         raise WorkflowError("public access requires evidence.exception_flags.public_access_approved=true")
-    metadata = step_record(state, "resolve-metadata").get("evidence", {})
-    footprint_gb = estimated_footprint_gb(str(metadata.get("estimated_published_footprint", "")))
+    metadata = canonical_resolve_metadata(step_record(state, "resolve-metadata").get("evidence", {}))
+    footprint_gb = parse_footprint_gb(str(metadata.get("estimated_published_size_gb", "")))
     if footprint_gb is not None and footprint_gb >= 10 and not normalized_flags["large_data_exception_approved"]:
         raise WorkflowError("estimated published footprint is >= 10 GB; large_data_exception_approved must be true")
     normalized.update(
@@ -2181,10 +2190,10 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
             "source_version_date": "string",
             "update_cadence": "string",
             "intended_consumers": ["string"],
-            "shared_datasets_rationale": "string",
+            "shared_rationale": "string",
             "alternatives_considered": "string",
-            "deprecation_exit_policy": "string",
-            "estimated_published_footprint": "string",
+            "deprecation_policy": "string",
+            "estimated_published_size_gb": "string (total GB, e.g. '3.2' or '3.2 GB')",
         },
         commands_for_resolve_metadata,
         validate_resolve_metadata,
@@ -2534,7 +2543,7 @@ def print_status(state: dict[str, Any], *, as_json: bool) -> None:
 
 def render_pr_body_from_state(state: dict[str, Any], *, publish_plan: dict[str, Any] | None = None) -> str:
     plan = plan_from_state(state)
-    metadata = step_record(state, "resolve-metadata").get("evidence", {})
+    metadata = canonical_resolve_metadata(step_record(state, "resolve-metadata").get("evidence", {}))
     validation = step_record(state, "validate-artifacts").get("evidence", {})
     catalog = step_record(state, "catalog-outputs").get("evidence", {})
     publish_plan = publish_plan or build_publish_plan_from_state(state)
@@ -2559,14 +2568,14 @@ def render_pr_body_from_state(state: dict[str, Any], *, publish_plan: dict[str, 
 ## Dataset Admission
 
 - Intended consumer(s): {', '.join(metadata.get('intended_consumers', []))}
-- Why this belongs in shared-datasets instead of project storage, scratch storage, or direct upstream access: {metadata.get('shared_datasets_rationale', '')}
+- Why this belongs in shared-datasets instead of project storage, scratch storage, or direct upstream access: {metadata.get('shared_rationale', '')}
 - Source, license, and citation status: Source: {metadata.get('source_name', '')}; license/terms: {metadata.get('license', '')}; citation: {metadata.get('citation', '')}
 - Named steward: {metadata.get('steward', '')}
 - Update expectations: {metadata.get('update_cadence', '')}
-- Estimated published footprint, including canonical files, companion artifacts, and expected release copies: {metadata.get('estimated_published_footprint', '')}
+- Estimated published size in GB, one total across canonical files, companion artifacts, and expected release copies: {metadata.get('estimated_published_size_gb', '')}
 - Large-data exception, required when the proposed published footprint is >= 10 GB: See contract exception flags in concierge workflow state.
 - Alternatives considered: {metadata.get('alternatives_considered', '')}
-- Deprecation or exit policy: {metadata.get('deprecation_exit_policy', '')}
+- Deprecation or exit policy: {metadata.get('deprecation_policy', '')}
 
 ## Publish Plan
 

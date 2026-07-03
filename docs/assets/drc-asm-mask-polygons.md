@@ -41,7 +41,7 @@ admission:
     Project-local storage would duplicate a broadly reusable label layer and would not provide shared release metadata.
   steward: SkyTruth shared-datasets maintainers; upstream steward Pasanisi et al.
   update_expectations: Manual refresh if the Zenodo dataset publishes a new version or the polygonization rules change.
-  estimated_published_size_gb: 1
+  estimated_published_size_gb: 0.03
   deprecation_policy: Keep this release readable and citable. Deprecate or supersede only if a corrected upstream release,
     a stronger official label set, or a new reviewed polygonization pipeline replaces it.
 bounds:

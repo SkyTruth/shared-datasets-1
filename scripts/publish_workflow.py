@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import copy
-import csv
 import json
 import os
 import pathlib
@@ -36,7 +34,6 @@ CATALOG_CSV_PATH = str(catalog_csv.DEFAULT_CATALOG_CSV)
 SCHEMA_SUFFIXES = {".fgb", ".geojson", ".ndgeojson", ".csv"}
 REQUIRED_REVIEWER = "jonaraphael"
 BREAKING_ALERT_MARKER_PREFIX = "shared-datasets-breaking-alert"
-IGNORED_GENERATED_AT = "<ignored-generated-at>"
 CATALOG_ROW_FILES = (
     ("current-catalog-row.json", "--current-catalog-row-json"),
     ("proposed-catalog-row.json", "--proposed-catalog-row-json"),
@@ -57,18 +54,16 @@ def load_plan(plan_json: str) -> dict[str, Any]:
 
 
 def plan_asset_slug() -> str:
+    """Read the asset slug from the extracted plan file.
+
+    The workflow steps that call this only run when a plan was detected and
+    extracted, so a missing plan file is a wiring bug and fails loudly.
+    """
     for path in ("publish-plan.json", "delete-plan.json"):
         plan_path = pathlib.Path(path)
         if plan_path.exists():
             return json.loads(plan_path.read_text())["asset_slug"]
-    return ""
-
-
-def row_from_catalog_text(text: str, asset_slug: str) -> dict[str, str] | None:
-    for row in csv.DictReader(text.splitlines()):
-        if row.get("asset_slug") == asset_slug:
-            return row
-    return None
+    raise RuntimeError("no publish-plan.json or delete-plan.json in the working directory")
 
 
 def catalog_row(asset_slug: str) -> dict[str, str] | None:
@@ -165,8 +160,6 @@ def first_parent(ref: str) -> str:
 
 def command_collect_catalog_rows(args: argparse.Namespace) -> int:
     asset_slug = plan_asset_slug()
-    if not asset_slug:
-        return 0
     event = json.loads(pathlib.Path(args.event_path).read_text())
     pull_request = event.get("pull_request") or {}
     proposed_ref = str(pull_request.get("merge_commit_sha") or pull_request.get("head", {}).get("sha") or "")
@@ -178,11 +171,11 @@ def command_collect_catalog_rows(args: argparse.Namespace) -> int:
         proposed_text = pathlib.Path(CATALOG_CSV_PATH).read_text()
 
     if current_text:
-        row = row_from_catalog_text(current_text, asset_slug)
+        row = catalog_csv.catalog_row_from_text(current_text, asset_slug, label="current catalog")
         if row:
             pathlib.Path("current-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
     if proposed_text:
-        row = row_from_catalog_text(proposed_text, asset_slug)
+        row = catalog_csv.catalog_row_from_text(proposed_text, asset_slug, label="proposed catalog")
         if row:
             pathlib.Path("proposed-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
     if not pathlib.Path("current-catalog-row.json").exists():
@@ -194,8 +187,6 @@ def command_collect_catalog_rows(args: argparse.Namespace) -> int:
 
 def command_collect_proposed_catalog_row(args: argparse.Namespace) -> int:
     asset_slug = plan_asset_slug()
-    if not asset_slug:
-        return 0
     ref = urllib.parse.quote(args.head_sha, safe="")
     try:
         payload = gh_api_json(f"repos/{repository()}/contents/{CATALOG_CSV_PATH}?ref={ref}")
@@ -203,7 +194,7 @@ def command_collect_proposed_catalog_row(args: argparse.Namespace) -> int:
         print(f"Could not read proposed catalog at {args.head_sha}: {exc}")
         return 0
     content = base64.b64decode(str(payload.get("content") or "")).decode("utf-8")
-    row = row_from_catalog_text(content, asset_slug)
+    row = catalog_csv.catalog_row_from_text(content, asset_slug, label="proposed catalog")
     if row:
         pathlib.Path("proposed-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
     else:
@@ -284,25 +275,15 @@ def command_check_schema_compatibility(args: argparse.Namespace) -> int:
     return 0
 
 
-def normalize_catalog_json(text: str, *, label: str) -> dict[str, Any]:
-    payload = json.loads(text)
-    if not isinstance(payload, dict):
-        raise ValueError(f"{label} must be a JSON object")
-    generated_at = payload.get("generated_at")
-    if not isinstance(generated_at, str) or not generated_at.strip():
-        raise ValueError(f"{label} generated_at must be a non-empty string")
-    normalized = copy.deepcopy(payload)
-    normalized["generated_at"] = IGNORED_GENERATED_AT
-    return normalized
-
-
 def command_promote(args: argparse.Namespace) -> int:
-    repo_root = pathlib.Path(__file__).resolve().parents[1]
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
     from google.api_core.exceptions import NotFound
 
     from scripts import gcs_asset
+    from scripts.catalog_drift_guard import (
+        CatalogDriftGuardError,
+        load_json_payload,
+        normalize_web_catalog_payload,
+    )
 
     bucket = bucket_name()
     catalog_web_catalog_uri = f"gs://{bucket}/_catalog/web/catalog.json"
@@ -335,15 +316,15 @@ def command_promote(args: argparse.Namespace) -> int:
         )
 
         try:
-            source_payload = normalize_catalog_json(
-                source_blob.download_as_text(),
+            source_payload = normalize_web_catalog_payload(
+                load_json_payload(source_blob.download_as_text(), label=promotion["source_uri"]),
                 label=promotion["source_uri"],
             )
-            destination_payload = normalize_catalog_json(
-                current_destination_blob.download_as_text(),
+            destination_payload = normalize_web_catalog_payload(
+                load_json_payload(current_destination_blob.download_as_text(), label=promotion["destination_uri"]),
                 label=promotion["destination_uri"],
             )
-        except (json.JSONDecodeError, ValueError):
+        except CatalogDriftGuardError:
             return False
 
         if source_payload != destination_payload:

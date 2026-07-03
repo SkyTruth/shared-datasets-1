@@ -171,6 +171,28 @@ class ParseFootprintGbTests(unittest.TestCase):
         self.assertIsNone(admission_check.parse_footprint_gb("small"))
         self.assertIsNone(admission_check.parse_footprint_gb(-1))
 
+    def test_comma_grouped_values_keep_their_full_magnitude(self):
+        self.assertAlmostEqual(admission_check.parse_footprint_gb("10,240 MB"), 10.24)
+        self.assertEqual(admission_check.parse_footprint_gb("10,240"), 10240.0)
+
+    def test_garbled_numbers_are_rejected_not_misread(self):
+        self.assertIsNone(admission_check.parse_footprint_gb("1.5.2 GB"))
+
+    def test_comma_grouped_footprint_still_requires_large_data_exception(self):
+        evidence = {
+            "citation": "c",
+            "intended_consumers": ["x"],
+            "shared_rationale": "r",
+            "steward": "s",
+            "update_expectations": "u",
+            "alternatives_considered": "a",
+            "deprecation_policy": "d",
+            "estimated_published_size_gb": "10,240 MB",
+            "large_data_exception": None,
+        }
+        errors = admission_check.validate_admission_evidence(evidence, label="doc")
+        self.assertEqual(errors, ["doc: missing admission.large_data_exception for footprint >= 10 GB"])
+
 
 if __name__ == "__main__":
     unittest.main()

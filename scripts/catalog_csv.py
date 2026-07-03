@@ -10,6 +10,7 @@ generation and validation, not here.
 from __future__ import annotations
 
 import csv
+import io
 from pathlib import Path
 
 DEFAULT_CATALOG_CSV = Path("catalog/shared-datasets-catalog.csv")
@@ -19,13 +20,18 @@ class CatalogCsvError(ValueError):
     """Raised when the catalog CSV is unreadable or malformed."""
 
 
+def read_catalog_rows_text(text: str, *, label: str = "catalog") -> list[dict[str, str]]:
+    """Return all catalog rows from CSV text in order."""
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise CatalogCsvError(f"{label}: catalog has no header row")
+    return [dict(row) for row in reader]
+
+
 def read_catalog_rows(path: Path = DEFAULT_CATALOG_CSV) -> list[dict[str, str]]:
     """Return all catalog rows in file order."""
     with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            raise CatalogCsvError(f"{path}: catalog has no header row")
-        return [dict(row) for row in reader]
+        return read_catalog_rows_text(handle.read(), label=str(path))
 
 
 def load_catalog(path: Path = DEFAULT_CATALOG_CSV, *, missing_ok: bool = False) -> dict[str, dict[str, str]]:
@@ -38,3 +44,11 @@ def load_catalog(path: Path = DEFAULT_CATALOG_CSV, *, missing_ok: bool = False) 
 def catalog_row(asset_slug: str, path: Path = DEFAULT_CATALOG_CSV) -> dict[str, str] | None:
     """Return the catalog row for one asset, or None when it is not cataloged."""
     return load_catalog(path).get(asset_slug)
+
+
+def catalog_row_from_text(text: str, asset_slug: str, *, label: str = "catalog") -> dict[str, str] | None:
+    """Return the catalog row for one asset from CSV text, or None when absent."""
+    for row in read_catalog_rows_text(text, label=label):
+        if row.get("asset_slug") == asset_slug:
+            return row
+    return None

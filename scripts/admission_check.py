@@ -19,8 +19,9 @@ FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 ASSET_DOC_RE = re.compile(r"^docs/assets/([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
 INGESTION_JOB_FILE_RE = re.compile(r"^ingestion/([^/]+)/(README\.md|Dockerfile|run\.py)$")
 PLACEHOLDER_BRACES_RE = re.compile(r"^\{[^{}]*\}$")
+FOOTPRINT_NUMBER = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 FOOTPRINT_UNIT_RE = re.compile(
-    r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>kb|mb|gb|tb|kib|mib|gib|tib)\b",
+    rf"(?<![\d.,])(?P<value>{FOOTPRINT_NUMBER})\s*(?P<unit>kb|mb|gb|tb|kib|mib|gib|tib)\b",
     re.IGNORECASE,
 )
 FOOTPRINT_BINARY_UNITS_GB = {"kib": 1 / (1024 * 1024), "mib": 1 / 1024, "gib": 1.0, "tib": 1024.0}
@@ -131,8 +132,10 @@ def is_missing_text(value: Any) -> bool:
 
 
 def parse_footprint_gb(value: Any) -> float | None:
-    """Parse a footprint into GB. Unit-suffixed sizes are converted and summed;
-    bare numbers are taken as GB."""
+    """Parse a footprint into GB. Unit-suffixed sizes are converted and summed
+    (a breakdown list totals up); bare numbers are taken as GB. Values may use
+    comma thousands grouping. Anything else is None so callers fail loudly
+    rather than gate on a misread size."""
     if is_missing_text(value):
         return None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -145,12 +148,12 @@ def parse_footprint_gb(value: Any) -> float | None:
             for match in matches:
                 unit = match.group("unit").lower()
                 scale = FOOTPRINT_BINARY_UNITS_GB.get(unit) or FOOTPRINT_DECIMAL_UNITS_GB[unit]
-                footprint += float(match.group("value")) * scale
+                footprint += float(match.group("value").replace(",", "")) * scale
         else:
-            try:
-                footprint = float(text.strip())
-            except ValueError:
+            stripped = text.strip()
+            if not re.fullmatch(rf"[-+]?(?:{FOOTPRINT_NUMBER})", stripped):
                 return None
+            footprint = float(stripped.replace(",", ""))
     if not math.isfinite(footprint) or footprint < 0:
         return None
     return footprint

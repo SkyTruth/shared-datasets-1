@@ -298,14 +298,6 @@ def infer_datatype(values: Iterable[str]) -> str:
     return "string"
 
 
-def duplicate_counts(values: list[str]) -> tuple[int, int]:
-    counts: dict[str, int] = {}
-    for value in values:
-        counts[value] = counts.get(value, 0) + 1
-    repeated = [count for count in counts.values() if count > 1]
-    return len(repeated), sum(repeated)
-
-
 def field_profile_from_counts(
     name: str,
     counts: Counter[str],
@@ -739,15 +731,6 @@ def profile_rows(
     )
 
 
-def read_csv_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
-    rows = []
-    for row in iter_csv_rows(source):
-        rows.append(row)
-        if limit is not None and len(rows) >= limit:
-            break
-    return rows
-
-
 def iter_csv_rows(source: Path) -> Iterator[dict[str, Any]]:
     with source.open(newline="") as handle:
         reader = csv.DictReader(handle)
@@ -791,29 +774,6 @@ def iter_ndgeojson_rows(source: Path) -> Iterator[dict[str, Any]]:
             feature = json.loads(line)
             if isinstance(feature, dict) and isinstance(feature.get("properties"), dict):
                 yield dict(feature["properties"])
-
-
-def read_ogr_rows(source: Path, *, limit: int | None = None) -> list[dict[str, Any]]:
-    if not shutil.which("ogr2ogr"):
-        return []
-    command = ["ogr2ogr", "-f", "CSV", "/vsistdout/", str(source)]
-    if limit is not None:
-        command.extend(["-limit", str(limit)])
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=OGR_PROFILE_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return []
-    if completed.returncode != 0 or not completed.stdout.strip():
-        return []
-    reader = csv.DictReader(io.StringIO(completed.stdout))
-    return [{str(key): value for key, value in row.items() if key is not None} for row in reader]
 
 
 def profile_iterable_rows(

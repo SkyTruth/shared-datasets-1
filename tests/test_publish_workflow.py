@@ -8,7 +8,7 @@ from unittest import mock
 
 from temp_workspace import workspace
 
-from scripts import publish_workflow
+from scripts import catalog_csv, publish_workflow
 
 
 BUCKET = "skytruth-shared-datasets-1"
@@ -112,18 +112,122 @@ class CheckApprovedReviewTests(unittest.TestCase):
             self.assertEqual(self.run_command([{"state": "COMMENTED", "user": {"login": "jonaraphael"}}]), 1)
 
 
-class NormalizeCatalogJsonTests(unittest.TestCase):
-    def test_masks_generated_at(self):
-        payload = {"generated_at": "2026-07-01T00:00:00Z", "assets": [1]}
-        normalized = publish_workflow.normalize_catalog_json(json.dumps(payload), label="x")
-        self.assertEqual(normalized["generated_at"], publish_workflow.IGNORED_GENERATED_AT)
-        self.assertEqual(normalized["assets"], [1])
+class FakeBlob:
+    def __init__(self, text: str = "", *, content_type: str = "", cache_control: str = "", generation: int = 0):
+        self.text = text
+        self.content_type = content_type
+        self.cache_control = cache_control
+        self.generation = generation
 
-    def test_rejects_non_object_and_missing_generated_at(self):
-        with self.assertRaises(ValueError):
-            publish_workflow.normalize_catalog_json("[]", label="x")
-        with self.assertRaises(ValueError):
-            publish_workflow.normalize_catalog_json(json.dumps({"generated_at": " "}), label="x")
+    def reload(self):
+        pass
+
+    def download_as_text(self) -> str:
+        return self.text
+
+
+class FakeBucket:
+    def __init__(self, blobs: dict):
+        self.blobs = blobs
+
+    def blob(self, name: str, generation: int | None = None) -> FakeBlob:
+        return self.blobs[(name, int(generation))]
+
+
+class FakeClient:
+    def __init__(self, blobs: dict):
+        self.blobs = blobs
+
+    def bucket(self, name: str) -> FakeBucket:
+        return FakeBucket(self.blobs)
+
+
+class PromoteTests(unittest.TestCase):
+    """Pin command_promote's canonical-mutation safety wiring."""
+
+    CATALOG_JSON_URI = f"gs://{BUCKET}/_catalog/web/catalog.json"
+    CATALOG_JSON_SOURCE = f"gs://{BUCKET}/_scratch/pending-publishes/demo-asset/catalog.json"
+
+    def run_promote(self, promotions: list[dict]) -> list[list[str]]:
+        plan = {"asset_slug": "demo-asset", "promotions": promotions}
+        with (
+            workspace({"publish-plan.json": json.dumps(plan)}),
+            mock.patch.dict(os.environ, {"SHARED_DATASETS_BUCKET": BUCKET}),
+            mock.patch.object(publish_workflow, "catalog_row", return_value=None),
+            mock.patch.object(publish_workflow.subprocess, "run") as run,
+        ):
+            exit_code = publish_workflow.main(["promote", "--plan-json", "publish-plan.json"])
+        self.assertEqual(exit_code, 0)
+        return [list(call.args[0]) for call in run.call_args_list]
+
+    def run_catalog_json_promote(self, *, source_text: str, destination_text: str) -> list[list[str]]:
+        blobs = {
+            ("_scratch/pending-publishes/demo-asset/catalog.json", 111): FakeBlob(source_text),
+            ("_catalog/web/catalog.json", 7): FakeBlob(destination_text),
+        }
+        destination = FakeBlob(content_type="application/json", cache_control="", generation=7)
+        promotion = make_promotion(
+            source_uri=self.CATALOG_JSON_SOURCE,
+            destination_uri=self.CATALOG_JSON_URI,
+            destination_generation="7",
+            content_type="application/json",
+        )
+        with (
+            mock.patch("scripts.gcs_asset.get_client", return_value=FakeClient(blobs)),
+            mock.patch("scripts.gcs_asset.get_blob", return_value=destination),
+        ):
+            return self.run_promote([promotion])
+
+    def test_replace_generation_only_for_existing_destinations(self):
+        latest = f"gs://{BUCKET}/industry/mining/demo-asset/latest/demo-asset.pmtiles"
+        release = f"gs://{BUCKET}/industry/mining/demo-asset/releases/2026-07-01/demo-asset.pmtiles"
+        calls = self.run_promote(
+            [
+                make_promotion(
+                    destination_uri=latest,
+                    destination_generation="222",
+                    content_type="application/vnd.pmtiles",
+                    cache_control="public, max-age=60",
+                ),
+                make_promotion(destination_uri=release, destination_generation="", content_type=""),
+            ]
+        )
+
+        commands = [(call[4], call[5:]) for call in calls]
+        self.assertEqual([name for name, _ in commands], ["stat", "copy", "stat", "stat", "copy", "stat"])
+
+        replace_copy = commands[1][1]
+        self.assertEqual(replace_copy[:2], [make_promotion()["source_uri"], latest])
+        self.assertEqual(replace_copy[2:6], ["--source-generation", "111", "--replace-generation", "222"])
+        self.assertEqual(replace_copy[6:], ["--content-type", "application/vnd.pmtiles", "--cache-control", "public, max-age=60"])
+
+        no_clobber_copy = commands[4][1]
+        self.assertNotIn("--replace-generation", no_clobber_copy)
+        self.assertEqual(no_clobber_copy[2:], ["--source-generation", "111"])
+
+        self.assertFalse(any("scripts/dataset_alerts.py" in part for call in calls for part in call))
+
+    def test_catalog_json_skips_copy_when_destination_already_matches(self):
+        calls = self.run_catalog_json_promote(
+            source_text=json.dumps({"generated_at": "2026-07-02T00:00:00Z", "assets": [1]}),
+            destination_text=json.dumps({"generated_at": "2020-01-01T00:00:00Z", "assets": [1]}),
+        )
+        self.assertEqual([call[4] for call in calls], ["stat"])
+
+    def test_catalog_json_copies_when_payload_differs(self):
+        calls = self.run_catalog_json_promote(
+            source_text=json.dumps({"generated_at": "2026-07-02T00:00:00Z", "assets": [1]}),
+            destination_text=json.dumps({"generated_at": "2020-01-01T00:00:00Z", "assets": [2]}),
+        )
+        self.assertEqual([call[4] for call in calls], ["stat", "copy", "stat"])
+        self.assertIn("--replace-generation", calls[1])
+
+    def test_catalog_json_copies_when_source_is_malformed(self):
+        calls = self.run_catalog_json_promote(
+            source_text="not json",
+            destination_text=json.dumps({"generated_at": "2020-01-01T00:00:00Z", "assets": [1]}),
+        )
+        self.assertEqual([call[4] for call in calls], ["stat", "copy", "stat"])
 
 
 class DetectSchemaTargetsTests(unittest.TestCase):
@@ -436,10 +540,12 @@ class DeleteVerificationTests(unittest.TestCase):
 
 
 class CollectCatalogRowTests(unittest.TestCase):
-    def test_row_from_catalog_text(self):
-        row = publish_workflow.row_from_catalog_text(CATALOG_CSV, "demo-asset")
+    def test_catalog_row_from_text(self):
+        row = catalog_csv.catalog_row_from_text(CATALOG_CSV, "demo-asset")
         self.assertEqual(row["canonical_path"], CANONICAL_PATH)
-        self.assertIsNone(publish_workflow.row_from_catalog_text(CATALOG_CSV, "missing"))
+        self.assertIsNone(catalog_csv.catalog_row_from_text(CATALOG_CSV, "missing"))
+        with self.assertRaises(catalog_csv.CatalogCsvError):
+            catalog_csv.catalog_row_from_text("", "demo-asset")
 
     def test_collect_catalog_rows_writes_current_and_proposed(self):
         plan = {"asset_slug": "demo-asset"}
@@ -469,13 +575,13 @@ class CollectCatalogRowTests(unittest.TestCase):
         self.assertEqual(current["asset_slug"], "demo-asset")
         self.assertEqual(proposed["asset_slug"], "demo-asset")
 
-    def test_collect_catalog_rows_without_plan_is_a_no_op(self):
+    def test_collect_catalog_rows_without_plan_fails_loudly(self):
         with (
             workspace({"event.json": "{}"}),
             mock.patch.object(publish_workflow, "remote_catalog_text") as remote,
+            self.assertRaises(RuntimeError),
         ):
-            exit_code = publish_workflow.main(["collect-catalog-rows", "--event-path", "event.json"])
-        self.assertEqual(exit_code, 0)
+            publish_workflow.main(["collect-catalog-rows", "--event-path", "event.json"])
         remote.assert_not_called()
 
 
