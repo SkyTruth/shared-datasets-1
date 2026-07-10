@@ -33,9 +33,9 @@ admission:
   intended_consumers:
   - SkyTruth projects needing reusable global international boundary lines reflecting U.S. Government policy.
   - Shared-datasets catalog users needing a citable administrative boundary reference layer.
-  shared_rationale: LSIB is a reusable global boundary reference dataset likely to be useful across multiple SkyTruth
-    projects, and publishing canonical FGB plus PMTiles avoids repeated project-local downloads and conversion from the State
-    Department source package.
+  shared_rationale: LSIB is a reusable global boundary reference dataset likely to be useful across multiple SkyTruth projects,
+    and publishing canonical FGB plus PMTiles avoids repeated project-local downloads and conversion from the State Department
+    source package.
   alternatives_considered: Direct upstream access from data.geodata.state.gov is available but leaves each project to download
     a large ZIP and handle shapefile styling and metadata details. Natural Earth and Marine Regions are already available
     but do not provide the State Department-approved international boundary lines represented by LSIB.

@@ -41,9 +41,9 @@ admission:
   steward: SkyTruth shared-datasets maintainers, pending confirmation of a named internal owner
   update_expectations: Manual refresh from the portal until source terms and refresh ownership are approved.
   estimated_published_size_gb: 1
-  deprecation_policy: If CAMI or Spatial Dimension declines permission, terms become incompatible, or an authoritative
-    open replacement appears, mark this asset deprecated or retired, keep any authorized historical releases readable only
-    while allowed, and point consumers to the official portal or successor source.
+  deprecation_policy: If CAMI or Spatial Dimension declines permission, terms become incompatible, or an authoritative open
+    replacement appears, mark this asset deprecated or retired, keep any authorized historical releases readable only while
+    allowed, and point consumers to the official portal or successor source.
 bounds:
 - 12.1916667
 - -13.4333333

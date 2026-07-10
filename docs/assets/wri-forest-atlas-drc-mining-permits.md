@@ -35,8 +35,8 @@ admission:
     layer
   - Shared catalog/map users who need a citable WRI Forest Atlas DRC mining permit boundary dataset without repeatedly paging
     the ArcGIS REST service
-  shared_rationale: The ArcGIS service is public and paginated with a 1,000-record limit. A versioned shared-datasets
-    release gives consumers a stable FGB, lightweight PMTiles, and release metadata without repeated service extraction.
+  shared_rationale: The ArcGIS service is public and paginated with a 1,000-record limit. A versioned shared-datasets release
+    gives consumers a stable FGB, lightweight PMTiles, and release metadata without repeated service extraction.
   source_license_citation_status: Source and citation are identified; explicit reuse terms were not found in available ArcGIS
     service metadata, so the first proposal keeps access internal pending review.
   steward: SkyTruth shared-datasets maintainers; upstream source producer CAMI and publisher WRI Forest Atlas DRC
@@ -45,9 +45,9 @@ admission:
   alternatives_considered: Direct ArcGIS REST queries require batching and are less reproducible. A future CAMI-direct asset
     can be added separately, so this slug names WRI Forest Atlas as the source. Project-local storage would duplicate a reusable
     public extractives/permit dataset.
-  deprecation_policy: If CAMI or WRI publishes a clearer successor, withdraws access, or changes terms incompatibly,
-    mark this asset deprecated or superseded, retain existing releases where allowed, and point consumers to the successor
-    source or direct upstream service.
+  deprecation_policy: If CAMI or WRI publishes a clearer successor, withdraws access, or changes terms incompatibly, mark
+    this asset deprecated or superseded, retain existing releases where allowed, and point consumers to the successor source
+    or direct upstream service.
 bounds:
 - 6.6666667
 - -21.1

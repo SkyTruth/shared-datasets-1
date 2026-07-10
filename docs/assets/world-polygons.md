@@ -36,9 +36,9 @@ admission:
   - SkyTruth projects needing reusable global State Department country and area polygons for map context and metadata lookup.
   - Shared-datasets catalog users needing a citable companion polygon layer for State Department boundary and political geography
     data.
-  shared_rationale: World Polygons is a reusable global geographic reference layer likely to be useful across multiple
-    SkyTruth projects, and publishing canonical FGB plus PMTiles avoids repeated project-local downloads and conversion from
-    the State Department source package.
+  shared_rationale: World Polygons is a reusable global geographic reference layer likely to be useful across multiple SkyTruth
+    projects, and publishing canonical FGB plus PMTiles avoids repeated project-local downloads and conversion from the State
+    Department source package.
   alternatives_considered: Direct upstream access from data.geodata.state.gov is available but leaves each project to download
     and convert a multi-gigabyte package. Natural Earth land and administrative datasets are useful general-purpose references
     but do not provide the State Department World Polygons political geography represented by this source.
