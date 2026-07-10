@@ -22,6 +22,8 @@ env:
   IMAGE_NAME: preview-service
   CATALOG_VIEWER_IMAGE_NAME: preview-catalog-viewer
   SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview
+  FEATURE_PREVIEW_FIRESTORE_DATABASE: feature-preview
+  FEATURE_PREVIEW_COLLECTION_ROOT: feature_preview_index
   INDEX_LOADER_SERVICE_ACCOUNT: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
   CATALOG_WEB_CACHE_CONTROL: "no-cache, max-age=0, must-revalidate"
   TF_IN_AUTOMATION: "1"
@@ -221,6 +223,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          if ! grep -q 'bucket = "skytruth-shared-datasets-1-terraform-state"' preview-source/terraform/envs/preview/versions.tf; then
+            echo "The selected branch uses the legacy preview state backend; rebase it onto main." >&2
+            exit 1
+          fi
+          if grep -q 'resource "google_storage_bucket" "preview_bucket"' preview-source/terraform/envs/preview/main.tf \
+            || grep -q 'resource "google_firestore_database" "feature_preview"' preview-source/terraform/envs/preview/main.tf; then
+            echo "The selected branch still owns stable preview storage; rebase it onto main." >&2
+            exit 1
+          fi
           test -f preview-source/services/feature_preview_service/Dockerfile
           if ! grep -q "FEATURE_PREVIEW_FIRESTORE_DATABASE" preview-source/services/feature_preview_service/run.py; then
             echo "The selected feature branch must support the preview Firestore database override before it can run in preview." >&2
@@ -289,71 +300,28 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - name: Authenticate as preview loader for reset
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Reset stable preview data
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        run: |
+          uv sync --frozen
+          uv run python scripts/feature_preview_reset.py
+
+      - name: Restore Terraform authentication after reset
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
       - name: Terraform init
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init -input=false
-
-      - name: Release stable preview bootstrap state
-        run: |
-          set -euo pipefail
-
-          bootstrap_addresses=(
-            "module.feature_preview_service_account.google_service_account.this"
-            "module.feature_preview_loader_service_account.google_service_account.this"
-            "google_service_account_iam_member.feature_preview_loader_github_wif"
-          )
-
-          for address in "${bootstrap_addresses[@]}"; do
-            if terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state list | grep -qx "${address}"; then
-              terraform -chdir="${PREVIEW_TERRAFORM_DIR}" state rm "${address}"
-            fi
-          done
-
-      - name: Terraform reset plan
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: |
-          set -euo pipefail
-
-          terraform -chdir="${PREVIEW_TERRAFORM_DIR}" plan \
-            -destroy \
-            -input=false \
-            -out="${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
-
-      - name: Export Terraform reset plan JSON
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan" > "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json"
-
-      - name: Terraform apply reset plan
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan"
-
-      - name: Wait for preview database ID reuse
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: |
-          set -euo pipefail
-
-          wait_required="$(
-            python - "${RUNNER_TEMP}/feature-branch-preview-reset.tfplan.json" <<'PY'
-          import json
-          import sys
-
-          plan = json.load(open(sys.argv[1]))
-          for resource in plan.get("resource_changes", []):
-              if resource.get("address") != "google_firestore_database.feature_preview":
-                  continue
-              if resource.get("change", {}).get("actions", []) == ["delete"]:
-                  print("1")
-                  break
-          else:
-              print("0")
-          PY
-          )"
-
-          if [[ "${wait_required}" == "1" ]]; then
-            echo "The preview database was deleted during reset; waiting for database ID reuse."
-            sleep 330
-          else
-            echo "The preview database was not deleted during reset; continuing without a reuse wait."
-          fi
 
       - name: Terraform plan
         run: |
@@ -379,11 +347,6 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
-              "google_storage_bucket.preview_bucket",
-              "google_firestore_database.feature_preview",
-              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
-              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
-              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
               "google_cloud_run_v2_service.feature_preview_service",
               "google_cloud_run_v2_service.feature_preview_catalog_viewer",
               "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
@@ -444,11 +407,7 @@ jobs:
               address = resource.get("address", "")
               if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
                   values = planned_values(resource)
-                  if address == "google_storage_bucket.preview_bucket":
-                      require_value(value_violations, address, values, "name", expected["bucket"])
-                  elif address == "google_firestore_database.feature_preview":
-                      require_value(value_violations, address, values, "name", expected["database"])
-                  elif address == "google_cloud_run_v2_service.feature_preview_service":
+                  if address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
                       env = cloud_run_env(values)
                       if env:
@@ -506,8 +465,17 @@ jobs:
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
                   elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["catalog_viewer"])
-                  elif address.startswith("google_storage_bucket_iam_member."):
-                      require_value(value_violations, address, values, "bucket", expected["bucket"])
+                  continue
+              if address in {
+                  "google_storage_bucket.preview_bucket",
+                  "google_firestore_database.feature_preview",
+                  "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+                  "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+                  "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+              }:
+                  value_violations.append(
+                      f"{address} is stable bootstrap infrastructure; rebase the preview branch onto main"
+                  )
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 

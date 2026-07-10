@@ -9,6 +9,13 @@ permissions:
 
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  SHARED_DATASETS_BUCKET: skytruth-shared-datasets-1-preview
+  INDEX_LOADER_SERVICE_ACCOUNT: feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com
+  FEATURE_PREVIEW_FIRESTORE_DATABASE: feature-preview
+  FEATURE_PREVIEW_COLLECTION_ROOT: feature_preview_index
+  UV_CACHE_DIR: .uv-cache
+  UV_VERSION: "0.11.8"
+  PYTHON_VERSION: "3.12"
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
   TERRAFORM_VERSION: "1.8.5"
@@ -39,6 +46,20 @@ jobs:
         with:
           ref: main
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
       - name: Validate Terraform auth configuration
         run: |
           set -euo pipefail
@@ -52,7 +73,16 @@ jobs:
             exit 1
           fi
 
-      - name: Authenticate to Google Cloud
+      - name: Authenticate as preview loader
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Reset stable preview data
+        run: uv run python scripts/feature_preview_reset.py
+
+      - name: Authenticate to Google Cloud for Terraform
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
@@ -65,22 +95,6 @@ jobs:
 
       - name: Terraform init
         run: terraform -chdir=terraform/envs/preview init -input=false
-
-      - name: Release stable preview bootstrap state
-        run: |
-          set -euo pipefail
-
-          bootstrap_addresses=(
-            "module.feature_preview_service_account.google_service_account.this"
-            "module.feature_preview_loader_service_account.google_service_account.this"
-            "google_service_account_iam_member.feature_preview_loader_github_wif"
-          )
-
-          for address in "${bootstrap_addresses[@]}"; do
-            if terraform -chdir=terraform/envs/preview state list | grep -qx "${address}"; then
-              terraform -chdir=terraform/envs/preview state rm "${address}"
-            fi
-          done
 
       - name: Terraform destroy plan
         run: |
@@ -103,11 +117,6 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
-              "google_storage_bucket.preview_bucket",
-              "google_firestore_database.feature_preview",
-              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
-              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
-              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
               "google_cloud_run_v2_service.feature_preview_service",
               "google_cloud_run_v2_service.feature_preview_catalog_viewer",
               "google_cloud_run_v2_service_iam_member.feature_preview_service_iap_invoker",
@@ -149,11 +158,7 @@ jobs:
                   continue
               if address in allowed_exact or any(pattern.match(address) for pattern in allowed_patterns):
                   values = planned_values(resource)
-                  if address == "google_storage_bucket.preview_bucket":
-                      require_value(value_violations, address, values, "name", expected["bucket"])
-                  elif address == "google_firestore_database.feature_preview":
-                      require_value(value_violations, address, values, "name", expected["database"])
-                  elif address == "google_cloud_run_v2_service.feature_preview_service":
+                  if address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
                   elif address == "google_cloud_run_v2_service.feature_preview_catalog_viewer":
                       require_value(value_violations, address, values, "name", expected["catalog_viewer"])
@@ -165,8 +170,6 @@ jobs:
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["service"])
                   elif address.startswith("google_iap_web_cloud_run_service_iam_member.feature_preview_catalog_viewer_accessors"):
                       require_value(value_violations, address, values, "cloud_run_service_name", expected["catalog_viewer"])
-                  elif address.startswith("google_storage_bucket_iam_member."):
-                      require_value(value_violations, address, values, "bucket", expected["bucket"])
                   continue
               blocked.append(f"{'/'.join(actions)} {address}")
 

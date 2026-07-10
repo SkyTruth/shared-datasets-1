@@ -28,20 +28,38 @@ jobs:
       block_deletes: true
       targets: |
         google_project_iam_custom_role.preview_terraform
+        google_project_iam_custom_role.preview_iap_terraform
+        google_storage_bucket.feature_preview
+        google_firestore_database.feature_preview
         module.feature_preview_service_account.google_service_account.this
         module.feature_preview_loader_service_account.google_service_account.this
         google_project_iam_member.github_actions_preview_terraform
+        google_project_iam_member.github_actions_preview_iap_terraform
+        google_service_account_iam_member.github_actions_preview_service_act_as
+        google_service_account_iam_member.github_actions_preview_loader_act_as
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
+        google_storage_bucket_iam_member.feature_preview_service_object_viewer
+        google_storage_bucket_iam_member.feature_preview_loader_object_viewer
+        google_storage_bucket_iam_member.feature_preview_loader_index_load_creator
         google_project_iam_member.feature_preview_service_firestore_viewer
         google_project_iam_member.feature_preview_loader_firestore_user
       allowed_exact: |
         google_project_iam_custom_role.preview_terraform
+        google_project_iam_custom_role.preview_iap_terraform
+        google_storage_bucket.feature_preview
+        google_firestore_database.feature_preview
         module.feature_preview_service_account.google_service_account.this
         module.feature_preview_loader_service_account.google_service_account.this
         google_project_iam_member.github_actions_preview_terraform
+        google_project_iam_member.github_actions_preview_iap_terraform
+        google_service_account_iam_member.github_actions_preview_service_act_as
+        google_service_account_iam_member.github_actions_preview_loader_act_as
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
+        google_storage_bucket_iam_member.feature_preview_service_object_viewer
+        google_storage_bucket_iam_member.feature_preview_loader_object_viewer
+        google_storage_bucket_iam_member.feature_preview_loader_index_load_creator
         google_project_iam_member.feature_preview_service_firestore_viewer
         google_project_iam_member.feature_preview_loader_firestore_user
       tf_vars: |

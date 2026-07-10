@@ -1,0 +1,95 @@
+name: Feature Preview State Ownership Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type MIGRATE_PREVIEW_OWNERSHIP after Preview Terraform IAM sync succeeds."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  release-preview-state:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: feature-branch-preview
+      cancel-in-progress: false
+    steps:
+      - name: Validate reviewed invocation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Preview ownership migration may only run from reviewed main." >&2
+            exit 1
+          fi
+          test "${CONFIRMATION}" = "MIGRATE_PREVIEW_OWNERSHIP"
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: Require migrated preview state
+        run: python scripts/terraform_state_backend_guard.py preview
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/preview init -input=false
+      - name: Plan state-only ownership release
+        run: |
+          terraform -chdir=terraform/envs/preview plan -input=false \
+            -out="${RUNNER_TEMP}/preview-ownership.tfplan" \
+            -target=google_storage_bucket.preview_bucket \
+            -target=google_firestore_database.feature_preview \
+            -target=google_storage_bucket_iam_member.feature_preview_service_object_viewer \
+            -target=google_storage_bucket_iam_member.feature_preview_loader_object_viewer \
+            -target=google_storage_bucket_iam_member.feature_preview_loader_index_load_creator
+          terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/preview-ownership.tfplan" \
+            > "${RUNNER_TEMP}/preview-ownership.tfplan.json"
+      - name: Require forget-only plan
+        run: |
+          python - "${RUNNER_TEMP}/preview-ownership.tfplan.json" <<'PY'
+          import json
+          import sys
+
+          expected = {
+              "google_storage_bucket.preview_bucket",
+              "google_firestore_database.feature_preview",
+              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+          }
+          plan = json.load(open(sys.argv[1]))
+          changed = {}
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              changed[resource.get("address", "")] = actions
+          unexpected = {
+              address: actions
+              for address, actions in changed.items()
+              if address not in expected or actions != ["forget"]
+          }
+          if unexpected:
+              raise SystemExit(f"preview ownership migration must be forget-only: {unexpected}")
+          PY
+      - name: Apply state-only ownership release
+        run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/preview-ownership.tfplan"

@@ -1,5 +1,8 @@
 locals {
   preview_firestore_database_resource_name = "projects/${var.project_id}/databases/feature-preview"
+  feature_preview_bucket_name              = "skytruth-shared-datasets-1-preview"
+  feature_preview_service_name             = "feature-preview-service"
+  feature_preview_catalog_viewer_name      = "feature-preview-catalog-viewer"
 }
 
 import {
@@ -13,34 +16,7 @@ resource "google_project_iam_custom_role" "preview_terraform" {
   title       = "Shared Datasets Preview Terraform"
   description = "Allows approved GitHub Actions Terraform to manage the replaceable feature branch preview slot."
   permissions = [
-    "datastore.databases.create",
-    "datastore.databases.delete",
-    "datastore.databases.get",
-    "datastore.databases.getMetadata",
-    "datastore.databases.list",
-    "datastore.databases.update",
-    "datastore.locations.get",
-    "datastore.locations.list",
-    "datastore.operations.get",
-    "datastore.operations.list",
-    "iam.serviceAccounts.actAs",
-    "iam.serviceAccounts.create",
-    "iam.serviceAccounts.get",
-    "iam.serviceAccounts.getIamPolicy",
-    "iam.serviceAccounts.list",
-    "iam.serviceAccounts.setIamPolicy",
-    "iam.serviceAccounts.update",
-    "iap.web.getIamPolicy",
-    "iap.web.setIamPolicy",
-    "iap.webServiceVersions.getIamPolicy",
-    "iap.webServiceVersions.setIamPolicy",
-    "iap.webServices.getIamPolicy",
-    "iap.webServices.setIamPolicy",
-    "iap.webTypes.getIamPolicy",
-    "iap.webTypes.setIamPolicy",
     "resourcemanager.projects.get",
-    "resourcemanager.projects.getIamPolicy",
-    "resourcemanager.projects.setIamPolicy",
     "run.locations.list",
     "run.operations.get",
     "run.operations.list",
@@ -51,25 +27,72 @@ resource "google_project_iam_custom_role" "preview_terraform" {
     "run.services.list",
     "run.services.setIamPolicy",
     "run.services.update",
-    "storage.buckets.create",
-    "storage.buckets.delete",
-    "storage.buckets.get",
-    "storage.buckets.getIamPolicy",
-    "storage.buckets.list",
-    "storage.buckets.setIamPolicy",
-    "storage.buckets.update",
-    "storage.folders.create",
-    "storage.folders.delete",
-    "storage.folders.get",
-    "storage.folders.list",
-    "storage.managedFolders.delete",
-    "storage.managedFolders.get",
-    "storage.managedFolders.list",
-    "storage.objects.delete",
-    "storage.objects.get",
-    "storage.objects.list",
   ]
+}
 
+resource "google_project_iam_custom_role" "preview_iap_terraform" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsPreviewIapTerraform"
+  title       = "Shared Datasets Preview IAP Terraform"
+  description = "Allows approved preview Terraform to manage IAP policy on the two preview services."
+  permissions = [
+    "iap.webServices.getIamPolicy",
+    "iap.webServices.setIamPolicy",
+  ]
+}
+
+import {
+  to = google_storage_bucket.feature_preview
+  id = local.feature_preview_bucket_name
+}
+
+resource "google_storage_bucket" "feature_preview" {
+  project                     = var.project_id
+  name                        = local.feature_preview_bucket_name
+  location                    = "US"
+  storage_class               = "STANDARD"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+
+  soft_delete_policy {
+    retention_duration_seconds = 604800
+  }
+
+  hierarchical_namespace {
+    enabled = true
+  }
+
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "HEAD", "OPTIONS"]
+    response_header = ["Content-Length", "Content-Range", "ETag", "Range"]
+    max_age_seconds = 3600
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+import {
+  to = google_firestore_database.feature_preview
+  id = local.preview_firestore_database_resource_name
+}
+
+resource "google_firestore_database" "feature_preview" {
+  project                     = var.project_id
+  name                        = "feature-preview"
+  location_id                 = "nam5"
+  type                        = "FIRESTORE_NATIVE"
+  delete_protection_state     = "DELETE_PROTECTION_ENABLED"
+  deletion_policy             = "ABANDON"
+  concurrency_mode            = "OPTIMISTIC"
+  app_engine_integration_mode = "DISABLED"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 module "feature_preview_service_account" {
@@ -96,6 +119,30 @@ resource "google_project_iam_member" "github_actions_preview_terraform" {
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
 
+resource "google_project_iam_member" "github_actions_preview_iap_terraform" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.preview_iap_terraform.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+
+  condition {
+    title       = "preview_iap_services_only"
+    description = "Limit IAP IAM mutation to the two preview Cloud Run services."
+    expression  = "resource.service == 'iap.googleapis.com' && (resource.name.endsWith('/services/${local.feature_preview_service_name}') || resource.name.endsWith('/services/${local.feature_preview_catalog_viewer_name}'))"
+  }
+}
+
+resource "google_service_account_iam_member" "github_actions_preview_service_act_as" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_service_account.email}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+}
+
+resource "google_service_account_iam_member" "github_actions_preview_loader_act_as" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+}
+
 resource "google_service_account_iam_member" "feature_preview_loader_github_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_loader_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
@@ -106,6 +153,24 @@ resource "google_service_account_iam_member" "feature_preview_service_self_sign_
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_service_account.email}"
   role               = google_project_iam_custom_role.catalog_viewer_sign_blob.name
   member             = module.feature_preview_service_account.member
+}
+
+resource "google_storage_bucket_iam_member" "feature_preview_service_object_viewer" {
+  bucket = google_storage_bucket.feature_preview.name
+  role   = "roles/storage.objectViewer"
+  member = module.feature_preview_service_account.member
+}
+
+resource "google_storage_bucket_iam_member" "feature_preview_loader_object_viewer" {
+  bucket = google_storage_bucket.feature_preview.name
+  role   = "roles/storage.objectViewer"
+  member = module.feature_preview_loader_service_account.member
+}
+
+resource "google_storage_bucket_iam_member" "feature_preview_loader_index_load_creator" {
+  bucket = google_storage_bucket.feature_preview.name
+  role   = "roles/storage.objectUser"
+  member = module.feature_preview_loader_service_account.member
 }
 
 resource "google_project_iam_member" "feature_preview_service_firestore_viewer" {

@@ -4,13 +4,16 @@ The feature branch preview is one replaceable test slot inside the
 `shared-datasets-1` GCP project. It lets maintainers deploy selected feature
 branches before deciding whether to merge them to `main`.
 
-The preview is not a second production environment. It owns only preview-named
-Cloud Run, Cloud Storage, Firestore, IAM, and service account resources, with
-Terraform state isolated under `000-system/terraform/state/preview`.
+The preview is not a second production environment. Stable preview-named Cloud
+Storage, Firestore, service accounts, and their narrow IAM grants are owned by
+the protected production bootstrap. Feature-branch Terraform owns only the two
+disposable Cloud Run services and their IAP bindings. Preview Terraform state
+is isolated under `000-system/terraform/state/preview` in the private state
+bucket.
 
-The preview bucket is disposable and uses `force_destroy = true` so the preview
-stack can be destroyed after testing. Do not put canonical dataset releases,
-production-only credentials, or irreplaceable data in the preview bucket.
+The preview bucket and named Firestore database remain present across deploys
+and destroys, but their data is disposable. Do not put canonical releases,
+production-only credentials, or irreplaceable data in them.
 
 ## Deploy Or Replace The Preview
 
@@ -36,11 +39,11 @@ allowlist. This lets feature branches exercise preview-only Terraform changes
 before merge while still refusing non-preview resources. In `preserve` mode, it
 plans and applies the updated preview stack without first destroying the preview
 bucket or Firestore database, then rebuilds the catalog web bundle from
-existing preview release indexes. In `reset` mode, it first plans and applies a
-saved destroy reset from the selected branch preview Terraform, waits if the
-preview Firestore database ID needs reuse time, then creates the new preview
-stack and publishes a catalog shell. In both modes, it prints the preview
-service and catalog viewer Cloud Run URLs.
+existing preview release indexes. In `reset` mode, it authenticates as the
+preview loader, deletes every listed bucket object with its exact generation,
+recursively deletes only the `feature_preview_index` collection, verifies both
+stores are empty, then deploys the services and publishes a catalog shell. In
+both modes, it prints the preview service and catalog viewer Cloud Run URLs.
 
 This split is intentional. The workflow branch dropdown provides the source and
 preview Terraform that are deployed into the preview slot, while stable
@@ -56,41 +59,40 @@ To replace the preview with a different feature branch, run the same workflow
 again and select the new branch or tag in the workflow branch dropdown. There is
 only one active preview slot. Use `preserve` when you are iterating on preview
 service or catalog viewer code against already loaded test data. Use `reset`
-when you need to tear down the previous preview bucket, Firestore database,
-Cloud Run services, and preview bucket/IAP IAM bindings before creating the new
-preview deployment. Reset clears previous preview data that is no longer present
-in the selected ref.
+when you need a clean data plane before deploying the new services. Reset clears
+prior preview objects and indexed feature documents without deleting or
+recreating the bucket or database.
 
-The deploy workflow does not own the stable conditioned project IAM grants that
+The deploy workflow does not own the stable preview bucket, named database,
+bucket IAM, or conditioned project IAM grants that
 let the preview service and preview loader use the preview Firestore database,
 the stable preview service accounts, the preview service self-signing grant used
 for catalog viewer signed URLs, or the preview loader Workload Identity binding.
 Those bootstrap resources are managed by the protected GitHub Actions workflow
 named `Preview Terraform IAM sync` from
 `terraform/envs/prod/preview_terraform_iam.tf`.
-That sync owns creation of `feature-preview-service` and
-`feature-preview-loader`; deploy and destroy only validate or use those stable
-identities.
+That sync owns the bucket, database, creation of `feature-preview-service` and
+`feature-preview-loader`, and their storage/Firestore grants; deploy and destroy
+only validate or use those stable resources.
 That sync workflow applies only from `main` after the reviewed control-plane
 changes have landed. Deploy validates those bootstrap resources before Docker
 build or Terraform reset, and fails without mutating the preview slot if the
 sync has not run.
 
-During the migration from the earlier preview root, deploy reset first removes
-the stable preview service accounts and loader Workload Identity binding from
-preview Terraform state without deleting the live resources. The saved preview
-reset plan may also delete old preview-stack resources that remain in
-`terraform/envs/preview` state from earlier naming.
+The one-time `Feature Preview State Ownership Migration` workflow releases the
+bucket, database, and bucket IAM from preview state with forget-only Terraform
+actions after the prod bootstrap has adopted them. Deploy and destroy contain no
+direct `terraform state rm` fallback.
 
 ## Destroy The Preview
 
 Use the GitHub Actions workflow named `Destroy Preview Environment`. The
 protected workflow applies only from `main`, checks out the reviewed `main`
-control plane, plans `terraform/envs/preview` with `-destroy`, enforces the
-preview-resource allowlist, and applies only that saved destroy plan. This
-removes the preview Cloud Run services, preview bucket contents, preview
-Firestore database, preview IAM bindings owned by the preview root. It does not
-delete the stable preview service accounts or loader Workload Identity binding.
+control plane, clears the stable preview data through the loader identity, then
+plans `terraform/envs/preview` with `-destroy`, enforces the preview-resource
+allowlist, and applies only that saved destroy plan. This removes the two Cloud
+Run services and their IAP bindings. It leaves the empty preview bucket,
+Firestore database, service accounts, and bootstrap IAM in place.
 
 ## Preview Catalog Viewer
 

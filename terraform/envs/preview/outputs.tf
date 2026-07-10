@@ -1,9 +1,9 @@
 output "preview_bucket" {
-  value = google_storage_bucket.preview_bucket.name
+  value = var.preview_bucket_name
 }
 
 output "preview_firestore_database" {
-  value = google_firestore_database.feature_preview.name
+  value = var.feature_preview_firestore_database_id
 }
 
 output "preview_service_name" {

@@ -574,8 +574,12 @@ prefix under `terraform/envs/preview/`; see
 the preview deploy workflow by selecting the feature branch or tag in the
 GitHub **Run workflow** branch dropdown. The deploy prints both the preview API
 URL and an IAP-protected preview catalog viewer URL.
-Stable preview IAM bootstrap is managed by the protected
-`Preview Terraform IAM sync` workflow.
+Stable preview storage, Firestore, service accounts, and IAM bootstrap are
+managed by the protected `Preview Terraform IAM sync` workflow. Feature-branch
+Terraform owns only the disposable Cloud Run/IAP layer. Preview reset and
+destroy clear bucket objects by generation and recursively clear only the
+`feature_preview_index` Firestore collection; destroy leaves the empty stable
+bucket and database in place.
 Preview test data is not production publishing: upload disposable release
 bundles directly to `gs://skytruth-shared-datasets-1-preview/` with safe
 preconditions, record exact generations, and pass those preview-bucket URIs and

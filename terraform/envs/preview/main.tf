@@ -5,45 +5,23 @@ data "google_project" "current" {
 locals {
   iap_service_agent              = "service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
   preview_service_account_email  = "${var.feature_preview_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
-  preview_service_account_member = "serviceAccount:${local.preview_service_account_email}"
   preview_loader_service_account = "${var.feature_preview_loader_service_account_id}@${var.project_id}.iam.gserviceaccount.com"
-  preview_loader_member          = "serviceAccount:${local.preview_loader_service_account}"
 }
 
-resource "google_storage_bucket" "preview_bucket" {
-  project                     = var.project_id
-  name                        = var.preview_bucket_name
-  location                    = "US"
-  storage_class               = "STANDARD"
-  uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
-  force_destroy               = true
+removed {
+  from = google_storage_bucket.preview_bucket
 
-  soft_delete_policy {
-    retention_duration_seconds = 604800
-  }
-
-  hierarchical_namespace {
-    enabled = true
-  }
-
-  cors {
-    origin          = ["*"]
-    method          = ["GET", "HEAD", "OPTIONS"]
-    response_header = ["Content-Length", "Content-Range", "ETag", "Range"]
-    max_age_seconds = 3600
+  lifecycle {
+    destroy = false
   }
 }
 
-resource "google_firestore_database" "feature_preview" {
-  project                     = var.project_id
-  name                        = var.feature_preview_firestore_database_id
-  location_id                 = "nam5"
-  type                        = "FIRESTORE_NATIVE"
-  delete_protection_state     = "DELETE_PROTECTION_DISABLED"
-  deletion_policy             = "DELETE"
-  concurrency_mode            = "OPTIMISTIC"
-  app_engine_integration_mode = "DISABLED"
+removed {
+  from = google_firestore_database.feature_preview
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 removed {
@@ -70,22 +48,28 @@ removed {
   }
 }
 
-resource "google_storage_bucket_iam_member" "feature_preview_service_object_viewer" {
-  bucket = google_storage_bucket.preview_bucket.name
-  role   = "roles/storage.objectViewer"
-  member = local.preview_service_account_member
+removed {
+  from = google_storage_bucket_iam_member.feature_preview_service_object_viewer
+
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "google_storage_bucket_iam_member" "feature_preview_loader_object_viewer" {
-  bucket = google_storage_bucket.preview_bucket.name
-  role   = "roles/storage.objectViewer"
-  member = local.preview_loader_member
+removed {
+  from = google_storage_bucket_iam_member.feature_preview_loader_object_viewer
+
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "google_storage_bucket_iam_member" "feature_preview_loader_index_load_creator" {
-  bucket = google_storage_bucket.preview_bucket.name
-  role   = "roles/storage.objectUser"
-  member = local.preview_loader_member
+removed {
+  from = google_storage_bucket_iam_member.feature_preview_loader_index_load_creator
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 resource "google_cloud_run_v2_service" "feature_preview_service" {
@@ -114,12 +98,12 @@ resource "google_cloud_run_v2_service" "feature_preview_service" {
 
       env {
         name  = "SHARED_DATASETS_BUCKET"
-        value = google_storage_bucket.preview_bucket.name
+        value = var.preview_bucket_name
       }
 
       env {
         name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
-        value = google_firestore_database.feature_preview.name
+        value = var.feature_preview_firestore_database_id
       }
 
       env {
@@ -170,7 +154,6 @@ resource "google_cloud_run_v2_service" "feature_preview_service" {
     ignore_changes = [launch_stage, scaling]
   }
 
-  depends_on = [google_firestore_database.feature_preview]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "feature_preview_service_iap_invoker" {

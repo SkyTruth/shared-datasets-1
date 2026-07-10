@@ -24,7 +24,7 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
 
       env {
         name  = "SHARED_DATASETS_BUCKET"
-        value = google_storage_bucket.preview_bucket.name
+        value = var.preview_bucket_name
       }
 
       env {
@@ -34,7 +34,7 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
 
       env {
         name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
-        value = google_firestore_database.feature_preview.name
+        value = var.feature_preview_firestore_database_id
       }
 
       env {
@@ -100,7 +100,6 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
     ignore_changes = [launch_stage, scaling]
   }
 
-  depends_on = [google_storage_bucket.preview_bucket]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "feature_preview_catalog_viewer_iap_invoker" {
