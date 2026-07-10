@@ -22,6 +22,13 @@ def public_catalog_folder_names() -> set[str]:
 
 
 class SharedBucketPublicTerraformTests(unittest.TestCase):
+    def test_shared_bucket_has_thirty_day_soft_delete(self):
+        shared_bucket_tf = (REPO_ROOT / "terraform/envs/prod/shared_bucket_public.tf").read_text()
+
+        self.assertIn("retention_duration_seconds = 2592000", shared_bucket_tf)
+        self.assertIn("hierarchical_namespace", shared_bucket_tf)
+        self.assertNotIn("versioning {", shared_bucket_tf)
+
     def test_managed_folder_public_grants_are_catalog_driven(self):
         shared_bucket_tf = (REPO_ROOT / "terraform/envs/prod/shared_bucket_public.tf").read_text()
         variables_tf = (REPO_ROOT / "terraform/envs/prod/variables.tf").read_text()

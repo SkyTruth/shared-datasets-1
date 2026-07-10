@@ -194,6 +194,7 @@ jobs:
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
+            -target=google_storage_bucket.shared_bucket \
             -target=google_compute_url_map.pmtiles_cdn \
             -target=google_storage_managed_folder.shared_bucket_public_prefixes \
             -target=google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers \
@@ -212,6 +213,7 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
+              "google_storage_bucket.shared_bucket",
               "google_compute_url_map.pmtiles_cdn",
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
@@ -233,6 +235,9 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
+              if address == "google_storage_bucket.shared_bucket" and "delete" in actions:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
               if (
                   (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}["))
                   and "delete" in actions

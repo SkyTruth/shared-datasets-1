@@ -256,6 +256,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             plan_name="pmtiles-cdn-sync",
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
+                "google_storage_bucket.shared_bucket",
                 "google_compute_url_map.pmtiles_cdn",
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
                 "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
@@ -264,7 +265,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "google_compute_backend_bucket.pmtiles_cdn",
                 "google_cloud_run_v2_service.catalog_viewer",
                 "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
-                "google_storage_bucket.shared_bucket",
             },
         )
         trigger = workflow_triggers(workflow)
@@ -328,6 +328,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertIn('address.startswith(f"{prefix}[")', enforce_run)
         self.assertIn('managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"', enforce_run)
+        self.assertIn('address == "google_storage_bucket.shared_bucket" and "delete" in actions', enforce_run)
         self.assertIn('"delete" in actions', enforce_run)
 
         self.assertIn("unused-by-pmtiles-cdn-sync", steps["Terraform plan"]["run"])

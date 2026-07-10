@@ -20,7 +20,7 @@ resource "google_storage_bucket" "shared_bucket" {
   }
 
   soft_delete_policy {
-    retention_duration_seconds = 604800
+    retention_duration_seconds = 2592000
   }
 
   hierarchical_namespace {
