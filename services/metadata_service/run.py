@@ -14,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
+from services.http_base import FEATURE_ID_RE, LOOKUP_RE, NO_STORE, Response, as_int
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_COLLECTION_ROOT = "feature_metadata"
@@ -22,23 +24,10 @@ DEFAULT_MAX_IDS = 500
 DEFAULT_MAX_FIELDS = 500
 DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 DEFAULT_RELEASE_CACHE_TTL_SECONDS = 60.0
-NO_STORE = "no-store"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
-FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 LOAD_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 INDEX_STATUS_MODE = "inactive_firestore_serving"
-LOOKUP_RE = re.compile(
-    r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/"
-    r"(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
-)
-
-
-@dataclass(frozen=True)
-class Response:
-    status: int
-    headers: dict[str, str]
-    body: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -664,15 +653,6 @@ def validate_inactive_index_policy(release_entry: Mapping[str, Any]) -> None:
     policy = release_entry.get("index_status_policy")
     if not isinstance(policy, Mapping) or policy.get("mode") != INDEX_STATUS_MODE or policy.get("path") is not None:
         raise IndexNotReady("release index index_status_policy is invalid")
-
-
-def as_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def require_authenticated_user(headers: Mapping[str, str], *, allowed_email_domains: tuple[str, ...]) -> None:
