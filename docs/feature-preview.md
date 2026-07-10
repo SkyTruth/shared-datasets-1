@@ -39,7 +39,8 @@ allowlist. This lets feature branches exercise preview-only Terraform changes
 before merge while still refusing non-preview resources. In `preserve` mode, it
 plans and applies the updated preview stack without first destroying the preview
 bucket or Firestore database, then rebuilds the catalog web bundle from
-existing preview release indexes. In `reset` mode, it authenticates as the
+existing preview release indexes. In `reset` mode, it first validates the
+migrated backend and the saved Terraform plan, then authenticates as the
 preview loader, deletes every listed bucket object with its exact generation,
 recursively deletes only the `feature_preview_index` collection, verifies both
 stores are empty, then deploys the services and publishes a catalog shell. In
@@ -80,18 +81,23 @@ build or Terraform reset, and fails without mutating the preview slot if the
 sync has not run.
 
 The one-time `Feature Preview State Ownership Migration` workflow releases the
-bucket, database, and bucket IAM from preview state with forget-only Terraform
-actions after the prod bootstrap has adopted them. Deploy and destroy contain no
-direct `terraform state rm` fallback.
+bucket, database, two service accounts, loader Workload Identity binding, and
+three bucket IAM bindings from preview state with an exact forget-only plan
+after verifying every corresponding prod-state owner. A committed
+`state-migration-pending` marker blocks deploy and destroy throughout the
+transfer. After the workflow verifies the resources are present only in prod
+state, remove the marker and both one-time ownership workflows in a final
+reviewed cleanup PR.
+Deploy and destroy contain no direct `terraform state rm` fallback.
 
 ## Destroy The Preview
 
 Use the GitHub Actions workflow named `Destroy Preview Environment`. The
 protected workflow applies only from `main`, checks out the reviewed `main`
-control plane, clears the stable preview data through the loader identity, then
-plans `terraform/envs/preview` with `-destroy`, enforces the preview-resource
-allowlist, and applies only that saved destroy plan. This removes the two Cloud
-Run services and their IAP bindings. It leaves the empty preview bucket,
+control plane, verifies and applies the allowlisted saved destroy plan for
+`terraform/envs/preview`, and only then clears stable preview data through the
+loader identity. This removes the two Cloud Run services and their IAP
+bindings. It leaves the empty preview bucket,
 Firestore database, service accounts, and bootstrap IAM in place.
 
 ## Preview Catalog Viewer

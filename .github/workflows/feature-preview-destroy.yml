@@ -46,6 +46,13 @@ jobs:
         with:
           ref: main
 
+      - name: Block while preview ownership migration is pending
+        run: |
+          if [[ -f terraform/envs/preview/state-migration-pending ]]; then
+            echo "Preview destroy is disabled while stable-resource ownership migration is pending." >&2
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -72,15 +79,6 @@ jobs:
             echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
             exit 1
           fi
-
-      - name: Authenticate as preview loader
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
-
-      - name: Reset stable preview data
-        run: uv run python scripts/feature_preview_reset.py
 
       - name: Authenticate to Google Cloud for Terraform
         uses: google-github-actions/auth@v2
@@ -187,3 +185,12 @@ jobs:
 
       - name: Terraform apply destroy plan
         run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/feature-branch-preview-destroy.tfplan"
+
+      - name: Authenticate as preview loader
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Reset stable preview data
+        run: uv run python scripts/feature_preview_reset.py

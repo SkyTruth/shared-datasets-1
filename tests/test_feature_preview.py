@@ -18,6 +18,8 @@ PREVIEW_DESTROY_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-destro
 PREVIEW_INDEX_LOAD_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-index-load.yml"
 ARTIFACT_REGISTRY_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.yml"
 PREVIEW_TERRAFORM_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.yml"
+PREVIEW_OWNERSHIP_MIGRATION_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-state-ownership-migration.yml"
+PREVIEW_PROD_STATE_VERIFICATION_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-prod-state-verification.yml"
 PMTILES_CDN_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
 SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 PREVIEW_TF = REPO_ROOT / "terraform/envs/preview"
@@ -45,6 +47,10 @@ class FeaturePreviewTests(unittest.TestCase):
         )
         self.assertEqual(workflow["env"]["SHARED_DATASETS_BUCKET"], "skytruth-shared-datasets-1-preview")
         self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "main")
+        self.assertIn(
+            "state-migration-pending",
+            steps["Block while preview ownership migration is pending"]["run"],
+        )
         self.assertEqual(steps["Check out selected feature branch"]["with"]["ref"], "${{ github.ref }}")
         self.assertEqual(steps["Check out selected feature branch"]["with"]["path"], "preview-source")
         self.assertNotIn("terraform -chdir=terraform/envs/prod", all_runs)
@@ -189,6 +195,10 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("-target=", workflow)
         self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
         self.assertNotIn("Refusing preview reset", workflow)
+        steps = workflow_steps_by_name(load_workflow(PREVIEW_WORKFLOW), "preview")
+        names = list(steps)
+        self.assertLess(names.index("Enforce preview resource-change allowlist"), names.index("Reset stable preview data"))
+        self.assertLess(names.index("Reset stable preview data"), names.index("Terraform apply preview plan"))
         deploy_create_section = workflow.split("      - name: Terraform plan", 1)[1]
         self.assertNotIn("google_project_iam_member.feature_preview_service_firestore_viewer", deploy_create_section)
         self.assertNotIn("google_project_iam_member.feature_preview_loader_firestore_user", deploy_create_section)
@@ -234,6 +244,41 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("module.feature_preview_service_account.", destroy_allowlist_section)
         self.assertNotIn("module.feature_preview_loader_service_account.", destroy_allowlist_section)
         self.assertNotIn("google_service_account_iam_member.feature_preview_loader_github_wif", destroy_allowlist_section)
+        steps = workflow_steps_by_name(load_workflow(PREVIEW_DESTROY_WORKFLOW), "destroy")
+        names = list(steps)
+        self.assertIn("state-migration-pending", steps["Block while preview ownership migration is pending"]["run"])
+        self.assertLess(names.index("Enforce preview resource-change allowlist"), names.index("Terraform apply destroy plan"))
+        self.assertLess(names.index("Terraform apply destroy plan"), names.index("Reset stable preview data"))
+
+    def test_preview_ownership_migration_is_exact_and_marker_gated(self):
+        marker = PREVIEW_TF / "state-migration-pending"
+        workflow = PREVIEW_OWNERSHIP_MIGRATION_WORKFLOW.read_text()
+        prod_verification = PREVIEW_PROD_STATE_VERIFICATION_WORKFLOW.read_text()
+        preview_main = (PREVIEW_TF / "main.tf").read_text()
+
+        self.assertTrue(marker.exists())
+        self.assertIn("Remove it only in a reviewed cleanup PR", marker.read_text())
+        self.assertIn("Require committed migration marker", workflow)
+        self.assertIn("verify-prod-state-before", workflow)
+        self.assertIn("verify-prod-state-after", workflow)
+        self.assertIn("Verify stable resources left preview state", workflow)
+        self.assertIn("Verify stable resources exist in prod state", prod_verification)
+        self.assertIn("group: prod-terraform-state", prod_verification)
+        expected_preview_addresses = {
+            "google_storage_bucket.preview_bucket",
+            "google_firestore_database.feature_preview",
+            "module.feature_preview_service_account.google_service_account.this",
+            "module.feature_preview_loader_service_account.google_service_account.this",
+            "google_service_account_iam_member.feature_preview_loader_github_wif",
+            "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+            "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+            "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+        }
+        for address in expected_preview_addresses:
+            with self.subTest(address=address):
+                self.assertIn(f"from = {address}", preview_main)
+                self.assertIn(f"-target={address}", workflow)
+        self.assertIn("missing = expected - changed.keys()", workflow)
 
     def test_preview_deploy_workflow_allowlist_patterns_match_real_addresses(self):
         workflow = PREVIEW_WORKFLOW.read_text()

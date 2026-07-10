@@ -81,6 +81,13 @@ jobs:
         with:
           ref: main
 
+      - name: Block while preview ownership migration is pending
+        run: |
+          if [[ -f terraform/envs/preview/state-migration-pending ]]; then
+            echo "Preview deploy is disabled while stable-resource ownership migration is pending." >&2
+            exit 1
+          fi
+
       - name: Check out selected feature branch
         uses: actions/checkout@v4
         with:
@@ -300,26 +307,6 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Authenticate as preview loader for reset
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
-
-      - name: Reset stable preview data
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        run: |
-          uv sync --frozen
-          uv run python scripts/feature_preview_reset.py
-
-      - name: Restore Terraform authentication after reset
-        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-
       - name: Terraform init
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init -input=false
 
@@ -490,6 +477,26 @@ jobs:
                   print(f"- {item}")
               raise SystemExit(1)
           PY
+
+      - name: Authenticate as preview loader for reset
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.INDEX_LOADER_SERVICE_ACCOUNT }}
+
+      - name: Reset stable preview data
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        run: |
+          uv sync --frozen
+          uv run python scripts/feature_preview_reset.py
+
+      - name: Restore Terraform authentication after reset
+        if: ${{ env.PREVIEW_DATA_MODE == 'reset' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
       - name: Terraform apply preview plan
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/feature-branch-preview.tfplan"

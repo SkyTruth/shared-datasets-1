@@ -52,6 +52,11 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Dataset object promotion/deletion:
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
+- Stable preview data-plane ownership:
+  `.github/workflows/preview-terraform-iam-sync.yml`, followed once by
+  `.github/workflows/feature-preview-state-ownership-migration.yml`. Keep the
+  committed migration marker until a reviewed cleanup PR verifies single state
+  ownership and removes both one-time ownership workflows.
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.

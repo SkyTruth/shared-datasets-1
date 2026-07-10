@@ -21,7 +21,11 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
+  verify-prod-state-before:
+    uses: ./.github/workflows/feature-preview-prod-state-verification.yml
+
   release-preview-state:
+    needs: verify-prod-state-before
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
@@ -41,6 +45,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+      - name: Require committed migration marker
+        run: |
+          if [[ ! -f terraform/envs/preview/state-migration-pending ]]; then
+            echo "Preview ownership migration marker is absent; refusing an unplanned repeat migration." >&2
+            exit 1
+          fi
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
@@ -58,6 +68,9 @@ jobs:
             -out="${RUNNER_TEMP}/preview-ownership.tfplan" \
             -target=google_storage_bucket.preview_bucket \
             -target=google_firestore_database.feature_preview \
+            -target=module.feature_preview_service_account.google_service_account.this \
+            -target=module.feature_preview_loader_service_account.google_service_account.this \
+            -target=google_service_account_iam_member.feature_preview_loader_github_wif \
             -target=google_storage_bucket_iam_member.feature_preview_service_object_viewer \
             -target=google_storage_bucket_iam_member.feature_preview_loader_object_viewer \
             -target=google_storage_bucket_iam_member.feature_preview_loader_index_load_creator
@@ -72,6 +85,9 @@ jobs:
           expected = {
               "google_storage_bucket.preview_bucket",
               "google_firestore_database.feature_preview",
+              "module.feature_preview_service_account.google_service_account.this",
+              "module.feature_preview_loader_service_account.google_service_account.this",
+              "google_service_account_iam_member.feature_preview_loader_github_wif",
               "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
@@ -88,8 +104,36 @@ jobs:
               for address, actions in changed.items()
               if address not in expected or actions != ["forget"]
           }
+          missing = expected - changed.keys()
+          if missing:
+              raise SystemExit(f"preview ownership migration is missing forget actions: {sorted(missing)}")
           if unexpected:
               raise SystemExit(f"preview ownership migration must be forget-only: {unexpected}")
           PY
       - name: Apply state-only ownership release
         run: terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/preview-ownership.tfplan"
+      - name: Verify stable resources left preview state
+        run: |
+          terraform -chdir=terraform/envs/preview state list > "${RUNNER_TEMP}/preview-state-addresses.txt"
+          python - "${RUNNER_TEMP}/preview-state-addresses.txt" <<'PY'
+          import sys
+
+          preview_expected_absent = {
+              "google_storage_bucket.preview_bucket",
+              "google_firestore_database.feature_preview",
+              "module.feature_preview_service_account.google_service_account.this",
+              "module.feature_preview_loader_service_account.google_service_account.this",
+              "google_service_account_iam_member.feature_preview_loader_github_wif",
+              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+          }
+          preview = set(open(sys.argv[1]).read().splitlines())
+          still_in_preview = sorted(preview_expected_absent & preview)
+          if still_in_preview:
+              raise SystemExit(f"stable resources remain in preview state: {still_in_preview}")
+          PY
+
+  verify-prod-state-after:
+    needs: release-preview-state
+    uses: ./.github/workflows/feature-preview-prod-state-verification.yml

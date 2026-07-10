@@ -1,0 +1,59 @@
+name: Feature Preview Prod State Verification
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: Require migrated prod state
+        run: python scripts/terraform_state_backend_guard.py prod
+      - name: Verify stable resources exist in prod state
+        run: |
+          terraform -chdir=terraform/envs/prod init -input=false
+          terraform -chdir=terraform/envs/prod state list > "${RUNNER_TEMP}/prod-state-addresses.txt"
+          python - "${RUNNER_TEMP}/prod-state-addresses.txt" <<'PY'
+          import sys
+
+          expected = {
+              "google_storage_bucket.feature_preview",
+              "google_firestore_database.feature_preview",
+              "module.feature_preview_service_account.google_service_account.this",
+              "module.feature_preview_loader_service_account.google_service_account.this",
+              "google_service_account_iam_member.feature_preview_loader_github_wif",
+              "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
+              "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
+          }
+          actual = set(open(sys.argv[1]).read().splitlines())
+          missing = sorted(expected - actual)
+          if missing:
+              raise SystemExit(f"stable preview resources are missing from prod state: {missing}")
+          PY
+

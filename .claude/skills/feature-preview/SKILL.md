@@ -155,10 +155,10 @@ Use these checks before upload for hand-built vector preview bundles:
   catalog viewer code against already loaded preview data. This is the default
   and rebuilds the preview catalog from existing preview release indexes.
 - Select `preview_data_mode=reset` only when a clean preview slot is intended;
-  it generation-safely clears preview bucket objects and recursively deletes
-  only the preview Firestore collection, publishes an empty preview catalog
-  shell, and requires reloading preview data. The stable bucket and database
-  are not destroyed.
+  after backend and saved-plan validation, it generation-safely clears preview
+  bucket objects and recursively deletes only the preview Firestore collection,
+  publishes an empty preview catalog shell, and requires reloading preview
+  data. The stable bucket and database are not destroyed.
 - For code-only preview fixes, push the branch, dispatch the deploy workflow
   with `preview_data_mode=preserve`, wait for the workflow to finish, and
   validate the live preview URL before reporting that the issue is fixed.
@@ -169,8 +169,11 @@ Use these checks before upload for hand-built vector preview bundles:
 - The deploy reports both the preview API URL and the preview catalog viewer
   URL.
 - Destroy the preview with `Destroy Preview Environment`.
-  Destroy clears preview data and removes only Cloud Run/IAP resources; the
-  empty stable stores and bootstrap identities remain.
+  Destroy first applies the allowlisted Cloud Run/IAP destroy plan, then clears
+  preview data; the empty stable stores and bootstrap identities remain.
+- Deploy and destroy refuse to run while the committed preview ownership
+  migration marker exists. Remove that marker only through the reviewed cleanup
+  PR after the one-time ownership workflow verifies both states.
 - Do not run local preview Terraform applies unless the user explicitly requests
   a break-glass path and the protected Terraform skill permits it.
 

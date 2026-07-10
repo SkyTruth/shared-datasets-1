@@ -1,0 +1,6 @@
+Preview stable-resource ownership migration is pending.
+
+While this marker exists, feature preview deploy and destroy workflows must
+refuse to run. Remove it only in a reviewed cleanup PR after the protected prod
+import and preview forget-only migration have both been verified.
+
