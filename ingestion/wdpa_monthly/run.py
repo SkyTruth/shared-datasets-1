@@ -14,7 +14,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 import tempfile
 import urllib.request
 import zipfile
@@ -25,19 +24,18 @@ from typing import Any, Mapping, Sequence
 from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
-from ingestion.common import feature_metadata
+from ingestion.common import feature_metadata, vector_pipeline
 from ingestion.common.gcs import GcsPublisher
-from ingestion.common.http import (
-    STATUS_NOT_READY,
-    STATUS_SUCCESS,
-    request_with_retries,
-)
 from ingestion.common.runtime import (
+    SourceNotAvailableError as SourceNotAvailableError,
+    bind_run_command,
     configure_logging,
     content_type_for as content_type_for,
+    download_file as common_download_file,
+    parse_run_date as common_parse_run_date,
     remove_if_exists,
     require_binary,
-    run_command as common_run_command,
+    run_job_main,
     sha256_file,
 )
 from scripts import feature_metadata_localization, release_feature_model
@@ -65,32 +63,13 @@ TRANSLATION_REVIEW_STATE = "needs_review"
 TRANSLATION_NOTES = "Initial Spanish sidecar preserves source proper-name value pending human review."
 
 
-class SourceNotAvailableError(FileNotFoundError):
-    """Raised when the monthly upstream file has not appeared yet."""
-
-
 @dataclass(frozen=True)
-class AssetSpec:
+class AssetSpec(vector_pipeline.AssetPaths):
     slug: str
     title: str
     tile_layer: str
     split_group: str
-
-    @property
-    def root(self) -> str:
-        return f"{ASSET_PARENT}/{self.slug}"
-
-    def release_prefix(self, run_date: dt.date) -> str:
-        return f"{self.root}/releases/{run_date.isoformat()}"
-
-    def release_object(self, run_date: dt.date, suffix: str) -> str:
-        return f"{self.release_prefix(run_date)}/{self.slug}{suffix}"
-
-    def latest_object(self, suffix: str) -> str:
-        return f"{self.root}/latest/{self.slug}{suffix}"
-
-    def run_record_object(self, run_date: dt.date) -> str:
-        return f"{self.root}/runs/{run_date.isoformat()}.json"
+    parent: str = ASSET_PARENT
 
 
 @dataclass(frozen=True)
@@ -161,9 +140,7 @@ def default_run_date(today: dt.date | None = None) -> dt.date:
 
 
 def parse_run_date(value: str | None) -> dt.date:
-    if not value:
-        return default_run_date()
-    return dt.date.fromisoformat(value)
+    return common_parse_run_date(value, default_factory=default_run_date)
 
 
 def parse_sample_spec() -> SampleSpec | None:
@@ -193,49 +170,20 @@ def source_version_for(run_date: dt.date) -> str:
     return run_date.strftime("%b%Y")
 
 
-def run_command(
-    args: list[str],
-    *,
-    capture_json: bool = False,
-    capture_text: bool = False,
-) -> Any:
-    return common_run_command(
-        args,
-        capture_json=capture_json,
-        capture_text=capture_text,
-        logger=LOGGER,
-    )
+run_command = bind_run_command(LOGGER)
 
 
 def download_file(url: str, dest: Path) -> None:
-    LOGGER.info("downloading source: %s", url)
-    request = urllib.request.Request(
+    common_download_file(
         url,
-        headers={"User-Agent": USER_AGENT},
-    )
-
-    def write_response(response) -> None:
-        with dest.open("wb") as file_obj:
-            shutil.copyfileobj(response, file_obj)
-
-    outcome, _payload = request_with_retries(
-        request,
+        dest,
+        user_agent=USER_AGENT,
         timeout_seconds=REQUEST_TIMEOUT_SECONDS,
-        not_ready_status_codes=SOURCE_NOT_READY_STATUS_CODES,
-        response_reader=write_response,
-        opener=urllib.request.urlopen,
         logger=LOGGER,
+        not_ready_status_codes=SOURCE_NOT_READY_STATUS_CODES,
+        not_ready_label="WDPA source",
+        opener=urllib.request.urlopen,
     )
-    if outcome.status == STATUS_NOT_READY:
-        raise SourceNotAvailableError(
-            f"WDPA source not available yet ({outcome.reason}): {url}"
-        )
-    if outcome.status != STATUS_SUCCESS:
-        raise RuntimeError(
-            f"Download failed with {outcome.reason or outcome.status}: {url}"
-        )
-    if dest.stat().st_size == 0:
-        raise RuntimeError(f"Downloaded zero-byte source file: {url}")
 
 
 def source_dataset_path(path: Path) -> str:
@@ -968,111 +916,23 @@ def publish_asset(
         }
 
     publisher.assert_no_partial_release(asset, run_date)
-    release_fgb = publisher.upload_new_object(
-        local_path=outputs.fgb,
-        object_name=asset.release_object(run_date, ".fgb"),
-        metadata=metadata,
-    )
-    release_pmtiles = publisher.upload_new_object(
-        local_path=outputs.pmtiles,
-        object_name=asset.release_object(run_date, ".pmtiles"),
-        metadata=metadata,
-    )
-    release_metadata = publisher.upload_new_object(
-        local_path=outputs.metadata,
-        object_name=asset.release_object(run_date, ".metadata.ndjson.gz"),
-        metadata=metadata,
-    )
-    release_metadata_es = publisher.upload_new_object(
-        local_path=outputs.metadata_es,
-        object_name=asset.release_object(run_date, f".metadata.{TRANSLATION_LOCALE}.ndjson.gz"),
-        metadata=metadata,
-    )
-    release_metadata_translations = publisher.upload_new_object(
-        local_path=outputs.metadata_translations,
-        object_name=asset.release_object(run_date, ".metadata-translations.csv"),
-        metadata=metadata,
-    )
-    release_schema = publisher.upload_new_object(
-        local_path=outputs.schema,
-        object_name=asset.release_object(run_date, ".schema.json"),
-        metadata=metadata,
-    )
-    latest_fgb = publisher.replace_latest_object(
-        local_path=outputs.fgb,
-        object_name=asset.latest_object(".fgb"),
-        metadata=metadata,
-    )
-    latest_pmtiles = publisher.replace_latest_object(
-        local_path=outputs.pmtiles,
-        object_name=asset.latest_object(".pmtiles"),
-        metadata=metadata,
-    )
-    latest_metadata = publisher.replace_latest_object(
-        local_path=outputs.metadata,
-        object_name=asset.latest_object(".metadata.ndjson.gz"),
-        metadata=metadata,
-    )
-    latest_metadata_es = publisher.replace_latest_object(
-        local_path=outputs.metadata_es,
-        object_name=asset.latest_object(f".metadata.{TRANSLATION_LOCALE}.ndjson.gz"),
-        metadata=metadata,
-    )
-    latest_metadata_translations = publisher.replace_latest_object(
-        local_path=outputs.metadata_translations,
-        object_name=asset.latest_object(".metadata-translations.csv"),
-        metadata=metadata,
-    )
-    latest_schema = publisher.replace_latest_object(
-        local_path=outputs.schema,
-        object_name=asset.latest_object(".schema.json"),
-        metadata=metadata,
-    )
-    manifest_release_object = asset.release_object(run_date, ".manifest.json")
-    manifest_latest_object = asset.latest_object(".manifest.json")
-    feature_metadata.write_manifest(
-        feature_metadata.final_manifest_payload(
-            asset_slug=asset.slug,
-            release=run_date.isoformat(),
-            bucket_name=publisher.bucket.name,
-            asset_root=asset.root,
-            sha256_by_role=outputs.sha256,
-            schema=outputs.schema_payload,
-            source_inputs=[{"uri": source_url}],
-            identity=feature_metadata.release_feature_model.build_identity_metadata(
-                strategy="generated_sequence_source_fields",
-                source_fields=["SITE_PID"],
-                next_generated_feature_id_after_release=feature_metadata.next_generated_feature_id(outputs.sidecar_records),
-            ),
-            feature_count=outputs.row_count,
-            release_blob_info_by_role={
-                "fgb": release_fgb,
-                "pmtiles": release_pmtiles,
-                "metadata": release_metadata,
-                "schema": release_schema,
-            },
-            latest_blob_info_by_role={
-                "fgb": latest_fgb,
-                "pmtiles": latest_pmtiles,
-                "metadata": latest_metadata,
-                "schema": latest_schema,
-            },
-            manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
-            manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+    bundle = vector_pipeline.publish_vector_bundle(
+        publisher=publisher,
+        asset=asset,
+        run_date=run_date,
+        outputs=outputs,
+        object_metadata=metadata,
+        source_inputs=[{"uri": source_url}],
+        identity=feature_metadata.release_feature_model.build_identity_metadata(
+            strategy="generated_sequence_source_fields",
+            source_fields=["SITE_PID"],
+            next_generated_feature_id_after_release=feature_metadata.next_generated_feature_id(outputs.sidecar_records),
         ),
-        outputs.manifest,
+        extra_suffix_paths=(
+            (f".metadata.{TRANSLATION_LOCALE}.ndjson.gz", outputs.metadata_es),
+            (".metadata-translations.csv", outputs.metadata_translations),
+        ),
     )
-    release_manifest = publisher.upload_new_object(
-        local_path=outputs.manifest,
-        object_name=manifest_release_object,
-        metadata=metadata,
-    )
-    latest_manifest = publisher.replace_latest_object(
-        local_path=outputs.manifest,
-        object_name=manifest_latest_object,
-        metadata=metadata,
-    )
-    sha256_values = {**outputs.sha256, "manifest": sha256_file(outputs.manifest)}
 
     record = {
         "schema_version": 1,
@@ -1084,10 +944,10 @@ def publish_asset(
         "source": source_url,
         "source_version": source_version,
         "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-        "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
-        "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
+        "release_paths": bundle.release_paths,
+        "latest_paths": bundle.latest_paths,
         "row_count": outputs.row_count,
-        "sha256": sha256_values,
+        "sha256": bundle.sha256,
         "field_count": len(source_fields),
         "notes": "Generated by simplified monthly WDPA job; fields preserved from source.",
         "localization": {
@@ -1096,8 +956,8 @@ def publish_asset(
             "report": outputs.localization_report,
         },
     }
-    record["release_paths"].extend([release_metadata_es, release_metadata_translations])
-    record["latest_paths"].extend([latest_metadata_es, latest_metadata_translations])
+    record["release_paths"].extend(bundle.extra_release_paths)
+    record["latest_paths"].extend(bundle.extra_latest_paths)
     run_record = publisher.write_run_record(
         asset=asset,
         run_date=run_date,
@@ -1269,13 +1129,7 @@ def run() -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    try:
-        records = run()
-    except Exception:
-        LOGGER.exception("wdpa monthly job failed")
-        raise
-    json.dump(records, sys.stdout, indent=2, sort_keys=True)
-    sys.stdout.write("\n")
+    run_job_main(run, logger=LOGGER, failure_message="wdpa monthly job failed")
 
 
 if __name__ == "__main__":
