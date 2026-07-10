@@ -560,6 +560,9 @@ GitHub Actions workflows in the `shared-datasets-production` environment. Local
 local `terraform apply` and `scripts/terraform_prod_apply.py` are reserved for
 explicitly approved break-glass emergencies.
 
+The shared hierarchical-namespace data bucket retains deleted or overwritten
+objects through Cloud Storage soft delete for 30 days.
+
 ### Feature Branch Preview
 
 The feature branch preview is a single replaceable test slot in
