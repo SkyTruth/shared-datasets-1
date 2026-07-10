@@ -3,8 +3,16 @@ name: Storage hardening sync
 on:
   workflow_dispatch:
     inputs:
+      phase:
+        description: "Run scoped additions first; remove broad grants only in a later verified dispatch."
+        required: true
+        default: add_scoped
+        type: choice
+        options:
+          - add_scoped
+          - remove_broad
       confirmation:
-        description: "Type HARDEN_STORAGE to run the reviewed saved plan."
+        description: "Type HARDEN_STORAGE_ADD_SCOPED or HARDEN_STORAGE_REMOVE_BROAD for the selected phase."
         required: true
         type: string
       use_legacy_backend:
@@ -37,13 +45,19 @@ jobs:
       - name: Validate reviewed invocation
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
+          PHASE: ${{ inputs.phase }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "Storage hardening may only run from reviewed main." >&2
             exit 1
           fi
-          test "${CONFIRMATION}" = "HARDEN_STORAGE"
+          case "${PHASE}" in
+            add_scoped) expected_confirmation="HARDEN_STORAGE_ADD_SCOPED" ;;
+            remove_broad) expected_confirmation="HARDEN_STORAGE_REMOVE_BROAD" ;;
+            *) echo "Unknown storage-hardening phase: ${PHASE}" >&2; exit 1 ;;
+          esac
+          test "${CONFIRMATION}" = "${expected_confirmation}"
 
       - uses: actions/checkout@v4
         with:
@@ -73,10 +87,11 @@ jobs:
             terraform -chdir=terraform/envs/prod init -input=false
           fi
 
-      - name: Terraform saved plan
+      - name: Terraform saved plan for scoped additions
+        if: ${{ inputs.phase == 'add_scoped' }}
         run: |
           terraform -chdir=terraform/envs/prod plan -input=false \
-            -out="${RUNNER_TEMP}/storage-hardening.tfplan" \
+            -out="${RUNNER_TEMP}/storage-hardening-add.tfplan" \
             -var='wdpa_monthly_image=unused-by-storage-hardening' \
             -var='sea_ice_daily_image=unused-by-storage-hardening' \
             -var='eamlis_monthly_image=unused-by-storage-hardening' \
@@ -88,16 +103,15 @@ jobs:
             -target=google_storage_managed_folder_iam_member.shared_dataset_consumer_object_viewers \
             -target=google_project_iam_custom_role.github_readonly_object_lister \
             -target=google_storage_bucket_iam_member.github_readonly_object_viewer \
-            -target=google_storage_bucket_iam_member.github_readonly_object_lister \
-            -target=google_storage_bucket_iam_member.shared_bucket_cloud_cdn_fill_object_viewer \
-            -target=google_storage_bucket_iam_member.shared_dataset_consumer_object_viewers
-          terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/storage-hardening.tfplan" \
-            > "${RUNNER_TEMP}/storage-hardening.tfplan.json"
+            -target=google_storage_bucket_iam_member.github_readonly_object_lister
+          terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/storage-hardening-add.tfplan" \
+            > "${RUNNER_TEMP}/storage-hardening-add.tfplan.json"
 
-      - name: Enforce storage hardening allowlist
+      - name: Enforce scoped-addition allowlist
+        if: ${{ inputs.phase == 'add_scoped' }}
         run: |
           python scripts/terraform_plan_allowlist.py \
-            "${RUNNER_TEMP}/storage-hardening.tfplan.json" \
+            "${RUNNER_TEMP}/storage-hardening-add.tfplan.json" \
             --allowed-exact google_storage_bucket.terraform_state \
             --allowed-exact google_storage_bucket_iam_member.terraform_state_workflow_admin \
             --allowed-exact google_storage_bucket_iam_member.terraform_state_breakglass_admin \
@@ -105,20 +119,127 @@ jobs:
             --allowed-exact google_project_iam_custom_role.github_readonly_object_lister \
             --allowed-exact google_storage_bucket_iam_member.github_readonly_object_viewer \
             --allowed-exact google_storage_bucket_iam_member.github_readonly_object_lister \
-            --allowed-pattern '^google_storage_bucket_iam_member\.shared_bucket_cloud_cdn_fill_object_viewer(?:\[[0-9]+\])?$' \
-            --allowed-pattern '^google_storage_bucket_iam_member\.shared_dataset_consumer_object_viewers(?:\[.*\])?$' \
             --allowed-pattern '^google_storage_managed_folder_iam_member\.shared_bucket_cdn_fill_object_viewers(?:\[.*\])?$' \
             --allowed-pattern '^google_storage_managed_folder_iam_member\.shared_dataset_consumer_object_viewers(?:\[.*\])?$' \
-            --refusal-prefix "Refusing storage hardening sync"
+            --refusal-prefix "Refusing storage hardening scoped-addition phase"
 
-      - name: Terraform apply saved plan
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/storage-hardening.tfplan"
+      - name: Terraform apply scoped additions
+        if: ${{ inputs.phase == 'add_scoped' }}
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/storage-hardening-add.tfplan"
 
-      - name: Verify hardened storage
+      - name: Verify scoped access before broad removal
         run: |
           set -euo pipefail
           gcloud storage buckets describe gs://skytruth-shared-datasets-1-terraform-state \
             --format='value(versioning.enabled,softDeletePolicy.retentionDuration)'
           gcloud storage buckets describe gs://skytruth-shared-datasets-1 \
             --format='value(softDeletePolicy.retentionDuration)'
+
+          project_number="$(gcloud projects describe shared-datasets-1 --format='value(projectNumber)')"
+          export CDN_FILL_MEMBER="serviceAccount:service-${project_number}@cloud-cdn-fill.iam.gserviceaccount.com"
+          terraform -chdir=terraform/envs/prod output -json shared_dataset_consumer_service_accounts \
+            > "${RUNNER_TEMP}/storage-consumers.json"
+          folders=(
+            "_catalog/"
+            "100-geographic-reference/110-boundaries/lsib/"
+            "400-events-observations/430-alerts-notices/acled-middle-east-aggregated-weekly-admin1/"
+          )
+          policy_files=()
+          for index in "${!folders[@]}"; do
+            policy_file="${RUNNER_TEMP}/managed-folder-${index}.json"
+            gcloud storage managed-folders get-iam-policy \
+              "gs://skytruth-shared-datasets-1/${folders[${index}]}" \
+              --format=json > "${policy_file}"
+            policy_files+=("${policy_file}")
+          done
+          python - "${RUNNER_TEMP}/storage-consumers.json" "${policy_files[@]}" <<'PY'
+          import json
+          import os
+          import sys
+
+          consumers = {
+              f"serviceAccount:{email}"
+              for email in json.load(open(sys.argv[1])).values()
+          }
+          expected = consumers | {os.environ["CDN_FILL_MEMBER"]}
+          for policy_path in sys.argv[2:]:
+              policy = json.load(open(policy_path))
+              viewers = {
+                  member
+                  for binding in policy.get("bindings", [])
+                  if binding.get("role") == "roles/storage.objectViewer"
+                  for member in binding.get("members", [])
+              }
+              missing = sorted(expected - viewers)
+              if missing:
+                  raise SystemExit(f"{policy_path} is missing scoped viewers: {missing}")
+          PY
+
           curl -fsS https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv >/dev/null
+          curl -fsSI \
+            https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/lsib/latest/lsib.fgb \
+            >/dev/null
+          private_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            https://storage.googleapis.com/skytruth-shared-datasets-1/400-events-observations/430-alerts-notices/acled-middle-east-aggregated-weekly-admin1/latest/acled-middle-east-aggregated-weekly-admin1.fgb)"
+          case "${private_status}" in
+            401|403) ;;
+            *) echo "Expected anonymous private-object denial, got HTTP ${private_status}" >&2; exit 1 ;;
+          esac
+
+      - name: Terraform saved plan for broad-grant removal
+        if: ${{ inputs.phase == 'remove_broad' }}
+        run: |
+          terraform -chdir=terraform/envs/prod plan -input=false \
+            -out="${RUNNER_TEMP}/storage-hardening-remove.tfplan" \
+            -var='wdpa_monthly_image=unused-by-storage-hardening' \
+            -var='sea_ice_daily_image=unused-by-storage-hardening' \
+            -var='eamlis_monthly_image=unused-by-storage-hardening' \
+            -target=google_storage_bucket_iam_member.shared_bucket_cloud_cdn_fill_object_viewer \
+            -target=google_storage_bucket_iam_member.shared_dataset_consumer_object_viewers
+          terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/storage-hardening-remove.tfplan" \
+            > "${RUNNER_TEMP}/storage-hardening-remove.tfplan.json"
+
+      - name: Enforce broad-removal allowlist
+        if: ${{ inputs.phase == 'remove_broad' }}
+        run: |
+          python scripts/terraform_plan_allowlist.py \
+            "${RUNNER_TEMP}/storage-hardening-remove.tfplan.json" \
+            --allowed-pattern '^google_storage_bucket_iam_member\.shared_bucket_cloud_cdn_fill_object_viewer(?:\[[0-9]+\])?$' \
+            --allowed-pattern '^google_storage_bucket_iam_member\.shared_dataset_consumer_object_viewers(?:\[.*\])?$' \
+            --require-action delete \
+            --refusal-prefix "Refusing storage hardening broad-removal phase"
+
+      - name: Terraform apply broad-grant removal
+        if: ${{ inputs.phase == 'remove_broad' }}
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/storage-hardening-remove.tfplan"
+
+      - name: Verify broad grants removed
+        if: ${{ inputs.phase == 'remove_broad' }}
+        run: |
+          set -euo pipefail
+          project_number="$(gcloud projects describe shared-datasets-1 --format='value(projectNumber)')"
+          export CDN_FILL_MEMBER="serviceAccount:service-${project_number}@cloud-cdn-fill.iam.gserviceaccount.com"
+          terraform -chdir=terraform/envs/prod output -json shared_dataset_consumer_service_accounts \
+            > "${RUNNER_TEMP}/storage-consumers.json"
+          gcloud storage buckets get-iam-policy gs://skytruth-shared-datasets-1 --format=json \
+            > "${RUNNER_TEMP}/shared-bucket-iam.json"
+          python - "${RUNNER_TEMP}/storage-consumers.json" "${RUNNER_TEMP}/shared-bucket-iam.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          forbidden = {
+              f"serviceAccount:{email}"
+              for email in json.load(open(sys.argv[1])).values()
+          } | {os.environ["CDN_FILL_MEMBER"]}
+          policy = json.load(open(sys.argv[2]))
+          broad_viewers = {
+              member
+              for binding in policy.get("bindings", [])
+              if binding.get("role") == "roles/storage.objectViewer"
+              for member in binding.get("members", [])
+          }
+          remaining = sorted(forbidden & broad_viewers)
+          if remaining:
+              raise SystemExit(f"bucket-wide objectViewer grants remain: {remaining}")
+          PY

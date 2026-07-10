@@ -28,6 +28,7 @@ def blocked_changes(
     allowed_exact: set[str],
     allowed_patterns: list[re.Pattern[str]],
     block_deletes: bool,
+    required_action: str | None = None,
 ) -> list[str]:
     blocked = []
     for resource in plan.get("resource_changes", []):
@@ -35,6 +36,9 @@ def blocked_changes(
         if actions in IGNORED_ACTIONS:
             continue
         address = resource.get("address", "")
+        if required_action is not None and actions != [required_action]:
+            blocked.append(f"{'/'.join(actions)} {address}")
+            continue
         if block_deletes and "delete" in actions:
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
@@ -51,13 +55,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("plan_json", help="Path to `terraform show -json` output for the plan.")
     parser.add_argument(
         "--allowed-exact",
-        required=True,
+        action="append",
+        default=[],
         help="Newline-separated resource addresses allowed to change.",
     )
     parser.add_argument(
+        "--allowed-pattern",
         "--allowed-patterns",
-        default="",
+        dest="allowed_patterns",
+        action="append",
+        default=[],
         help="Newline-separated regexes; addresses matching any are allowed to change.",
+    )
+    parser.add_argument(
+        "--require-action",
+        choices=("create", "update", "delete", "forget"),
+        help="Refuse every non-noop change whose action list is not exactly this one action.",
     )
     parser.add_argument(
         "--block-deletes",
@@ -73,14 +86,23 @@ def main(argv: list[str] | None = None) -> int:
 
     with open(args.plan_json) as file_obj:
         plan = json.load(file_obj)
-    allowed_exact = set(split_lines(args.allowed_exact))
-    allowed_patterns = [re.compile(pattern) for pattern in split_lines(args.allowed_patterns)]
+    allowed_exact = {
+        address
+        for value in args.allowed_exact
+        for address in split_lines(value)
+    }
+    allowed_patterns = [
+        re.compile(pattern)
+        for value in args.allowed_patterns
+        for pattern in split_lines(value)
+    ]
 
     blocked = blocked_changes(
         plan,
         allowed_exact=allowed_exact,
         allowed_patterns=allowed_patterns,
         block_deletes=args.block_deletes,
+        required_action=args.require_action,
     )
     if blocked:
         print(f"{args.refusal_prefix} because the Terraform plan changes non-allowlisted resources:")

@@ -95,6 +95,40 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("- delete/create google_firestore_database.feature_metadata", output)
 
+    def test_repeated_exact_and_pattern_arguments_are_combined(self):
+        plan = plan_with(
+            ("google_storage_bucket.one", ["update"]),
+            ("google_storage_bucket.two", ["update"]),
+            ('google_storage_bucket_iam_member.viewer["member"]', ["create"]),
+        )
+        exit_code, output = self.run_main(
+            plan,
+            "--allowed-exact",
+            "google_storage_bucket.one",
+            "--allowed-exact",
+            "google_storage_bucket.two",
+            "--allowed-pattern",
+            r"^google_storage_bucket_iam_member\.viewer\[",
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output, "")
+
+    def test_required_action_refuses_other_allowlisted_actions(self):
+        plan = plan_with(
+            ("google_storage_bucket_iam_member.old", ["delete"]),
+            ("google_storage_bucket_iam_member.changed", ["update"]),
+        )
+        exit_code, output = self.run_main(
+            plan,
+            "--allowed-exact",
+            "google_storage_bucket_iam_member.old\ngoogle_storage_bucket_iam_member.changed",
+            "--require-action",
+            "delete",
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertNotIn("- delete google_storage_bucket_iam_member.old", output)
+        self.assertIn("- update google_storage_bucket_iam_member.changed", output)
+
 
 if __name__ == "__main__":
     unittest.main()
