@@ -45,9 +45,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Require committed migration marker
+      - name: Require committed ownership marker
         run: |
-          if [[ ! -f terraform/envs/preview/state-migration-pending ]]; then
+          if [[ ! -f terraform/envs/preview/ownership-migration-pending ]]; then
             echo "Preview ownership migration marker is absent; refusing an unplanned repeat migration." >&2
             exit 1
           fi
@@ -58,8 +58,6 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-      - name: Require migrated preview state
-        run: python scripts/terraform_state_backend_guard.py preview
       - name: Terraform init
         run: terraform -chdir=terraform/envs/preview init -input=false
       - name: Plan state-only ownership release

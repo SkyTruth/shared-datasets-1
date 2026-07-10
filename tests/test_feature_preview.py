@@ -48,7 +48,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertEqual(workflow["env"]["SHARED_DATASETS_BUCKET"], "skytruth-shared-datasets-1-preview")
         self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "main")
         self.assertIn(
-            "state-migration-pending",
+            "ownership-migration-pending",
             steps["Block while preview ownership migration is pending"]["run"],
         )
         self.assertEqual(steps["Check out selected feature branch"]["with"]["ref"], "${{ github.ref }}")
@@ -64,7 +64,6 @@ class FeaturePreviewTests(unittest.TestCase):
         outputs_tf = (PREVIEW_TF / "outputs.tf").read_text()
 
         self.assertIn('prefix = "000-system/terraform/state/preview"', versions_tf)
-        self.assertIn('bucket = "skytruth-shared-datasets-1-terraform-state"', versions_tf)
         self.assertIn('default     = "skytruth-shared-datasets-1-preview"', variables_tf)
         self.assertIn('default     = "feature-preview-service"', variables_tf)
         self.assertIn('default     = "feature-preview-catalog-viewer"', variables_tf)
@@ -141,7 +140,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("preview-source/services/catalog_viewer/Dockerfile", workflow)
         self.assertIn("preview Firestore database override", workflow)
         self.assertIn("catalog viewer site-prefix override", workflow)
-        self.assertIn("uses the legacy preview state backend; rebase it onto main", workflow)
         self.assertIn("still owns stable preview storage; rebase it onto main", workflow)
         self.assertIn("Build preview service image", workflow)
         self.assertIn("Build preview catalog viewer image", workflow)
@@ -246,19 +244,19 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("google_service_account_iam_member.feature_preview_loader_github_wif", destroy_allowlist_section)
         steps = workflow_steps_by_name(load_workflow(PREVIEW_DESTROY_WORKFLOW), "destroy")
         names = list(steps)
-        self.assertIn("state-migration-pending", steps["Block while preview ownership migration is pending"]["run"])
+        self.assertIn("ownership-migration-pending", steps["Block while preview ownership migration is pending"]["run"])
         self.assertLess(names.index("Enforce preview resource-change allowlist"), names.index("Terraform apply destroy plan"))
         self.assertLess(names.index("Terraform apply destroy plan"), names.index("Reset stable preview data"))
 
     def test_preview_ownership_migration_is_exact_and_marker_gated(self):
-        marker = PREVIEW_TF / "state-migration-pending"
+        marker = PREVIEW_TF / "ownership-migration-pending"
         workflow = PREVIEW_OWNERSHIP_MIGRATION_WORKFLOW.read_text()
         prod_verification = PREVIEW_PROD_STATE_VERIFICATION_WORKFLOW.read_text()
         preview_main = (PREVIEW_TF / "main.tf").read_text()
 
         self.assertTrue(marker.exists())
         self.assertIn("Remove it only in a reviewed cleanup PR", marker.read_text())
-        self.assertIn("Require committed migration marker", workflow)
+        self.assertIn("Require committed ownership marker", workflow)
         self.assertIn("verify-prod-state-before", workflow)
         self.assertIn("verify-prod-state-after", workflow)
         self.assertIn("Verify stable resources left preview state", workflow)

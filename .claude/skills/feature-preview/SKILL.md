@@ -155,7 +155,7 @@ Use these checks before upload for hand-built vector preview bundles:
   catalog viewer code against already loaded preview data. This is the default
   and rebuilds the preview catalog from existing preview release indexes.
 - Select `preview_data_mode=reset` only when a clean preview slot is intended;
-  after backend and saved-plan validation, it generation-safely clears preview
+  after saved-plan validation, it generation-safely clears preview
   bucket objects and recursively deletes only the preview Firestore collection,
   publishes an empty preview catalog shell, and requires reloading preview
   data. The stable bucket and database are not destroyed.

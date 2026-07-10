@@ -48,7 +48,7 @@ jobs:
 
       - name: Block while preview ownership migration is pending
         run: |
-          if [[ -f terraform/envs/preview/state-migration-pending ]]; then
+          if [[ -f terraform/envs/preview/ownership-migration-pending ]]; then
             echo "Preview destroy is disabled while stable-resource ownership migration is pending." >&2
             exit 1
           fi

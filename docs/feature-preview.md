@@ -40,7 +40,7 @@ before merge while still refusing non-preview resources. In `preserve` mode, it
 plans and applies the updated preview stack without first destroying the preview
 bucket or Firestore database, then rebuilds the catalog web bundle from
 existing preview release indexes. In `reset` mode, it first validates the
-migrated backend and the saved Terraform plan, then authenticates as the
+saved Terraform plan, then authenticates as the
 preview loader, deletes every listed bucket object with its exact generation,
 recursively deletes only the `feature_preview_index` collection, verifies both
 stores are empty, then deploys the services and publishes a catalog shell. In
@@ -84,7 +84,7 @@ The one-time `Feature Preview State Ownership Migration` workflow releases the
 bucket, database, two service accounts, loader Workload Identity binding, and
 three bucket IAM bindings from preview state with an exact forget-only plan
 after verifying every corresponding prod-state owner. A committed
-`state-migration-pending` marker blocks deploy and destroy throughout the
+`ownership-migration-pending` marker blocks deploy and destroy throughout the
 transfer. After the workflow verifies the resources are present only in prod
 state, remove the marker and both one-time ownership workflows in a final
 reviewed cleanup PR.

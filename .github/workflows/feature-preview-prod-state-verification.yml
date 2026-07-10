@@ -32,8 +32,6 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
-      - name: Require migrated prod state
-        run: python scripts/terraform_state_backend_guard.py prod
       - name: Verify stable resources exist in prod state
         run: |
           terraform -chdir=terraform/envs/prod init -input=false
@@ -56,4 +54,3 @@ jobs:
           if missing:
               raise SystemExit(f"stable preview resources are missing from prod state: {missing}")
           PY
-

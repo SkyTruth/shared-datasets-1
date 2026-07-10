@@ -55,7 +55,7 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Stable preview data-plane ownership:
   `.github/workflows/preview-terraform-iam-sync.yml`, followed once by
   `.github/workflows/feature-preview-state-ownership-migration.yml`. Keep the
-  committed migration marker until a reviewed cleanup PR verifies single state
+  committed ownership marker until a reviewed cleanup PR verifies single state
   ownership and removes both one-time ownership workflows.
 
 For any Terraform resource not covered by an existing protected workflow, add or

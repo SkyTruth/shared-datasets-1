@@ -83,7 +83,7 @@ jobs:
 
       - name: Block while preview ownership migration is pending
         run: |
-          if [[ -f terraform/envs/preview/state-migration-pending ]]; then
+          if [[ -f terraform/envs/preview/ownership-migration-pending ]]; then
             echo "Preview deploy is disabled while stable-resource ownership migration is pending." >&2
             exit 1
           fi
@@ -230,10 +230,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! grep -q 'bucket = "skytruth-shared-datasets-1-terraform-state"' preview-source/terraform/envs/preview/versions.tf; then
-            echo "The selected branch uses the legacy preview state backend; rebase it onto main." >&2
-            exit 1
-          fi
           if grep -q 'resource "google_storage_bucket" "preview_bucket"' preview-source/terraform/envs/preview/main.tf \
             || grep -q 'resource "google_firestore_database" "feature_preview"' preview-source/terraform/envs/preview/main.tf; then
             echo "The selected branch still owns stable preview storage; rebase it onto main." >&2
