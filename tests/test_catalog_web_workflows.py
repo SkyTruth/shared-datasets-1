@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +23,28 @@ RELEASE_INDEX_REBUILD = REPO_ROOT / ".github/workflows/release-index-rebuild.yml
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
 SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 PROTECTED_TERRAFORM_READINESS = REPO_ROOT / ".github/workflows/protected-terraform-readiness.yml"
+
+
+def run_embedded_python_allowlist(run: str, resource_changes: list[dict]) -> subprocess.CompletedProcess[str]:
+    marker = "<<'PY'\n"
+    source = run.partition(marker)[2].rsplit("\nPY", maxsplit=1)[0]
+    if not source:
+        raise AssertionError("workflow step does not contain an embedded Python script")
+
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json") as plan_file:
+        json.dump({"resource_changes": resource_changes}, plan_file)
+        plan_file.flush()
+        return subprocess.run(
+            [sys.executable, "-", plan_file.name],
+            input=source,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+
+def terraform_resource_change(address: str, actions: list[str]) -> dict:
+    return {"address": address, "change": {"actions": actions}}
 
 
 def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -> dict:
@@ -293,6 +319,11 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         verify_run = steps["Verify catalog CDN routes"]["run"]
         enforce_run = steps["Enforce PMTiles resource-change allowlist"]["run"]
         bootstrap_targets = {
+            "google_storage_bucket.shared_bucket",
+            "google_project_iam_custom_role.pmtiles_managed_folder_sync",
+            "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync",
+        }
+        bootstrap_allowed_exact = {
             "google_project_iam_custom_role.pmtiles_managed_folder_sync",
             "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync",
         }
@@ -311,7 +342,12 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("-refresh=false", bootstrap_plan)
         self.assertIn('out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"', bootstrap_plan)
         self.assertIn("unused-by-pmtiles-cdn-sync", bootstrap_plan)
-        self.assertEqual(python_literal_string_set(bootstrap_enforce, "allowed_exact"), bootstrap_targets)
+        self.assertEqual(python_literal_string_set(bootstrap_enforce, "allowed_exact"), bootstrap_allowed_exact)
+        self.assertEqual(
+            python_literal_string_set(bootstrap_enforce, "allowed_update_only"),
+            {"google_storage_bucket.shared_bucket"},
+        )
+        self.assertIn('actions == ["update"]', bootstrap_enforce)
         self.assertIn('"delete" in actions', bootstrap_enforce)
         self.assertIn(
             "terraform -chdir=terraform/envs/prod apply -input=false",
@@ -353,6 +389,35 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("expected 200 without redirect", verify_run)
         self.assertNotIn("curl -L", verify_run)
         self.assertNotIn("--location", verify_run)
+
+    def test_pmtiles_bootstrap_allows_only_in_place_shared_bucket_update(self):
+        workflow = load_workflow(PMTILES_CDN_SYNC)
+        enforce_run = workflow_steps_by_name(workflow, "sync")[
+            "Enforce PMTiles managed-folder IAM bootstrap allowlist"
+        ]["run"]
+        shared_bucket = "google_storage_bucket.shared_bucket"
+
+        allowed = run_embedded_python_allowlist(
+            enforce_run,
+            [terraform_resource_change(shared_bucket, ["update"])],
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
+        for actions in (["create"], ["delete"], ["delete", "create"]):
+            with self.subTest(actions=actions):
+                blocked = run_embedded_python_allowlist(
+                    enforce_run,
+                    [terraform_resource_change(shared_bucket, actions)],
+                )
+                self.assertEqual(blocked.returncode, 1)
+                self.assertIn(f"{'/'.join(actions)} {shared_bucket}", blocked.stdout)
+
+        unrelated = run_embedded_python_allowlist(
+            enforce_run,
+            [terraform_resource_change("google_storage_bucket.unrelated", ["update"])],
+        )
+        self.assertEqual(unrelated.returncode, 1)
+        self.assertIn("update google_storage_bucket.unrelated", unrelated.stdout)
 
     def test_scratch_cleanup_iam_sync_uses_constrained_apply(self):
         # Caller wiring is asserted in detail in
