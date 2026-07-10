@@ -1,0 +1,72 @@
+name: Terraform State Legacy Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      prod_generation:
+        description: "Exact generation of the legacy prod default.tfstate object."
+        required: true
+        type: string
+      preview_generation:
+        description: "Exact generation of the legacy preview default.tfstate object."
+        required: true
+        type: string
+      confirmation:
+        description: "Type DELETE_LEGACY_TERRAFORM_STATE after two plans and one protected no-op apply succeed."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+    steps:
+      - name: Validate reviewed invocation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PROD_GENERATION: ${{ inputs.prod_generation }}
+          PREVIEW_GENERATION: ${{ inputs.preview_generation }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Legacy state cleanup may only run from reviewed main." >&2
+            exit 1
+          fi
+          test "${CONFIRMATION}" = "DELETE_LEGACY_TERRAFORM_STATE"
+          [[ "${PROD_GENERATION}" =~ ^[0-9]+$ ]]
+          [[ "${PREVIEW_GENERATION}" =~ ^[0-9]+$ ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      - name: Require isolated states
+        run: |
+          python scripts/terraform_state_backend_guard.py prod
+          python scripts/terraform_state_backend_guard.py preview
+      - name: Delete exact legacy generations
+        env:
+          PROD_GENERATION: ${{ inputs.prod_generation }}
+          PREVIEW_GENERATION: ${{ inputs.preview_generation }}
+        run: |
+          set -euo pipefail
+          prod_uri="gs://skytruth-shared-datasets-1/000-system/terraform/state/prod/default.tfstate"
+          preview_uri="gs://skytruth-shared-datasets-1/000-system/terraform/state/preview/default.tfstate"
+          test "$(gcloud storage objects describe "${prod_uri}" --format='value(generation)')" = "${PROD_GENERATION}"
+          test "$(gcloud storage objects describe "${preview_uri}" --format='value(generation)')" = "${PREVIEW_GENERATION}"
+          gcloud storage rm "${prod_uri}#${PROD_GENERATION}"
+          gcloud storage rm "${preview_uri}#${PREVIEW_GENERATION}"

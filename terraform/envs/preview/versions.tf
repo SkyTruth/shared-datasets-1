@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.6.0"
 
   backend "gcs" {
-    bucket = "skytruth-shared-datasets-1"
+    bucket = "skytruth-shared-datasets-1-terraform-state"
     prefix = "000-system/terraform/state/preview"
   }
 

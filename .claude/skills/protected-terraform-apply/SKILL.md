@@ -52,6 +52,19 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Dataset object promotion/deletion:
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
+- Storage recovery/state-bucket bootstrap:
+  `.github/workflows/storage-hardening-sync.yml` with its saved-plan allowlist.
+- State backend migration and exact-generation legacy cleanup:
+  `.github/workflows/terraform-state-migration.yml` and
+  `.github/workflows/terraform-state-legacy-cleanup.yml` after the reviewed
+  bootstrap succeeds.
+- Stable preview data-plane ownership:
+  `.github/workflows/preview-terraform-iam-sync.yml`, followed once by
+  `.github/workflows/feature-preview-state-ownership-migration.yml`.
+
+Normal apply workflows run `scripts/terraform_state_backend_guard.py` before
+Terraform initialization. A missing isolated state object is a migration
+blocker; do not bypass the guard or initialize an empty backend.
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.

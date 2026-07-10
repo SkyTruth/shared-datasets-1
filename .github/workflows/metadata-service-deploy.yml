@@ -154,6 +154,9 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - name: Require migrated Terraform state
+        run: python scripts/terraform_state_backend_guard.py prod
+
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 

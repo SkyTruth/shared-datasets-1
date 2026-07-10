@@ -289,6 +289,9 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - name: Require migrated Terraform state
+        run: python scripts/terraform_state_backend_guard.py preview
+
       - name: Terraform init
         run: terraform -chdir="${PREVIEW_TERRAFORM_DIR}" init -input=false
 
