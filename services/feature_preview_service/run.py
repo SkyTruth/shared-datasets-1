@@ -17,6 +17,20 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
 
 from scripts import release_feature_model
+from services.http_base import (
+    FEATURE_ID_RE,
+    LOOKUP_RE,
+    NO_STORE,
+    Response,
+    api_headers,
+    as_int,
+    authenticated_user_email,
+    email_domain_allowed,
+    header_value,
+    json_response,
+    send_handler_response,
+    split_gs_uri,
+)
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -29,21 +43,9 @@ DEFAULT_MAX_RESPONSE_BYTES = 10_485_760
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 RELEASE_RE = re.compile(r"^(latest|\d{4}-\d{2}-\d{2})$")
 FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SIDECAR_FEATURE_ID_RE = re.compile(
     r'"feature_id"\s*:\s*(?P<value>"[^"\\]*(?:\\.[^"\\]*)*"|-?[0-9]+|[^,}\s]+)'
 )
-LOOKUP_RE = re.compile(
-    r"^/v1/assets/(?P<asset_slug>[a-z0-9]+(?:-[a-z0-9]+)*)/releases/(?P<release>latest|\d{4}-\d{2}-\d{2}):lookup$"
-)
-NO_STORE = "no-store"
-
-
-@dataclass(frozen=True)
-class Response:
-    status: int
-    headers: dict[str, str]
-    body: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -719,53 +721,8 @@ def parse_sidecar_records(payload: bytes, *, asset_slug: str, release: str) -> d
     return records
 
 
-def split_gs_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("gs://"):
-        raise ValueError(f"expected gs:// URI, got {uri!r}")
-    rest = uri[5:]
-    bucket, separator, object_name = rest.partition("/")
-    if not bucket or not separator or not object_name:
-        raise ValueError(f"expected gs:// object URI, got {uri!r}")
-    return bucket, object_name
-
-
-def as_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
-    raw = raw.strip()
-    if ":" in raw:
-        raw = raw.rsplit(":", 1)[-1]
-    return raw.lower()
-
-
-def email_domain_allowed(email: str, allowed_domains: tuple[str, ...]) -> bool:
-    if "@" not in email:
-        return False
-    domain = email.rsplit("@", 1)[-1].lower()
-    return domain in {item.lower().lstrip("@") for item in allowed_domains if item}
-
-
-def header_value(headers: Mapping[str, str], name: str) -> str | None:
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
 def weak_etag(body: bytes) -> str:
     return f'W/"{hashlib.sha256(body).hexdigest()[:32]}"'
-
-
-def api_headers() -> dict[str, str]:
-    return {"Cache-Control": NO_STORE, "Content-Type": "application/json; charset=utf-8"}
 
 
 def error_response(status: int, code: str, message: str, *, details: Mapping[str, Any] | None = None) -> Response:
@@ -773,11 +730,6 @@ def error_response(status: int, code: str, message: str, *, details: Mapping[str
     if details:
         payload["error"]["details"] = dict(details)
     return json_response(status, payload)
-
-
-def json_response(status: int, payload: Mapping[str, Any]) -> Response:
-    body = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
-    return Response(status, {**api_headers(), "Content-Length": str(len(body))}, body)
 
 
 def text_response(status: int, message: str) -> Response:
@@ -840,12 +792,7 @@ def make_handler(
             )
 
         def _send(self, response: Response) -> None:
-            self.send_response(response.status)
-            for key, value in response.headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            if response.body:
-                self.wfile.write(response.body)
+            send_handler_response(self, response)
 
     return Handler
 

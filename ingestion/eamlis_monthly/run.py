@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 import urllib.parse
 import urllib.request
@@ -21,13 +20,17 @@ from google.cloud import storage
 
 from ingestion.common import feature_metadata
 from ingestion.common import release_index
+from ingestion.common import vector_pipeline
 from ingestion.common.gcs import GcsPublisher
 from ingestion.common.http import STATUS_SUCCESS, request_with_retries
 from ingestion.common.runtime import (
+    bind_run_command,
     configure_logging,
+    parse_positive_int,
+    parse_run_date as parse_run_date,
     remove_if_exists,
     require_binary,
-    run_command as common_run_command,
+    run_job_main,
     sha256_file,
 )
 
@@ -55,29 +58,9 @@ PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
 
 
 @dataclass(frozen=True)
-class AssetSpec:
+class AssetSpec(vector_pipeline.AssetPaths):
     slug: str = ASSET_SLUG
     parent: str = ASSET_PARENT
-
-    @property
-    def root(self) -> str:
-        return f"{self.parent}/{self.slug}"
-
-    @property
-    def runs_prefix(self) -> str:
-        return f"{self.root}/runs/"
-
-    def release_prefix(self, run_date: dt.date) -> str:
-        return f"{self.root}/releases/{run_date.isoformat()}"
-
-    def release_object(self, run_date: dt.date, suffix: str) -> str:
-        return f"{self.release_prefix(run_date)}/{self.slug}{suffix}"
-
-    def latest_object(self, suffix: str) -> str:
-        return f"{self.root}/latest/{self.slug}{suffix}"
-
-    def run_record_object(self, run_date: dt.date) -> str:
-        return f"{self.runs_prefix}{run_date.isoformat()}.json"
 
 
 @dataclass(frozen=True)
@@ -124,23 +107,8 @@ class AssetOutput:
 ASSET = AssetSpec()
 
 
-def default_run_date(today: dt.date | None = None) -> dt.date:
-    return today or dt.datetime.now(dt.UTC).date()
-
-
-def parse_run_date(value: str | None) -> dt.date:
-    if not value:
-        return default_run_date()
-    return dt.date.fromisoformat(value)
-
-
 def parse_page_size(value: str | None) -> int:
-    if not value:
-        return DEFAULT_PAGE_SIZE
-    parsed = int(value)
-    if parsed <= 0:
-        raise RuntimeError("EAMLIS_PAGE_SIZE must be greater than zero")
-    return parsed
+    return parse_positive_int(value, DEFAULT_PAGE_SIZE, "EAMLIS_PAGE_SIZE")
 
 
 def request_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -376,18 +344,7 @@ def download_source_geojson(
     )
 
 
-def run_command(
-    args: list[str],
-    *,
-    capture_json: bool = False,
-    capture_text: bool = False,
-) -> Any:
-    return common_run_command(
-        args,
-        capture_json=capture_json,
-        capture_text=capture_text,
-        logger=LOGGER,
-    )
+run_command = bind_run_command(LOGGER)
 
 
 def convert_geojson_to_fgb(source: Path, output: Path) -> None:
@@ -703,90 +660,18 @@ def publish_changed_asset(
     output: AssetOutput,
 ) -> dict[str, Any]:
     metadata = metadata_for_source(run_date=run_date, source=source)
-    release_fgb = publisher.upload_new_object(
-        local_path=output.fgb,
-        object_name=ASSET.release_object(run_date, ".fgb"),
-        metadata=metadata,
-    )
-    release_pmtiles = publisher.upload_new_object(
-        local_path=output.pmtiles,
-        object_name=ASSET.release_object(run_date, ".pmtiles"),
-        metadata=metadata,
-    )
-    release_metadata = publisher.upload_new_object(
-        local_path=output.metadata,
-        object_name=ASSET.release_object(run_date, ".metadata.ndjson.gz"),
-        metadata=metadata,
-    )
-    release_schema = publisher.upload_new_object(
-        local_path=output.schema,
-        object_name=ASSET.release_object(run_date, ".schema.json"),
-        metadata=metadata,
-    )
-    latest_fgb = publisher.replace_latest_object(
-        local_path=output.fgb,
-        object_name=ASSET.latest_object(".fgb"),
-        metadata=metadata,
-    )
-    latest_pmtiles = publisher.replace_latest_object(
-        local_path=output.pmtiles,
-        object_name=ASSET.latest_object(".pmtiles"),
-        metadata=metadata,
-    )
-    latest_metadata = publisher.replace_latest_object(
-        local_path=output.metadata,
-        object_name=ASSET.latest_object(".metadata.ndjson.gz"),
-        metadata=metadata,
-    )
-    latest_schema = publisher.replace_latest_object(
-        local_path=output.schema,
-        object_name=ASSET.latest_object(".schema.json"),
-        metadata=metadata,
-    )
-    manifest_release_object = ASSET.release_object(run_date, ".manifest.json")
-    manifest_latest_object = ASSET.latest_object(".manifest.json")
-    feature_metadata.write_manifest(
-        feature_metadata.final_manifest_payload(
-            asset_slug=ASSET.slug,
-            release=run_date.isoformat(),
-            bucket_name=publisher.bucket.name,
-            asset_root=ASSET.root,
-            sha256_by_role=output.sha256,
-            schema=output.schema_payload,
-            source_inputs=[{"uri": source.layer_url, "where": source.where}],
-            identity=feature_metadata.release_feature_model.build_identity_metadata(
-                strategy="source_field",
-                source_fields=["OBJECTID"],
-            ),
-            feature_count=output.row_count,
-            release_blob_info_by_role={
-                "fgb": release_fgb,
-                "pmtiles": release_pmtiles,
-                "metadata": release_metadata,
-                "schema": release_schema,
-            },
-            latest_blob_info_by_role={
-                "fgb": latest_fgb,
-                "pmtiles": latest_pmtiles,
-                "metadata": latest_metadata,
-                "schema": latest_schema,
-            },
-            manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
-            manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+    bundle = vector_pipeline.publish_vector_bundle(
+        publisher=publisher,
+        asset=ASSET,
+        run_date=run_date,
+        outputs=output,
+        object_metadata=metadata,
+        source_inputs=[{"uri": source.layer_url, "where": source.where}],
+        identity=feature_metadata.release_feature_model.build_identity_metadata(
+            strategy="source_field",
+            source_fields=["OBJECTID"],
         ),
-        output.manifest,
     )
-    release_manifest = publisher.upload_new_object(
-        local_path=output.manifest,
-        object_name=manifest_release_object,
-        metadata=metadata,
-    )
-    latest_manifest = publisher.replace_latest_object(
-        local_path=output.manifest,
-        object_name=manifest_latest_object,
-        metadata=metadata,
-    )
-    sha256_values = {**output.sha256, "manifest": sha256_file(output.manifest)}
 
     record = {
         "schema_version": 1,
@@ -805,10 +690,10 @@ def publish_changed_asset(
             "max_objectid": source.stats.max_objectid,
         },
         "release_path": f"gs://{publisher.bucket.name}/{ASSET.release_prefix(run_date)}/",
-        "release_paths": [release_fgb, release_pmtiles, release_metadata, release_schema, release_manifest],
-        "latest_paths": [latest_fgb, latest_pmtiles, latest_metadata, latest_schema, latest_manifest],
+        "release_paths": bundle.release_paths,
+        "latest_paths": bundle.latest_paths,
         "row_count": output.row_count,
-        "sha256": sha256_values,
+        "sha256": bundle.sha256,
         "field_count": len(source.fields),
         "notes": "Generated by monthly e-AMLIS job from the public ArcGIS hosted feature layer.",
     }
@@ -968,13 +853,7 @@ def run() -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    try:
-        records = run()
-    except Exception:
-        LOGGER.exception("e-AMLIS monthly job failed")
-        raise
-    json.dump(records, sys.stdout, indent=2, sort_keys=True)
-    sys.stdout.write("\n")
+    run_job_main(run, logger=LOGGER, failure_message="e-AMLIS monthly job failed")
 
 
 if __name__ == "__main__":
