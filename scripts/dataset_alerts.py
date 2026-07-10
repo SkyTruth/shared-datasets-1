@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts import catalog_csv
 from scripts import catalog_docs
 from scripts.gcs_asset import ALLOW_CANONICAL_MUTATION_ENV, parse_gs_uri, require_mutation_allowed
 from scripts.slack_notify import notify
@@ -77,9 +78,8 @@ class SchemaCompatibilityResult:
         return payload
 
 
-def load_catalog(path: Path = Path("catalog/shared-datasets-catalog.csv")) -> dict[str, dict[str, str]]:
-    with path.open(newline="") as file_obj:
-        return {row["asset_slug"]: row for row in csv.DictReader(file_obj)}
+def load_catalog(path: Path = catalog_csv.DEFAULT_CATALOG_CSV) -> dict[str, dict[str, str]]:
+    return catalog_csv.load_catalog(path)
 
 
 def asset_root_from_canonical(canonical_path: str) -> str:

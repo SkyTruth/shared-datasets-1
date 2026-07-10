@@ -40,6 +40,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             html,
             (
                 'id="download-fgb"',
+                'id="detail-slug"',
                 'id="metadata-language-control"',
                 'id="metadata-language-select"',
                 'id="metadata-path-row"',
@@ -53,6 +54,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             app,
             (
                 "renderDocsLink(asset)",
+                "elements.slug.textContent = asset.slug",
                 "elements.docs.hidden = !docsUrl",
                 "elements.docs.removeAttribute(\"href\")",
                 "if (asset && asset.docs_url)",
@@ -63,6 +65,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             ),
         )
         self.assertNotIn("warmFeatureMetadataCaches", app)
+        self.assertIn(".detail-slug", styles)
         self.assertIn(".metadata-language-control", styles)
 
     def test_private_pmtiles_and_fgb_downloads_use_server_authorized_urls(self):
@@ -110,6 +113,10 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             infer_color_mode.index("shouldUseCategoricalNumericMode"),
             infer_color_mode.index("isGradientCandidate"),
         )
+        # Integer measures such as fatalities keep numeric gradients: only
+        # identifier-like field names may force categorical-numeric mode.
+        self.assertIn("return looksLikeIdentifierField(field);", map_preview)
+        self.assertNotIn("CATEGORICAL_NUMERIC_VALUE_LIMIT", map_preview)
         assert_contains_all(
             self,
             app,
@@ -129,6 +136,27 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "queryRenderedFeatures(queryBox",
             ),
         )
+
+    def test_unavailable_color_field_reason_is_surfaced_in_ui(self):
+        app = source("web/catalog/app.js")
+        map_preview = source("web/catalog/map-preview.js")
+
+        # map-preview reports why a metadata color field cannot load, and the
+        # app must carry that reason into a visible note instead of silently
+        # resetting the colorize dropdown to None.
+        self.assertIn("context.onColorFieldUnavailable(field, result.unavailableReason || \"\")", map_preview)
+        assert_contains_all(
+            self,
+            app,
+            (
+                "onColorFieldUnavailable: (field, reason) => clearUnavailableColorField(colorizeAsset, field, reason)",
+                "function clearUnavailableColorField(asset, field, reason = \"\")",
+                "renderColorizeUnavailableNote(fieldName, reason)",
+                'note.className = "color-legend-note"',
+                "is unavailable: ${detail}",
+            ),
+        )
+        self.assertIn(".color-legend-note", source("web/catalog/styles.css"))
 
     def test_release_metadata_sidecars_drive_inspector_and_colorization(self):
         app = source("web/catalog/app.js")
@@ -169,7 +197,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "featureMetadataSchemaColorFields",
                 "privateFeatureMetadataSchemaUrl(assetSlug, release)",
                 "publicFeatureMetadataSchemaUrl(reference, schemaFile)",
-                "const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 5 * 1024 * 1024",
+                "const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 24 * 1024 * 1024",
                 'const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes"',
                 "const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 100",
                 "const FEATURE_METADATA_LINE_ID_RE =",
@@ -222,7 +250,7 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
                 "function compactGeometryHash",
                 "loadFeatureMetadataColorValues",
                 "valuesByFeatureId.set(String(featureId), value)",
-                "onColorFieldUnavailable: (field) => clearUnavailableColorField(colorizeAsset, field)",
+                "onColorFieldUnavailable: (field, reason) => clearUnavailableColorField(colorizeAsset, field, reason)",
                 "function clearUnavailableColorField",
                 "delete state.colorFieldByReference[key]",
             ),

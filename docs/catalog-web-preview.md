@@ -123,7 +123,9 @@ colorizer field discovery bounded to a small JSON contract.
 Whole-sidecar hydration is a consumer policy decision, not a producer-granted
 permission. Release file entries expose enough information, including sidecar
 size when known, for each consumer to choose a strategy. The catalog viewer's
-browser policy follows a 5 MiB default autoload budget and can be configured by
+browser policy follows a 24 MiB default autoload budget — sized to cover every
+current catalog sidecar except `ucdp-ged-events`, whose colorize-by-metadata
+stays withheld in favor of the bounded lookup API — and can be configured by
 setting `window.SHARED_DATASETS_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES` or a
 `shared-datasets-metadata-sidecar-autoload-max-bytes` meta tag before `app.js`
 runs. When a sidecar is larger than the configured budget or has no declared

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts import publishing_concierge
+from scripts import concierge_profiling, publishing_concierge
 
 
 CATEGORIES_YAML = """categories:
@@ -188,10 +188,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Disposable preview load for catalog QA.",
+                    "shared_rationale": "Disposable preview load for catalog QA.",
                     "alternatives_considered": "Production publish path.",
-                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -282,10 +282,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Disposable vector preview load for catalog QA.",
+                    "shared_rationale": "Disposable vector preview load for catalog QA.",
                     "alternatives_considered": "Production publish path.",
-                    "deprecation_exit_policy": "Preview data will be replaced or destroyed with the preview slot.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Preview data will be replaced or destroyed with the preview slot.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -609,6 +609,58 @@ class PublishingConciergeTests(unittest.TestCase):
                     },
                 )
 
+    def test_stage_scratch_metadata_error_uses_json_index_and_destination_uri(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = self._release_metadata_state(root)
+            prefix = publishing_concierge.pending_publish_prefix(state)
+            pmtiles_destination = (
+                "gs://skytruth-shared-datasets-1/"
+                "300-infrastructure-industrial/330-offshore-platforms/"
+                "example/latest/example.pmtiles"
+            )
+
+            with self.assertRaisesRegex(
+                publishing_concierge.WorkflowError,
+                r"staged_objects\[1\] \(gs://.*example\.pmtiles\)\.cache_control",
+            ):
+                publishing_concierge.validate_stage_scratch(
+                    state,
+                    {
+                        "staged_objects": [
+                            {
+                                "source_uri": f"{prefix}example.fgb",
+                                "source_generation": "111",
+                                "destination_uri": (
+                                    "gs://skytruth-shared-datasets-1/"
+                                    "300-infrastructure-industrial/330-offshore-platforms/"
+                                    "example/latest/example.fgb"
+                                ),
+                            },
+                            {
+                                "source_uri": f"{prefix}example.pmtiles",
+                                "source_generation": "222",
+                                "destination_uri": pmtiles_destination,
+                                "content_type": "application/vnd.pmtiles",
+                            },
+                        ]
+                    },
+                )
+
+    def test_metadata_rule_step_templates_document_enforced_fields(self):
+        by_id = {step.step_id: step for step in publishing_concierge.STEP_DEFINITIONS}
+
+        validate_schema = by_id["validate-artifacts"].evidence_schema
+        self.assertIn("tool_versions", validate_schema)
+
+        staged_template = by_id["stage-scratch"].evidence_schema["staged_objects"][0]
+        self.assertIn("application/vnd.pmtiles", staged_template["content_type"])
+        self.assertIn(publishing_concierge.no_cache_control(), staged_template["cache_control"])
+
+        uploaded_template = by_id["preview-upload"].evidence_schema["uploaded_objects"][0]
+        self.assertIn("application/x-ndjson", uploaded_template["content_type"])
+        self.assertIn(publishing_concierge.no_cache_control(), uploaded_template["cache_control"])
+
     def _fgb_validation_payload(self, *, include_gdal: bool = True) -> dict:
         payload = {
             "commands_run": [
@@ -873,10 +925,10 @@ class PublishingConciergeTests(unittest.TestCase):
                     "source_version_date": "2026-05-01",
                     "update_cadence": "manual",
                     "intended_consumers": ["test"],
-                    "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                    "shared_rationale": "Reusable reference table for multiple projects.",
                     "alternatives_considered": "Project storage and direct upstream access.",
-                    "deprecation_exit_policy": "Deprecate with a successor if source support ends.",
-                    "estimated_published_footprint": "1 MB",
+                    "deprecation_policy": "Deprecate with a successor if source support ends.",
+                    "estimated_published_size_gb": "1 MB",
                 },
             ),
             0,
@@ -1264,7 +1316,7 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertFalse(any(candidate.field == "GIS_AREA_K" for candidate in plan.curator_field_options.group_field_candidates))
 
     def test_field_profile_reports_decision_table_statistics(self):
-        options = publishing_concierge.profile_rows(
+        options = concierge_profiling.profile_rows(
             [
                 {"source_id": "A1", "NAME": "North Reef", "DISC": "-9999"},
                 {"source_id": "A2", "NAME": "North Reef", "DISC": "1999"},
@@ -1364,7 +1416,7 @@ class PublishingConciergeTests(unittest.TestCase):
                 }
             )
 
-        options = publishing_concierge.profile_rows(rows)
+        options = concierge_profiling.profile_rows(rows)
 
         provider = options.id_field_candidates[0]
         self.assertEqual(provider.field, "PRIMKEY")
@@ -1393,7 +1445,7 @@ class PublishingConciergeTests(unittest.TestCase):
             + [{"NAME": f"Reef {index}", "ORIG_NAME": f"Original Reef {index}"} for index in range(100)]
         )
 
-        options = publishing_concierge.profile_rows(rows)
+        options = concierge_profiling.profile_rows(rows)
 
         by_field = {candidate.field: candidate for candidate in options.group_field_candidates}
         self.assertIn("NAME", by_field)
@@ -1438,7 +1490,7 @@ class PublishingConciergeTests(unittest.TestCase):
     def test_profile_row_iter_uses_deterministic_random_sample_not_first_rows(self):
         rows = [{"source_id": f"A{index}", "NAME": f"Name {index}"} for index in range(25)]
 
-        sample, total_rows, profile_scope = publishing_concierge.profile_row_iter(rows, sample_size=10, random_seed=7)
+        sample, total_rows, profile_scope = concierge_profiling.profile_row_iter(rows, sample_size=10, random_seed=7)
 
         self.assertEqual(total_rows, 25)
         self.assertEqual(profile_scope, "random_sample")
@@ -1454,11 +1506,11 @@ class PublishingConciergeTests(unittest.TestCase):
             source.write_text("placeholder")
 
             with mock.patch.dict(publishing_concierge.os.environ, {"SHARED_DATASETS_PROFILE_WITH_GDAL": "1"}), mock.patch.object(
-                publishing_concierge.shutil,
+                concierge_profiling.shutil,
                 "which",
                 return_value="/usr/bin/ogr2ogr",
             ), mock.patch.object(
-                publishing_concierge.subprocess,
+                concierge_profiling.subprocess,
                 "run",
                 return_value=mock.Mock(
                     returncode=0,
@@ -1487,7 +1539,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
         self.assertEqual(run.call_args.args[0][:3], ["ogr2ogr", "-f", "CSV"])
         self.assertNotIn("-limit", run.call_args.args[0])
-        self.assertEqual(run.call_args.kwargs["timeout"], publishing_concierge.OGR_PROFILE_TIMEOUT_SECONDS)
+        self.assertEqual(run.call_args.kwargs["timeout"], concierge_profiling.OGR_PROFILE_TIMEOUT_SECONDS)
         self.assertEqual(plan.curator_field_options.profile_scope, "full")
         self.assertTrue(plan.curator_field_options.generated_feature_id_option.available)
         self.assertEqual(plan.curator_field_options.id_field_candidates[0].field, "source_id")
@@ -1503,7 +1555,7 @@ class PublishingConciergeTests(unittest.TestCase):
             source.write_text("placeholder")
 
             with mock.patch.dict(publishing_concierge.os.environ, {}, clear=True), mock.patch.object(
-                publishing_concierge.subprocess,
+                concierge_profiling.subprocess,
                 "run",
             ) as run:
                 plan = publishing_concierge.build_plan(
@@ -1538,8 +1590,8 @@ class PublishingConciergeTests(unittest.TestCase):
             source = root / "example.geojson"
             source.write_text('{"type":"FeatureCollection","features":[]}' + (" " * 32))
 
-            with mock.patch.object(publishing_concierge, "MAX_IN_MEMORY_GEOJSON_BYTES", 16), mock.patch.object(
-                publishing_concierge,
+            with mock.patch.object(concierge_profiling, "MAX_IN_MEMORY_GEOJSON_BYTES", 16), mock.patch.object(
+                concierge_profiling,
                 "read_geojson_rows",
             ) as read_rows:
                 plan = publishing_concierge.build_plan(
@@ -1866,10 +1918,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                        "shared_rationale": "Reusable reference table for multiple projects.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "1 MB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "1 MB",
                     },
                 ),
                 0,
@@ -1955,10 +2007,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table for multiple projects.",
+                        "shared_rationale": "Reusable reference table for multiple projects.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "12 GB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "12 GB",
                     },
                 ),
                 0,
@@ -2009,10 +2061,10 @@ class PublishingConciergeTests(unittest.TestCase):
                         "source_version_date": "2026-05-01",
                         "update_cadence": "manual",
                         "intended_consumers": ["test"],
-                        "shared_datasets_rationale": "Reusable reference table.",
+                        "shared_rationale": "Reusable reference table.",
                         "alternatives_considered": "Project storage.",
-                        "deprecation_exit_policy": "Deprecate with a successor.",
-                        "estimated_published_footprint": "1 MB",
+                        "deprecation_policy": "Deprecate with a successor.",
+                        "estimated_published_size_gb": "1 MB",
                     },
                 ),
                 0,
@@ -2767,6 +2819,29 @@ class PublishingConciergeTests(unittest.TestCase):
         )
         self.assertIn("source_scale_denominator: 10000000", text)
         self.assertIn("pmtiles_detail_hint: medium", text)
+
+
+class ResolveMetadataLegacyKeysTests(unittest.TestCase):
+    def test_legacy_evidence_keys_normalize_to_canonical(self):
+        evidence = {
+            "source_name": "Example source",
+            "license": "Example license",
+            "citation": "Example citation",
+            "steward": "Data Steward",
+            "source_version_date": "2026-01-01",
+            "update_cadence": "manual",
+            "intended_consumers": ["test"],
+            "shared_datasets_rationale": "Legacy rationale.",
+            "alternatives_considered": "None.",
+            "deprecation_exit_policy": "Legacy policy.",
+            "estimated_published_footprint": "12 GB",
+        }
+        normalized = publishing_concierge.validate_resolve_metadata({}, evidence)
+        self.assertEqual(normalized["shared_rationale"], "Legacy rationale.")
+        self.assertEqual(normalized["deprecation_policy"], "Legacy policy.")
+        self.assertEqual(normalized["estimated_published_size_gb"], "12 GB")
+        for legacy_key in publishing_concierge.LEGACY_RESOLVE_METADATA_KEYS:
+            self.assertNotIn(legacy_key, normalized)
 
 
 if __name__ == "__main__":

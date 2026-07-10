@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/artifact-registry-iam-sync.yml"
+      - ".github/workflows/prod-terraform-target-apply.yml"
       - "terraform/envs/prod/artifact_registry_iam.tf"
       - "terraform/envs/prod/main.tf"
       - "terraform/envs/prod/variables.tf"
@@ -16,157 +17,39 @@ permissions:
   contents: read
   id-token: write
 
-env:
-  GOOGLE_CLOUD_PROJECT: shared-datasets-1
-  TF_IN_AUTOMATION: "1"
-  TF_INPUT: "0"
-  TERRAFORM_VERSION: "1.8.5"
-  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
 jobs:
-  sync:
-    name: Apply Artifact Registry IAM sync
+  bootstrap:
+    name: Apply Artifact Registry IAM policy manager bootstrap
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    environment: shared-datasets-production
-    concurrency:
-      group: prod-terraform-state
-      cancel-in-progress: false
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      sync_name: Artifact Registry IAM sync
+      refusal_prefix: Refusing automatic Artifact Registry IAM bootstrap
+      # Wait for IAM policy manager propagation before the writer binding plan.
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_custom_role.artifact_registry_iam_policy_manager
+        google_project_iam_member.github_actions_artifact_registry_iam_policy_manager
+      allowed_exact: |
+        google_project_iam_custom_role.artifact_registry_iam_policy_manager
+        google_project_iam_member.github_actions_artifact_registry_iam_policy_manager
+      tf_vars: |
+        wdpa_monthly_image=unused-by-artifact-registry-iam-sync
+        sea_ice_daily_image=unused-by-artifact-registry-iam-sync
+        eamlis_monthly_image=unused-by-artifact-registry-iam-sync
 
-    steps:
-      - name: Validate main ref
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Artifact Registry IAM sync may only apply from main after reviewed changes have landed." >&2
-            exit 1
-          fi
-
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Validate Terraform auth configuration
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform init
-        run: terraform -chdir=terraform/envs/prod init -input=false
-
-      - name: Terraform plan Artifact Registry IAM policy manager bootstrap
-        run: |
-          terraform -chdir=terraform/envs/prod plan \
-            -input=false \
-            -refresh=false \
-            -out="${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan" \
-            -target=google_project_iam_custom_role.artifact_registry_iam_policy_manager \
-            -target=google_project_iam_member.github_actions_artifact_registry_iam_policy_manager \
-            -var="wdpa_monthly_image=unused-by-artifact-registry-iam-sync" \
-            -var="sea_ice_daily_image=unused-by-artifact-registry-iam-sync" \
-            -var="eamlis_monthly_image=unused-by-artifact-registry-iam-sync"
-
-      - name: Export Artifact Registry IAM policy manager bootstrap plan JSON
-        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan.json"
-
-      - name: Enforce Artifact Registry IAM policy manager bootstrap allowlist
-        run: |
-          python - "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan.json" <<'PY'
-          import json
-          import sys
-
-          plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-              "google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
-          }
-
-          blocked = []
-          for resource in plan.get("resource_changes", []):
-              actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
-                  continue
-              address = resource.get("address", "")
-              if address in allowed_exact:
-                  continue
-              blocked.append(f"{'/'.join(actions)} {address}")
-
-          if blocked:
-              print("Refusing automatic Artifact Registry IAM bootstrap because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
-              raise SystemExit(1)
-          PY
-
-      - name: Terraform apply Artifact Registry IAM policy manager bootstrap
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/artifact-registry-iam-bootstrap.tfplan"
-
-      - name: Wait for Artifact Registry IAM policy manager propagation
-        run: sleep 30
-
-      - name: Terraform plan Artifact Registry writer binding
-        run: |
-          terraform -chdir=terraform/envs/prod plan \
-            -input=false \
-            -refresh=false \
-            -out="${RUNNER_TEMP}/artifact-registry-writer.tfplan" \
-            -target=google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer \
-            -var="wdpa_monthly_image=unused-by-artifact-registry-iam-sync" \
-            -var="sea_ice_daily_image=unused-by-artifact-registry-iam-sync" \
-            -var="eamlis_monthly_image=unused-by-artifact-registry-iam-sync"
-
-      - name: Export Artifact Registry writer binding plan JSON
-        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/artifact-registry-writer.tfplan" > "${RUNNER_TEMP}/artifact-registry-writer.tfplan.json"
-
-      - name: Enforce Artifact Registry writer binding allowlist
-        run: |
-          python - "${RUNNER_TEMP}/artifact-registry-writer.tfplan.json" <<'PY'
-          import json
-          import sys
-
-          plan = json.load(open(sys.argv[1]))
-          allowed_exact = {
-              "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
-          }
-
-          blocked = []
-          for resource in plan.get("resource_changes", []):
-              actions = resource.get("change", {}).get("actions", [])
-              if actions in ([], ["no-op"], ["read"]):
-                  continue
-              address = resource.get("address", "")
-              if address in allowed_exact:
-                  continue
-              blocked.append(f"{'/'.join(actions)} {address}")
-
-          if blocked:
-              print("Refusing automatic Artifact Registry IAM writer sync because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
-              raise SystemExit(1)
-          PY
-
-      - name: Terraform apply Artifact Registry writer binding
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/artifact-registry-writer.tfplan"
+  writer:
+    name: Apply Artifact Registry writer binding
+    needs: bootstrap
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      sync_name: Artifact Registry writer binding sync
+      refusal_prefix: Refusing automatic Artifact Registry IAM writer sync
+      targets: |
+        google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer
+      allowed_exact: |
+        google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer
+      tf_vars: |
+        wdpa_monthly_image=unused-by-artifact-registry-iam-sync
+        sea_ice_daily_image=unused-by-artifact-registry-iam-sync
+        eamlis_monthly_image=unused-by-artifact-registry-iam-sync

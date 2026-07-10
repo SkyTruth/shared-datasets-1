@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime as dt
 import json
 import re
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -16,10 +16,17 @@ from urllib.parse import quote
 
 import yaml
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts import catalog_csv
+
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
 DEFAULT_SITE_PREFIX = "_catalog/web"
 DEFAULT_PMTILES_CDN_BASE_URL = "https://tiles.skytruth.org/pmtiles"
+METADATA_SIDECAR_AUTOLOAD_META_NAME = "shared-datasets-metadata-sidecar-autoload-max-bytes"
 APPROVED_FORMATS = {"fgb", "cog", "zarr", "pmtiles", "geojson", "ndgeojson", "csv"}
 SYNTHETIC_CANONICAL_FORMAT_PREFERENCE = ("fgb", "cog", "zarr", "csv", "geojson", "ndgeojson")
 ACCESS_TIERS = {"public", "private", "internal"}
@@ -147,11 +154,10 @@ def load_categories(path: Path) -> dict[str, dict[str, str]]:
 
 
 def load_catalog_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            raise CatalogSiteError(f"{path}: catalog has no header row")
-        return [dict(row) for row in reader]
+    try:
+        return catalog_csv.read_catalog_rows(path)
+    except catalog_csv.CatalogCsvError as exc:
+        raise CatalogSiteError(str(exc)) from exc
 
 
 def split_semicolon(value: str) -> list[str]:
@@ -403,17 +409,6 @@ def optional_search_fields(metadata: dict[str, Any], *, row_count: int | None, d
         normalize_search_field(value, index=index, doc_path=doc_path, row_count=row_count)
         for index, value in enumerate(raw_fields, start=1)
     ]
-
-
-def normalize_locale_code(value: Any, *, context: str, doc_path: Path) -> str:
-    locale_code = str(value or "").strip()
-    if not locale_code:
-        raise CatalogSiteError(f"{doc_path}: {context} is required")
-    if locale_code != locale_code.lower() or "-" in locale_code or not FIELD_SAFE_LOCALE_RE.fullmatch(locale_code):
-        raise CatalogSiteError(
-            f"{doc_path}: {context} must be a field-safe BCP 47 locale code such as en, pt_br, or zh_hans"
-        )
-    return locale_code
 
 
 def optional_feature_identity(metadata: dict[str, Any], *, doc_path: Path) -> dict[str, Any] | None:
@@ -876,9 +871,9 @@ def validate_row(
     docs_dir: Path,
 ) -> None:
     prefix = f"catalog row {row_number}"
-    for field in REQUIRED_FIELDS:
-        if not (row.get(field) or "").strip():
-            raise CatalogSiteError(f"{prefix}: missing required field {field!r}")
+    for field_name in REQUIRED_FIELDS:
+        if not (row.get(field_name) or "").strip():
+            raise CatalogSiteError(f"{prefix}: missing required field {field_name!r}")
     slug = row["asset_slug"].strip()
     if slug in seen:
         raise CatalogSiteError(f"{prefix}: duplicate asset_slug {slug!r}")
@@ -889,9 +884,9 @@ def validate_row(
         allowed = ", ".join(sorted(LIFECYCLE_STATUSES))
         raise CatalogSiteError(f"{prefix}: status must be one of: {allowed}")
     if status != "active":
-        for field in ("lifecycle_reason", "lifecycle_date", "consumer_guidance"):
-            if not (row.get(field) or "").strip():
-                raise CatalogSiteError(f"{prefix}: non-active assets require {field!r}")
+        for field_name in ("lifecycle_reason", "lifecycle_date", "consumer_guidance"):
+            if not (row.get(field_name) or "").strip():
+                raise CatalogSiteError(f"{prefix}: non-active assets require {field_name!r}")
         lifecycle_date = (row.get("lifecycle_date") or "").strip()
         if not DATE_RE.fullmatch(lifecycle_date):
             raise CatalogSiteError(f"{prefix}: lifecycle_date must be YYYY-MM-DD")
@@ -1256,6 +1251,19 @@ def copy_static_files(source_dir: Path, out_dir: Path) -> list[Path]:
     return copied
 
 
+def inject_metadata_sidecar_autoload_meta(index_html: Path, max_bytes: int) -> None:
+    if max_bytes < 0:
+        raise CatalogSiteError("metadata sidecar autoload max bytes must be >= 0")
+    html = index_html.read_text(encoding="utf-8")
+    if METADATA_SIDECAR_AUTOLOAD_META_NAME in html:
+        raise CatalogSiteError(f"index.html already declares {METADATA_SIDECAR_AUTOLOAD_META_NAME}")
+    marker = "</head>"
+    if html.count(marker) != 1:
+        raise CatalogSiteError("index.html must contain exactly one </head> tag")
+    meta = f'    <meta name="{METADATA_SIDECAR_AUTOLOAD_META_NAME}" content="{max_bytes}" />\n'
+    index_html.write_text(html.replace(marker, f"{meta}  {marker}"), encoding="utf-8")
+
+
 def copy_docs(docs_dir: Path, out_dir: Path) -> list[Path]:
     copied: list[Path] = []
     target_dir = out_dir / "docs/assets"
@@ -1282,6 +1290,7 @@ def build_site(
     allow_release_index_only_assets: bool = False,
     force_access_tier: str | None = None,
     generated_at: str | None = None,
+    metadata_sidecar_autoload_max_bytes: int | None = None,
 ) -> list[Path]:
     payload = build_catalog_payload(
         catalog_path=catalog_path,
@@ -1298,6 +1307,8 @@ def build_site(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     written = copy_static_files(static_dir, out_dir)
+    if metadata_sidecar_autoload_max_bytes is not None:
+        inject_metadata_sidecar_autoload_meta(out_dir / "index.html", metadata_sidecar_autoload_max_bytes)
     written.extend(copy_docs(docs_dir, out_dir))
     catalog_json = out_dir / "catalog.json"
     catalog_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -1341,6 +1352,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Override emitted asset access_tier values, for private preview deployments.",
     )
     parser.add_argument("--generated-at", help="Override generated_at timestamp for deterministic tests.")
+    parser.add_argument(
+        "--metadata-sidecar-autoload-max-bytes",
+        type=int,
+        help=(
+            "Preview-only: inject the catalog-viewer metadata sidecar autoload budget meta tag "
+            f"({METADATA_SIDECAR_AUTOLOAD_META_NAME}) into the generated index.html."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -1360,6 +1379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         allow_release_index_only_assets=args.allow_release_index_only_assets,
         force_access_tier=args.force_access_tier,
         generated_at=args.generated_at,
+        metadata_sidecar_autoload_max_bytes=args.metadata_sidecar_autoload_max_bytes,
     )
     print(json.dumps({"output": str(args.out), "files": [str(path) for path in written]}, indent=2))
     return 0

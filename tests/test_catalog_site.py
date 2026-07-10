@@ -541,6 +541,49 @@ class CatalogSiteTests(unittest.TestCase):
                 else:
                     self.assertEqual(asset["colorizer_metadata"]["source"], "none")
 
+    def test_inject_metadata_sidecar_autoload_meta_adds_single_meta_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index_html = Path(tmp) / "index.html"
+            index_html.write_text(
+                '<!doctype html>\n<html>\n  <head>\n    <meta name="viewport" content="width=device-width" />\n'
+                "  </head>\n  <body></body>\n</html>\n",
+                encoding="utf-8",
+            )
+
+            catalog_site.inject_metadata_sidecar_autoload_meta(index_html, 16777216)
+
+            html = index_html.read_text(encoding="utf-8")
+            self.assertIn(
+                '<meta name="shared-datasets-metadata-sidecar-autoload-max-bytes" content="16777216" />',
+                html,
+            )
+            self.assertEqual(html.count("</head>"), 1)
+            self.assertLess(html.index("shared-datasets-metadata-sidecar-autoload-max-bytes"), html.index("</head>"))
+
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "already declares"):
+                catalog_site.inject_metadata_sidecar_autoload_meta(index_html, 16777216)
+
+    def test_inject_metadata_sidecar_autoload_meta_rejects_bad_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index_html = Path(tmp) / "index.html"
+            index_html.write_text("<html><head></head><body></body></html>", encoding="utf-8")
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "must be >= 0"):
+                catalog_site.inject_metadata_sidecar_autoload_meta(index_html, -1)
+
+            index_html.write_text("<html><body>no head</body></html>", encoding="utf-8")
+            with self.assertRaisesRegex(catalog_site.CatalogSiteError, "exactly one </head>"):
+                catalog_site.inject_metadata_sidecar_autoload_meta(index_html, 1024)
+
+    def test_repo_index_html_accepts_autoload_meta_injection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index_html = Path(tmp) / "index.html"
+            index_html.write_text((REPO_ROOT / "web/catalog/index.html").read_text(encoding="utf-8"), encoding="utf-8")
+            catalog_site.inject_metadata_sidecar_autoload_meta(index_html, 16777216)
+            self.assertIn(
+                catalog_site.METADATA_SIDECAR_AUTOLOAD_META_NAME,
+                index_html.read_text(encoding="utf-8"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

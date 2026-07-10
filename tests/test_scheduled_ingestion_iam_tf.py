@@ -5,10 +5,6 @@ from pathlib import Path
 
 from workflow_helpers import (
     load_workflow,
-    python_literal_string_set,
-    terraform_targets,
-    workflow_steps_by_name,
-    workflow_triggers,
 )
 
 
@@ -269,39 +265,18 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             binding_block,
         )
 
-    def test_scheduled_ingestion_deploy_iam_sync_workflow_is_protected_and_allowlisted(self):
+    def test_scheduled_ingestion_deploy_iam_sync_workflow_uses_constrained_apply(self):
+        # Caller wiring is asserted in detail in
+        # tests/test_prod_terraform_target_apply_workflow.py; keep a pointer
+        # assertion here so IAM .tf changes stay linked to the sync workflow.
         workflow = load_workflow(SCHEDULED_INGESTION_DEPLOY_IAM_SYNC_WORKFLOW)
-        trigger = workflow_triggers(workflow)
-        steps = workflow_steps_by_name(workflow, "sync")
-        plan_run = steps["Terraform plan"]["run"]
-        enforce_run = steps["Enforce scheduled ingestion deploy IAM resource-change allowlist"]["run"]
+        job = workflow["jobs"]["sync"]
 
-        self.assertEqual(workflow["name"], "Scheduled ingestion deploy IAM sync")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
-        self.assertIn("workflow_dispatch", trigger)
-        self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
-        self.assertEqual(workflow["jobs"]["sync"]["environment"], "shared-datasets-production")
-        self.assertEqual(
-            workflow["jobs"]["sync"]["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+        self.assertEqual(job["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
+        self.assertIn(
+            "google_project_iam_custom_role.scheduled_ingestion_deployer",
+            job["with"]["allowed_exact"],
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
-        self.assertIn("-refresh=false", plan_run)
-        self.assertEqual(
-            terraform_targets(plan_run),
-            {
-                "google_project_iam_custom_role.scheduled_ingestion_deployer",
-                "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
-            },
-        )
-        self.assertEqual(
-            python_literal_string_set(enforce_run, "allowed_exact"),
-            {
-                "google_project_iam_custom_role.scheduled_ingestion_deployer",
-                "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
-            },
-        )
-        self.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
 
 
 if __name__ == "__main__":

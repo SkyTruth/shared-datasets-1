@@ -31,6 +31,11 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Feature preview deploys and test-data loads | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md` |
 | Python environment/tooling alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
 | Bucket/repo compliance walkthroughs | `.claude/skills/shared-datasets-compliance-audit/SKILL.md` |
+| Invariant-first code/design simplification | `.claude/skills/invariant-first-engineering/SKILL.md` |
+| Production Terraform apply safety | `.claude/skills/protected-terraform-apply/SKILL.md` |
+| Repo-alert commit messages | `.claude/skills/repo-alert-commit-messages/SKILL.md` |
+| Release feature metadata translations | `.claude/skills/update-feature-metadata-translations/SKILL.md` |
+| Temporary local file/workspace hygiene | `docs/standards/local-temp-workspaces.md` |
 | Dataset categories and bucket paths | `catalog/categories.yaml`, `docs/standards/dataset-taxonomy.md` |
 | Asset layout, formats, and README requirements | `docs/standards/asset-layout-and-formats.md` |
 | Dataset README templates | `templates/dataset_README.template.md`, `templates/dataset_README.minimal.template.md` |
@@ -47,13 +52,8 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Ingestion jobs | `ingestion/` or `scripts/` |
 | Access protocols / APIs | `api/python/`, `api/typescript/`, and `docs/` |
 
-When instructions conflict, follow this order:
-
-1. User or issue/PR instructions.
-2. `AGENTS.md`.
-3. The relevant skill in `.claude/skills/`.
-4. Other docs/templates.
-5. Existing code conventions.
+When instructions conflict, follow the **Authority Order** defined in
+`AGENTS.md`; it is the single owner of that ordering.
 
 ## Core principles
 
@@ -84,6 +84,8 @@ When instructions conflict, follow this order:
 │       │   └── SKILL.md
 │       ├── gcp-shared-datasets/
 │       │   └── SKILL.md
+│       ├── invariant-first-engineering/
+│       │   └── SKILL.md
 │       ├── publish-shared-dataset/
 │       │   └── SKILL.md
 │       ├── protected-terraform-apply/
@@ -94,7 +96,9 @@ When instructions conflict, follow this order:
 │       │   └── SKILL.md
 │       ├── static-catalog-web-preview/
 │       │   └── SKILL.md
-│       └── sync-docs-with-code/
+│       ├── sync-docs-with-code/
+│       │   └── SKILL.md
+│       └── update-feature-metadata-translations/
 │           └── SKILL.md
 ├── catalog/
 │   ├── categories.yaml
@@ -617,6 +621,22 @@ RUN_GDAL_INTEGRATION_TESTS=1 UV_CACHE_DIR=.uv-cache uv run pytest \
   tests/test_sea_ice_daily.py \
   tests/test_eamlis_monthly.py
 ```
+
+### Local lint and Terraform validation
+
+CI also gates merges on Python lint and Terraform validation. Run the same
+checks locally before opening a PR:
+
+```bash
+UV_CACHE_DIR=.uv-cache uv run ruff check .
+terraform fmt -check -recursive terraform/
+terraform -chdir=terraform/envs/prod init -backend=false -input=false && terraform -chdir=terraform/envs/prod validate
+terraform -chdir=terraform/envs/preview init -backend=false -input=false && terraform -chdir=terraform/envs/preview validate
+```
+
+Terraform validation requires the CI-pinned Terraform version (see
+`TERRAFORM_VERSION` in `.github/workflows/ci.yml`); older binaries reject the
+`optional(type, default)` variable syntax used by the prod environment.
 
 ## TypeScript SDK release
 

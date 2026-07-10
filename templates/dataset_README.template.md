@@ -28,6 +28,7 @@ admission:
   intended_consumers:
     - "{project-or-user}"
   shared_rationale: "{why this belongs in shared-datasets}"
+  source_license_citation_status: "{optional: confirmation status of source, license, and citation}"
   steward: "{person-or-team}"
   update_expectations: "{manual/static/scheduled expectation and freshness notes}"
   estimated_published_size_gb: "{number or unknown}"

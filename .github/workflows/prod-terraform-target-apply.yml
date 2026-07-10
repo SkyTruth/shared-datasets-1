@@ -1,0 +1,173 @@
+name: Prod Terraform target apply
+
+# Reusable constrained apply for prod Terraform IAM syncs. Callers pass an
+# explicit -target list plus a resource-change allowlist; the plan is refused
+# if it touches anything else. This file owns the protected-apply mechanics
+# (main-ref validation, trusted checkout, prod state concurrency, allowlist
+# enforcement) so caller workflows stay declarative.
+
+on:
+  workflow_call:
+    inputs:
+      sync_name:
+        description: "Human-readable name used in log and refusal messages."
+        required: true
+        type: string
+      terraform_dir:
+        description: "Terraform working directory; must stay under terraform/envs/prod."
+        required: false
+        type: string
+        default: terraform/envs/prod
+      targets:
+        description: "Newline-separated Terraform -target resource addresses."
+        required: true
+        type: string
+      allowed_exact:
+        description: "Newline-separated resource addresses allowed to change."
+        required: true
+        type: string
+      allowed_patterns:
+        description: "Newline-separated regexes of additional allowed addresses."
+        required: false
+        type: string
+        default: ""
+      block_deletes:
+        description: "Refuse deletes, including replaces, even for allowlisted addresses."
+        required: false
+        type: boolean
+        default: false
+      tf_vars:
+        description: "Newline-separated key=value Terraform variable assignments."
+        required: false
+        type: string
+        default: ""
+      refusal_prefix:
+        description: "Refusal message prefix, e.g. 'Refusing automatic X IAM sync'."
+        required: true
+        type: string
+      post_apply_wait_seconds:
+        description: "Seconds to sleep after apply, e.g. for IAM propagation."
+        required: false
+        type: number
+        default: 0
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  TERRAFORM_DIR: ${{ inputs.terraform_dir }}
+
+jobs:
+  sync:
+    name: Apply ${{ inputs.sync_name }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        env:
+          SYNC_NAME: ${{ inputs.sync_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "${SYNC_NAME} may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
+      - name: Validate Terraform directory
+        run: |
+          set -euo pipefail
+
+          if [[ "${TERRAFORM_DIR}" == *..* ]] || [[ ! "${TERRAFORM_DIR}" =~ ^terraform/envs/prod(/[A-Za-z0-9_.-]+)*$ ]]; then
+            echo "terraform_dir must stay under terraform/envs/prod: ${TERRAFORM_DIR}" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir="${TERRAFORM_DIR}" init -input=false
+
+      - name: Terraform plan
+        env:
+          TARGETS: ${{ inputs.targets }}
+          TF_VARS: ${{ inputs.tf_vars }}
+        run: |
+          set -euo pipefail
+
+          plan_args=(-input=false -refresh=false -out="${RUNNER_TEMP}/target-apply.tfplan")
+          while IFS= read -r target; do
+            [[ -z "${target}" ]] && continue
+            plan_args+=("-target=${target}")
+          done <<< "${TARGETS}"
+          while IFS= read -r tf_var; do
+            [[ -z "${tf_var}" ]] && continue
+            plan_args+=("-var=${tf_var}")
+          done <<< "${TF_VARS}"
+          terraform -chdir="${TERRAFORM_DIR}" plan "${plan_args[@]}"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir="${TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/target-apply.tfplan" > "${RUNNER_TEMP}/target-apply.tfplan.json"
+
+      - name: Enforce resource-change allowlist
+        env:
+          ALLOWED_EXACT: ${{ inputs.allowed_exact }}
+          ALLOWED_PATTERNS: ${{ inputs.allowed_patterns }}
+          BLOCK_DELETES: ${{ inputs.block_deletes }}
+          REFUSAL_PREFIX: ${{ inputs.refusal_prefix }}
+        run: |
+          set -euo pipefail
+
+          enforce_args=(
+            "${RUNNER_TEMP}/target-apply.tfplan.json"
+            --allowed-exact "${ALLOWED_EXACT}"
+            --allowed-patterns "${ALLOWED_PATTERNS}"
+            --refusal-prefix "${REFUSAL_PREFIX}"
+          )
+          if [[ "${BLOCK_DELETES}" == "true" ]]; then
+            enforce_args+=(--block-deletes)
+          fi
+          python scripts/terraform_plan_allowlist.py "${enforce_args[@]}"
+
+      - name: Terraform apply
+        run: terraform -chdir="${TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/target-apply.tfplan"
+
+      - name: Wait after apply
+        if: ${{ inputs.post_apply_wait_seconds > 0 }}
+        env:
+          WAIT_SECONDS: ${{ inputs.post_apply_wait_seconds }}
+        run: sleep "${WAIT_SECONDS}"

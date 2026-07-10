@@ -187,6 +187,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("--latest-from-release-index", workflow)
         self.assertIn("--allow-release-index-only-assets", workflow)
         self.assertIn("--force-access-tier private", workflow)
+        self.assertIn("--metadata-sidecar-autoload-max-bytes 33554432", workflow)
         self.assertIn("Publish preview catalog web bundle", workflow)
         self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
@@ -319,6 +320,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("--latest-from-release-index", workflow)
         self.assertNotIn("--allow-release-index-only-assets", workflow)
         self.assertIn("--force-access-tier private", workflow)
+        self.assertIn("--metadata-sidecar-autoload-max-bytes 33554432", workflow)
         self.assertIn("Publish refreshed preview catalog web bundle", workflow)
         self.assertIn('scripts/catalog_web_publish.py', workflow)
         self.assertNotIn("skytruth-shared-datasets-1/", workflow)
@@ -345,17 +347,24 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("google-cloud-firestore", catalog_viewer_dockerfile.read_text())
 
     def test_prod_terraform_sync_workflows_share_state_concurrency(self):
+        reusable = (REPO_ROOT / ".github/workflows/prod-terraform-target-apply.yml").read_text()
+        self.assertIn("group: prod-terraform-state", reusable)
+        self.assertIn("cancel-in-progress: false", reusable)
+
+        pmtiles = PMTILES_CDN_SYNC_WORKFLOW.read_text()
+        self.assertIn("group: prod-terraform-state", pmtiles)
+        self.assertIn("cancel-in-progress: false", pmtiles)
+
         for workflow_path in (
             ARTIFACT_REGISTRY_IAM_WORKFLOW,
             PREVIEW_TERRAFORM_IAM_WORKFLOW,
-            PMTILES_CDN_SYNC_WORKFLOW,
             SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW,
         ):
             with self.subTest(workflow=workflow_path.name):
-                workflow = workflow_path.read_text()
-
-                self.assertIn("group: prod-terraform-state", workflow)
-                self.assertIn("cancel-in-progress: false", workflow)
+                self.assertIn(
+                    "uses: ./.github/workflows/prod-terraform-target-apply.yml",
+                    workflow_path.read_text(),
+                )
 
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()
@@ -390,23 +399,8 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("var.github_actions_terraform_service_account_email", artifact_registry_tf)
         self.assertIn("google_project_iam_member.github_actions_artifact_registry_iam_policy_manager", artifact_registry_tf)
         self.assertIn("Artifact Registry IAM sync", workflow)
-        self.assertIn("shared-datasets-production", workflow)
-        self.assertIn("Validate main ref", workflow)
-        self.assertIn("ref: main", workflow)
-        self.assertIn("group: prod-terraform-state", workflow)
-        self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
-        self.assertIn(
-            "-target=google_project_iam_custom_role.artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_project_iam_member.github_actions_artifact_registry_iam_policy_manager",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
-            workflow,
-        )
+        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
+        self.assertIn("post_apply_wait_seconds: 30", workflow)
         self.assertIn("allowed_exact", workflow)
         self.assertIn(
             "google_project_iam_custom_role.artifact_registry_iam_policy_manager",
@@ -420,10 +414,6 @@ class FeaturePreviewTests(unittest.TestCase):
             "google_artifact_registry_repository_iam_member.github_actions_artifact_registry_writer",
             workflow,
         )
-        self.assertIn("Terraform apply Artifact Registry IAM policy manager bootstrap", workflow)
-        self.assertIn("Wait for Artifact Registry IAM policy manager propagation", workflow)
-        self.assertIn("sleep 30", workflow)
-        self.assertIn("Terraform apply Artifact Registry writer binding", workflow)
         self.assertIn("Refusing automatic Artifact Registry IAM bootstrap", workflow)
         self.assertIn("Refusing automatic Artifact Registry IAM writer sync", workflow)
         self.assertNotIn("roles/artifactregistry.admin", artifact_registry_tf)
@@ -476,46 +466,9 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("roles/storage.admin", preview_terraform_tf)
         self.assertNotIn("roles/editor", preview_terraform_tf)
         self.assertIn("Preview Terraform IAM sync", workflow)
-        self.assertIn("shared-datasets-production", workflow)
-        self.assertIn("Validate main ref", workflow)
-        self.assertIn('GITHUB_REF}" != "refs/heads/main"', workflow)
-        self.assertIn("Preview Terraform IAM sync may only apply from main", workflow)
-        self.assertIn("ref: main", workflow)
+        self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
         self.assertIn("terraform/envs/prod/main.tf", workflow)
         self.assertIn("terraform/envs/prod/preview_terraform_iam.tf", workflow)
-        self.assertIn("terraform -chdir=terraform/envs/prod plan", workflow)
-        self.assertIn(
-            "-target=google_project_iam_custom_role.preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "-target=module.feature_preview_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "-target=module.feature_preview_loader_service_account.google_service_account.this",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_project_iam_member.github_actions_preview_terraform",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_service_account_iam_member.feature_preview_loader_github_wif",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_service_account_iam_member.feature_preview_service_self_sign_blob",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_project_iam_member.feature_preview_service_firestore_viewer",
-            workflow,
-        )
-        self.assertIn(
-            "-target=google_project_iam_member.feature_preview_loader_firestore_user",
-            workflow,
-        )
         self.assertIn("allowed_exact", workflow)
         self.assertIn(
             "google_project_iam_custom_role.preview_terraform",
@@ -549,7 +502,7 @@ class FeaturePreviewTests(unittest.TestCase):
             "google_project_iam_member.feature_preview_loader_firestore_user",
             workflow,
         )
-        self.assertIn('actions == ["delete"]', workflow)
+        self.assertIn("block_deletes: true", workflow)
         self.assertIn("Refusing automatic preview Terraform IAM sync", workflow)
         self.assertNotIn("roles/storage.admin", workflow)
         self.assertNotIn("roles/editor", workflow)

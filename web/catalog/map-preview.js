@@ -8,7 +8,6 @@ const FEATURE_STATE_COLOR_VALUE = "colorizeValue";
 const METADATA_FOCUS_FILTER_ID_LIMIT = 8000;
 const SAMPLE_LIMIT = 700;
 const CATEGORICAL_MATCH_LIMIT = 320;
-const CATEGORICAL_NUMERIC_VALUE_LIMIT = 12;
 const GRADIENT_LEGEND_VALUE_LIMIT = 20;
 const MIN_GRADIENT_VALUES = 4;
 const GRADIENT_PARSE_RATIO = 0.86;
@@ -1168,14 +1167,11 @@ function shouldUseCategoricalNumericMode(field, samples, numericItems, categoric
   if (categoricalValues.length < 2 || categoricalValues.length > CATEGORICAL_MATCH_LIMIT) {
     return false;
   }
-  // Numeric identifiers are labels, not measurements. Keep fields such as METADATA_I discrete.
-  if (looksLikeIdentifierField(field)) {
-    return true;
-  }
-  return (
-    categoricalValues.length <= CATEGORICAL_NUMERIC_VALUE_LIMIT &&
-    numericItems.every((item) => Number.isInteger(item.parsed))
-  );
+  // Numeric identifiers are labels, not measurements, so they stay discrete.
+  // Integer measures (fatalities, events, other counts) must keep numeric
+  // gradients even when a viewport samples only a few distinct values, so the
+  // field-name contract decides — not sampled cardinality.
+  return looksLikeIdentifierField(field);
 }
 
 function looksLikeIdentifierField(field) {

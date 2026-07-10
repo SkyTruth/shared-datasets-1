@@ -183,10 +183,9 @@ class CatalogReleaseResolver:
 
         schema_path = str(schema_entry.get("path") or "")
         manifest_path = str(manifest_entry.get("path") or "")
-        metadata_path = str(metadata_entry.get("path") or "")
         schema_payload = self._load_gcs_json(schema_path, expected_generation=schema_entry.get("generation"))
         manifest_payload = self._load_gcs_json(manifest_path, expected_generation=manifest_entry.get("generation"))
-        schema_fields = schema_field_names(schema_payload, asset_slug=asset_slug, release=resolved_release)
+        schema_field_names(schema_payload, asset_slug=asset_slug, release=resolved_release)
         validate_manifest_bundle(
             manifest_payload,
             asset_slug=asset_slug,

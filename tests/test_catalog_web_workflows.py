@@ -33,6 +33,7 @@ def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -
         set(trigger["pull_request"]["paths"]),
         {
             ".github/workflows/protected-terraform-readiness.yml",
+            ".github/workflows/prod-terraform-target-apply.yml",
             ".github/workflows/artifact-registry-iam-sync.yml",
             ".github/workflows/metadata-service-deploy.yml",
             ".github/workflows/pmtiles-cdn-sync.yml",
@@ -187,6 +188,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("--latest-from-release-index", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--release-index-assets-only", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--allow-release-index-only-assets", steps["Build catalog web bundle"]["run"])
+        self.assertNotIn("--metadata-sidecar-autoload-max-bytes", steps["Build catalog web bundle"]["run"])
         self.assertIn("uv run python scripts/catalog_web_publish.py", steps["Publish catalog web bundle"]["run"])
         self.assertIn(
             '--catalog-source "catalog/shared-datasets-catalog.csv"',
@@ -351,33 +353,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("curl -L", verify_run)
         self.assertNotIn("--location", verify_run)
 
-    def test_scratch_cleanup_iam_sync_has_explicit_resource_change_allowlist(self):
-        workflow = assert_protected_terraform_sync(
-            self,
-            SCRATCH_CLEANUP_IAM_SYNC,
-            expected_name="Scratch cleanup IAM sync",
-            push_paths={
-                "terraform/envs/prod/canonical_mutation_iam.tf",
-                "terraform/envs/prod/scratch_cleanup_iam_sync/**",
-                "terraform/envs/prod/variables.tf",
-                "terraform/envs/prod/versions.tf",
-            },
-            plan_name="scratch-cleanup-iam-sync",
-            enforce_step_name="Enforce scratch cleanup IAM resource-change allowlist",
-            expected_targets={
-                "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
-                "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
-            },
-            blocked_resources={
-                "google_compute_url_map.pmtiles_cdn",
-                "google_storage_bucket.shared_bucket",
-                "google_storage_managed_folder.shared_bucket_public_prefixes",
-            },
-        )
+    def test_scratch_cleanup_iam_sync_uses_constrained_apply(self):
+        # Caller wiring is asserted in detail in
+        # tests/test_prod_terraform_target_apply_workflow.py.
+        workflow = load_workflow(SCRATCH_CLEANUP_IAM_SYNC)
+        job = workflow["jobs"]["sync"]
 
-        plan_step = workflow_steps_by_name(workflow, "sync")["Terraform plan"]["run"]
-        self.assertIn("terraform/envs/prod/scratch_cleanup_iam_sync", plan_step)
-        self.assertNotIn("unused-by-scratch-cleanup-iam-sync", plan_step)
+        self.assertEqual(job["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
+        self.assertEqual(job["with"]["terraform_dir"], "terraform/envs/prod/scratch_cleanup_iam_sync")
 
 
 if __name__ == "__main__":

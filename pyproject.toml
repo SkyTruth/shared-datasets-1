@@ -15,7 +15,26 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=9.0.0",
+  "ruff>=0.14.0",
 ]
+
+[tool.ruff]
+target-version = "py312"
+extend-exclude = [
+  "_scratch",
+  "cache",
+  "test-results",
+  "web",
+]
+
+[tool.ruff.lint]
+# Default rules (pycodestyle errors + pyflakes). Broaden deliberately, not by default.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# Standalone scripts bootstrap sys.path before importing repo modules.
+"scripts/*.py" = ["E402"]
+".claude/skills/**/*.py" = ["E402"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config"
