@@ -53,7 +53,8 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
 - Storage recovery/state-bucket bootstrap:
-  `.github/workflows/storage-hardening-sync.yml` with its saved-plan allowlist.
+  `.github/workflows/storage-hardening-sync.yml` in two protected dispatches:
+  add and verify scoped grants first, then remove only the legacy broad grants.
 - State backend migration and exact-generation legacy cleanup:
   `.github/workflows/terraform-state-migration.yml` and
   `.github/workflows/terraform-state-legacy-cleanup.yml` after the reviewed

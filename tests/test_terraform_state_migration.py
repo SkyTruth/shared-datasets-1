@@ -55,8 +55,15 @@ class TerraformStateMigrationTests(unittest.TestCase):
         self.assertIn("MIGRATE_TERRAFORM_STATE", state_migration)
         self.assertIn("Refusing to overwrite existing destination state", migration_script)
         self.assertIn('for key in ("lineage", "serial", "outputs")', migration_script)
-        self.assertIn("migrated state resource addresses do not match", migration_script)
-        self.assertIn("HARDEN_STORAGE", storage_sync)
+        self.assertIn("source_generation_before", migration_script)
+        self.assertIn("source_generation_after", migration_script)
+        self.assertIn("state list", migration_script)
+        self.assertIn("source.addresses", migration_script)
+        self.assertIn("destination.addresses", migration_script)
+        self.assertIn("cmp -s", migration_script)
+        self.assertIn('"resource_addresses": addresses', migration_script)
+        self.assertIn("HARDEN_STORAGE_ADD_SCOPED", storage_sync)
+        self.assertIn("HARDEN_STORAGE_REMOVE_BROAD", storage_sync)
         self.assertIn("terraform_plan_allowlist.py", storage_sync)
 
 
