@@ -141,6 +141,7 @@ jobs:
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" \
+            -target=google_storage_bucket.shared_bucket \
             -target=google_project_iam_custom_role.pmtiles_managed_folder_sync \
             -target=google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync \
             -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
@@ -161,6 +162,9 @@ jobs:
               "google_project_iam_custom_role.pmtiles_managed_folder_sync",
               "google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync",
           }
+          allowed_update_only = {
+              "google_storage_bucket.shared_bucket",
+          }
 
           blocked = []
           for resource in plan.get("resource_changes", []):
@@ -168,6 +172,11 @@ jobs:
               if actions in ([], ["no-op"], ["read"]):
                   continue
               address = resource.get("address", "")
+              if address in allowed_update_only:
+                  if actions == ["update"]:
+                      continue
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
               if "delete" in actions:
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
