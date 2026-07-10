@@ -360,7 +360,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         job = workflow["jobs"]["sync"]
 
         self.assertEqual(job["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
-        self.assertEqual(job["with"]["terraform_dir"], "terraform/envs/prod/scratch_cleanup_iam_sync")
+        self.assertNotIn("terraform_dir", job["with"])
 
 
 if __name__ == "__main__":

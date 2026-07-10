@@ -208,22 +208,52 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         self.assertEqual(url, "https://tiles.skytruth.org/_catalog/releases/example%20asset.json")
 
-    def test_resolve_supports_canonical_latest_only_from_csv_catalog(self):
+    def test_resolve_derives_advertised_latest_companion_paths(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
 
         fgb = catalog.resolve("example-vector", format="fgb")
+        pmtiles = catalog.resolve("example-vector", format="pmtiles")
+        geojson = catalog.resolve("example-vector", format="geojson")
 
         self.assertEqual(fgb.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb")
+        self.assertEqual(pmtiles.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.pmtiles")
+        self.assertEqual(pmtiles.url, "https://tiles.skytruth.org/pmtiles/public/example-vector.pmtiles")
+        self.assertEqual(geojson.gs_uri, "gs://example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.geojson")
         self.assertIsNone(fgb.cache_path)
         self.assertEqual(fgb.resolved_id, "example-vector@latest")
-        with self.assertRaisesRegex(UnsupportedFormatError, "release-index file entry"):
-            catalog.resolve("example-vector", format="pmtiles")
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format=".fgb")
         with self.assertRaises(UnsupportedFormatError):
             catalog.resolve("example-vector", format="csv")
         with self.assertRaises(UnsupportedVersionError):
             catalog.resolve("example-vector", version="2026-4-30")
+
+    def test_latest_noncanonical_zarr_remains_non_inferable(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV.replace("fgb;pmtiles;geojson", "fgb;zarr"))
+
+        with self.assertRaisesRegex(UnsupportedFormatError, "cannot be inferred"):
+            catalog.resolve("example-vector", format="zarr")
+
+    def test_latest_companion_requires_canonical_latest_root(self):
+        catalog = Catalog.from_csv_text(FIXTURE_CSV.replace("/latest/example-vector.fgb", "/releases/2026-01-01/example-vector.fgb"))
+
+        with self.assertRaisesRegex(ValueError, "canonical_path must contain"):
+            catalog.resolve("example-vector", format="pmtiles")
+
+    def test_every_real_catalog_pmtiles_row_resolves_to_slug_latest_path(self):
+        catalog = Catalog.load(REPO_ROOT / "catalog/shared-datasets-catalog.csv")
+        pmtiles_assets = catalog.search(format="pmtiles", status=None)
+
+        self.assertTrue(pmtiles_assets)
+        for asset in pmtiles_assets:
+            with self.subTest(asset=asset.slug):
+                ref = catalog.resolve(asset.slug, format="pmtiles")
+                self.assertEqual(ref.filename, f"{asset.slug}.pmtiles")
+                self.assertIn(f"/{asset.slug}/latest/{asset.slug}.pmtiles", ref.gs_uri)
+                self.assertEqual(
+                    ref.url,
+                    f"https://tiles.skytruth.org/pmtiles/{asset.access_tier}/{asset.slug}.pmtiles",
+                )
 
     def test_resolve_cdn_url_keeps_canonical_gs_uri(self):
         pmtiles_csv = FIXTURE_CSV.replace(
@@ -484,7 +514,16 @@ class SharedDatasetSdkTests(unittest.TestCase):
                 client=client,
                 catalog_source="gs://example-bucket/catalog.csv",
             )
-            self.assertEqual(client.requests, [("example-bucket", "catalog.csv")])
+            pmtiles_ref = resolve_dataset(
+                "example-vector",
+                "pmtiles",
+                client=client,
+                catalog_source="gs://example-bucket/catalog.csv",
+            )
+            self.assertEqual(
+                client.requests,
+                [("example-bucket", "catalog.csv"), ("example-bucket", "catalog.csv")],
+            )
             client.requests.clear()
             fetched_ref = fetch_dataset(
                 "example-vector",
@@ -501,6 +540,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
             ref.url,
             "https://storage.googleapis.com/example-bucket/100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb",
         )
+        self.assertEqual(pmtiles_ref.url, "https://tiles.skytruth.org/pmtiles/public/example-vector.pmtiles")
         self.assertEqual(fetched_ref.last_updated, "")
         self.assertEqual(fetched_ref.resolved_id, "example-vector@latest")
         self.assertEqual(

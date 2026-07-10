@@ -182,7 +182,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             },
         )
 
-    def test_scratch_cleanup_iam_sync_caller_uses_isolated_terraform_dir(self):
+    def test_scratch_cleanup_iam_sync_caller_uses_full_prod_root(self):
         assert_target_apply_caller(
             self,
             SCRATCH_CLEANUP,
@@ -190,13 +190,11 @@ class TargetApplyCallerTests(unittest.TestCase):
             push_paths={
                 REUSABLE_PATH_ENTRY,
                 "terraform/envs/prod/canonical_mutation_iam.tf",
-                "terraform/envs/prod/scratch_cleanup_iam_sync/**",
                 "terraform/envs/prod/variables.tf",
                 "terraform/envs/prod/versions.tf",
             },
             sync_name="Scratch cleanup IAM sync",
             refusal_prefix="Refusing automatic scratch cleanup IAM sync",
-            expected_terraform_dir="terraform/envs/prod/scratch_cleanup_iam_sync",
             expected_targets={
                 "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
                 "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
@@ -205,6 +203,11 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "google_compute_url_map.pmtiles_cdn",
                 "google_storage_bucket.shared_bucket",
                 "google_storage_managed_folder.shared_bucket_public_prefixes",
+            },
+            expected_tf_vars={
+                "wdpa_monthly_image=unused-by-scratch-cleanup-iam-sync",
+                "sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync",
+                "eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync",
             },
         )
 

@@ -189,14 +189,10 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertNotIn("_scratch/*", viewer_block)
         self.assertNotIn("_scratch/*", block)
 
-    def test_scratch_cleanup_iam_sync_root_matches_publisher_temp_prefixes(self):
-        sync_tf = (PROD_TF_DIR / "scratch_cleanup_iam_sync/main.tf").read_text()
-
-        self.assertIn(GCLOUD_COMPOSITE_TEMP_PREFIX, sync_tf)
-        self.assertIn("shared_datasets_publisher_pending_publish_viewer", sync_tf)
-        self.assertIn("shared_datasets_publisher_pending_publish_cleanup_user", sync_tf)
-        self.assertIn("pending_publish_sources_read_only", sync_tf)
-        self.assertIn("pending_publish_cleanup", sync_tf)
+    def test_scratch_cleanup_iam_has_single_owner_in_prod_root(self):
+        partial_root = PROD_TF_DIR / "scratch_cleanup_iam_sync"
+        self.assertFalse((partial_root / "main.tf").exists())
+        self.assertFalse((partial_root / "versions.tf").exists())
 
     def test_publisher_has_bucket_level_list_only_role_for_scratch_cleanup(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
