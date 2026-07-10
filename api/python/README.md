@@ -126,7 +126,10 @@ print(ref.cache_path)   # None; resolve_dataset does not download bytes
 
 PMTiles latest URLs default to the tiered shared CDN URL. Exact dated PMTiles
 release references keep their exact object identity and are not a promise of
-anonymous public access.
+anonymous public access. For advertised file companions, the SDK derives the
+stable latest object as `latest/{asset-slug}.{extension}` from the catalog's
+canonical `/latest/` root. Formats without a deterministic file path, including
+a noncanonical Zarr companion, still require an explicit path and fail loudly.
 
 For public catalog and browser URL resolution without the `gcs` extra or ADC,
 load the public catalog and resolve through `Catalog` explicitly:

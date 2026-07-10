@@ -34,6 +34,14 @@ AccessMode = Literal["public", "gcs"]
 UrlStrategy = Literal["public_gcs", "cdn"]
 AccessTier = Literal["public", "private", "internal"]
 ACCESS_TIERS = {"public", "private", "internal"}
+LATEST_FILE_EXTENSIONS = {
+    "fgb": ".fgb",
+    "pmtiles": ".pmtiles",
+    "geojson": ".geojson",
+    "ndgeojson": ".ndgeojson",
+    "csv": ".csv",
+    "cog": ".tif",
+}
 
 
 class SharedDatasetsError(Exception):
@@ -140,10 +148,17 @@ class CatalogAsset:
             )
         if resolved_format == self.canonical_format:
             return self.canonical_path
-        raise UnsupportedFormatError(
-            f"{self.slug!r} latest path for non-canonical format {resolved_format!r} "
-            "must come from an explicit release-index file entry"
-        )
+        extension = LATEST_FILE_EXTENSIONS.get(resolved_format)
+        if extension is None:
+            raise UnsupportedFormatError(
+                f"{self.slug!r} latest path for non-canonical format {resolved_format!r} "
+                "cannot be inferred from the catalog"
+            )
+        marker = "/latest/"
+        if marker not in self.canonical_path:
+            raise ValueError(f"canonical_path must contain {marker!r}: {self.canonical_path}")
+        latest_root = self.canonical_path.split(marker, 1)[0] + "/latest"
+        return f"{latest_root}/{self.slug}{extension}"
 
 
 @dataclass(frozen=True)

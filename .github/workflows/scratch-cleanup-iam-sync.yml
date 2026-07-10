@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/prod-terraform-target-apply.yml"
       - "terraform/envs/prod/canonical_mutation_iam.tf"
-      - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
   workflow_dispatch:
@@ -24,10 +23,13 @@ jobs:
     with:
       sync_name: Scratch cleanup IAM sync
       refusal_prefix: Refusing automatic scratch cleanup IAM sync
-      terraform_dir: terraform/envs/prod/scratch_cleanup_iam_sync
       targets: |
         google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer
         google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user
       allowed_exact: |
         google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer
         google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user
+      tf_vars: |
+        wdpa_monthly_image=unused-by-scratch-cleanup-iam-sync
+        sea_ice_daily_image=unused-by-scratch-cleanup-iam-sync
+        eamlis_monthly_image=unused-by-scratch-cleanup-iam-sync
