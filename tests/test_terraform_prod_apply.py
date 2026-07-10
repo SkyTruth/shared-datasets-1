@@ -11,6 +11,9 @@ from unittest import mock
 from scripts import terraform_prod_apply
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 REQUIRED_VARS = [
     "--var",
     "wdpa_monthly_image=image",
@@ -212,7 +215,7 @@ class TerraformProdApplyTests(unittest.TestCase):
                 terraform_prod_apply.resolve_terraform_binary(str(binary))
 
     def test_binary_resolver_accepts_private_executable(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as tmp:
             binary = Path(tmp) / "terraform"
             binary.write_text("#!/bin/sh\n")
             binary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
