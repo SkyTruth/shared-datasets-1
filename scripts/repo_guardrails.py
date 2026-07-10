@@ -125,6 +125,11 @@ FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS = (
     "ref: ${{ github.ref }}",
     "Select the branch or tag to deploy from the workflow branch dropdown.",
 )
+# Matches literal prod chdir applies and parameterized applies such as
+# `terraform -chdir="${TERRAFORM_DIR}" apply` in the reusable target-apply
+# workflow; combined with a terraform/envs/prod mention to exclude
+# preview-only workflows.
+TERRAFORM_APPLY_RE = re.compile(r"terraform -chdir=\S+ apply")
 
 
 @dataclass(frozen=True)
@@ -455,7 +460,7 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
         if "terraform -chdir=terraform/envs/preview apply" in text and "terraform -chdir=terraform/envs/prod" in text:
             errors.append(f"{rel}: preview Terraform apply workflows must stay under terraform/envs/preview")
 
-        if "terraform -chdir=terraform/envs/prod apply" in text:
+        if "terraform/envs/prod" in text and TERRAFORM_APPLY_RE.search(text):
             required = {
                 "main ref validation": WORKFLOW_MAIN_REF_GUARD,
                 "prod Terraform state concurrency": "group: prod-terraform-state",

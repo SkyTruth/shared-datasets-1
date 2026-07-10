@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/prod-terraform-target-apply.yml"
       - "terraform/envs/prod/canonical_mutation_iam.tf"
       - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
       - "terraform/envs/prod/variables.tf"
@@ -15,105 +16,18 @@ permissions:
   contents: read
   id-token: write
 
-env:
-  GOOGLE_CLOUD_PROJECT: shared-datasets-1
-  TF_IN_AUTOMATION: "1"
-  TF_INPUT: "0"
-  TERRAFORM_VERSION: "1.8.5"
-  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
 jobs:
   sync:
     name: Apply scratch cleanup IAM sync
     if: ${{ github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    environment: shared-datasets-production
-    concurrency:
-      group: prod-terraform-state
-      cancel-in-progress: false
-
-    steps:
-      - name: Validate main ref
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Scratch cleanup IAM sync may only apply from main after reviewed changes have landed." >&2
-            exit 1
-          fi
-
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Validate Terraform auth configuration
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform init
-        run: terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync init -input=false
-
-      - name: Terraform plan
-        run: |
-          terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync plan \
-            -no-color \
-            -input=false \
-            -refresh=false \
-            -out="${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan" \
-            -target=google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer \
-            -target=google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user \
-            | tee "${RUNNER_TEMP}/scratch-cleanup-iam-sync.plan.txt"
-
-      - name: Enforce scratch cleanup IAM resource-change allowlist
-        run: |
-          python - "${RUNNER_TEMP}/scratch-cleanup-iam-sync.plan.txt" <<'PY'
-          import re
-          import sys
-
-          allowed_exact = {
-              "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
-              "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user",
-          }
-
-          resource_line = re.compile(r"^\s*# (?P<address>\S+) (?:will|must) ")
-          blocked = []
-          for line in open(sys.argv[1], encoding="utf-8"):
-              match = resource_line.match(line)
-              if not match:
-                  continue
-              address = match.group("address")
-              if address in allowed_exact:
-                  continue
-              blocked.append(address)
-
-          if blocked:
-              print("Refusing automatic scratch cleanup IAM sync because the Terraform plan changes non-allowlisted resources:")
-              for item in blocked:
-                  print(f"- {item}")
-              raise SystemExit(1)
-          PY
-
-      - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod/scratch_cleanup_iam_sync apply -input=false "${RUNNER_TEMP}/scratch-cleanup-iam-sync.tfplan"
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      sync_name: Scratch cleanup IAM sync
+      refusal_prefix: Refusing automatic scratch cleanup IAM sync
+      terraform_dir: terraform/envs/prod/scratch_cleanup_iam_sync
+      targets: |
+        google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer
+        google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user
+      allowed_exact: |
+        google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer
+        google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_cleanup_user

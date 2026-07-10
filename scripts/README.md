@@ -467,7 +467,13 @@ Shared internal modules:
 ```text
 scripts/catalog_csv.py
 scripts/concierge_profiling.py
+scripts/terraform_plan_allowlist.py
 ```
+
+`terraform_plan_allowlist.py` refuses a Terraform plan that changes resources
+outside an explicit allowlist; the reusable
+`.github/workflows/prod-terraform-target-apply.yml` workflow runs it between
+plan and apply for every constrained prod IAM sync.
 
 `catalog_csv.py` is the single owner of `catalog/shared-datasets-catalog.csv`
 parsing; script code should load catalog rows through it rather than reading

@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/protected-terraform-readiness.yml"
+      - ".github/workflows/prod-terraform-target-apply.yml"
       - ".github/workflows/artifact-registry-iam-sync.yml"
       - ".github/workflows/metadata-service-deploy.yml"
       - ".github/workflows/pmtiles-cdn-sync.yml"
