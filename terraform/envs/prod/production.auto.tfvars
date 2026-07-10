@@ -19,11 +19,10 @@ shared_dataset_consumer_projects = {
   }
 }
 
-pmtiles_serving_mode                   = "cdn"
-pmtiles_cdn_grant_fill_service_account = true
-pmtiles_redirector_image               = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:20260505144357"
-catalog_viewer_image                   = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:20260509032023"
-metadata_service_image                 = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/metadata-service:bootstrap-required"
+pmtiles_serving_mode     = "cdn"
+pmtiles_redirector_image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/pmtiles-redirector:20260505144357"
+catalog_viewer_image     = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/catalog-viewer:20260509032023"
+metadata_service_image   = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/metadata-service:bootstrap-required"
 
 cerulean_pmtiles_cookie_signer_service_accounts = [
   "serviceAccount:734798842681-compute@developer.gserviceaccount.com",

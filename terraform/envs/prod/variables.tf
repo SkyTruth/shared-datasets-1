@@ -197,12 +197,6 @@ variable "pmtiles_cdn_secret_id" {
   default     = "pmtiles-cdn-signed-request-key"
 }
 
-variable "pmtiles_cdn_grant_fill_service_account" {
-  description = "Grant the Cloud CDN fill service account objectViewer access to the shared bucket. Enable after a signed request key has created the Google-managed service account."
-  type        = bool
-  default     = false
-}
-
 variable "cerulean_pmtiles_cookie_signer_service_accounts" {
   description = "Service account members allowed to read the PMTiles CDN signing key secret, such as serviceAccount:name@project.iam.gserviceaccount.com."
   type        = set(string)

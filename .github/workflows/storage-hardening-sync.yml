@@ -1,0 +1,124 @@
+name: Storage hardening sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type HARDEN_STORAGE to run the reviewed saved plan."
+        required: true
+        type: string
+      use_legacy_backend:
+        description: "Use the legacy shared-bucket backend for the one-time state-bucket bootstrap."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate reviewed invocation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Storage hardening may only run from reviewed main." >&2
+            exit 1
+          fi
+          test "${CONFIRMATION}" = "HARDEN_STORAGE"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        env:
+          USE_LEGACY_BACKEND: ${{ inputs.use_legacy_backend }}
+        run: |
+          set -euo pipefail
+          if [[ "${USE_LEGACY_BACKEND}" == "true" ]]; then
+            terraform -chdir=terraform/envs/prod init -input=false -reconfigure \
+              -backend-config=bucket=skytruth-shared-datasets-1 \
+              -backend-config=prefix=000-system/terraform/state/prod
+          else
+            python scripts/terraform_state_backend_guard.py prod
+            terraform -chdir=terraform/envs/prod init -input=false
+          fi
+
+      - name: Terraform saved plan
+        run: |
+          terraform -chdir=terraform/envs/prod plan -input=false \
+            -out="${RUNNER_TEMP}/storage-hardening.tfplan" \
+            -var='wdpa_monthly_image=unused-by-storage-hardening' \
+            -var='sea_ice_daily_image=unused-by-storage-hardening' \
+            -var='eamlis_monthly_image=unused-by-storage-hardening' \
+            -target=google_storage_bucket.terraform_state \
+            -target=google_storage_bucket_iam_member.terraform_state_workflow_admin \
+            -target=google_storage_bucket_iam_member.terraform_state_breakglass_admin \
+            -target=google_storage_bucket.shared_bucket \
+            -target=google_storage_managed_folder_iam_member.shared_bucket_cdn_fill_object_viewers \
+            -target=google_storage_managed_folder_iam_member.shared_dataset_consumer_object_viewers \
+            -target=google_project_iam_custom_role.github_readonly_object_lister \
+            -target=google_storage_bucket_iam_member.github_readonly_object_viewer \
+            -target=google_storage_bucket_iam_member.github_readonly_object_lister \
+            -target=google_storage_bucket_iam_member.shared_bucket_cloud_cdn_fill_object_viewer \
+            -target=google_storage_bucket_iam_member.shared_dataset_consumer_object_viewers
+          terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/storage-hardening.tfplan" \
+            > "${RUNNER_TEMP}/storage-hardening.tfplan.json"
+
+      - name: Enforce storage hardening allowlist
+        run: |
+          python scripts/terraform_plan_allowlist.py \
+            "${RUNNER_TEMP}/storage-hardening.tfplan.json" \
+            --allowed-exact google_storage_bucket.terraform_state \
+            --allowed-exact google_storage_bucket_iam_member.terraform_state_workflow_admin \
+            --allowed-exact google_storage_bucket_iam_member.terraform_state_breakglass_admin \
+            --allowed-exact google_storage_bucket.shared_bucket \
+            --allowed-exact google_project_iam_custom_role.github_readonly_object_lister \
+            --allowed-exact google_storage_bucket_iam_member.github_readonly_object_viewer \
+            --allowed-exact google_storage_bucket_iam_member.github_readonly_object_lister \
+            --allowed-pattern '^google_storage_bucket_iam_member\.shared_bucket_cloud_cdn_fill_object_viewer(?:\[[0-9]+\])?$' \
+            --allowed-pattern '^google_storage_bucket_iam_member\.shared_dataset_consumer_object_viewers(?:\[.*\])?$' \
+            --allowed-pattern '^google_storage_managed_folder_iam_member\.shared_bucket_cdn_fill_object_viewers(?:\[.*\])?$' \
+            --allowed-pattern '^google_storage_managed_folder_iam_member\.shared_dataset_consumer_object_viewers(?:\[.*\])?$' \
+            --refusal-prefix "Refusing storage hardening sync"
+
+      - name: Terraform apply saved plan
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/storage-hardening.tfplan"
+
+      - name: Verify hardened storage
+        run: |
+          set -euo pipefail
+          gcloud storage buckets describe gs://skytruth-shared-datasets-1-terraform-state \
+            --format='value(versioning.enabled,softDeletePolicy.retentionDuration)'
+          gcloud storage buckets describe gs://skytruth-shared-datasets-1 \
+            --format='value(softDeletePolicy.retentionDuration)'
+          curl -fsS https://tiles.skytruth.org/_catalog/shared-datasets-catalog.csv >/dev/null

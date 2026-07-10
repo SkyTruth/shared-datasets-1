@@ -483,7 +483,28 @@ table.
 
 Production Terraform mutations must land through reviewed PRs and protected
 GitHub Actions workflows. Local use of `scripts/terraform_prod_apply.py` is
-reserved for explicitly approved break-glass emergencies.
+reserved for explicitly approved break-glass emergencies. It cannot run
+unattended and refuses to apply until the operator confirms the exact saved-plan
+SHA-256. Example shape (only after explicit emergency authorization):
+
+```bash
+uv run python scripts/terraform_prod_apply.py \
+  --break-glass \
+  --reason "incident reference and exact required mutation" \
+  --var wdpa_monthly_image=IMAGE \
+  --var sea_ice_daily_image=IMAGE \
+  --var eamlis_monthly_image=IMAGE
+```
+
+Add `--allow-destroy` only when the reviewed plan intentionally contains a
+delete or replace. The script rejects non-TTY execution, unsafe Terraform
+binaries, altered plan bytes, missing pre-apply audit logging, and mismatched
+confirmation.
+
+`terraform_state_backend_guard.py` is the fail-closed runtime boundary used by
+apply workflows after state isolation. `terraform_state_migrate.sh` is called
+only by the protected Terraform State Migration workflow; do not invoke it
+locally for production state.
 
 Static catalog web builds use:
 

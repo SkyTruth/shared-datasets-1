@@ -35,6 +35,14 @@ module "github_readonly_service_account" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_project_iam_custom_role" "github_readonly_object_lister" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsGithubObjectLister"
+  title       = "Shared Datasets GitHub Object Lister"
+  description = "Allows approved read-only audits to list object names without reading Terraform state bytes."
+  permissions = ["storage.objects.list"]
+}
+
 resource "google_service_account_iam_member" "github_readonly_wif" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.github_readonly_service_account.email}"
   role               = "roles/iam.workloadIdentityUser"
@@ -44,6 +52,20 @@ resource "google_service_account_iam_member" "github_readonly_wif" {
 resource "google_storage_bucket_iam_member" "github_readonly_object_viewer" {
   bucket = var.bucket_name
   role   = "roles/storage.objectViewer"
+  member = module.github_readonly_service_account.member
+
+  condition {
+    title       = "exclude_terraform_state_bytes"
+    description = "Allow audit reads everywhere except the legacy Terraform state prefix."
+    expression  = "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/objects/') && !resource.name.startsWith('projects/_/buckets/${var.bucket_name}/objects/000-system/terraform/state/')"
+  }
+
+  depends_on = [google_storage_bucket.shared_bucket]
+}
+
+resource "google_storage_bucket_iam_member" "github_readonly_object_lister" {
+  bucket = var.bucket_name
+  role   = google_project_iam_custom_role.github_readonly_object_lister.name
   member = module.github_readonly_service_account.member
 
   depends_on = [google_storage_bucket.shared_bucket]

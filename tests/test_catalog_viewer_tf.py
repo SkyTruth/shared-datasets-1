@@ -55,8 +55,12 @@ class CatalogViewerTerraformTests(unittest.TestCase):
 
         self.assertIn("catalog_viewer_image", prod_tfvars)
         self.assertIn("catalog-viewer:20260509032023", prod_tfvars)
-        self.assertIn('pmtiles_serving_mode                   = "cdn"', prod_tfvars)
-        self.assertIn("pmtiles_cdn_grant_fill_service_account = true", prod_tfvars)
+        self.assertIn('pmtiles_serving_mode     = "cdn"', prod_tfvars)
+        self.assertNotIn("pmtiles_cdn_grant_fill_service_account", prod_tfvars)
+        self.assertIn(
+            'resource "google_storage_managed_folder_iam_member" "shared_bucket_cdn_fill_object_viewers"',
+            (PROD_TF / "shared_bucket_public.tf").read_text(),
+        )
 
     def test_pmtiles_secret_iam_policy_bootstrap_is_condition_scoped(self):
         pmtiles_cdn_tf = (PROD_TF / "pmtiles_cdn.tf").read_text()

@@ -129,6 +129,17 @@ Expected shared bucket:
 gs://skytruth-shared-datasets-1/
 ```
 
+Expected private Terraform state bucket:
+
+```text
+gs://skytruth-shared-datasets-1-terraform-state/
+```
+
+Production and preview apply workflows must pass the isolated-state backend
+guard before Terraform initialization. Use the protected state migration and
+legacy cleanup workflows documented in `docs/terraform-state-recovery.md`; do
+not create an empty replacement state or copy state locally as a normal path.
+
 Use environment variables in scripts where possible:
 
 ```bash
@@ -192,6 +203,7 @@ why they are safe to remove. Never broad-delete the shared temp root.
 | Python environment alignment | `.claude/skills/align-virtual-environment/SKILL.md` |
 | Dataset README templates | `templates/` |
 | Infrastructure | `terraform/` |
+| Terraform state isolation and recovery | `docs/terraform-state-recovery.md` |
 
 ## Non-Negotiable Rules
 

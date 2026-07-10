@@ -26,8 +26,9 @@ class SharedDatasetConsumersTerraformTests(unittest.TestCase):
         self.assertRegex(consumers_tf, re.compile(r'resource "google_service_account" "shared_dataset_consumers"'))
         self.assertRegex(
             consumers_tf,
-            re.compile(r'resource "google_storage_bucket_iam_member" "shared_dataset_consumer_object_viewers"'),
+            re.compile(r'resource "google_storage_managed_folder_iam_member" "shared_dataset_consumer_object_viewers"'),
         )
+        self.assertIn("setproduct", consumers_tf)
         self.assertIn("roles/storage.objectViewer", consumers_tf)
         self.assertIn("shared_dataset_consumer_service_accounts", outputs_tf)
 

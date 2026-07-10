@@ -81,10 +81,9 @@ The production Terraform stack owns:
 - URL map rules from `/pmtiles/{access-tier}/{asset}.pmtiles` paths to
   canonical `latest/{asset}.pmtiles` objects, generated from active PMTiles
   catalog rows.
-- Optional Cloud CDN fill access:
-  `service-${PROJECT_NUMBER}@cloud-cdn-fill.iam.gserviceaccount.com` receives
-  `roles/storage.objectViewer` when
-  `pmtiles_cdn_grant_fill_service_account=true`.
+- Cloud CDN fill access is granted on the `_catalog/` and canonical asset
+  managed folders only. The fill identity has no bucket-wide read path to
+  `_scratch/`, `000-system/`, or Terraform state.
 - Managed folders for `_catalog/` and every catalog asset root. Only folders
   whose catalog row has `access_tier=public` grant `allUsers`
   `roles/storage.objectViewer`.
@@ -119,8 +118,9 @@ As of May 12, 2026:
 - The backend bucket has signed request key
   `shared-datasets-pmtiles-v1`.
 - The PMTiles CDN signing-key secret has an enabled version.
-- The Cloud CDN fill service account has `roles/storage.objectViewer` on
-  `gs://skytruth-shared-datasets-1`.
+- The Cloud CDN fill service account has managed-folder
+  `roles/storage.objectViewer` grants on `_catalog/` and canonical asset roots,
+  not on the whole bucket.
 - Approved consumer runtime service accounts have
   `roles/secretmanager.secretAccessor` on the signing-key secret.
 
@@ -217,9 +217,10 @@ gcloud iam service-accounts describe \
   --project="$GOOGLE_CLOUD_PROJECT"
 ```
 
-Then set `pmtiles_cdn_grant_fill_service_account=true` in Terraform so the
-service account can read PMTiles after public GCS access is removed. Open a PR
-and let the protected workflow apply after review and merge.
+Then run the reviewed PMTiles CDN sync so Terraform grants the fill identity
+viewer access on `_catalog/` and canonical asset managed folders. Do not restore
+a bucket-wide viewer grant. Open a PR and let the protected workflow apply after
+review and merge.
 
 Grant consumer runtime access to the signing secret in the same PR. Use the
 runtime service account that serves the cookie endpoint. Do not assume the
@@ -391,8 +392,8 @@ CDN signed-cookie rollout:
 1. Apply managed-folder public grants while keeping
    `shared_bucket_public_object_viewer_enabled=true`.
 2. Install the signed request key on the backend bucket and Secret Manager.
-3. Enable `pmtiles_cdn_grant_fill_service_account=true`, grant signer access
-   for each approved consumer runtime, and apply Terraform.
+3. Apply the managed-folder CDN fill grants, grant signer access for each
+   approved consumer runtime, and apply Terraform through the protected sync.
 4. Deploy each consumer environment with PMTiles session endpoint support,
    tiered CDN URLs, and credentialed PMTiles range fetches.
 5. Set `shared_bucket_public_object_viewer_enabled=false` and apply Terraform

@@ -468,11 +468,12 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
             required = {
                 "main ref validation": WORKFLOW_MAIN_REF_GUARD,
                 "prod Terraform state concurrency": "group: prod-terraform-state",
-                "resource-change allowlist": "allowed_exact",
             }
             for label, marker in required.items():
                 if marker not in text:
                     errors.append(f"{rel}: prod Terraform apply workflow is missing {label}")
+            if "allowed_exact" not in text and "terraform_plan_allowlist.py" not in text:
+                errors.append(f"{rel}: prod Terraform apply workflow is missing resource-change allowlist")
 
     return errors
 

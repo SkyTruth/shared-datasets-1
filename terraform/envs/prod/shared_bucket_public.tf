@@ -20,7 +20,7 @@ resource "google_storage_bucket" "shared_bucket" {
   }
 
   soft_delete_policy {
-    retention_duration_seconds = 604800
+    retention_duration_seconds = 2592000
   }
 
   hierarchical_namespace {
@@ -101,6 +101,19 @@ resource "google_storage_managed_folder_iam_member" "shared_bucket_public_object
   managed_folder = each.value.name
   role           = "roles/storage.objectViewer"
   member         = "allUsers"
+
+  depends_on = [
+    google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync,
+  ]
+}
+
+resource "google_storage_managed_folder_iam_member" "shared_bucket_cdn_fill_object_viewers" {
+  for_each = google_storage_managed_folder.shared_bucket_public_prefixes
+
+  bucket         = each.value.bucket
+  managed_folder = each.value.name
+  role           = "roles/storage.objectViewer"
+  member         = "serviceAccount:service-${data.google_project.current.number}@cloud-cdn-fill.iam.gserviceaccount.com"
 
   depends_on = [
     google_storage_bucket_iam_member.github_actions_pmtiles_managed_folder_sync,

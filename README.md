@@ -558,7 +558,18 @@ Production Terraform mutations must land through reviewed PRs and protected
 GitHub Actions workflows in the `shared-datasets-production` environment. Local
 `terraform plan`, `terraform validate`, and saved-plan review commands are OK;
 local `terraform apply` and `scripts/terraform_prod_apply.py` are reserved for
-explicitly approved break-glass emergencies.
+explicitly approved break-glass emergencies. The helper requires
+`--break-glass`, a non-empty `--reason`, exact plan-hash confirmation, and
+`--allow-destroy` for delete/replace actions; it writes Cloud Logging audit
+events before and after apply.
+
+Production and preview state live in the private, versioned
+`skytruth-shared-datasets-1-terraform-state` bucket. Apply workflows fail
+closed until the expected isolated state object exists. Follow
+`docs/terraform-state-recovery.md` for bootstrap, migration, verification, and
+legacy-state cleanup. The shared HNS data bucket uses 30-day soft delete;
+Object Versioning is intentionally enabled only on the flat-namespace state
+bucket.
 
 ### Feature Branch Preview
 

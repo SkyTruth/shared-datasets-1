@@ -197,6 +197,8 @@ jobs:
             -target=google_compute_url_map.pmtiles_cdn \
             -target=google_storage_managed_folder.shared_bucket_public_prefixes \
             -target=google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers \
+            -target=google_storage_managed_folder_iam_member.shared_bucket_cdn_fill_object_viewers \
+            -target=google_storage_managed_folder_iam_member.shared_dataset_consumer_object_viewers \
             -var="wdpa_monthly_image=unused-by-pmtiles-cdn-sync" \
             -var="sea_ice_daily_image=unused-by-pmtiles-cdn-sync" \
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
@@ -215,11 +217,15 @@ jobs:
               "google_compute_url_map.pmtiles_cdn",
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+              "google_storage_managed_folder_iam_member.shared_bucket_cdn_fill_object_viewers",
+              "google_storage_managed_folder_iam_member.shared_dataset_consumer_object_viewers",
           }
           managed_folder_prefix = "google_storage_managed_folder.shared_bucket_public_prefixes"
           allowed_for_each_prefixes = {
               "google_storage_managed_folder.shared_bucket_public_prefixes",
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
+              "google_storage_managed_folder_iam_member.shared_bucket_cdn_fill_object_viewers",
+              "google_storage_managed_folder_iam_member.shared_dataset_consumer_object_viewers",
           }
 
           def is_allowed_address(address):

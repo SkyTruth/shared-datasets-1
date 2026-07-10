@@ -177,16 +177,6 @@ resource "google_compute_backend_service" "pmtiles_redirector" {
   }
 }
 
-resource "google_storage_bucket_iam_member" "shared_bucket_cloud_cdn_fill_object_viewer" {
-  count = var.pmtiles_cdn_grant_fill_service_account ? 1 : 0
-
-  bucket = var.bucket_name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:service-${data.google_project.current.number}@cloud-cdn-fill.iam.gserviceaccount.com"
-
-  depends_on = [google_project_service.required]
-}
-
 resource "google_compute_url_map" "pmtiles_cdn" {
   project     = var.project_id
   name        = "shared-datasets-pmtiles-cdn"

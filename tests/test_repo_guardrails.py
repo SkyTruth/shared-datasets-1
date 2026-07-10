@@ -381,6 +381,30 @@ class RepoGuardrailsTests(unittest.TestCase):
 
         self.assertTrue(any("not valid UTF-8" in error for error in errors))
 
+    def test_workflow_boundaries_accept_shared_plan_allowlist_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "apply.yml").write_text(
+                "name: Apply\n"
+                "on:\n"
+                "  push:\n"
+                "jobs:\n"
+                "  apply:\n"
+                "    concurrency:\n"
+                "      group: prod-terraform-state\n"
+                "    steps:\n"
+                "      - run: |\n"
+                "          if [[ \"${GITHUB_REF}\" != \"refs/heads/main\" ]]; then exit 1; fi\n"
+                "          python scripts/terraform_plan_allowlist.py plan.json\n"
+                "          terraform -chdir=terraform/envs/prod apply plan.tfplan\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertFalse(any("prod Terraform apply workflow" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()
