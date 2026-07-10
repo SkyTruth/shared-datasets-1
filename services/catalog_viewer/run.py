@@ -20,6 +20,16 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
+from services.http_base import (
+    NO_STORE,
+    Response,
+    api_headers,
+    authenticated_user_email,
+    email_domain_allowed,
+    json_response,
+    send_handler_response,
+    split_gs_uri,
+)
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -29,7 +39,6 @@ DEFAULT_CATALOG_CACHE_TTL_SECONDS = 60.0
 DEFAULT_SIGNED_URL_TTL_SECONDS = 900
 DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
 NO_CACHE = "no-cache, max-age=0, must-revalidate"
-NO_STORE = "no-store"
 ACCESS_TIERS = {"public", "private", "internal"}
 RESTRICTED_ACCESS_TIERS = {"private", "internal"}
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -37,13 +46,6 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
 ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
-
-
-@dataclass(frozen=True)
-class Response:
-    status: int
-    headers: dict[str, str]
-    body: bytes = b""
 
 
 @dataclass(frozen=True)
@@ -834,38 +836,6 @@ def first_query_value(path: str, key: str) -> str:
     return values[0].strip() if values else ""
 
 
-def authenticated_user_email(headers: Mapping[str, str]) -> str:
-    raw = header_value(headers, "X-Goog-Authenticated-User-Email") or ""
-    raw = raw.strip()
-    if ":" in raw:
-        raw = raw.rsplit(":", 1)[-1]
-    return raw.lower()
-
-
-def email_domain_allowed(email: str, allowed_domains: tuple[str, ...]) -> bool:
-    if not email or "@" not in email:
-        return False
-    domain = email.rsplit("@", 1)[-1].lower()
-    return domain in {item.lower().lstrip("@") for item in allowed_domains if item}
-
-
-def header_value(headers: Mapping[str, str], name: str) -> str | None:
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
-def split_gs_uri(uri: str) -> tuple[str, str]:
-    if not uri.startswith("gs://"):
-        raise ValueError(f"expected gs:// URI, got {uri!r}")
-    rest = uri[5:]
-    bucket, separator, object_name = rest.partition("/")
-    if not bucket or not separator or not object_name:
-        raise ValueError(f"expected gs:// object URI, got {uri!r}")
-    return bucket, object_name
-
-
 def basename(path: str) -> str:
     return next(reversed([part for part in str(path or "").split("/") if part]), "")
 
@@ -897,18 +867,6 @@ def content_type_for_name(name: str) -> str:
         return "application/json; charset=utf-8"
     guessed, _encoding = mimetypes.guess_type(name)
     return guessed or "application/octet-stream"
-
-
-def api_headers() -> dict[str, str]:
-    return {
-        "Cache-Control": NO_STORE,
-        "Content-Type": "application/json; charset=utf-8",
-    }
-
-
-def json_response(status: int, payload: Mapping[str, Any], *, include_body: bool = True) -> Response:
-    body = b"" if not include_body else (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
-    return Response(status, {**api_headers(), "Content-Length": str(len(body))}, body)
 
 
 def text_response(status: int, message: str, headers: dict[str, str], *, include_body: bool = True) -> Response:
@@ -1071,12 +1029,7 @@ def make_handler(
             self._send(handle_request_from_self("POST", self, body))
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
-            self.send_response(response.status)
-            for key, value in response.headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            if include_body and response.body:
-                self.wfile.write(response.body)
+            send_handler_response(self, response, include_body=include_body)
 
     def handle_request_from_self(method: str, handler: BaseHTTPRequestHandler, body: bytes) -> Response:
         return handle_request(

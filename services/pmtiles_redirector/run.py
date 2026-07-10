@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 import time
-from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Mapping
@@ -17,6 +16,8 @@ from skytruth_shared_datasets import (
     SharedDatasetsError,
     UnsupportedFormatError,
 )
+
+from services.http_base import Response, header_value, send_handler_response
 
 
 DEFAULT_ALLOWED_ORIGINS = (
@@ -30,13 +31,6 @@ DEFAULT_CATALOG_TTL_SECONDS = 300.0
 PMTILES_PATH_RE = re.compile(
     r"^/pmtiles/(?P<access_tier>public|private|internal)/(?P<slug>[a-z0-9]+(?:-[a-z0-9]+)*)\.pmtiles$"
 )
-
-
-@dataclass(frozen=True)
-class Response:
-    status: int
-    headers: dict[str, str]
-    body: bytes = b""
 
 
 class CatalogUnavailable(RuntimeError):
@@ -111,7 +105,7 @@ def handle_request(
     allowed_origin_regexes: tuple[str, ...] = DEFAULT_ALLOWED_ORIGIN_REGEXES,
 ) -> Response:
     method = method.upper()
-    origin = _header(headers, "Origin")
+    origin = header_value(headers, "Origin")
     cors_headers = cors_headers_for_origin(origin, allowed_origins, allowed_origin_regexes)
     request_path = urlsplit(path).path
 
@@ -181,13 +175,6 @@ def text_response(status: int, message: str, headers: dict[str, str]) -> Respons
     return Response(status, {"Content-Type": "text/plain; charset=utf-8", **headers}, body)
 
 
-def _header(headers: Mapping[str, str], name: str) -> str | None:
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
 def _matches_origin_regex(origin: str, allowed_origin_regexes: tuple[str, ...]) -> bool:
     for pattern in allowed_origin_regexes:
         try:
@@ -242,12 +229,7 @@ def make_handler(
             )
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
-            self.send_response(response.status)
-            for key, value in response.headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            if include_body and response.body:
-                self.wfile.write(response.body)
+            send_handler_response(self, response, include_body=include_body)
 
     return Handler
 
