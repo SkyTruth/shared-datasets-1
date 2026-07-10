@@ -127,9 +127,10 @@ FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS = (
 )
 # Matches literal prod chdir applies and parameterized applies such as
 # `terraform -chdir="${TERRAFORM_DIR}" apply` in the reusable target-apply
-# workflow; combined with a terraform/envs/prod mention to exclude
+# workflow, including applies with flags between -chdir and apply on the
+# same line; combined with a terraform/envs/prod mention to exclude
 # preview-only workflows.
-TERRAFORM_APPLY_RE = re.compile(r"terraform -chdir=\S+ apply")
+TERRAFORM_APPLY_RE = re.compile(r"terraform +-chdir=\S+[^\n]* apply\b")
 
 
 @dataclass(frozen=True)
@@ -436,9 +437,12 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
         return []
 
     errors: list[str] = []
-    for path in sorted(workflows_dir.glob("*.yml")):
+    for path in sorted([*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml")]):
         text = file_text(path)
         rel = path.relative_to(repo_root)
+        if not text and path.stat().st_size > 0:
+            errors.append(f"{rel}: workflow file is not valid UTF-8, so boundary checks cannot run")
+            continue
 
         if any(marker in text for marker in WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS):
             errors.append(f"{rel}: single-object dataset publish fallback is not allowed; use reviewed PR plans")

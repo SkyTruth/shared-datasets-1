@@ -32,7 +32,7 @@ on:
         type: string
         default: ""
       block_deletes:
-        description: "Refuse deletes even for allowlisted addresses."
+        description: "Refuse deletes, including replaces, even for allowlisted addresses."
         required: false
         type: boolean
         default: false
@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "${TERRAFORM_DIR}" =~ ^terraform/envs/prod(/[A-Za-z0-9_./-]+)?$ ]]; then
+          if [[ "${TERRAFORM_DIR}" == *..* ]] || [[ ! "${TERRAFORM_DIR}" =~ ^terraform/envs/prod(/[A-Za-z0-9_.-]+)*$ ]]; then
             echo "terraform_dir must stay under terraform/envs/prod: ${TERRAFORM_DIR}" >&2
             exit 1
           fi

@@ -57,7 +57,8 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         inputs = self.trigger["workflow_call"]["inputs"]
         self.assertEqual(inputs["terraform_dir"]["default"], "terraform/envs/prod")
         validate_run = self.steps["Validate Terraform directory"]["run"]
-        self.assertIn("^terraform/envs/prod(/[A-Za-z0-9_./-]+)?$", validate_run)
+        self.assertIn('"${TERRAFORM_DIR}" == *..*', validate_run)
+        self.assertIn("^terraform/envs/prod(/[A-Za-z0-9_.-]+)*$", validate_run)
         self.assertIn("terraform_dir must stay under terraform/envs/prod", validate_run)
 
     def test_plan_is_targeted_and_allowlist_enforced_before_apply(self):

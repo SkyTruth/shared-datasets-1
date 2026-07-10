@@ -349,6 +349,38 @@ class RepoGuardrailsTests(unittest.TestCase):
 
         self.assertTrue(any("single-object dataset publish fallback is not allowed" in error for error in errors))
 
+    def test_workflow_boundaries_detect_prod_apply_with_flags_and_yaml_extension(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "apply.yaml").write_text(
+                "name: Apply\n"
+                "on:\n"
+                "  push:\n"
+                "jobs:\n"
+                "  apply:\n"
+                "    steps:\n"
+                "      - run: terraform -chdir=terraform/envs/prod -input=false apply plan.tfplan\n"
+            )
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("missing main ref validation" in error for error in errors))
+        self.assertTrue(any("missing prod Terraform state concurrency" in error for error in errors))
+        self.assertTrue(any("missing resource-change allowlist" in error for error in errors))
+
+    def test_workflow_boundaries_fail_closed_on_undecodable_workflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (workflows / "binary.yml").write_bytes(b"\xff\xfe\x00broken")
+
+            errors = repo_guardrails.check_workflow_boundaries(root)
+
+        self.assertTrue(any("not valid UTF-8" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

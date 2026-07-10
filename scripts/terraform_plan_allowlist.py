@@ -35,7 +35,7 @@ def blocked_changes(
         if actions in IGNORED_ACTIONS:
             continue
         address = resource.get("address", "")
-        if block_deletes and actions == ["delete"]:
+        if block_deletes and "delete" in actions:
             blocked.append(f"{'/'.join(actions)} {address}")
             continue
         if address in allowed_exact:
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--block-deletes",
         action="store_true",
-        help="Refuse deletes even for allowlisted addresses.",
+        help="Refuse deletes, including replaces, even for allowlisted addresses.",
     )
     parser.add_argument(
         "--refusal-prefix",

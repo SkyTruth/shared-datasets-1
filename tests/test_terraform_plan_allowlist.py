@@ -78,6 +78,17 @@ class TerraformPlanAllowlistTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("- delete google_project_iam_member.allowed", output)
 
+    def test_block_deletes_refuses_allowlisted_replaces(self):
+        plan = plan_with(("google_project_iam_member.allowed", ["delete", "create"]))
+        exit_code, output = self.run_main(
+            plan,
+            "--allowed-exact",
+            "google_project_iam_member.allowed",
+            "--block-deletes",
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("- delete/create google_project_iam_member.allowed", output)
+
     def test_replace_actions_are_checked_against_allowlist(self):
         plan = plan_with(("google_firestore_database.feature_metadata", ["delete", "create"]))
         exit_code, output = self.run_main(plan, "--allowed-exact", "other.resource")
