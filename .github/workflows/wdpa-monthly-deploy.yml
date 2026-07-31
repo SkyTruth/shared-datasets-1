@@ -1,0 +1,270 @@
+name: WDPA monthly deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/wdpa-monthly-deploy.yml"
+      - "ingestion/common/**"
+      - "ingestion/wdpa_monthly/**"
+      - "scripts/feature_metadata_localization.py"
+      - "scripts/pmtiles_zoom.py"
+      - "scripts/release_feature_model.py"
+      - "scripts/slack_notify.py"
+      - "scripts/vector_asset.py"
+      - "terraform/envs/prod/main.tf"
+      - "terraform/envs/prod/wdpa_monthly.tf"
+      - "terraform/envs/prod/wdpa_monthly_variables.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+      - "terraform/modules/cloud_run_job/**"
+      - "terraform/modules/scheduler_job/**"
+  workflow_dispatch:
+    inputs:
+      canary_run_date:
+        description: "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
+  IMAGE_NAME: wdpa-monthly
+  JOB_NAME: wdpa-monthly
+  BUCKET: skytruth-shared-datasets-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TERRAFORM_VERSION: "1.8.5"
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+
+jobs:
+  deploy:
+    name: Build image and apply wdpa-monthly Terraform
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      cancel-in-progress: false
+
+    steps:
+      - name: Validate main ref
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "WDPA monthly deploy may only apply from main after reviewed changes have landed." >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate Terraform auth configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
+            exit 1
+          fi
+          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
+            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build wdpa-monthly image
+        run: |
+          set -euo pipefail
+
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          docker build \
+            --platform linux/amd64 \
+            -f ingestion/wdpa_monthly/Dockerfile \
+            -t "${image_tag}" \
+            .
+          echo "WDPA_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
+
+      - name: Smoke-test native tools in image
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" sh -c \
+            'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version'
+
+      - name: Smoke-test job import closure in image
+        run: |
+          set -euo pipefail
+
+          docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" python -c \
+            'import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
+
+      - name: Push wdpa-monthly image
+        run: |
+          set -euo pipefail
+
+          docker push "${WDPA_MONTHLY_IMAGE_TAG}"
+          image_digest="$(docker buildx imagetools inspect "${WDPA_MONTHLY_IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
+          if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
+            image_digest="$(docker buildx imagetools inspect "${WDPA_MONTHLY_IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')"
+          fi
+          if [[ -z "${image_digest}" || "${image_digest}" != sha256:* ]]; then
+            echo "Could not resolve immutable image digest for ${WDPA_MONTHLY_IMAGE_TAG}" >&2
+            exit 1
+          fi
+          image_ref="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}@${image_digest}"
+          echo "WDPA_MONTHLY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform init
+        run: terraform -chdir=terraform/envs/prod init -input=false
+
+      - name: Terraform plan
+        run: |
+          set -euo pipefail
+
+          terraform -chdir=terraform/envs/prod plan \
+            -input=false \
+            -out="${RUNNER_TEMP}/wdpa-monthly.tfplan" \
+            -target=module.wdpa_monthly_job.google_cloud_run_v2_job.this \
+            -var="wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}" \
+            -var="eamlis_monthly_image=unused-by-wdpa-monthly-deploy" \
+            -var="sea_ice_daily_image=unused-by-wdpa-monthly-deploy"
+
+      - name: Export Terraform plan JSON
+        run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/wdpa-monthly.tfplan" > "${RUNNER_TEMP}/wdpa-monthly.tfplan.json"
+
+      - name: Enforce wdpa-monthly resource-change allowlist
+        run: |
+          set -euo pipefail
+
+          python - "${RUNNER_TEMP}/wdpa-monthly.tfplan.json" "${WDPA_MONTHLY_IMAGE}" <<'PY'
+          import json
+          import sys
+
+          plan = json.load(open(sys.argv[1]))
+          expected_image = sys.argv[2]
+          allowed_exact = {
+              "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+          }
+
+          blocked = []
+          for resource in plan.get("resource_changes", []):
+              actions = resource.get("change", {}).get("actions", [])
+              if actions in ([], ["no-op"], ["read"]):
+                  continue
+              address = resource.get("address", "")
+              if address not in allowed_exact:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              if actions != ["update"]:
+                  blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              after = resource.get("change", {}).get("after", {})
+              containers = (
+                  after.get("template", [{}])[0]
+                  .get("template", [{}])[0]
+                  .get("containers", [{}])
+              )
+              image = containers[0].get("image") if containers else None
+              if image != expected_image:
+                  blocked.append(f"unexpected image for {address}: {image!r}")
+
+          if blocked:
+              print("Refusing wdpa-monthly deploy because the Terraform plan changes non-allowlisted resources:")
+              for item in blocked:
+                  print(f"- {item}")
+              raise SystemExit(1)
+          PY
+
+      - name: Terraform apply
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/wdpa-monthly.tfplan"
+
+      - name: Confirm deployed digest
+        run: |
+          set -euo pipefail
+
+          deployed_image="$(gcloud run jobs describe "${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          echo "Deployed image: ${deployed_image}"
+          if [[ "${deployed_image}" != "${WDPA_MONTHLY_IMAGE}" ]]; then
+            echo "Cloud Run job image does not match expected digest." >&2
+            exit 1
+          fi
+
+      - name: Execute wdpa-monthly canary
+        env:
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          set -euo pipefail
+
+          execute_args=(
+            "${JOB_NAME}"
+            --region="${REGION}"
+            --project="${GOOGLE_CLOUD_PROJECT}"
+            --async
+            "--format=value(metadata.name)"
+          )
+          if [[ -n "${CANARY_RUN_DATE}" ]]; then
+            if [[ ! "${CANARY_RUN_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "canary_run_date must be YYYY-MM-DD, got: ${CANARY_RUN_DATE}" >&2
+              exit 1
+            fi
+            echo "Canary uses execution-level override RUN_DATE=${CANARY_RUN_DATE}"
+            execute_args+=(--update-env-vars="RUN_DATE=${CANARY_RUN_DATE}")
+          fi
+          execution_name="$(gcloud run jobs execute "${execute_args[@]}")"
+          echo "Canary execution: ${execution_name}"
+          echo "WDPA_CANARY_EXECUTION=${execution_name}" >> "${GITHUB_ENV}"
+
+      - name: Watch wdpa-monthly canary
+        run: |
+          set -euo pipefail
+
+          # A full WDPA publish is a known multi-hour batch run, so this step
+          # only rejects fast failures. A canary still running after the watch
+          # window is reported and left to Cloud Run job failure alerting.
+          for _ in $(seq 1 20); do
+            state="$(gcloud run jobs executions describe "${WDPA_CANARY_EXECUTION}" \
+              --region="${REGION}" \
+              --project="${GOOGLE_CLOUD_PROJECT}" \
+              --format='value(status.succeededCount,status.failedCount)')"
+            succeeded="$(cut -f1 <<<"${state}")"
+            failed="$(cut -f2 <<<"${state}")"
+            if [[ -n "${failed}" && "${failed}" != "0" ]]; then
+              echo "Canary execution ${WDPA_CANARY_EXECUTION} failed." >&2
+              exit 1
+            fi
+            if [[ -n "${succeeded}" && "${succeeded}" != "0" ]]; then
+              echo "Canary execution ${WDPA_CANARY_EXECUTION} succeeded."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Canary execution ${WDPA_CANARY_EXECUTION} is still running after the watch window."
+          echo "Monitor it with: gcloud run jobs executions describe ${WDPA_CANARY_EXECUTION} --region=${REGION} --project=${GOOGLE_CLOUD_PROJECT}"

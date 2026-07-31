@@ -103,6 +103,19 @@ Build from the repo root:
 docker build -f ingestion/eamlis_monthly/Dockerfile -t eamlis-monthly .
 ```
 
+## Deploy
+
+Production deploys run through `.github/workflows/eamlis-monthly-deploy.yml`
+in the `shared-datasets-production` environment. Merging reviewed changes that
+touch this job, `ingestion/common/`, the copied `scripts/` modules, or the job
+Terraform builds a fresh image from `main`, smoke-tests it, pushes an immutable
+digest, applies only `module.eamlis_monthly_job.google_cloud_run_v2_job.this`,
+runs a waited canary execution, and validates the latest release metadata
+contract plus asset-scoped bucket hygiene. Use the workflow's `canary_run_date`
+dispatch input for a deliberate backfill or metadata-contract repair run. Do
+not deploy this job with a local `terraform apply` or by pushing hand-built
+images.
+
 ## Cost Controls and Teardown
 
 Immediate stop:
