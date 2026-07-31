@@ -217,7 +217,9 @@ jobs:
       - name: Enforce PMTiles resource-change allowlist
         run: |
           python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
+          import csv
           import json
+          import posixpath
           import sys
 
           plan = json.load(open(sys.argv[1]))
@@ -233,10 +235,35 @@ jobs:
               "google_storage_managed_folder_iam_member.shared_bucket_public_object_viewers",
           }
 
+          # Managed-folder deletes remove only the folder-level IAM anchor and
+          # never delete objects. A delete is legitimate only when the asset
+          # root has left the catalog, mirroring how the Terraform locals
+          # derive the managed-folder for_each set from catalog rows.
+          catalog_managed_folder_names = {"_catalog/"}
+          with open("catalog/shared-datasets-catalog.csv", newline="", encoding="utf-8") as handle:
+              for row in csv.DictReader(handle):
+                  canonical_path = (row.get("canonical_path") or "").strip()
+                  if not canonical_path.startswith("gs://"):
+                      continue
+                  object_name = canonical_path[len("gs://"):].partition("/")[2]
+                  folder = posixpath.dirname(posixpath.dirname(object_name))
+                  if folder:
+                      catalog_managed_folder_names.add(f"{folder}/")
+
           def is_allowed_address(address):
               if address in allowed_exact:
                   return True
               return any(address.startswith(f"{prefix}[") for prefix in allowed_for_each_prefixes)
+
+          def managed_folder_name(resource):
+              index = resource.get("index")
+              if isinstance(index, str) and index:
+                  return index
+              address = resource.get("address", "")
+              _, opener, rest = address.partition('["')
+              if not opener:
+                  return ""
+              return rest.rsplit('"]', 1)[0]
 
           blocked = []
           for resource in plan.get("resource_changes", []):
@@ -251,6 +278,14 @@ jobs:
                   (address == managed_folder_prefix or address.startswith(f"{managed_folder_prefix}["))
                   and "delete" in actions
               ):
+                  folder_name = managed_folder_name(resource)
+                  if (
+                      actions == ["delete"]
+                      and address.startswith(f"{managed_folder_prefix}[")
+                      and folder_name
+                      and folder_name not in catalog_managed_folder_names
+                  ):
+                      continue
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
               if is_allowed_address(address):

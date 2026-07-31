@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import json
+import posixpath
 import subprocess
 import sys
 import tempfile
@@ -418,6 +420,46 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(unrelated.returncode, 1)
         self.assertIn("update google_storage_bucket.unrelated", unrelated.stdout)
+
+    def test_pmtiles_cdn_sync_allows_managed_folder_delete_only_when_prefix_left_catalog(self):
+        workflow = load_workflow(PMTILES_CDN_SYNC)
+        enforce_run = workflow_steps_by_name(workflow, "sync")[
+            "Enforce PMTiles resource-change allowlist"
+        ]["run"]
+        folder_resource = "google_storage_managed_folder.shared_bucket_public_prefixes"
+
+        def folder_delete(prefix: str, actions: list[str]) -> dict:
+            return {
+                "address": f'{folder_resource}["{prefix}"]',
+                "index": prefix,
+                "change": {"actions": actions},
+            }
+
+        with (REPO_ROOT / "catalog/shared-datasets-catalog.csv").open(newline="", encoding="utf-8") as handle:
+            catalog_rows = list(csv.DictReader(handle))
+        active_path = catalog_rows[0]["canonical_path"]
+        object_name = active_path[len("gs://"):].partition("/")[2]
+        active_prefix = posixpath.dirname(posixpath.dirname(object_name)) + "/"
+        retired_prefix = "300-infrastructure-industrial/320-mining/no-longer-in-catalog/"
+
+        allowed = run_embedded_python_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete"])])
+        self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
+        still_active = run_embedded_python_allowlist(enforce_run, [folder_delete(active_prefix, ["delete"])])
+        self.assertEqual(still_active.returncode, 1, still_active.stdout + still_active.stderr)
+        self.assertIn(active_prefix, still_active.stdout)
+
+        catalog_folder = run_embedded_python_allowlist(enforce_run, [folder_delete("_catalog/", ["delete"])])
+        self.assertEqual(catalog_folder.returncode, 1)
+
+        replace = run_embedded_python_allowlist(enforce_run, [folder_delete(retired_prefix, ["delete", "create"])])
+        self.assertEqual(replace.returncode, 1)
+
+        whole_resource = run_embedded_python_allowlist(
+            enforce_run,
+            [terraform_resource_change(folder_resource, ["delete"])],
+        )
+        self.assertEqual(whole_resource.returncode, 1)
 
     def test_scratch_cleanup_iam_sync_uses_constrained_apply(self):
         # Caller wiring is asserted in detail in
