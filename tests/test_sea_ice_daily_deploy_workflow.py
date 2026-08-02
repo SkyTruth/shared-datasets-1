@@ -27,6 +27,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
 
         self.assertEqual(workflow["name"], "Sea ice daily deploy")
         self.assertEqual(trigger["push"]["branches"], ["main"])
+        self.assertIn("catalog/feature-identity-resolutions/**", set(trigger["push"]["paths"]))
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("resume_scheduler", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -64,6 +65,14 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         all_step_runs = "\n".join(str(step.get("run", "")) for step in steps.values())
         self.assertNotIn("gcloud run jobs describe wdpa-monthly", all_step_runs)
         self.assertNotIn("gcloud run jobs describe eamlis-monthly", all_step_runs)
+
+        dockerfile = (REPO_ROOT / "ingestion/sea_ice_daily/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions",
+            dockerfile,
+            "sea-ice-daily image must ship reviewed feature-identity resolutions; "
+            "the job loads them from catalog/feature-identity-resolutions/ at runtime",
+        )
 
         enforce_run = steps["Enforce sea-ice-daily resource-change allowlist"]["run"]
         self.assertEqual(

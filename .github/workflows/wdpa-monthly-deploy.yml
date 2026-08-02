@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/wdpa-monthly-deploy.yml"
+      - "catalog/feature-identity-resolutions/**"
       - "ingestion/common/**"
       - "ingestion/wdpa_monthly/**"
       - "scripts/feature_metadata_localization.py"
