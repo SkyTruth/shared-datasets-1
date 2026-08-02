@@ -256,6 +256,44 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         notify.assert_called_once()
         self.assertIn("catalog/feature-identity-resolutions/example.json", notify.call_args.kwargs["body"])
 
+    def test_unresolved_ambiguities_log_full_evidence_and_cap_message(self):
+        def ambiguity_for(index: int) -> model.IdentityAmbiguity:
+            return model.IdentityAmbiguity(
+                ambiguity_type="same_geometry_changed_properties",
+                identity_key=(f"new-{index}",),
+                geometry_hash=VALID_HASH_A,
+                properties_hash=VALID_HASH_B,
+                matching_geometry_feature_ids=("1",),
+                matching_properties_feature_ids=(),
+                matching_geometry_properties_hashes=(VALID_HASH_A,),
+                matching_properties_geometry_hashes=(),
+            )
+
+        total = feature_metadata.IDENTITY_AMBIGUITY_MESSAGE_LIMIT + 5
+        ambiguities = [ambiguity_for(index) for index in range(total)]
+
+        with mock.patch("scripts.slack_notify.notify", return_value=True):
+            with self.assertLogs("ingestion.common.feature_metadata", level="ERROR") as logs:
+                with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash") as raised:
+                    feature_metadata.raise_unresolved_identity_ambiguities(
+                        asset_slug="example",
+                        release="2026-05-01",
+                        ambiguities=ambiguities,
+                    )
+
+        evidence_lines = [line for line in logs.output if "identity ambiguity evidence" in line]
+        self.assertEqual(len(evidence_lines), total)
+        self.assertIn(f"identity ambiguity evidence example 2026-05-01 1/{total}:", evidence_lines[0])
+        self.assertIn(f"{total}/{total}", evidence_lines[-1])
+
+        message = str(raised.exception)
+        self.assertIn(f"has {total} unresolved partial identity hash match(es)", message)
+        self.assertEqual(
+            message.count('"ambiguity_type"'),
+            feature_metadata.IDENTITY_AMBIGUITY_MESSAGE_LIMIT,
+        )
+        self.assertIn("full evidence is in the per-ambiguity", message)
+
     def test_sidecar_round_trip_uses_split_hashes(self):
         feature = model.FeatureRecord(
             feature_id="1",

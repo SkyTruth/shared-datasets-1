@@ -40,6 +40,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
         push_paths = set(trigger["push"]["paths"])
         self.assertIn(".github/workflows/wdpa-monthly-deploy.yml", push_paths)
+        self.assertIn("catalog/feature-identity-resolutions/**", push_paths)
         self.assertIn("ingestion/common/**", push_paths)
         self.assertIn("ingestion/wdpa_monthly/**", push_paths)
         for script_path in REQUIRED_SCRIPT_COPIES:
@@ -113,6 +114,12 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                 dockerfile,
                 f"wdpa-monthly image must copy {script_path}; the job imports it at runtime",
             )
+        self.assertIn(
+            "COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions",
+            dockerfile,
+            "wdpa-monthly image must ship reviewed feature-identity resolutions; "
+            "the job loads them from catalog/feature-identity-resolutions/ at runtime",
+        )
 
 
 if __name__ == "__main__":

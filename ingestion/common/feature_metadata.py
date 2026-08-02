@@ -5,12 +5,15 @@ from __future__ import annotations
 import gzip
 import io
 import json
+import logging
 import re
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from scripts import release_feature_model
+
+LOGGER = logging.getLogger(__name__)
 
 FEATURE_ID_COLUMN = "feature_id"
 GEOMETRY_HASH_COLUMN = "geometry_hash"
@@ -398,6 +401,9 @@ def notify_identity_ambiguities(
     )
 
 
+IDENTITY_AMBIGUITY_MESSAGE_LIMIT = 10
+
+
 def raise_unresolved_identity_ambiguities(
     *,
     asset_slug: str,
@@ -407,9 +413,33 @@ def raise_unresolved_identity_ambiguities(
     if not ambiguities:
         return
     notify_identity_ambiguities(asset_slug=asset_slug, release=release, ambiguities=ambiguities)
+    # One log line per ambiguity: a single entry holding all evidence can
+    # exceed the Cloud Logging entry size limit and get truncated, which
+    # leaves maintainers without the evidence the resolutions file needs.
+    payloads = release_feature_model.identity_ambiguities_to_dicts(ambiguities)
+    total = len(payloads)
+    for index, payload in enumerate(payloads, start=1):
+        LOGGER.error(
+            "identity ambiguity evidence %s %s %d/%d: %s",
+            asset_slug,
+            release,
+            index,
+            total,
+            json.dumps(payload, sort_keys=True),
+        )
+    visible = payloads[:IDENTITY_AMBIGUITY_MESSAGE_LIMIT]
+    suffix = (
+        ""
+        if total <= len(visible)
+        else (
+            f" ... {total - len(visible)} more; full evidence is in the "
+            "per-ambiguity 'identity ambiguity evidence' log lines."
+        )
+    )
     raise RuntimeError(
-        f"{asset_slug} has {len(ambiguities)} unresolved partial identity hash match(es) requiring maintainer review: "
-        + json.dumps(release_feature_model.identity_ambiguities_to_dicts(ambiguities), sort_keys=True)
+        f"{asset_slug} has {total} unresolved partial identity hash match(es) requiring maintainer review: "
+        + json.dumps(visible, sort_keys=True)
+        + suffix
     )
 
 

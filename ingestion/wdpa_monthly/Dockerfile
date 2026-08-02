@@ -45,5 +45,6 @@ COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
+COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

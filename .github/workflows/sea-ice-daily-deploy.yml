@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/sea-ice-daily-deploy.yml"
+      - "catalog/feature-identity-resolutions/**"
       - "ingestion/common/**"
       - "ingestion/sea_ice_daily/**"
       - "scripts/pmtiles_zoom.py"
