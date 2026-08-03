@@ -7,6 +7,7 @@ update external databases.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import csv
 import json
@@ -99,7 +100,7 @@ class AssetOutputs:
     row_count: int
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
-    sidecar_records: tuple[dict[str, Any], ...]
+    next_generated_feature_id: int
     localization_report: dict[str, Any]
 
 
@@ -633,45 +634,54 @@ def validate_pmtiles(path: Path) -> None:
         run_command(["tippecanoe-decode", "-S", str(path)], capture_json=True)
 
 
-def write_translation_source(records: Sequence[Mapping[str, Any]], path: Path) -> int:
-    """Write initial proper-name translation rows from canonical metadata."""
-    count = 0
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "feature_id",
-                "field",
-                "locale",
-                "source_value_hash",
-                "value",
-                "review_state",
-                "notes",
-            ],
+TRANSLATION_SOURCE_FIELDNAMES = (
+    "feature_id",
+    "field",
+    "locale",
+    "source_value_hash",
+    "value",
+    "review_state",
+    "notes",
+)
+
+
+class TranslationSourceWriter:
+    """Write proper-name translation rows as sidecar records stream past."""
+
+    def __init__(self, handle) -> None:
+        self._writer = csv.DictWriter(handle, fieldnames=list(TRANSLATION_SOURCE_FIELDNAMES))
+        self._writer.writeheader()
+        self.count = 0
+
+    def write_record(self, record: Mapping[str, Any]) -> None:
+        properties = record.get("properties")
+        if not isinstance(properties, Mapping):
+            return
+        value = properties.get(TRANSLATION_FIELD)
+        if value is None or str(value) == "":
+            return
+        self._writer.writerow(
+            {
+                "feature_id": str(record.get("feature_id") or ""),
+                "field": TRANSLATION_FIELD,
+                "locale": TRANSLATION_LOCALE,
+                "source_value_hash": feature_metadata_localization.source_value_hash(value),
+                "value": str(value),
+                "review_state": TRANSLATION_REVIEW_STATE,
+                "notes": TRANSLATION_NOTES,
+            }
         )
-        writer.writeheader()
-        for record in records:
-            properties = record.get("properties")
-            if not isinstance(properties, Mapping):
-                continue
-            value = properties.get(TRANSLATION_FIELD)
-            if value is None or str(value) == "":
-                continue
-            writer.writerow(
-                {
-                    "feature_id": str(record.get("feature_id") or ""),
-                    "field": TRANSLATION_FIELD,
-                    "locale": TRANSLATION_LOCALE,
-                    "source_value_hash": feature_metadata_localization.source_value_hash(value),
-                    "value": str(value),
-                    "review_state": TRANSLATION_REVIEW_STATE,
-                    "notes": TRANSLATION_NOTES,
-                }
-            )
-            count += 1
-    if count == 0:
+        self.count += 1
+
+
+@contextlib.contextmanager
+def translation_source_writer(path: Path):
+    """Open a streaming translation-source writer, requiring at least one row."""
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = TranslationSourceWriter(handle)
+        yield writer
+    if writer.count == 0:
         raise RuntimeError(f"{TRANSLATION_FIELD} translation source would be empty")
-    return count
 
 
 def materialize_localized_metadata(
@@ -803,29 +813,26 @@ def build_asset_outputs(
         remove_if_exists(path)
 
     convert_gpkg_to_geojsonseq(gpkg, asset, geojsonseq)
-    enriched_features, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
-        feature_metadata.iter_geojsonseq(geojsonseq),
-        asset_slug=asset.slug,
-        release=run_date.isoformat(),
-        source_fields=["SITE_PID"],
-        provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
-        previous_records=previous_records,
-        identity_resolution_decisions=identity_resolution_decisions,
-    )
-    if ambiguities:
-        feature_metadata.raise_unresolved_identity_ambiguities(
+    # The GPKG is dead weight once the GeoJSONSeq exists. On Cloud Run the
+    # writable filesystem is charged against container memory, so holding it
+    # until after the FGB build costs the release its own size in RAM.
+    remove_if_exists(gpkg)
+
+    with translation_source_writer(metadata_translations) as translations:
+        release_outputs = feature_metadata.write_generated_id_release(
+            open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
             asset_slug=asset.slug,
             release=run_date.isoformat(),
-            ambiguities=ambiguities,
+            source_fields=["SITE_PID"],
+            provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
+            enriched_features_path=enriched_geojsonseq,
+            sidecar_path=metadata,
+            previous_records=previous_records,
+            identity_resolution_decisions=identity_resolution_decisions,
+            sidecar_sink=translations.write_record,
         )
-    feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
-    feature_metadata.write_sidecar(sidecar_records, metadata)
-    translation_count = write_translation_source(sidecar_records, metadata_translations)
-    schema_payload = feature_metadata.schema_from_records(
-        asset_slug=asset.slug,
-        release=run_date.isoformat(),
-        records=sidecar_records,
-    )
+    translation_count = translations.count
+    schema_payload = release_outputs.schema_payload
     feature_metadata.write_schema(schema_payload, schema)
     localization_report = materialize_localized_metadata(
         metadata=metadata,
@@ -866,7 +873,6 @@ def build_asset_outputs(
         pmtiles_path=pmtiles,
         decode_zoom=PMTILES_MINZOOM,
     )
-    remove_if_exists(gpkg)
 
     return AssetOutputs(
         fgb=fgb,
@@ -887,7 +893,7 @@ def build_asset_outputs(
             "schema": sha256_file(schema),
         },
         schema_payload=schema_payload,
-        sidecar_records=tuple(sidecar_records),
+        next_generated_feature_id=release_outputs.next_generated_feature_id,
         localization_report=localization_report,
     )
 
@@ -926,7 +932,7 @@ def publish_asset(
         identity=feature_metadata.release_feature_model.build_identity_metadata(
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
-            next_generated_feature_id_after_release=feature_metadata.next_generated_feature_id(outputs.sidecar_records),
+            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
         ),
         extra_suffix_paths=(
             (f".metadata.{TRANSLATION_LOCALE}.ndjson.gz", outputs.metadata_es),

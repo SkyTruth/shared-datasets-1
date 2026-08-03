@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from ingestion.common import feature_metadata
+from release_streaming_helpers import write_generated_release
 from scripts import release_feature_model as model
 
 
@@ -68,7 +69,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             "geometry": {"type": "Point", "coordinates": [0, 0]},
         }
 
-        enriched, sidecar, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+        enriched, sidecar, result = write_generated_release(
             [feature],
             asset_slug="wdpa-marine",
             release="2026-05-01",
@@ -76,7 +77,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             source_fields=["SITE_PID"],
         )
 
-        self.assertEqual(ambiguities, ())
+        self.assertEqual(result.feature_count, 1)
         self.assertEqual(enriched[0]["properties"]["feature_id"], "1")
         self.assertEqual(sidecar[0]["identity_key"], ["WDPA-123"])
 
@@ -87,7 +88,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             "geometry": {"type": "Point", "coordinates": [0, 0]},
         }
 
-        enriched, sidecar, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+        enriched, sidecar, result = write_generated_release(
             [feature, feature],
             asset_slug="ims-sea-ice-extent",
             release="2026-05-01",
@@ -96,7 +97,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         self.assertEqual(len(enriched), 1)
         self.assertEqual(len(sidecar), 1)
-        self.assertEqual(ambiguities, ())
+        self.assertEqual(result.feature_count, 1)
         self.assertEqual(sidecar[0]["feature_id"], "1")
         self.assertEqual(sidecar[0]["provenance"]["duplicate_source_row_numbers"], [2])
 

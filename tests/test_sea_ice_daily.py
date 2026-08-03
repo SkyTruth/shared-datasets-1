@@ -144,7 +144,7 @@ def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ic
             "schema": VALID_SCHEMA_SHA,
         },
         schema_payload=schema_payload,
-        sidecar_records=(),
+        next_generated_feature_id=1,
     )
 
 

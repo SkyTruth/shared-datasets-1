@@ -12,6 +12,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.common import release_index
 from ingestion.common import feature_metadata
+from release_streaming_helpers import write_generated_release
 from ingestion.common.gcs import GcsPublisher
 from scripts import release_feature_model
 
@@ -261,7 +262,7 @@ class GcsPublisherTests(unittest.TestCase):
             }
         ]
 
-        enriched, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+        enriched, sidecar_records, _result = write_generated_release(
             [new_feature],
             asset_slug="ims-sea-ice-extent",
             release="2026-06-15",
@@ -271,7 +272,6 @@ class GcsPublisherTests(unittest.TestCase):
             identity_ambiguity_match_properties=False,
         )
 
-        self.assertEqual(ambiguities, ())
         self.assertEqual(enriched[0]["properties"]["feature_id"], "7")
         self.assertEqual(sidecar_records[0]["feature_id"], "7")
         self.assertEqual(sidecar_records[0]["properties"]["ice_date"], "2026-06-15")
@@ -310,7 +310,7 @@ class GcsPublisherTests(unittest.TestCase):
             "properties": {"DN": 3, "ice_date": "2026-06-15"},
         }
 
-        enriched, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
+        enriched, sidecar_records, _result = write_generated_release(
             [new_feature],
             asset_slug="ims-sea-ice-extent",
             release="2026-06-15",
@@ -320,7 +320,6 @@ class GcsPublisherTests(unittest.TestCase):
             identity_ambiguity_match_properties=False,
         )
 
-        self.assertEqual(ambiguities, ())
         self.assertEqual(enriched[0]["properties"]["feature_id"], "3")
         self.assertEqual(sidecar_records[0]["feature_id"], "3")
 
@@ -347,19 +346,22 @@ class GcsPublisherTests(unittest.TestCase):
             "properties": {"DN": 4, "ice_date": "2026-06-15"},
         }
 
-        _enriched, _sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
-            [new_feature],
-            asset_slug="ims-sea-ice-extent",
-            release="2026-06-15",
-            provenance={"source_date": "2026-06-15"},
-            previous_records=previous_records,
-            identity_excluded_properties=("ice_date",),
-            identity_ambiguity_match_properties=False,
-        )
+        with self.assertLogs("ingestion.common.feature_metadata", level="ERROR") as logs:
+            with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash"):
+                write_generated_release(
+                    [new_feature],
+                    asset_slug="ims-sea-ice-extent",
+                    release="2026-06-15",
+                    provenance={"source_date": "2026-06-15"},
+                    previous_records=previous_records,
+                    identity_excluded_properties=("ice_date",),
+                    identity_ambiguity_match_properties=False,
+                )
 
-        self.assertEqual(len(ambiguities), 1)
-        self.assertEqual(ambiguities[0].ambiguity_type, "same_geometry_changed_properties")
-        self.assertEqual(ambiguities[0].matching_geometry_feature_ids, ("7",))
+        evidence = [line for line in logs.output if "identity ambiguity evidence" in line]
+        self.assertEqual(len(evidence), 1)
+        self.assertIn('"ambiguity_type": "same_geometry_changed_properties"', evidence[0])
+        self.assertIn('"matching_geometry_feature_ids": ["7"]', evidence[0])
 
     def test_release_upload_uses_no_clobber(self):
         bucket = FakeBucket()

@@ -174,7 +174,7 @@ def fake_asset_outputs(
             "schema": VALID_SCHEMA_SHA,
         },
         schema_payload=schema_payload,
-        sidecar_records=(),
+        next_generated_feature_id=1,
         localization_report={"valid": True, "applied_translation_count": 2},
     )
 
