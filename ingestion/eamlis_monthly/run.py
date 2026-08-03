@@ -754,7 +754,7 @@ def needs_metadata_contract_refresh(
 
 def run() -> list[dict[str, Any]]:
     configure_logging()
-    for binary in ("ogrinfo", "ogr2ogr", "pmtiles"):
+    for binary in ("ogrinfo", "ogr2ogr", "pmtiles", "tippecanoe-decode"):
         require_binary(binary)
 
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", DEFAULT_PROJECT_ID)

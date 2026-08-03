@@ -115,7 +115,7 @@ jobs:
           set -euo pipefail
 
           docker run --platform linux/amd64 --rm "${EAMLIS_MONTHLY_IMAGE_TAG}" sh -c \
-            'ogrinfo --version && ogr2ogr --version && pmtiles version'
+            'ogrinfo --version && ogr2ogr --version && pmtiles version && command -v tippecanoe-decode'
 
       - name: Smoke-test job import closure in image
         run: |
