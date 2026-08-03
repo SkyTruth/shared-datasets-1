@@ -1,0 +1,153 @@
+{
+  "asset_slug": "wdpa-terrestrial",
+  "decisions": [
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "300615"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:668b562d434ef2eab6e89083717af3a0280c6f82b2d94f844fa1fb8a201e3eef"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:3b9c3afe9bbb2d30aa56e80864345731bc9271c71f6852e352291eed8665c494",
+      "new_identity_key": [
+        "555682754"
+      ],
+      "new_properties_hash": "sha256:7ec826a950d1e9e01545d767c219c1519520999f1213b383dc02efa07cb918e8",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 555682755 as 555682754 for Reserva Particular Do Patrim\u00f4nio Natural Fazenda Santo Antonio Do Pindar\u00e9,Gleba Barra Da Jurema (Natural Heritage Private Reserve, BRA). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "300615",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "297926"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:9285f1d3a75dabf040109350c24716aa778490722e7f089d80181917b3d746d6"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:df106d46c4440222aeb613a6d5836ee07b6925b1b2749f933db81f6c551c1fd2",
+      "new_identity_key": [
+        "555884979"
+      ],
+      "new_properties_hash": "sha256:dd1741a3b4393b6578dab3d41384762c8a2fdfbac0f459f068f1684f6d33acce",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 555621859 as 555884979 for Rancho La Viga (Protected Area, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "297926",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "298275"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:77733751be229f2e9887858f52bd8a8dd71e0dcda30992906b4b7a77210a34b0"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:d366b2141ef6c66ecb2668a8f63b8de7e33b1a2a1470f0591c501b6908ad3774",
+      "new_identity_key": [
+        "555885276"
+      ],
+      "new_properties_hash": "sha256:cbaffd8c5db92768820bd6b35a62b28c6b1afe4a49189767b7a1bba7b1bb28e0",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 108093 as 555885276 for Tlanepantla (Municipal Park, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "298275",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "298161"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:b1e3cec6405e289e6958a96db83d35df0ba491789c6af79fc6e631cccd6f3eaf"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:41437350228225a812a0f5fa6830d27c27e5201cedaeeb0cbdcf1567dae61977",
+      "new_identity_key": [
+        "555885982"
+      ],
+      "new_properties_hash": "sha256:27a735ccd8b93cd53d7a56de64e53b95c8085208277f9733eeef55e148154183",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 107748 as 555885982 for Lago Cr\u00e1ter La Joya (Ecological Park, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "298161",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "298099"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:f62c576ef45a6bd50da53c287c6e3d1ebb60a7d4a747995eb0f041fc6f1a5434"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:b61308cd87f391ff782eb2900644dc7b201e96622e7c84e6a88b28a54c702bc6",
+      "new_identity_key": [
+        "555886024"
+      ],
+      "new_properties_hash": "sha256:d44be5a9c813bd48aac78c5de9d496dcd3cceee15272671b7335cb86bd8003b4",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 555621889 as 555886024 for Mega parque de la ciudad de Dolores hidalgo (Ecological Park, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "298099",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "298154"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:036465ec864e69df3a2420f9e7710420d904227f9f9eaa6b5498e08cce8af251"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:880a2a11e15e127c25b07d88265e7b3ab3efec2d11cfc719109e88acf51a0d11",
+      "new_identity_key": [
+        "555886081"
+      ],
+      "new_properties_hash": "sha256:ed9d14b177c0c5aa5149f4fc887a14856868c3840bc46343aeacde5f899d3736",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 555621746 as 555886081 for Cerro Rosa y Jocoque (Municipal Park, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "298154",
+      "reviewer": "jonaraphael"
+    },
+    {
+      "action": "reuse_previous_feature_id",
+      "matching_geometry_feature_ids": [
+        "298104"
+      ],
+      "matching_geometry_properties_hashes": [
+        "sha256:4b6f24aa4911e35ef297c083a00415588830da889b069eba862e05806b5c1025"
+      ],
+      "matching_properties_feature_ids": [],
+      "matching_properties_geometry_hashes": [],
+      "new_geometry_hash": "sha256:5156611f491eed71d53d238f317329800d7605de87b9207d3d051216630df8e9",
+      "new_identity_key": [
+        "555886131"
+      ],
+      "new_properties_hash": "sha256:291519cb909954f1081eaa6d3a5984f8d17b95b1d3f6bc6d1910dfad5039d768",
+      "pr_reference": "PENDING-PR-REFERENCE",
+      "rationale": "Upstream reissued SITE_PID 555621901 as 555886131 for Presa Neutla y su Zona de Influencia (Ecological Restoration Area, MEX). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "release": "2026-08-01",
+      "reuse_feature_id": "298104",
+      "reviewer": "jonaraphael"
+    }
+  ],
+  "schema_version": 1
+}
