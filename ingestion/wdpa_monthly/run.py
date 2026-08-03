@@ -101,6 +101,7 @@ class AssetOutputs:
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    identity_decisions: dict[str, Any]
     localization_report: dict[str, Any]
 
 
@@ -894,6 +895,7 @@ def build_asset_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=release_outputs.next_generated_feature_id,
+        identity_decisions=release_outputs.identity_decisions,
         localization_report=localization_report,
     )
 
@@ -933,6 +935,7 @@ def publish_asset(
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            decisions=outputs.identity_decisions,
         ),
         extra_suffix_paths=(
             (f".metadata.{TRANSLATION_LOCALE}.ndjson.gz", outputs.metadata_es),

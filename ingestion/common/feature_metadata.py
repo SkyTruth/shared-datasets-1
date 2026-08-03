@@ -314,6 +314,7 @@ class GeneratedIdentityRelease:
     feature_count: int
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    identity_decisions: dict[str, Any]
 
 
 def _plan_generated_identities(
@@ -427,7 +428,7 @@ def write_generated_id_release(
     if not planned:
         raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
 
-    ambiguities = release_feature_model.find_identity_ambiguities(
+    scan = release_feature_model.find_identity_ambiguities(
         (
             {
                 "geometry_hash": row.geometry_hash,
@@ -442,12 +443,12 @@ def write_generated_id_release(
     try:
         resolutions = release_feature_model.validate_identity_resolutions(
             release=release,
-            ambiguities=ambiguities,
+            ambiguities=scan.ambiguities,
             decisions=identity_resolution_decisions or (),
         )
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
-    unresolved = release_feature_model.unresolved_identity_ambiguities(ambiguities, resolutions)
+    unresolved = release_feature_model.unresolved_identity_ambiguities(scan.ambiguities, resolutions)
     if unresolved:
         raise_unresolved_identity_ambiguities(
             asset_slug=asset_slug,
@@ -521,6 +522,11 @@ def write_generated_id_release(
         feature_count=written,
         schema_payload=schema.payload(asset_slug=asset_slug, release=release),
         next_generated_feature_id=highest_feature_id + 1,
+        identity_decisions=release_feature_model.build_identity_decisions(
+            ambiguities_detected=len(scan.ambiguities),
+            key_corroborated=scan.key_corroborated_count,
+            resolutions=resolutions,
+        ),
     )
 
 

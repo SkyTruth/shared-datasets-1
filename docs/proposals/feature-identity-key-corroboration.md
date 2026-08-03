@@ -1,6 +1,10 @@
 # Proposal: Identity-Key Corroboration in Feature Identity Ambiguity Detection
 
-Status: proposed
+Status: implemented (2026-08-03). The rule ships as policy
+`identity_key_corroboration_v1`; releases record how their identity questions
+were settled in the published manifest at `identity.decisions`. The stale
+`wdpa-marine.json` 2026-08-01 decisions were removed with the rule, per the
+migration note below.
 Owner: jonaraphael
 Date: 2026-08-03
 

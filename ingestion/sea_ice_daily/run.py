@@ -110,6 +110,7 @@ class AssetOutputs:
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    identity_decisions: dict[str, Any]
 
 
 ASSET = AssetSpec(
@@ -569,6 +570,7 @@ def build_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=release_outputs.next_generated_feature_id,
+        identity_decisions=release_outputs.identity_decisions,
     )
 
 
@@ -613,6 +615,7 @@ def publish_outputs(
             assignment_key=["geometry_hash", "properties_hash"],
             properties_hash_excluded_properties=["ice_date"],
             next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            decisions=outputs.identity_decisions,
         ),
     )
 
