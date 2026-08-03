@@ -175,6 +175,14 @@ def fake_asset_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=1,
+        identity_decisions={
+            "schema_version": 1,
+            "policy": "identity_key_corroboration_v1",
+            "ambiguities_detected": 0,
+            "auto_resolved_key_corroborated": 0,
+            "escalated_for_review": 0,
+            "reviewed_decisions_applied": 0,
+        },
         localization_report={"valid": True, "applied_translation_count": 2},
     )
 

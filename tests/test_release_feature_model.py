@@ -162,8 +162,11 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         self.assertEqual(model.unresolved_identity_ambiguities([ambiguity], resolutions), ())
 
     def test_reviewed_resolution_assigns_new_feature_id_even_for_previous_key(self):
+        # The key is unchanged but its footprint moved onto another feature's,
+        # so corroboration does not apply and the gate still escalates.
         previous = [
-            {"feature_id": "7", "identity_key": ["same"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
+            {"feature_id": "7", "identity_key": ["same"], "geometry_hash": VALID_HASH_B, "properties_hash": VALID_HASH_B},
+            {"feature_id": "9", "identity_key": ["neighbour"], "geometry_hash": VALID_HASH_A, "properties_hash": VALID_HASH_A},
         ]
         new = {
             "identity_key": ["same"],
@@ -181,11 +184,11 @@ class ReleaseFeatureModelTests(unittest.TestCase):
                     "new_identity_key": ["same"],
                     "new_geometry_hash": VALID_HASH_A,
                     "new_properties_hash": VALID_HASH_B,
-                    "matching_geometry_feature_ids": ["7"],
-                    "matching_properties_feature_ids": [],
+                    "matching_geometry_feature_ids": ["9"],
+                    "matching_properties_feature_ids": ["7"],
                     "matching_geometry_properties_hashes": [VALID_HASH_A],
-                    "matching_properties_geometry_hashes": [],
-                    "rationale": "Same footprint now represents a different logical feature.",
+                    "matching_properties_geometry_hashes": [VALID_HASH_B],
+                    "rationale": "The key moved onto another feature's footprint; treat it as new.",
                     "reviewer": "jonaraphael",
                     "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/123",
                 }
@@ -198,7 +201,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
         )
 
-        self.assertEqual(assigned[("same",)], "8")
+        self.assertEqual(assigned[("same",)], "10")
 
     def test_stale_resolution_is_rejected(self):
         ambiguity = model.IdentityAmbiguity(

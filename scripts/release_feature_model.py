@@ -23,6 +23,8 @@ RELEASE_MANIFEST_SCHEMA_VERSION = 2
 METADATA_SIDECAR_SCHEMA_VERSION = 2
 RELEASE_SCHEMA_SCHEMA_VERSION = 2
 FEATURE_IDENTITY_SCHEMA_VERSION = 1
+IDENTITY_DECISIONS_SCHEMA_VERSION = 1
+IDENTITY_DECISION_POLICY = "identity_key_corroboration_v1"
 FEATURE_IDENTITY_RESOLUTION_SCHEMA_VERSION = 1
 FEATURE_ID_ALGORITHM = "shared-datasets-feature-identity:v2"
 HASH_ALGORITHM = "sha256"
@@ -99,6 +101,23 @@ class IdentityAmbiguity:
     matching_properties_feature_ids: tuple[str, ...]
     matching_geometry_properties_hashes: tuple[str, ...] = ()
     matching_properties_geometry_hashes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IdentityAmbiguityScan:
+    """Outcome of comparing a release against its previous-release baseline."""
+
+    ambiguities: tuple[IdentityAmbiguity, ...]
+    key_corroborated_count: int = 0
+
+    def __iter__(self):
+        return iter(self.ambiguities)
+
+    def __len__(self) -> int:
+        return len(self.ambiguities)
+
+    def __getitem__(self, index):
+        return self.ambiguities[index]
 
 
 @dataclass(frozen=True)
@@ -329,10 +348,24 @@ def find_identity_ambiguities(
     *,
     previous_records: Iterable[SidecarRecord | Mapping[str, Any]],
     match_properties: bool = True,
-) -> tuple[IdentityAmbiguity, ...]:
-    """Find partial hash matches that require maintainer resolution."""
+) -> IdentityAmbiguityScan:
+    """Find partial hash matches that require maintainer resolution.
+
+    Hash matching alone is not a reliable identity signal for sources that file
+    several records on one footprint, so a record is not escalated when its
+    identity key is unchanged **and** the previous feature carrying that same
+    key has the same geometry hash. The content corroborates the key, so
+    identity is not in question and there is nothing for a maintainer to
+    decide. Both halves are load-bearing: the key alone would miss a recycled
+    or reassigned source key, and the geometry alone is what makes duplicate
+    footprints look ambiguous in the first place.
+
+    Suppressions are counted and reported so the volume of automatically
+    resolved ambiguity stays visible in release provenance.
+    """
     by_geometry: dict[str, list[tuple[str, str]]] = {}
     by_properties: dict[str, list[tuple[str, str]]] = {}
+    baseline_geometry_by_key: dict[tuple[str, ...], str | None] = {}
     for record in previous_records:
         payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
         feature_id = str(payload.get("feature_id") or "").strip()
@@ -342,11 +375,26 @@ def find_identity_ambiguities(
             by_geometry.setdefault(geometry_hash_value, []).append((feature_id, properties_hash_value))
         if match_properties and feature_id and properties_hash_value:
             by_properties.setdefault(properties_hash_value, []).append((feature_id, geometry_hash_value))
+        baseline_key = identity_key_from_record(payload)
+        if baseline_key and geometry_hash_value:
+            if (
+                baseline_key in baseline_geometry_by_key
+                and baseline_geometry_by_key[baseline_key] != geometry_hash_value
+            ):
+                # A key that mapped to more than one footprint cannot corroborate.
+                baseline_geometry_by_key[baseline_key] = None
+            else:
+                baseline_geometry_by_key[baseline_key] = geometry_hash_value
 
     ambiguities: list[IdentityAmbiguity] = []
+    key_corroborated = 0
     for record in new_records:
         geometry_hash_value = str(record.get("geometry_hash") or "").strip()
         properties_hash_value = str(record.get("properties_hash") or "").strip()
+        baseline_geometry = baseline_geometry_by_key.get(identity_key_from_record(record))
+        if baseline_geometry is not None and baseline_geometry == geometry_hash_value:
+            key_corroborated += 1
+            continue
         geometry_records = by_geometry.get(geometry_hash_value, ())
         properties_records = by_properties.get(properties_hash_value, ())
         geometry_matches = tuple(sorted({feature_id for feature_id, _hash in geometry_records}))
@@ -393,7 +441,10 @@ def find_identity_ambiguities(
                 matching_properties_geometry_hashes=properties_geometry_hashes,
             )
         )
-    return tuple(ambiguities)
+    return IdentityAmbiguityScan(
+        ambiguities=tuple(ambiguities),
+        key_corroborated_count=key_corroborated,
+    )
 
 
 def identity_ambiguity_to_dict(ambiguity: IdentityAmbiguity) -> dict[str, Any]:
@@ -828,6 +879,71 @@ def validate_artifact_hash(value: Any, *, label: str) -> str:
     return value.split(":", 1)[1] if value.startswith("sha256:") else value
 
 
+def build_identity_decisions(
+    *,
+    ambiguities_detected: int,
+    key_corroborated: int,
+    resolutions: Sequence[IdentityResolution] = (),
+) -> dict[str, Any]:
+    """Summarize how this release's identity questions were settled.
+
+    Published inside the release manifest so a consumer reading the data can
+    see what decided its feature_ids without access to this repository:
+    how many identity questions arose, how many the corroboration policy
+    settled automatically, how many required a reviewed human decision, and
+    where those decisions were reviewed.
+    """
+
+    reviewed = list(resolutions)
+    decisions: dict[str, Any] = {
+        "schema_version": IDENTITY_DECISIONS_SCHEMA_VERSION,
+        "policy": IDENTITY_DECISION_POLICY,
+        "ambiguities_detected": int(ambiguities_detected) + int(key_corroborated),
+        "auto_resolved_key_corroborated": int(key_corroborated),
+        "escalated_for_review": int(ambiguities_detected),
+        "reviewed_decisions_applied": len(reviewed),
+    }
+    if reviewed:
+        decisions["reviewed_decision_actions"] = {
+            action: sum(1 for resolution in reviewed if resolution.action == action)
+            for action in sorted({resolution.action for resolution in reviewed})
+        }
+        decisions["reviewed_decision_references"] = sorted(
+            {resolution.pr_reference for resolution in reviewed if resolution.pr_reference}
+        )
+        decisions["reviewers"] = sorted(
+            {resolution.reviewer for resolution in reviewed if resolution.reviewer}
+        )
+    return decisions
+
+
+def validate_identity_decisions(decisions: Any) -> None:
+    if not isinstance(decisions, Mapping):
+        raise ReleaseFeatureModelError("manifest identity decisions must be an object")
+    if decisions.get("schema_version") != IDENTITY_DECISIONS_SCHEMA_VERSION:
+        raise ReleaseFeatureModelError("manifest identity decisions has unsupported schema_version")
+    if not decisions.get("policy"):
+        raise ReleaseFeatureModelError("manifest identity decisions must name a policy")
+    for field in (
+        "ambiguities_detected",
+        "auto_resolved_key_corroborated",
+        "escalated_for_review",
+        "reviewed_decisions_applied",
+    ):
+        value = decisions.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ReleaseFeatureModelError(f"manifest identity decisions {field} must be a non-negative integer")
+    if decisions["escalated_for_review"] != decisions["reviewed_decisions_applied"]:
+        raise ReleaseFeatureModelError(
+            "manifest identity decisions must account for every escalated ambiguity with a reviewed decision"
+        )
+    if (
+        decisions["auto_resolved_key_corroborated"] + decisions["escalated_for_review"]
+        != decisions["ambiguities_detected"]
+    ):
+        raise ReleaseFeatureModelError("manifest identity decisions counts must sum to ambiguities_detected")
+
+
 def build_identity_metadata(
     *,
     strategy: str,
@@ -836,6 +952,7 @@ def build_identity_metadata(
     properties_hash_excluded_properties: Sequence[str] = (),
     previous_release: str | None = None,
     next_generated_feature_id_after_release: int | None = None,
+    decisions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     clean_source_fields = [str(field) for field in source_fields]
     clean_assignment_key = [str(part) for part in assignment_key]
@@ -859,6 +976,8 @@ def build_identity_metadata(
             identity["properties_hash_excluded_properties"] = clean_excluded_properties
         identity["previous_release"] = previous_release
         identity["next_generated_feature_id_after_release"] = next_generated_feature_id_after_release
+    if decisions is not None:
+        identity["decisions"] = dict(decisions)
     validate_identity_metadata(identity)
     return identity
 
@@ -906,6 +1025,9 @@ def validate_identity_metadata(identity: Any) -> None:
     clean_excluded_properties = [str(field).strip() for field in excluded_properties if str(field).strip()]
     if clean_excluded_properties != list(excluded_properties):
         raise ReleaseFeatureModelError("manifest identity properties_hash_excluded_properties must contain non-empty strings")
+    # Optional so manifests published before decision provenance stay valid.
+    if "decisions" in identity:
+        validate_identity_decisions(identity["decisions"])
 
 
 def validate_release_manifest(

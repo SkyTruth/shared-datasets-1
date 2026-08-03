@@ -96,6 +96,30 @@ expecting source columns in PMTiles. After loading the sidecar, use
 `geometry_hash` as the stable geometry-equivalence key for grouping or
 de-duplicating footprints; do not use hashes as URL lookup handles.
 
+## How a release decided its feature IDs
+
+`feature_id` is meant to stay stable for the same logical feature across
+releases, so each release publishes how it settled that question. Read
+`identity` in the release manifest, `{asset-slug}.manifest.json`, which sits
+beside the data in `releases/{date}/` and `latest/`:
+
+- `strategy` and `assignment_key` — whether IDs are copied from a source field
+  or assigned as a monotonic sequence, and what key they are assigned from.
+- `previous_release` and `next_generated_feature_id_after_release` — the
+  baseline this release continued from, and where the sequence stands after it.
+- `decisions` — the identity questions this release raised and how each was
+  settled: `ambiguities_detected`, how many the corroboration policy resolved
+  automatically (`auto_resolved_key_corroborated`), how many were
+  `escalated_for_review`, and how many `reviewed_decisions_applied`. When
+  humans decided, `reviewed_decision_references` links the PRs holding each
+  decision's written rationale and reviewer.
+
+A release cannot publish with an escalated ambiguity that no reviewed decision
+accounts for, so the counts always describe the data you are reading. If
+`reviewed_decisions_applied` is non-zero, some `feature_id`s in that release
+were assigned by a human judgement call rather than by the ordinary rule —
+follow the linked references before treating those IDs as machine-derived.
+
 Default production layer lists should use `status="active"`. If a UI
 intentionally shows deprecated, superseded, or retired assets, display
 `consumer_guidance`.
