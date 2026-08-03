@@ -7,9 +7,9 @@ import io
 import json
 import logging
 import re
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 from scripts import release_feature_model
 
@@ -77,37 +77,84 @@ def content_hashes(
     )
 
 
-def records_with_identity_properties_hash(
+IDENTITY_BASELINE_FIELDS = ("feature_id", "geometry_hash", "properties_hash", "identity_key")
+
+
+def identity_baseline_records(
     records: Iterable[Mapping[str, Any]],
     *,
     exclude_properties: Sequence[str],
 ) -> list[dict[str, Any]]:
-    """Return records with properties_hash/identity_key recalculated for identity-only properties."""
+    """Project previous-release records down to the fields identity work needs.
 
-    if not exclude_properties:
-        return [dict(record) for record in records]
-    normalized: list[dict[str, Any]] = []
+    Identity comparison and feature_id assignment read only feature_id, the two
+    content hashes, and the identity key. Dropping `properties` here keeps the
+    previous-release baseline proportional to the identity data rather than to
+    the full previous release, which for large assets is the difference between
+    a few hundred megabytes and several gigabytes.
+
+    When `exclude_properties` is set, properties_hash and the derived content
+    identity key are recomputed from identity-only properties before the
+    projection discards them.
+    """
+
+    baseline: list[dict[str, Any]] = []
     for record in records:
-        payload = dict(record)
+        payload = asdict(record) if is_dataclass(record) and not isinstance(record, type) else dict(record)
         properties = payload.get("properties")
-        if not isinstance(properties, Mapping):
-            normalized.append(payload)
-            continue
-        properties_hash = release_feature_model.properties_hash(
-            properties,
-            exclude_properties=exclude_properties,
-        )
-        payload["properties_hash"] = properties_hash
-        geometry_hash = str(payload.get("geometry_hash") or "")
-        if geometry_hash:
-            payload["identity_key"] = list(
-                release_feature_model.content_identity_key(
-                    geometry_hash_value=geometry_hash,
-                    properties_hash_value=properties_hash,
-                )
+        if exclude_properties and isinstance(properties, Mapping):
+            properties_hash = release_feature_model.properties_hash(
+                properties,
+                exclude_properties=exclude_properties,
             )
-        normalized.append(payload)
-    return normalized
+            payload["properties_hash"] = properties_hash
+            geometry_hash = str(payload.get("geometry_hash") or "")
+            if geometry_hash:
+                payload["identity_key"] = list(
+                    release_feature_model.content_identity_key(
+                        geometry_hash_value=geometry_hash,
+                        properties_hash_value=properties_hash,
+                    )
+                )
+        baseline.append({field: payload[field] for field in IDENTITY_BASELINE_FIELDS if field in payload})
+    return baseline
+
+
+class SchemaAccumulator:
+    """Derive a release schema from sidecar records one record at a time."""
+
+    def __init__(self) -> None:
+        self._field_names: list[str] = []
+        self._observed: dict[str, Any] = {}
+        self._nullable: dict[str, bool] = {}
+
+    def observe(self, record: Mapping[str, Any]) -> None:
+        properties = record.get("properties") if isinstance(record.get("properties"), Mapping) else {}
+        for name, value in properties.items():
+            field_name = str(name)
+            if field_name not in self._nullable:
+                self._field_names.append(field_name)
+                self._nullable[field_name] = False
+            if value is None:
+                self._nullable[field_name] = True
+            elif field_name not in self._observed:
+                self._observed[field_name] = value
+
+    def payload(self, *, asset_slug: str, release: str) -> dict[str, Any]:
+        return {
+            "schema_version": RELEASE_SCHEMA_VERSION,
+            "asset_slug": asset_slug,
+            "release": release,
+            "fields": [
+                {
+                    "name": name,
+                    "type": schema_type(self._observed.get(name)),
+                    "nullable": self._nullable.get(name, True),
+                    "projectable": True,
+                }
+                for name in self._field_names
+            ],
+        }
 
 
 def assign_generated_feature_ids(
@@ -176,12 +223,16 @@ def _feature_record(
     provenance: Mapping[str, Any],
     identity_key: Sequence[str],
     identity_excluded_properties: Sequence[str] = (),
+    content_hash_pair: tuple[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    geometry_hash, properties_hash = content_hashes(
-        geometry=geometry,
-        properties=source_properties,
-        exclude_properties=identity_excluded_properties,
-    )
+    if content_hash_pair is None:
+        geometry_hash, properties_hash = content_hashes(
+            geometry=geometry,
+            properties=source_properties,
+            exclude_properties=identity_excluded_properties,
+        )
+    else:
+        geometry_hash, properties_hash = content_hash_pair
     metadata_properties = dict(source_properties)
     published_properties = {
         **metadata_properties,
@@ -240,29 +291,47 @@ def enrich_features_with_source_field_ids(
     return enriched, sidecar_records
 
 
-def enrich_features_with_generated_ids(
+@dataclass(frozen=True)
+class _PlannedFeature:
+    """Identity decision for one emitted release row, without its payload."""
+
+    ordinal: int
+    identity_key: tuple[str, ...]
+    geometry_hash: str
+    properties_hash: str
+    duplicate_source_row_numbers: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class GeneratedIdentityRelease:
+    """Result of a written generated-identity release.
+
+    Holds aggregates only. A release large enough to matter must never be
+    represented in memory as a list of features, so this deliberately exposes
+    no record collections.
+    """
+
+    feature_count: int
+    schema_payload: dict[str, Any]
+    next_generated_feature_id: int
+
+
+def _plan_generated_identities(
     features: Iterable[Mapping[str, Any]],
     *,
     asset_slug: str,
-    release: str,
-    provenance: Mapping[str, Any],
-    source_fields: Sequence[str] = (),
-    previous_records: Iterable[Mapping[str, Any]] | None = None,
-    identity_resolution_decisions: Iterable[Mapping[str, Any]] | None = None,
-    identity_excluded_properties: Sequence[str] = (),
-    identity_ambiguity_match_properties: bool = True,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[release_feature_model.IdentityAmbiguity, ...]]:
-    prepared: list[dict[str, Any]] = []
-    seen_identity_keys: dict[tuple[str, ...], dict[str, Any]] = {}
-    normalized_previous_records = records_with_identity_properties_hash(
-        previous_records or (),
-        exclude_properties=identity_excluded_properties,
-    )
+    source_fields: Sequence[str],
+    identity_excluded_properties: Sequence[str],
+) -> list[_PlannedFeature]:
+    """First pass: derive identity for every source row, retaining no payloads."""
+
+    planned: list[_PlannedFeature] = []
+    duplicates_by_key: dict[tuple[str, ...], list[int]] = {}
+    index_by_key: dict[tuple[str, ...], int] = {}
     for ordinal, feature in enumerate(features, start=1):
-        source_properties = dict(feature.get("properties") or {})
-        geometry = feature.get("geometry")
+        source_properties = feature.get("properties") or {}
         geometry_hash, properties_hash = content_hashes(
-            geometry=geometry,
+            geometry=feature.get("geometry"),
             properties=source_properties,
             exclude_properties=identity_excluded_properties,
         )
@@ -273,38 +342,101 @@ def enrich_features_with_generated_ids(
                 geometry_hash_value=geometry_hash,
                 properties_hash_value=properties_hash,
             )
-        if identity_key in seen_identity_keys:
-            first = seen_identity_keys[identity_key]
-            if first["geometry_hash"] == geometry_hash and first["properties_hash"] == properties_hash:
-                first["duplicate_source_row_numbers"].append(ordinal)
-                continue
-            previous_index = first["ordinal"]
-            raise RuntimeError(f"duplicate generated identity key with different content in {asset_slug}: rows {previous_index} and {ordinal}")
-        prepared_item = {
-            "ordinal": ordinal,
-            "feature": feature,
-            "source_properties": source_properties,
-            "geometry": geometry,
-            "identity_key": identity_key,
-            "geometry_hash": geometry_hash,
-            "properties_hash": properties_hash,
-            "duplicate_source_row_numbers": [],
-        }
-        seen_identity_keys[identity_key] = prepared_item
-        prepared.append(prepared_item)
-
-    provisional_records = [
-        {
-            "geometry_hash": item["geometry_hash"],
-            "properties_hash": item["properties_hash"],
-            "identity_key": item["identity_key"],
-            "properties": item["source_properties"],
-        }
-        for item in prepared
+        existing_index = index_by_key.get(identity_key)
+        if existing_index is not None:
+            first = planned[existing_index]
+            if first.geometry_hash != geometry_hash or first.properties_hash != properties_hash:
+                raise RuntimeError(
+                    f"duplicate generated identity key with different content in {asset_slug}: "
+                    f"rows {first.ordinal} and {ordinal}"
+                )
+            duplicates_by_key.setdefault(identity_key, []).append(ordinal)
+            continue
+        index_by_key[identity_key] = len(planned)
+        planned.append(
+            _PlannedFeature(
+                ordinal=ordinal,
+                identity_key=identity_key,
+                geometry_hash=geometry_hash,
+                properties_hash=properties_hash,
+                duplicate_source_row_numbers=(),
+            )
+        )
+    if not duplicates_by_key:
+        return planned
+    return [
+        (
+            row
+            if row.identity_key not in duplicates_by_key
+            else _PlannedFeature(
+                ordinal=row.ordinal,
+                identity_key=row.identity_key,
+                geometry_hash=row.geometry_hash,
+                properties_hash=row.properties_hash,
+                duplicate_source_row_numbers=tuple(duplicates_by_key[row.identity_key]),
+            )
+        )
+        for row in planned
     ]
+
+
+def write_generated_id_release(
+    *,
+    open_features: Callable[[], Iterable[Mapping[str, Any]]],
+    asset_slug: str,
+    release: str,
+    provenance: Mapping[str, Any],
+    enriched_features_path: Path,
+    sidecar_path: Path,
+    source_fields: Sequence[str] = (),
+    previous_records: Iterable[Mapping[str, Any]] | None = None,
+    identity_resolution_decisions: Iterable[Mapping[str, Any]] | None = None,
+    identity_excluded_properties: Sequence[str] = (),
+    identity_ambiguity_match_properties: bool = True,
+    sidecar_sink: Callable[[Mapping[str, Any]], None] | None = None,
+) -> GeneratedIdentityRelease:
+    """Write an enriched GeoJSONSeq and metadata sidecar with bounded memory.
+
+    Two passes over `open_features()`:
+
+    1. Derive each row's identity key and content hashes, keeping only those
+       (no geometry, no properties), then resolve ambiguities and assign every
+       feature_id. Nothing is written, so an unresolved ambiguity aborts before
+       any output exists.
+    2. Re-read the source and stream each enriched feature and sidecar record
+       straight to disk, accumulating only the release schema, the feature
+       count, and the highest assigned feature_id.
+
+    Peak memory is therefore proportional to the identity data (a key and two
+    hashes per feature) rather than to the release payload, which is what makes
+    large assets publishable at all.
+
+    Raises if any ambiguity is left unresolved by `identity_resolution_decisions`.
+    """
+
+    identity_baseline = identity_baseline_records(
+        previous_records or (),
+        exclude_properties=identity_excluded_properties,
+    )
+    planned = _plan_generated_identities(
+        open_features(),
+        asset_slug=asset_slug,
+        source_fields=source_fields,
+        identity_excluded_properties=identity_excluded_properties,
+    )
+    if not planned:
+        raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
+
     ambiguities = release_feature_model.find_identity_ambiguities(
-        provisional_records,
-        previous_records=normalized_previous_records,
+        (
+            {
+                "geometry_hash": row.geometry_hash,
+                "properties_hash": row.properties_hash,
+                "identity_key": row.identity_key,
+            }
+            for row in planned
+        ),
+        previous_records=identity_baseline,
         match_properties=identity_ambiguity_match_properties,
     )
     try:
@@ -315,38 +447,81 @@ def enrich_features_with_generated_ids(
         )
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
-    unresolved_ambiguities = release_feature_model.unresolved_identity_ambiguities(ambiguities, resolutions)
+    unresolved = release_feature_model.unresolved_identity_ambiguities(ambiguities, resolutions)
+    if unresolved:
+        raise_unresolved_identity_ambiguities(
+            asset_slug=asset_slug,
+            release=release,
+            ambiguities=unresolved,
+        )
     ids_by_key = assign_generated_feature_ids(
-        (item["identity_key"] for item in prepared),
-        previous_records=normalized_previous_records,
+        (row.identity_key for row in planned),
+        previous_records=identity_baseline,
         feature_id_overrides=release_feature_model.resolved_feature_id_overrides(resolutions),
         force_new_identity_keys=release_feature_model.resolved_force_new_identity_keys(resolutions),
     )
-    enriched: list[dict[str, Any]] = []
-    sidecar_records: list[dict[str, Any]] = []
-    for item in prepared:
-        ordinal = int(item["ordinal"])
-        identity_key = item["identity_key"]
-        feature_id = ids_by_key[identity_key]
-        provenance_payload = {**dict(provenance), "source_row_number": ordinal, "identity_key": list(identity_key)}
-        duplicate_source_row_numbers = item["duplicate_source_row_numbers"]
-        if duplicate_source_row_numbers:
-            provenance_payload["duplicate_source_row_numbers"] = list(duplicate_source_row_numbers)
-        next_feature, sidecar = _feature_record(
-            asset_slug=asset_slug,
-            release=release,
-            feature_id=feature_id,
-            geometry=item["geometry"],
-            source_properties=item["source_properties"],
-            provenance=provenance_payload,
-            identity_key=identity_key,
-            identity_excluded_properties=identity_excluded_properties,
+    # The baseline is only needed to decide identity. Release it before the
+    # write pass so the previous release's hashes do not sit alongside the
+    # current release's buffers.
+    del identity_baseline
+
+    schema = SchemaAccumulator()
+    highest_feature_id = 0
+
+    def _release_records() -> Iterator[Mapping[str, Any]]:
+        nonlocal highest_feature_id
+        with enriched_features_path.open("w", encoding="utf-8") as enriched_file:
+            plan_index = 0
+            for ordinal, feature in enumerate(open_features(), start=1):
+                if plan_index >= len(planned):
+                    break
+                row = planned[plan_index]
+                if row.ordinal != ordinal:
+                    # Collapsed duplicate of an already-emitted identity key.
+                    continue
+                plan_index += 1
+                feature_id = ids_by_key[row.identity_key]
+                provenance_payload = {
+                    **dict(provenance),
+                    "source_row_number": row.ordinal,
+                    "identity_key": list(row.identity_key),
+                }
+                if row.duplicate_source_row_numbers:
+                    provenance_payload["duplicate_source_row_numbers"] = list(row.duplicate_source_row_numbers)
+                enriched_feature, sidecar = _feature_record(
+                    asset_slug=asset_slug,
+                    release=release,
+                    feature_id=feature_id,
+                    geometry=feature.get("geometry"),
+                    source_properties=feature.get("properties") or {},
+                    provenance=provenance_payload,
+                    identity_key=row.identity_key,
+                    identity_excluded_properties=identity_excluded_properties,
+                    content_hash_pair=(row.geometry_hash, row.properties_hash),
+                )
+                enriched_file.write(canonical_json(enriched_feature) + "\n")
+                schema.observe(sidecar)
+                if feature_id.isdigit():
+                    highest_feature_id = max(highest_feature_id, int(feature_id))
+                if sidecar_sink is not None:
+                    sidecar_sink(sidecar)
+                yield sidecar
+            if plan_index != len(planned):
+                raise RuntimeError(
+                    f"{asset_slug} source changed between identity and write passes: "
+                    f"wrote {plan_index} of {len(planned)} planned features"
+                )
+
+    written = write_sidecar(_release_records(), sidecar_path)
+    if written != len(planned):
+        raise RuntimeError(
+            f"{asset_slug} sidecar wrote {written} records for {len(planned)} planned features"
         )
-        enriched.append(next_feature)
-        sidecar_records.append(sidecar)
-    if not sidecar_records:
-        raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
-    return enriched, sidecar_records, unresolved_ambiguities
+    return GeneratedIdentityRelease(
+        feature_count=written,
+        schema_payload=schema.payload(asset_slug=asset_slug, release=release),
+        next_generated_feature_id=highest_feature_id + 1,
+    )
 
 
 def identity_ambiguity_alert_body(
@@ -467,16 +642,34 @@ def sidecar_record(
     }
 
 
-def write_sidecar(records: Sequence[Mapping[str, Any]], path: Path) -> None:
-    validation = release_feature_model.validate_sidecar_records(records)
-    if not validation.valid:
-        raise RuntimeError("metadata sidecar validation failed: " + "; ".join(validation.errors))
+def write_sidecar(records: Iterable[Mapping[str, Any]], path: Path) -> int:
+    """Write a metadata sidecar, validating records as they stream past.
+
+    Validation and writing share one pass so callers never need the whole
+    release in memory. `validate_sidecar_records` already accumulates only
+    small per-release state (seen feature_ids and identity keys), so the
+    written file is validated in full. An invalid release raises after the
+    partial file is written; every caller writes to a scratch workdir and the
+    raise prevents the file from being used or uploaded.
+    """
+
+    written = 0
+
+    def _write_through(source: Iterable[Mapping[str, Any]], file_obj: io.TextIOWrapper) -> Iterator[Mapping[str, Any]]:
+        nonlocal written
+        for record in source:
+            payload = asdict(record) if is_dataclass(record) and not isinstance(record, type) else dict(record)
+            file_obj.write(canonical_json(payload) + "\n")
+            written += 1
+            yield payload
+
     with path.open("wb") as raw_file:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_file, mtime=0) as gzip_file:
             with io.TextIOWrapper(gzip_file, encoding="utf-8", newline="\n") as file_obj:
-                for record in records:
-                    payload = asdict(record) if is_dataclass(record) else dict(record)
-                    file_obj.write(canonical_json(payload) + "\n")
+                validation = release_feature_model.validate_sidecar_records(_write_through(records, file_obj))
+    if not validation.valid:
+        raise RuntimeError("metadata sidecar validation failed: " + "; ".join(validation.errors))
+    return written
 
 
 def validate_release_vector_contract(
@@ -510,47 +703,15 @@ def schema_type(value: Any) -> str:
     return "String"
 
 
-def schema_from_records(*, asset_slug: str, release: str, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    field_names: list[str] = []
-    observed: dict[str, Any] = {}
-    nullable: dict[str, bool] = {}
+def schema_from_records(*, asset_slug: str, release: str, records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    accumulator = SchemaAccumulator()
     for record in records:
-        properties = record.get("properties") if isinstance(record.get("properties"), Mapping) else {}
-        for name, value in properties.items():
-            if name not in field_names:
-                field_names.append(str(name))
-                nullable[str(name)] = False
-            if value is None:
-                nullable[str(name)] = True
-            elif str(name) not in observed:
-                observed[str(name)] = value
-    return {
-        "schema_version": RELEASE_SCHEMA_VERSION,
-        "asset_slug": asset_slug,
-        "release": release,
-        "fields": [
-            {
-                "name": name,
-                "type": schema_type(observed.get(name)),
-                "nullable": nullable.get(name, True),
-                "projectable": True,
-            }
-            for name in field_names
-        ],
-    }
+        accumulator.observe(record)
+    return accumulator.payload(asset_slug=asset_slug, release=release)
 
 
 def write_schema(schema: Mapping[str, Any], path: Path) -> None:
     path.write_text(json.dumps(dict(schema), indent=2, sort_keys=True) + "\n")
-
-
-def next_generated_feature_id(records: Sequence[Mapping[str, Any]]) -> int:
-    numeric_ids = [
-        int(str(record.get("feature_id") or ""))
-        for record in records
-        if str(record.get("feature_id") or "").isdigit()
-    ]
-    return max(numeric_ids, default=0) + 1
 
 
 def manifest_payload(

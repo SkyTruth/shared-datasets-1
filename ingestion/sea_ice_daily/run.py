@@ -109,7 +109,7 @@ class AssetOutputs:
     row_count: int
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
-    sidecar_records: tuple[dict[str, Any], ...]
+    next_generated_feature_id: int
 
 
 ASSET = AssetSpec(
@@ -514,29 +514,19 @@ def build_outputs(
         )
 
     convert_fgb_to_geojsonseq(normalized_fgb, geojsonseq)
-    enriched_features, sidecar_records, ambiguities = feature_metadata.enrich_features_with_generated_ids(
-        feature_metadata.iter_geojsonseq(geojsonseq),
+    release_outputs = feature_metadata.write_generated_id_release(
+        open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
         asset_slug=ASSET.slug,
         release=source_date.isoformat(),
         provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
+        enriched_features_path=enriched_geojsonseq,
+        sidecar_path=metadata,
         previous_records=previous_records,
         identity_resolution_decisions=identity_resolution_decisions,
         identity_excluded_properties=("ice_date",),
         identity_ambiguity_match_properties=False,
     )
-    if ambiguities:
-        feature_metadata.raise_unresolved_identity_ambiguities(
-            asset_slug=ASSET.slug,
-            release=source_date.isoformat(),
-            ambiguities=ambiguities,
-        )
-    feature_metadata.write_geojsonseq(enriched_features, enriched_geojsonseq)
-    feature_metadata.write_sidecar(sidecar_records, metadata)
-    schema_payload = feature_metadata.schema_from_records(
-        asset_slug=ASSET.slug,
-        release=source_date.isoformat(),
-        records=sidecar_records,
-    )
+    schema_payload = release_outputs.schema_payload
     feature_metadata.write_schema(schema_payload, schema)
     convert_geojsonseq_to_fgb(enriched_geojsonseq, fgb)
     final_fields = set(layer_fields(fgb))
@@ -578,7 +568,7 @@ def build_outputs(
             "schema": sha256_file(schema),
         },
         schema_payload=schema_payload,
-        sidecar_records=tuple(sidecar_records),
+        next_generated_feature_id=release_outputs.next_generated_feature_id,
     )
 
 
@@ -622,9 +612,7 @@ def publish_outputs(
             strategy="generated_sequence_content_hash",
             assignment_key=["geometry_hash", "properties_hash"],
             properties_hash_excluded_properties=["ice_date"],
-            next_generated_feature_id_after_release=feature_metadata.next_generated_feature_id(
-                outputs.sidecar_records
-            ),
+            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
         ),
     )
 
