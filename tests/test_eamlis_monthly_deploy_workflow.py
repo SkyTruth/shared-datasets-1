@@ -61,6 +61,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         tools_run = steps["Smoke-test native tools in image"]["run"]
         self.assertIn("ogr2ogr --version", tools_run)
         self.assertIn("pmtiles version", tools_run)
+        self.assertIn("tippecanoe-decode", tools_run)
         import_run = steps["Smoke-test job import closure in image"]["run"]
         self.assertIn("import ingestion.eamlis_monthly.run", import_run)
         self.assertIn("scripts.vector_asset", import_run)
@@ -116,6 +117,15 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         audit_run = steps["Run EAMLIS bucket hygiene audit"]["run"]
         self.assertIn("audit_shared_datasets.py", audit_run)
         self.assertIn("eamlis-abandoned-mine-land-inventory", audit_run)
+
+    def test_eamlis_monthly_dockerfile_installs_pmtiles_validation_decoder(self):
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        self.assertIn(
+            "tippecanoe",
+            dockerfile,
+            "eamlis-monthly image must install tippecanoe: the shared release vector "
+            "contract validation decodes PMTiles with tippecanoe-decode",
+        )
 
     def test_eamlis_monthly_dockerfile_copies_scripts_import_closure(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
