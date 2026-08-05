@@ -195,7 +195,10 @@ class ReleaseStreamingTests(unittest.TestCase):
             enriched_path = tmp_path / "enriched.geojsonseq"
             sidecar_path = tmp_path / "metadata.ndjson.gz"
             with mock.patch("scripts.slack_notify.notify", return_value=True):
-                with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash"):
+                with self.assertRaisesRegex(
+                    feature_metadata.IdentityDecisionRequired,
+                    "waiting on .* maintainer identity decision",
+                ):
                     feature_metadata.write_generated_id_release(
                         open_features=lambda: iter([feature]),
                         asset_slug="wdpa-marine",

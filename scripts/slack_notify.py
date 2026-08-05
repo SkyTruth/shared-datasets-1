@@ -39,6 +39,10 @@ def build_slack_payload(
         "error": "❌",
         "info": "💡",
         "new": "🎉",
+        # A pipeline paused for human input is not a failure. It gets its own
+        # mark so readers can tell "someone needs to decide something" from
+        # "something is broken" at a glance in a busy channel.
+        "decision": "🙋",
     }.get(status, "💡")
     text = f"{status_prefix} {title}\n{body}".strip()
     blocks: list[dict[str, Any]] = [
