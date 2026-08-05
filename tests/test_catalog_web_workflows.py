@@ -141,7 +141,7 @@ def assert_protected_terraform_sync(
     testcase.assertEqual(job["environment"], "shared-datasets-production")
     testcase.assertEqual(
         job["concurrency"],
-        {"group": "prod-terraform-state", "cancel-in-progress": False},
+        {"group": "prod-terraform-state-pmtiles-cdn-sync", "cancel-in-progress": False},
     )
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
     testcase.assertIn("may only apply from main", steps["Validate main ref"]["run"])
@@ -352,7 +352,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn('actions == ["update"]', bootstrap_enforce)
         self.assertIn('"delete" in actions', bootstrap_enforce)
         self.assertIn(
-            "terraform -chdir=terraform/envs/prod apply -input=false",
+            "terraform -chdir=terraform/envs/prod apply -lock-timeout=20m -input=false",
             steps["Terraform apply PMTiles managed-folder IAM bootstrap"]["run"],
         )
         self.assertEqual(steps["Wait for PMTiles managed-folder IAM propagation"]["run"], "sleep 30")

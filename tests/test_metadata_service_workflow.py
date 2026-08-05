@@ -52,7 +52,7 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-metadata-service", "cancel-in-progress": False},
         )
         self.assertEqual(deploy_steps["Check out repository"]["with"]["ref"], "main")
 
