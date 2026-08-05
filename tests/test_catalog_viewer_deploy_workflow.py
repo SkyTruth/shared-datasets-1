@@ -38,7 +38,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state-catalog-viewer", "cancel-in-progress": False},
+            {"group": "prod-terraform-state", "cancel-in-progress": False},
         )
         self.assertEqual(env["TF_REGISTRY_CLIENT_TIMEOUT"], "60")
         self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")

@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state-eamlis-monthly
+      group: prod-terraform-state
       cancel-in-progress: false
 
     steps:
@@ -152,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir=terraform/envs/prod plan -lock-timeout=20m \
+          terraform -chdir=terraform/envs/prod plan \
             -input=false \
             -out="${RUNNER_TEMP}/eamlis-monthly.tfplan" \
             -target=module.eamlis_monthly_job.google_cloud_run_v2_job.this \
@@ -207,7 +207,7 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -lock-timeout=20m -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
 
       - name: Confirm deployed digest
         run: |
