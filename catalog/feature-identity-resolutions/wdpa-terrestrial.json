@@ -2,7 +2,7 @@
   "asset_slug": "wdpa-terrestrial",
   "decisions": [
     {
-      "action": "reuse_previous_feature_id",
+      "action": "keep_previous_key_mapping",
       "matching_geometry_feature_ids": [
         "300615"
       ],
@@ -17,9 +17,8 @@
       ],
       "new_properties_hash": "sha256:7ec826a950d1e9e01545d767c219c1519520999f1213b383dc02efa07cb918e8",
       "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/137",
-      "rationale": "Upstream reissued SITE_PID 555682755 as 555682754 for Reserva Particular Do Patrim\u00f4nio Natural Fazenda Santo Antonio Do Pindar\u00e9,Gleba Barra Da Jurema (Natural Heritage Private Reserve, BRA). The footprint is byte-identical to exactly one 2026-06-09 feature and no other feature competes for it, so this is the same protected area under a new source key; reuse preserves feature identity continuity.",
+      "rationale": "SITE_PID 555682754 already exists in the 2026-06-09 baseline as feature_id 300616, Reserva Particular do Patrimonio Natural Fazenda Sao Jose, Gleba Itinga A - Lote 390. Upstream kept the key and changed the footprint, which now matches what a different reserve (feature 300615, Fazenda Santo Antonio do Pindare, Gleba Barra da Jurema) had in June. The key settles identity, so this record keeps feature_id 300616; reusing 300615 would merge two distinct reserves and assigning a new ID would abandon a live one. The identical footprint looks like an upstream geometry error worth reporting to Protected Planet.",
       "release": "2026-08-01",
-      "reuse_feature_id": "300615",
       "reviewer": "jonaraphael"
     },
     {

@@ -6,10 +6,25 @@ This directory stores reviewed, release-scoped decisions for generated
 release, new identity key, hashes, and matching previous feature IDs exactly
 match the ambiguity observed during that run.
 
-Use this only after reviewing the proposed release evidence. If the new feature
-is the same logical feature with changed attributes, use
-`reuse_previous_feature_id`. If the new feature should intentionally receive a
-new generated sequence ID, use `assign_new_feature_id`.
+Use this only after reviewing the proposed release evidence. Three actions are
+available, and picking the wrong one corrupts identity rather than failing safe:
+
+- `reuse_previous_feature_id` — this record is one of the features it matched,
+  under a new source key. Give it that feature's ID. Requires
+  `reuse_feature_id`, which must be one of the matched feature IDs.
+- `keep_previous_key_mapping` — the source key already owns a `feature_id` and
+  keeps it. Use when the key is unchanged but its content moved enough to trip
+  the gate: the key settles identity. Takes no `reuse_feature_id`.
+- `assign_new_feature_id` — this is genuinely not the feature it resembles.
+  Break continuity deliberately and issue a new ID.
+
+Check whether the new identity key already exists in the previous release before
+choosing. If it does, `keep_previous_key_mapping` is almost always right:
+`reuse_previous_feature_id` would merge two distinct records (and is refused,
+loudly, by the feature_id override conflict check), and `assign_new_feature_id`
+would abandon a live ID. `wdpa-terrestrial` release 2026-08-01 is a worked
+example: six new keys reusing the feature they matched, and one already-existing
+key keeping its own mapping.
 
 ## Most ambiguities never reach this directory
 

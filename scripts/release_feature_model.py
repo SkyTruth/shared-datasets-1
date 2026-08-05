@@ -34,7 +34,20 @@ FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 SHA256_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ARTIFACT_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 REQUIRED_VECTOR_ARTIFACT_ROLES = ("fgb", "pmtiles", "metadata", "schema", "manifest")
-IDENTITY_RESOLUTION_ACTIONS = frozenset({"reuse_previous_feature_id", "assign_new_feature_id"})
+IDENTITY_RESOLUTION_ACTIONS = frozenset(
+    {
+        # Give this release's record the feature_id of a feature it matched.
+        "reuse_previous_feature_id",
+        # Deliberately break continuity: this is not the feature it resembles.
+        "assign_new_feature_id",
+        # The identity key already owns a feature_id and keeps it. Use when the
+        # source kept a record's key but changed its content enough to trip the
+        # gate: the key settles identity, so the record keeps the ID it has.
+        # Reusing a *matched* feature's ID here would merge two distinct
+        # records, and assigning a new one would abandon a live ID.
+        "keep_previous_key_mapping",
+    }
+)
 IDENTITY_AMBIGUITY_TYPES = frozenset(
     {
         "same_geometry_changed_properties",

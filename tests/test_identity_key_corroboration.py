@@ -349,3 +349,165 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeepPreviousKeyMappingTests(unittest.TestCase):
+    """A key that already owns a feature_id keeps it when only content moved.
+
+    This is the wdpa-terrestrial 555682754 case. Its footprint changed to match a
+    *different* reserve's, so the gate escalated. Reusing the matched feature's ID
+    would have merged two distinct protected areas; assigning a new ID would have
+    abandoned a live one. Neither existing action was correct.
+    """
+
+    OWN_GEOMETRY = "sha256:" + "1" * 64
+    MOVED_GEOMETRY = "sha256:" + "2" * 64
+    OWN_PROPS = "sha256:" + "3" * 64
+    NEIGHBOUR_PROPS = "sha256:" + "4" * 64
+    NEW_PROPS = "sha256:" + "5" * 64
+
+    def baseline(self) -> list[dict]:
+        return [
+            # The record's own June identity.
+            {
+                "feature_id": "300616",
+                "identity_key": ["555682754"],
+                "geometry_hash": self.OWN_GEOMETRY,
+                "properties_hash": self.OWN_PROPS,
+            },
+            # A different reserve, whose footprint the record now matches.
+            {
+                "feature_id": "300615",
+                "identity_key": ["555682755"],
+                "geometry_hash": self.MOVED_GEOMETRY,
+                "properties_hash": self.NEIGHBOUR_PROPS,
+            },
+        ]
+
+    def new_record(self) -> dict:
+        return {
+            "identity_key": ["555682754"],
+            "geometry_hash": self.MOVED_GEOMETRY,
+            "properties_hash": self.NEW_PROPS,
+        }
+
+    def decision(self, action: str, **extra) -> dict:
+        ambiguity = model.find_identity_ambiguities(
+            [self.new_record()], previous_records=self.baseline()
+        )[0]
+        return {
+            "release": "2026-08-01",
+            "action": action,
+            "new_identity_key": list(ambiguity.identity_key),
+            "new_geometry_hash": ambiguity.geometry_hash,
+            "new_properties_hash": ambiguity.properties_hash,
+            "matching_geometry_feature_ids": list(ambiguity.matching_geometry_feature_ids),
+            "matching_properties_feature_ids": list(ambiguity.matching_properties_feature_ids),
+            "matching_geometry_properties_hashes": list(ambiguity.matching_geometry_properties_hashes),
+            "matching_properties_geometry_hashes": list(ambiguity.matching_properties_geometry_hashes),
+            "rationale": "The key settles identity; only the footprint moved.",
+            "reviewer": "jonaraphael",
+            "pr_reference": "https://github.com/SkyTruth/shared-datasets-1/pull/137",
+            **extra,
+        }, ambiguity
+
+    def resolve(self, action: str, **extra):
+        decision, ambiguity = self.decision(action, **extra)
+        return (
+            model.validate_identity_resolutions(
+                release="2026-08-01", ambiguities=[ambiguity], decisions=[decision]
+            ),
+            ambiguity,
+        )
+
+    def test_a_moved_footprint_on_an_existing_key_still_escalates(self):
+        scan = model.find_identity_ambiguities([self.new_record()], previous_records=self.baseline())
+
+        self.assertEqual(len(scan.ambiguities), 1)
+        self.assertEqual(scan.key_corroborated_count, 0)
+
+    def test_keeping_the_key_mapping_returns_the_records_own_feature_id(self):
+        resolutions, ambiguity = self.resolve("keep_previous_key_mapping")
+
+        self.assertEqual(model.unresolved_identity_ambiguities([ambiguity], resolutions), ())
+        # No override and no forced-new: ordinary key-based assignment applies.
+        self.assertEqual(model.resolved_feature_id_overrides(resolutions), {})
+        self.assertEqual(model.resolved_force_new_identity_keys(resolutions), ())
+
+        assigned = model.assign_generated_feature_ids(
+            [("555682754",)],
+            previous_records=self.baseline(),
+            feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
+            force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
+        )
+        self.assertEqual(assigned[("555682754",)], "300616")
+
+    def test_reusing_the_matched_feature_id_is_still_refused(self):
+        """The production failure this action exists to avoid."""
+        resolutions, _ambiguity = self.resolve("reuse_previous_feature_id", reuse_feature_id="300615")
+
+        with self.assertRaisesRegex(
+            model.ReleaseFeatureModelError,
+            "override conflicts with previous mapping",
+        ):
+            model.assign_generated_feature_ids(
+                [("555682754",)],
+                previous_records=self.baseline(),
+                feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
+            )
+
+    def test_keeping_the_mapping_rejects_a_reuse_feature_id(self):
+        decision, ambiguity = self.decision("keep_previous_key_mapping", reuse_feature_id="300615")
+
+        with self.assertRaisesRegex(
+            model.ReleaseFeatureModelError,
+            "reuse_feature_id is only valid with reuse_previous_feature_id",
+        ):
+            model.validate_identity_resolutions(
+                release="2026-08-01", ambiguities=[ambiguity], decisions=[decision]
+            )
+
+    def test_assigning_new_would_abandon_the_live_id(self):
+        """Contrast: the other available action breaks continuity on purpose."""
+        resolutions, _ambiguity = self.resolve("assign_new_feature_id")
+
+        assigned = model.assign_generated_feature_ids(
+            [("555682754",)],
+            previous_records=self.baseline(),
+            force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
+        )
+        self.assertNotEqual(assigned[("555682754",)], "300616")
+
+    def test_the_action_is_reported_in_published_provenance(self):
+        resolutions, _ambiguity = self.resolve("keep_previous_key_mapping")
+
+        decisions = model.build_identity_decisions(
+            ambiguities_detected=1, key_corroborated=15222, resolutions=resolutions
+        )
+
+        self.assertEqual(decisions["reviewed_decision_actions"], {"keep_previous_key_mapping": 1})
+        model.validate_identity_decisions(decisions)
+
+
+class TerrestrialDecisionFileTests(unittest.TestCase):
+    """Pin the shipped wdpa-terrestrial decisions against their real conflict."""
+
+    def test_the_key_that_already_owned_an_id_keeps_its_mapping(self):
+        import json as _json
+        from pathlib import Path as _Path
+
+        path = _Path(__file__).resolve().parents[1] / "catalog/feature-identity-resolutions/wdpa-terrestrial.json"
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+        by_key = {tuple(d["new_identity_key"]): d for d in payload["decisions"]}
+
+        self.assertEqual(len(by_key), 7)
+        conflicting = by_key[("555682754",)]
+        self.assertEqual(conflicting["action"], "keep_previous_key_mapping")
+        self.assertNotIn("reuse_feature_id", conflicting)
+        self.assertIn("300616", conflicting["rationale"])
+
+        others = [d for key, d in by_key.items() if key != ("555682754",)]
+        self.assertEqual(len(others), 6)
+        for decision in others:
+            self.assertEqual(decision["action"], "reuse_previous_feature_id")
+            self.assertIn("reuse_feature_id", decision)
