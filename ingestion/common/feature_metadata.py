@@ -440,12 +440,24 @@ def write_generated_id_release(
         previous_records=identity_baseline,
         match_properties=identity_ambiguity_match_properties,
     )
+    previous_feature_ids = release_feature_model.previous_feature_id_mapping(identity_baseline)
     try:
         resolutions = release_feature_model.validate_identity_resolutions(
             release=release,
             ambiguities=scan.ambiguities,
             decisions=identity_resolution_decisions or (),
+            previous_feature_ids=previous_feature_ids,
         )
+        # Both checks read only the decisions, the baseline and the planned key
+        # set, so an action its state forbids fails here by rule rather than
+        # surfacing later as a feature_id override conflict or a duplicate ID.
+        collisions = release_feature_model.check_reuse_target_collisions(
+            resolutions,
+            release_identity_keys=[row.identity_key for row in planned],
+            previous_feature_ids=previous_feature_ids,
+        )
+        if collisions:
+            raise release_feature_model.ReleaseFeatureModelError("; ".join(collisions))
     except release_feature_model.ReleaseFeatureModelError as exc:
         raise RuntimeError(str(exc)) from exc
     unresolved = release_feature_model.unresolved_identity_ambiguities(scan.ambiguities, resolutions)

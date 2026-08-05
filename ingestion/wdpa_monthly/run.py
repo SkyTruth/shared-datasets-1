@@ -774,6 +774,57 @@ def load_previous_records_for_asset(
         return converted
 
 
+def assert_identity_decisions_allowed(
+    assets,
+    *,
+    previous_records_by_slug: dict[str, Any],
+    decisions_by_slug: dict[str, Any],
+    run_date: dt.date,
+) -> None:
+    """Fail before building if a decision uses an action its key's state forbids."""
+    problems: list[str] = []
+    for asset in assets:
+        decisions = decisions_by_slug.get(asset.slug) or ()
+        if not decisions:
+            continue
+        previous_feature_ids = release_feature_model.previous_feature_id_mapping(
+            previous_records_by_slug.get(asset.slug) or ()
+        )
+        problems.extend(
+            f"{asset.slug} {problem}"
+            for problem in release_feature_model.check_declared_previous_feature_ids(
+                decisions, previous_feature_ids=previous_feature_ids
+            )
+        )
+        for index, decision in enumerate(decisions, start=1):
+            action = str(decision.get("action") or "").strip()
+            identity_key = release_feature_model.normalize_identity_key(
+                decision.get("new_identity_key"), label="new_identity_key"
+            )
+            reuse_feature_id = decision.get("reuse_feature_id")
+            problem = release_feature_model.identity_decision_legality(
+                action=action,
+                identity_key=identity_key,
+                reuse_feature_id=None if reuse_feature_id is None else str(reuse_feature_id).strip(),
+                ambiguity=release_feature_model.IdentityAmbiguity(
+                    ambiguity_type=release_feature_model.IDENTITY_AMBIGUITY_TYPE_UNKNOWN,
+                    identity_key=identity_key,
+                    geometry_hash=str(decision.get("new_geometry_hash") or ""),
+                    properties_hash=str(decision.get("new_properties_hash") or ""),
+                    matching_geometry_feature_ids=tuple(decision.get("matching_geometry_feature_ids") or ()),
+                    matching_properties_feature_ids=tuple(decision.get("matching_properties_feature_ids") or ()),
+                ),
+                previous_feature_ids=previous_feature_ids,
+            )
+            if problem:
+                problems.append(f"{asset.slug} decision {index}: {problem}")
+    if problems:
+        raise RuntimeError(
+            f"reviewed identity decisions for {run_date.isoformat()} are not applicable: "
+            + "; ".join(problems)
+        )
+
+
 def build_asset_outputs(
     *,
     source: str,
@@ -1048,6 +1099,28 @@ def run() -> list[dict[str, Any]]:
     for asset in publish_specs:
         publisher.assert_no_partial_release(asset, run_date)
 
+    # Load each baseline once and check reviewed decisions against it before
+    # downloading or building anything. Whether an action is legal depends only
+    # on the decisions and the previous release, so a wrong one is a rule
+    # violation catchable in minutes rather than a conflict discovered after an
+    # hour of conversion work.
+    previous_records_by_slug = {
+        asset.slug: load_previous_records_for_asset(publisher, asset) for asset in publish_specs
+    }
+    decisions_by_slug = {
+        asset.slug: release_feature_model.load_identity_resolution_decisions(
+            asset_slug=asset.slug,
+            release=run_date.isoformat(),
+        )
+        for asset in publish_specs
+    }
+    assert_identity_decisions_allowed(
+        publish_specs,
+        previous_records_by_slug=previous_records_by_slug,
+        decisions_by_slug=decisions_by_slug,
+        run_date=run_date,
+    )
+
     with tempfile.TemporaryDirectory(prefix="wdpa-monthly-") as tmp:
         workdir = Path(tmp)
         source_zip = workdir / "wdpa.zip"
@@ -1110,11 +1183,8 @@ def run() -> list[dict[str, Any]]:
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
-                previous_records=load_previous_records_for_asset(publisher, asset),
-                identity_resolution_decisions=release_feature_model.load_identity_resolution_decisions(
-                    asset_slug=asset.slug,
-                    release=run_date.isoformat(),
-                ),
+                previous_records=previous_records_by_slug[asset.slug],
+                identity_resolution_decisions=decisions_by_slug[asset.slug],
             )
             records.append(
                 publish_asset(
