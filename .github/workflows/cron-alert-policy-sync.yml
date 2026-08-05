@@ -1,0 +1,39 @@
+name: Cron alert policy sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/cron-alert-policy-sync.yml"
+      - ".github/workflows/prod-terraform-target-apply.yml"
+      - "terraform/envs/prod/monitoring.tf"
+      - "terraform/envs/prod/monitoring_variables.tf"
+      - "terraform/envs/prod/variables.tf"
+      - "terraform/envs/prod/versions.tf"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    name: Apply cron alert policy sync
+    if: ${{ github.event_name != 'pull_request' }}
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      sync_name: Cron alert policy sync
+      refusal_prefix: Refusing automatic cron alert policy sync
+      targets: |
+        google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
+        google_monitoring_alert_policy.release_awaiting_identity_decision
+        google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
+      allowed_exact: |
+        google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure
+        google_monitoring_alert_policy.release_awaiting_identity_decision
+        google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure
+      tf_vars: |
+        wdpa_monthly_image=unused-by-cron-alert-policy-sync
+        sea_ice_daily_image=unused-by-cron-alert-policy-sync
+        eamlis_monthly_image=unused-by-cron-alert-policy-sync

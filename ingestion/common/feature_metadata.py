@@ -530,6 +530,19 @@ def write_generated_id_release(
     )
 
 
+AMBIGUITY_TYPE_EXPLANATIONS = {
+    "same_geometry_changed_properties": (
+        "same footprint as an existing feature, but its attributes changed"
+    ),
+    "same_properties_changed_geometry": (
+        "same attributes as an existing feature, but its footprint moved"
+    ),
+    "conflicting_partial_matches": (
+        "partially matches more than one existing feature"
+    ),
+}
+
+
 def identity_ambiguity_alert_body(
     *,
     asset_slug: str,
@@ -537,27 +550,52 @@ def identity_ambiguity_alert_body(
     ambiguities: Sequence[release_feature_model.IdentityAmbiguity],
     limit: int = 5,
 ) -> str:
+    """Write the Slack body for a release paused on a maintainer decision.
+
+    This is a request for a decision, not an outage report. The wording says so
+    up front, states what is and is not affected, and gives the exact next step,
+    because an alert that reads like a broken pipeline gets escalated or
+    ignored rather than acted on.
+    """
+
     visible = list(ambiguities[:limit])
+    count = len(ambiguities)
+    noun = "feature" if count == 1 else "features"
     lines = [
-        f"*Asset:* `{asset_slug}`",
-        f"*Release:* `{release}`",
-        f"*Unresolved ambiguities:* `{len(ambiguities)}`",
+        f"*{asset_slug}* is ready to publish release `{release}`, but {count} {noun} "
+        "need a maintainer to confirm identity before it can go out.",
         "",
-        "Open a PR adding reviewed decisions to "
-        f"`catalog/feature-identity-resolutions/{asset_slug}.json`, merge it, then rerun the job.",
+        "*Nothing is broken and nothing is at risk.* The published dataset is unchanged, "
+        "the job stopped before writing anything, and it will keep retrying on its normal "
+        "schedule. This release simply waits until someone decides.",
+        "",
+        "*Why this happens:* shared-datasets keeps a stable `feature_id` for each feature "
+        "across releases. When the source changes a record in a way that makes its identity "
+        "genuinely uncertain, the job asks rather than guesses, because a wrong guess "
+        "silently breaks every saved reference to that feature.",
+        "",
+        "*What to do:* add reviewed decisions to "
+        f"`catalog/feature-identity-resolutions/{asset_slug}.json` and merge them. "
+        "The job picks them up on its next run. See "
+        "`catalog/feature-identity-resolutions/README.md`.",
     ]
+    if visible:
+        lines.append("")
+        lines.append(f"*{'Case' if count == 1 else 'Cases'} needing a decision:*")
     for index, ambiguity in enumerate(visible, start=1):
+        explanation = AMBIGUITY_TYPE_EXPLANATIONS.get(ambiguity.ambiguity_type, ambiguity.ambiguity_type)
         lines.extend(
             [
-                "",
-                f"*{index}. {ambiguity.ambiguity_type}*",
-                f"- New identity key: `{list(ambiguity.identity_key)}`",
-                f"- Geometry matches: `{list(ambiguity.matching_geometry_feature_ids)}`",
-                f"- Properties matches: `{list(ambiguity.matching_properties_feature_ids)}`",
+                f"{index}. Source key `{'/'.join(ambiguity.identity_key)}` — {explanation}.",
+                f"    Existing feature(s) it resembles: "
+                f"`{', '.join(ambiguity.matching_geometry_feature_ids + ambiguity.matching_properties_feature_ids) or 'none'}`",
             ]
         )
-    if len(ambiguities) > len(visible):
-        lines.append(f"\n... {len(ambiguities) - len(visible)} more unresolved ambiguity record(s) in job logs.")
+    if count > len(visible):
+        lines.append(
+            f"\n_{count - len(visible)} more of the same kind. Full evidence for every case is in the "
+            "job logs, one line each, searchable for `identity ambiguity evidence`._"
+        )
     return "\n".join(lines)
 
 
@@ -569,20 +607,62 @@ def notify_identity_ambiguities(
 ) -> bool:
     from scripts.slack_notify import notify
 
+    count = len(ambiguities)
     return notify(
-        title="Feature identity ambiguity requires review",
+        title=f"Decision needed: {asset_slug} release {release}",
         body=identity_ambiguity_alert_body(asset_slug=asset_slug, release=release, ambiguities=ambiguities),
-        status="warning",
+        status="decision",
         fields={
             "asset_slug": asset_slug,
             "release": release,
-            "ambiguity_count": str(len(ambiguities)),
+            "awaiting decisions": str(count),
+            "published data": "unchanged",
         },
         strict=False,
     )
 
 
 IDENTITY_AMBIGUITY_MESSAGE_LIMIT = 10
+
+# Greppable marker for a release that stopped to ask, so log-based alerting can
+# tell it apart from a failure without parsing prose.
+RELEASE_BLOCKED_MARKER = "shared_datasets_release_blocked=identity_decision_required"
+
+
+class IdentityDecisionRequired(RuntimeError):
+    """A release stopped because a maintainer must confirm feature identity.
+
+    Distinct from the errors that mean something broke. The pipeline is working
+    as designed: it declined to guess an identity, wrote nothing, and is waiting
+    for a reviewed decision. Jobs report this as a paused outcome rather than a
+    failed execution so it does not read as an outage.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        asset_slug: str,
+        release: str,
+        ambiguity_count: int,
+    ) -> None:
+        super().__init__(message)
+        self.asset_slug = asset_slug
+        self.release = release
+        self.ambiguity_count = ambiguity_count
+
+    def blocked_record(self) -> dict[str, Any]:
+        return {
+            "asset_slug": self.asset_slug,
+            "release": self.release,
+            "status": "blocked",
+            "reason": "identity_decision_required",
+            "awaiting_decisions": self.ambiguity_count,
+            "next_step": (
+                "Add reviewed decisions to "
+                f"catalog/feature-identity-resolutions/{self.asset_slug}.json and merge them."
+            ),
+        }
 
 
 def raise_unresolved_identity_ambiguities(
@@ -617,10 +697,14 @@ def raise_unresolved_identity_ambiguities(
             "per-ambiguity 'identity ambiguity evidence' log lines."
         )
     )
-    raise RuntimeError(
-        f"{asset_slug} has {total} unresolved partial identity hash match(es) requiring maintainer review: "
+    raise IdentityDecisionRequired(
+        f"{asset_slug} release {release} is waiting on {total} maintainer identity decision(s); "
+        "nothing was published: "
         + json.dumps(visible, sort_keys=True)
-        + suffix
+        + suffix,
+        asset_slug=asset_slug,
+        release=release,
+        ambiguity_count=total,
     )
 
 

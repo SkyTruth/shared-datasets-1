@@ -250,7 +250,10 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         )
 
         with mock.patch("scripts.slack_notify.notify", return_value=True) as notify:
-            with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash"):
+            with self.assertRaisesRegex(
+                feature_metadata.IdentityDecisionRequired,
+                "waiting on .* maintainer identity decision",
+            ):
                 feature_metadata.raise_unresolved_identity_ambiguities(
                     asset_slug="example",
                     release="2026-05-01",
@@ -278,7 +281,10 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         with mock.patch("scripts.slack_notify.notify", return_value=True):
             with self.assertLogs("ingestion.common.feature_metadata", level="ERROR") as logs:
-                with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash") as raised:
+                with self.assertRaisesRegex(
+                    feature_metadata.IdentityDecisionRequired,
+                    "waiting on .* maintainer identity decision",
+                ) as raised:
                     feature_metadata.raise_unresolved_identity_ambiguities(
                         asset_slug="example",
                         release="2026-05-01",
@@ -291,7 +297,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         self.assertIn(f"{total}/{total}", evidence_lines[-1])
 
         message = str(raised.exception)
-        self.assertIn(f"has {total} unresolved partial identity hash match(es)", message)
+        self.assertIn(f"waiting on {total} maintainer identity decision(s)", message)
         self.assertEqual(
             message.count('"ambiguity_type"'),
             feature_metadata.IDENTITY_AMBIGUITY_MESSAGE_LIMIT,

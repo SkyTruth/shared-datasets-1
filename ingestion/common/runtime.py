@@ -168,14 +168,43 @@ def run_job_main(
     logger: logging.Logger,
     failure_message: str,
 ) -> None:
-    """Run a pipeline entry point and emit its records as JSON on stdout."""
+    """Run a pipeline entry point and emit its records as JSON on stdout.
+
+    A release that stops to ask for a maintainer identity decision exits
+    successfully. It is a designed pause, not a broken pipeline: nothing was
+    published, the previous release is untouched, and the job will retry on its
+    normal schedule once decisions land. Exiting non-zero would raise the
+    project-wide "Cloud Run Job execution failed" alarm, which reads as an
+    outage and buries the one thing actually needed — a human decision. Genuine
+    failures still propagate and still alarm.
+    """
+    from ingestion.common.feature_metadata import IdentityDecisionRequired
+
     try:
         records = run()
+    except IdentityDecisionRequired as blocked:
+        logger.warning(
+            "%s %s release %s paused for %d maintainer identity decision(s); nothing published",
+            feature_metadata_release_blocked_marker(),
+            blocked.asset_slug,
+            blocked.release,
+            blocked.ambiguity_count,
+        )
+        logger.warning("%s", blocked)
+        json.dump(blocked.blocked_record(), sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return
     except Exception:
         logger.exception(failure_message)
         raise
     json.dump(records, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
+
+
+def feature_metadata_release_blocked_marker() -> str:
+    from ingestion.common.feature_metadata import RELEASE_BLOCKED_MARKER
+
+    return RELEASE_BLOCKED_MARKER
 
 
 def remove_if_exists(path: Path) -> None:

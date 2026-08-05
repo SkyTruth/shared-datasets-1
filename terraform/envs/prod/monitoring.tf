@@ -123,7 +123,7 @@ EOT
     mime_type = "text/markdown"
     subject   = "Shared datasets cron execution failed"
     content   = <<-EOT
-A shared-datasets scheduled-ingestion Cloud Run Job execution failed.
+A shared-datasets scheduled-ingestion Cloud Run Job execution failed. Something went wrong; this is not a routine pause.
 
 Check the failed execution and logs:
 
@@ -133,6 +133,8 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 ```
 
 This policy covers all Cloud Run Job execution failures in the shared-datasets project and region, including future scheduled-ingestion jobs and manual deploy canaries.
+
+A release that stops to ask for a maintainer identity decision does **not** reach this policy. That case exits successfully and is reported by "Shared datasets release waiting on a maintainer decision" instead.
 EOT
   }
 
@@ -148,6 +150,65 @@ EOT
   user_labels = {
     component = "scheduled-ingestion"
     service   = "shared-datasets"
+  }
+
+  depends_on = [
+    google_project_service.required,
+    terraform_data.cron_alert_channel_configured,
+  ]
+}
+
+resource "google_monitoring_alert_policy" "release_awaiting_identity_decision" {
+  project      = var.project_id
+  display_name = "Shared datasets release waiting on a maintainer decision"
+  combiner     = "OR"
+  enabled      = var.cron_alerts_enabled
+  severity     = "WARNING"
+
+  notification_channels = local.cron_alert_notification_channels
+
+  conditions {
+    display_name = "Release paused for a feature identity decision"
+
+    condition_matched_log {
+      filter = <<-EOT
+resource.type="cloud_run_job"
+resource.labels.project_id="${var.project_id}"
+resource.labels.location="${var.region}"
+textPayload:"shared_datasets_release_blocked=identity_decision_required"
+EOT
+    }
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    subject   = "A shared datasets release is waiting on a decision"
+    content   = <<-EOT
+**This is a request for a decision, not a failure.** A scheduled ingestion job built a release, found features whose identity it will not guess at, and stopped before writing anything.
+
+Nothing is broken and nothing is at risk: the published dataset is unchanged, and the job keeps retrying on its normal schedule. The release publishes as soon as decisions land.
+
+Why it asks: shared-datasets keeps a stable `feature_id` for each feature across releases. When a source changes a record so its identity is genuinely uncertain, guessing would silently break every saved reference to that feature, so a maintainer confirms instead.
+
+What to do: add reviewed decisions to `catalog/feature-identity-resolutions/{asset-slug}.json` and merge them. `catalog/feature-identity-resolutions/README.md` explains the options, and the job logs one `identity ambiguity evidence` line per case.
+
+The accompanying Slack message from the job lists the specific features awaiting a decision.
+EOT
+  }
+
+  alert_strategy {
+    auto_close           = "86400s"
+    notification_prompts = ["OPENED"]
+
+    notification_rate_limit {
+      period = "86400s"
+    }
+  }
+
+  user_labels = {
+    component = "scheduled-ingestion"
+    service   = "shared-datasets"
+    kind      = "decision-required"
   }
 
   depends_on = [

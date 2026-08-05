@@ -347,7 +347,10 @@ class GcsPublisherTests(unittest.TestCase):
         }
 
         with self.assertLogs("ingestion.common.feature_metadata", level="ERROR") as logs:
-            with self.assertRaisesRegex(RuntimeError, "unresolved partial identity hash"):
+            with self.assertRaisesRegex(
+                feature_metadata.IdentityDecisionRequired,
+                "waiting on .* maintainer identity decision",
+            ):
                 write_generated_release(
                     [new_feature],
                     asset_slug="ims-sea-ice-extent",
