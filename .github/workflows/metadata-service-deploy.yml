@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state-metadata-service
+      group: prod-terraform-state
       cancel-in-progress: false
 
     steps:
@@ -159,7 +159,7 @@ jobs:
 
       - name: Terraform plan
         run: |
-          terraform -chdir=terraform/envs/prod plan -lock-timeout=20m \
+          terraform -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/metadata-service.tfplan" \
@@ -233,4 +233,4 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -lock-timeout=20m -input=false "${RUNNER_TEMP}/metadata-service.tfplan"
+        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/metadata-service.tfplan"

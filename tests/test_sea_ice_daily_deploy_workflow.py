@@ -33,7 +33,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state-sea-ice-daily", "cancel-in-progress": False},
+            {"group": "prod-terraform-state", "cancel-in-progress": False},
         )
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
         self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
