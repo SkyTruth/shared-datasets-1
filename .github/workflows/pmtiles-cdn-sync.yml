@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state
+      group: prod-terraform-state-pmtiles-cdn-sync
       cancel-in-progress: false
 
     steps:
@@ -137,7 +137,7 @@ jobs:
 
       - name: Terraform plan PMTiles managed-folder IAM bootstrap
         run: |
-          terraform -chdir=terraform/envs/prod plan \
+          terraform -chdir=terraform/envs/prod plan -lock-timeout=20m \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" \
@@ -192,14 +192,14 @@ jobs:
           PY
 
       - name: Terraform apply PMTiles managed-folder IAM bootstrap
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"
+        run: terraform -chdir=terraform/envs/prod apply -lock-timeout=20m -input=false "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"
 
       - name: Wait for PMTiles managed-folder IAM propagation
         run: sleep 30
 
       - name: Terraform plan
         run: |
-          terraform -chdir=terraform/envs/prod plan \
+          terraform -chdir=terraform/envs/prod plan -lock-timeout=20m \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" \
@@ -300,7 +300,7 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
+        run: terraform -chdir=terraform/envs/prod apply -lock-timeout=20m -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
 
       - name: Invalidate catalog CDN cache
         run: |

@@ -34,7 +34,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertEqual(self.job["environment"], "shared-datasets-production")
         self.assertEqual(
             self.job["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-${{ inputs.sync_name }}", "cancel-in-progress": False},
         )
         self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "main")
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])
@@ -74,7 +74,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/terraform_plan_allowlist.py", enforce_run)
         self.assertIn("--allowed-exact", enforce_run)
         self.assertEqual(enforce_env["ALLOWED_EXACT"], "${{ inputs.allowed_exact }}")
-        self.assertIn('terraform -chdir="${TERRAFORM_DIR}" apply -input=false', apply_run)
+        self.assertIn('terraform -chdir="${TERRAFORM_DIR}" apply -lock-timeout=20m -input=false', apply_run)
         self.assertLess(step_names.index("Terraform plan"), step_names.index("Enforce resource-change allowlist"))
         self.assertLess(step_names.index("Enforce resource-change allowlist"), step_names.index("Terraform apply"))
 

@@ -28,6 +28,13 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Verify alert coverage after adding or changing scheduled jobs. Cron failure alerts should cover future jobs by default through project/region-level filters, labels, or another durable grouping; avoid per-job allowlists unless there is a documented reason.
 - Distinguish Cloud Monitoring notification channels from the local Terraform apply-summary webhook. A working Monitoring Slack channel does not prove `shared-datasets-slack-webhook-url` has a Secret Manager version, and vice versa.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
+- Give each production Terraform workflow its own `prod-terraform-state-<name>`
+  concurrency lane, and keep `cancel-in-progress: false`. A shared lane looks
+  safe but is not: GitHub holds only one pending run per group and cancels the
+  older one, so a merge touching shared paths silently drops deploys while the
+  merge itself reports success. State access is serialized by Terraform's GCS
+  lock instead, so every `plan` and `apply` must pass `-lock-timeout` and wait
+  for the lock rather than failing to acquire it.
 
 ## Job boundaries
 
