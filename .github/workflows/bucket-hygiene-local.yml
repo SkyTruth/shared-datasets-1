@@ -37,5 +37,8 @@ jobs:
       - name: Validate local catalog hygiene
         run: uv run python .claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py --local-only --format markdown --fail-on-findings
 
+      - name: Check reviewed identity decisions against declared state
+        run: uv run python scripts/check_identity_resolutions.py --offline
+
       - name: Run focused hygiene tests
         run: uv run python -m unittest tests.test_compliance_audit tests.test_gcs_asset tests.test_shared_dataset_sdk tests.test_raster_standards

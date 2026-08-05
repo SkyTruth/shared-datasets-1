@@ -48,6 +48,7 @@ IDENTITY_RESOLUTION_ACTIONS = frozenset(
         "keep_previous_key_mapping",
     }
 )
+IDENTITY_AMBIGUITY_TYPE_UNKNOWN = "unknown"
 IDENTITY_AMBIGUITY_TYPES = frozenset(
     {
         "same_geometry_changed_properties",
@@ -527,6 +528,174 @@ def load_identity_resolution_decisions(
     return tuple(decisions)
 
 
+def identity_decision_legality(
+    *,
+    action: str,
+    identity_key: tuple[str, ...],
+    reuse_feature_id: str | None,
+    ambiguity: IdentityAmbiguity,
+    previous_feature_ids: Mapping[tuple[str, ...], str],
+) -> str:
+    """Decide whether an action is legal for this key's baseline state.
+
+    The mechanism is not a judgement call. Given the identity key and the
+    previous release, exactly one thing can be true of the key -- either it
+    already owns a feature_id or it does not -- and that fact rules out actions
+    on its own:
+
+    - The key already owns a feature_id: ``reuse_previous_feature_id`` would
+      hand this record a *different* feature's ID and merge two records. Only
+      keeping the existing mapping, or deliberately issuing a new ID, is
+      coherent.
+    - The key is new: there is no mapping to keep, so
+      ``keep_previous_key_mapping`` is meaningless.
+
+    Returns "" when legal, otherwise an error that names the action to use
+    instead. The remaining choice is semantic (is this the same feature?), never
+    mechanical.
+    """
+
+    own_feature_id = previous_feature_ids.get(identity_key)
+    if action == "reuse_previous_feature_id":
+        if own_feature_id is not None and own_feature_id != reuse_feature_id:
+            return (
+                f"identity key {list(identity_key)} already owns feature_id {own_feature_id} in the "
+                f"previous release, so reuse_previous_feature_id would move it to "
+                f"{reuse_feature_id!r} and merge two records. Use keep_previous_key_mapping to keep "
+                f"feature_id {own_feature_id}, or assign_new_feature_id to break continuity on purpose."
+            )
+        return ""
+    if action == "keep_previous_key_mapping":
+        if own_feature_id is None:
+            matched = ", ".join(matching_feature_ids_for_ambiguity(ambiguity)) or "none"
+            return (
+                f"identity key {list(identity_key)} has no feature_id in the previous release, so "
+                f"there is no mapping to keep. Use reuse_previous_feature_id with one of the matched "
+                f"feature IDs ({matched}), or assign_new_feature_id."
+            )
+        return ""
+    return ""
+
+
+def check_identity_resolution_actions(
+    resolutions: Iterable[IdentityResolution],
+    *,
+    previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
+    previous_feature_ids: Mapping[tuple[str, ...], str] | None = None,
+    ambiguities: Iterable[IdentityAmbiguity] = (),
+) -> tuple[str, ...]:
+    """Return every action that its key's baseline state forbids.
+
+    Pure and deterministic: needs only the decisions and the previous release,
+    never the built release, so it can run before any expensive work.
+    """
+
+    if previous_feature_ids is None:
+        previous_feature_ids = previous_feature_id_mapping(previous_records or ())
+    by_key = {ambiguity.identity_key: ambiguity for ambiguity in ambiguities}
+    errors: list[str] = []
+    for resolution in resolutions:
+        ambiguity = by_key.get(resolution.identity_key) or IdentityAmbiguity(
+            ambiguity_type=IDENTITY_AMBIGUITY_TYPE_UNKNOWN,
+            identity_key=resolution.identity_key,
+            geometry_hash=resolution.geometry_hash,
+            properties_hash=resolution.properties_hash,
+            matching_geometry_feature_ids=resolution.matching_geometry_feature_ids,
+            matching_properties_feature_ids=resolution.matching_properties_feature_ids,
+        )
+        problem = identity_decision_legality(
+            action=resolution.action,
+            identity_key=resolution.identity_key,
+            reuse_feature_id=resolution.reuse_feature_id,
+            ambiguity=ambiguity,
+            previous_feature_ids=previous_feature_ids,
+        )
+        if problem:
+            errors.append(problem)
+    return tuple(errors)
+
+
+DECLARED_PREVIOUS_FEATURE_ID_FIELD = "previous_feature_id_for_key"
+
+
+def declared_previous_feature_ids(
+    decisions: Iterable[Mapping[str, Any]],
+) -> dict[tuple[str, ...], str]:
+    """Build a baseline mapping from what each decision declares about its key.
+
+    Decisions record the fact that determined their action: the feature_id the
+    identity key already owned, or null for a new key. Reviewers and CI can then
+    apply the same legality rule with no access to the bucket, and the job checks
+    the declarations against the real previous release before using them.
+    """
+
+    mapping: dict[tuple[str, ...], str] = {}
+    for decision in decisions:
+        key = normalize_identity_key(decision.get("new_identity_key"), label="new_identity_key")
+        declared = decision.get(DECLARED_PREVIOUS_FEATURE_ID_FIELD)
+        if declared not in (None, ""):
+            mapping[key] = str(declared).strip()
+    return mapping
+
+
+def check_declared_previous_feature_ids(
+    decisions: Iterable[Mapping[str, Any]],
+    *,
+    previous_feature_ids: Mapping[tuple[str, ...], str],
+) -> tuple[str, ...]:
+    """Reject declarations that disagree with the actual previous release."""
+
+    errors: list[str] = []
+    for index, decision in enumerate(decisions, start=1):
+        if DECLARED_PREVIOUS_FEATURE_ID_FIELD not in decision:
+            continue
+        key = normalize_identity_key(decision.get("new_identity_key"), label="new_identity_key")
+        declared = decision.get(DECLARED_PREVIOUS_FEATURE_ID_FIELD)
+        declared_value = None if declared in (None, "") else str(declared).strip()
+        actual = previous_feature_ids.get(key)
+        if declared_value != actual:
+            errors.append(
+                f"decision {index} for identity key {list(key)} declares "
+                f"{DECLARED_PREVIOUS_FEATURE_ID_FIELD}={declared_value!r} but the previous release "
+                f"says {actual!r}"
+            )
+    return tuple(errors)
+
+
+def check_reuse_target_collisions(
+    resolutions: Iterable[IdentityResolution],
+    *,
+    release_identity_keys: Iterable[Sequence[str]],
+    previous_feature_ids: Mapping[tuple[str, ...], str],
+) -> tuple[str, ...]:
+    """Reject a reuse whose target is still held by a key in this release.
+
+    Deterministic from the planned key set: if the feature being reused is
+    retained by another key that is also publishing, both records would claim
+    one feature_id. Sidecar validation would catch the duplicate afterwards;
+    catching it here names the conflict instead of reporting a duplicate ID.
+    """
+
+    keys_in_release = {tuple(str(part) for part in key) for key in release_identity_keys}
+    holder_by_feature_id: dict[str, tuple[str, ...]] = {}
+    for key, feature_id in previous_feature_ids.items():
+        if key in keys_in_release:
+            holder_by_feature_id[feature_id] = key
+    errors: list[str] = []
+    for resolution in resolutions:
+        if resolution.action != "reuse_previous_feature_id" or resolution.reuse_feature_id is None:
+            continue
+        holder = holder_by_feature_id.get(resolution.reuse_feature_id)
+        if holder is not None and holder != resolution.identity_key:
+            errors.append(
+                f"identity key {list(resolution.identity_key)} cannot reuse feature_id "
+                f"{resolution.reuse_feature_id}: identity key {list(holder)} still holds it in this "
+                f"release, so both records would claim one feature_id. Use assign_new_feature_id, or "
+                f"confirm the other record has genuinely left the source."
+            )
+    return tuple(errors)
+
+
 def validate_identity_resolution_decision(
     decision: Mapping[str, Any],
     *,
@@ -610,7 +779,15 @@ def validate_identity_resolutions(
     release: str,
     ambiguities: Iterable[IdentityAmbiguity],
     decisions: Iterable[Mapping[str, Any]],
+    previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
+    previous_feature_ids: Mapping[tuple[str, ...], str] | None = None,
 ) -> tuple[IdentityResolution, ...]:
+    """Validate reviewed decisions, including against the previous release.
+
+    Pass `previous_records` or `previous_feature_ids` so actions the key's
+    baseline state forbids are refused here, with the correct action named,
+    rather than surfacing later as a feature_id override conflict.
+    """
     ambiguities_by_key = {ambiguity.identity_key: ambiguity for ambiguity in ambiguities}
     resolutions: list[IdentityResolution] = []
     seen_keys: set[tuple[str, ...]] = set()
@@ -631,6 +808,15 @@ def validate_identity_resolutions(
                 ambiguity=ambiguity,
             )
         )
+    if previous_records is not None or previous_feature_ids is not None:
+        problems = check_identity_resolution_actions(
+            resolutions,
+            previous_records=previous_records,
+            previous_feature_ids=previous_feature_ids,
+            ambiguities=ambiguities_by_key.values(),
+        )
+        if problems:
+            raise ReleaseFeatureModelError("; ".join(problems))
     return tuple(resolutions)
 
 

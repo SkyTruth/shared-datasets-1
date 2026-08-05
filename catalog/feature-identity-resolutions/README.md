@@ -18,13 +18,49 @@ available, and picking the wrong one corrupts identity rather than failing safe:
 - `assign_new_feature_id` — this is genuinely not the feature it resembles.
   Break continuity deliberately and issue a new ID.
 
-Check whether the new identity key already exists in the previous release before
-choosing. If it does, `keep_previous_key_mapping` is almost always right:
-`reuse_previous_feature_id` would merge two distinct records (and is refused,
-loudly, by the feature_id override conflict check), and `assign_new_feature_id`
-would abandon a live ID. `wdpa-terrestrial` release 2026-08-01 is a worked
-example: six new keys reusing the feature they matched, and one already-existing
-key keeping its own mapping.
+## The mechanism is decided by state, not by judgement
+
+You do not choose between the three actions freely. One fact rules out actions on
+its own -- whether the identity key already owns a `feature_id` in the previous
+release:
+
+| Key already owns a feature_id? | Legal | Ruled out |
+|---|---|---|
+| Yes | `keep_previous_key_mapping`, or `assign_new_feature_id` to break continuity on purpose | `reuse_previous_feature_id` — it would hand the record a *different* feature's ID and merge two records |
+| No | `reuse_previous_feature_id`, or `assign_new_feature_id` | `keep_previous_key_mapping` — there is no mapping to keep |
+
+So record the fact in every decision:
+
+```json
+"previous_feature_id_for_key": "300616"   // or null when the key is new
+```
+
+Then the rule is enforced rather than remembered, in three places:
+
+1. **Before you open the PR**, and again on the PR itself, using only the
+   declared values:
+
+   ```bash
+   uv run python scripts/check_identity_resolutions.py --offline
+   ```
+
+2. **At job start**, before any download or conversion: the job checks each
+   declaration against the real previous release, then applies the same rule, so
+   a wrong action fails in minutes instead of after an hour of building.
+
+3. **In `validate_identity_resolutions`**, which refuses the action outright.
+
+Every rejection names the action to use instead. What remains for you is only the
+semantic question — is this the same feature? — never the mechanism.
+
+To check against the live bucket instead of the declarations, drop `--offline`
+(needs read access to the published sidecar).
+
+`wdpa-terrestrial` release 2026-08-01 is a worked example: six new keys reusing
+the feature they matched, and one already-existing key (`555682754`, which owned
+`300616`) keeping its own mapping. Reusing there would have merged two distinct
+Brazilian reserves; it was caught 72 minutes into a job by a feature_id override
+conflict, which is why the rule is now checked up front.
 
 ## Most ambiguities never reach this directory
 
