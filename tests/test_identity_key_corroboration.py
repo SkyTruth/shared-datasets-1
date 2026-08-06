@@ -511,3 +511,71 @@ class TerrestrialDecisionFileTests(unittest.TestCase):
         for decision in others:
             self.assertEqual(decision["action"], "reuse_previous_feature_id")
             self.assertIn("reuse_feature_id", decision)
+
+
+class CorroborationCountSemanticsTests(unittest.TestCase):
+    """`ambiguities_detected` must mean "had a partial hash match", not "exists".
+
+    The first published wdpa-terrestrial manifest reported 300,203 ambiguities
+    for a 304,816-feature release, because corroboration was applied before the
+    checks that skip records which were never in question. A consumer reading
+    that would conclude almost the whole release was uncertain. The true figures
+    were 15,229 partial matches and 7 needing review.
+    """
+
+    GEOM = "sha256:" + "1" * 64
+    PROPS = "sha256:" + "2" * 64
+
+    def test_an_unchanged_unique_record_is_neither_ambiguous_nor_corroborated(self):
+        previous = [
+            {
+                "feature_id": "1",
+                "identity_key": ["A"],
+                "geometry_hash": self.GEOM,
+                "properties_hash": self.PROPS,
+            }
+        ]
+        # Identical to its previous self, and nothing else shares its hashes.
+        result = scan(
+            {"identity_key": ["A"], "geometry_hash": self.GEOM, "properties_hash": self.PROPS},
+            previous,
+        )
+
+        self.assertEqual(result.ambiguities, ())
+        self.assertEqual(
+            result.key_corroborated_count,
+            0,
+            "a record that was never in question must not inflate the corroborated count",
+        )
+
+    def test_only_records_that_would_escalate_are_counted_as_corroborated(self):
+        # Sibling designations on one footprint: these *would* escalate.
+        contested = scan(
+            {"identity_key": ["12884"], "geometry_hash": HASH_PARK, "properties_hash": HASH_PARK_PROPS}
+        )
+        self.assertEqual(contested.key_corroborated_count, 1)
+        self.assertEqual(contested.ambiguities, ())
+
+    def test_published_totals_reflect_partial_matches_only(self):
+        previous = [
+            {"feature_id": "1", "identity_key": ["A"], "geometry_hash": self.GEOM, "properties_hash": self.PROPS},
+            {"feature_id": "2", "identity_key": ["B"], "geometry_hash": HASH_PARK, "properties_hash": HASH_PARK_PROPS},
+            {"feature_id": "3", "identity_key": ["C"], "geometry_hash": HASH_PARK, "properties_hash": HASH_RAMSAR_PROPS},
+        ]
+        records = [
+            # Never in question: unique hashes, unchanged.
+            {"identity_key": ["A"], "geometry_hash": self.GEOM, "properties_hash": self.PROPS},
+            # Would escalate on a shared footprint, but the key corroborates.
+            {"identity_key": ["B"], "geometry_hash": HASH_PARK, "properties_hash": HASH_PARK_PROPS},
+        ]
+        result = model.find_identity_ambiguities(records, previous_records=previous)
+        decisions = model.build_identity_decisions(
+            ambiguities_detected=len(result.ambiguities),
+            key_corroborated=result.key_corroborated_count,
+            resolutions=(),
+        )
+
+        self.assertEqual(decisions["ambiguities_detected"], 1, "only the contested record counts")
+        self.assertEqual(decisions["auto_resolved_key_corroborated"], 1)
+        self.assertEqual(decisions["escalated_for_review"], 0)
+        model.validate_identity_decisions(decisions)
