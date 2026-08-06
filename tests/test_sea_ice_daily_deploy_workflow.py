@@ -33,7 +33,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-sea-ice-daily", "cancel-in-progress": False},
         )
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
         self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
@@ -82,7 +82,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertIn('actions != ["update"]', enforce_run)
         self.assertIn("image != expected_image", enforce_run)
         self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
-        self.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
+        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
         self.assertLess(
             step_names.index("Enforce sea-ice-daily resource-change allowlist"),
             step_names.index("Terraform apply"),
