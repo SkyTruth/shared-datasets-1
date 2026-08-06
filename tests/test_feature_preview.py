@@ -348,7 +348,7 @@ class FeaturePreviewTests(unittest.TestCase):
 
     def test_prod_terraform_sync_workflows_share_state_concurrency(self):
         reusable = (REPO_ROOT / ".github/workflows/prod-terraform-target-apply.yml").read_text()
-        self.assertIn("group: prod-terraform-state-${{ inputs.sync_name }}", reusable)
+        self.assertIn("group: prod-terraform-state-sync", reusable)
         self.assertIn("cancel-in-progress: false", reusable)
 
         pmtiles = PMTILES_CDN_SYNC_WORKFLOW.read_text()

@@ -28,15 +28,22 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Verify alert coverage after adding or changing scheduled jobs. Cron failure alerts should cover future jobs by default through project/region-level filters, labels, or another durable grouping; avoid per-job allowlists unless there is a documented reason.
 - Distinguish Cloud Monitoring notification channels from the local Terraform apply-summary webhook. A working Monitoring Slack channel does not prove `shared-datasets-slack-webhook-url` has a Secret Manager version, and vice versa.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
-- Give each production Terraform workflow its own `prod-terraform-state-<name>`
-  concurrency lane with `cancel-in-progress: false`. A shared lane looks safe
-  but is not: GitHub keeps only one pending run per group and cancels the older
-  one, so a merge touching shared paths silently drops deploys while reporting
-  success.
-- Separate lanes are only safe because every production `plan` and `apply` runs
-  through `scripts/terraform_retry.sh`. `-lock-timeout` waits for a lock that is
-  *held*, but the GCS backend fails fatally when two runs race to create the
-  lock file, which is what simultaneous lanes produce. The wrapper retries that
+- Concurrency lanes for production Terraform split by what a cancelled run
+  costs. Give each *job deploy* its own `prod-terraform-state-<name>` lane with
+  `cancel-in-progress: false`: GitHub holds only one pending run per group and
+  cancels the older one, so a shared lane silently drops a deploy while
+  reporting success. Route every *state sync* through the single shared
+  `prod-terraform-state-sync` lane in `prod-terraform-target-apply.yml`
+  instead. Syncs are idempotent and re-run on the next merge, so a cancellation
+  costs nothing.
+- Do not give syncs their own lanes. Two syncs of one state then run at once,
+  each saves a plan, and the second apply is rejected with `Saved plan is
+  stale` — the state moved after its plan was made. That is unretryable by
+  construction: the plan is invalid, not blocked, so `scripts/terraform_retry.sh`
+  waits out the lock and then fails anyway.
+- `scripts/terraform_retry.sh` covers the remaining case, a deploy racing a sync
+  to *create* the lock file. `-lock-timeout` waits for a lock that is held, but
+  the GCS backend fails fatally on the create race. The wrapper retries that
   case and only that case.
 - A deploy must not start a canary while an execution of the same job is
   running. Skip by default and say so; a duplicate rebuilds an entire release

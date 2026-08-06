@@ -29,12 +29,22 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.job = self.workflow["jobs"]["sync"]
         self.steps = workflow_steps_by_name(self.workflow, "sync")
 
+    def test_every_caller_shares_one_lane_so_no_plan_goes_stale(self):
+        # The lane must not vary per caller. Two syncs of the same state can each
+        # save a plan, and whichever applies second is rejected -- "Saved plan is
+        # stale" -- because the state moved underneath it. Retrying cannot fix
+        # that: the plan is invalid, not blocked. One lane makes the second sync
+        # plan against the state the first one left.
+        group = self.job["concurrency"]["group"]
+        self.assertNotIn("${{", group, "a per-caller lane lets two saved plans race")
+        self.assertIs(self.job["concurrency"]["cancel-in-progress"], False)
+
     def test_only_callable_and_protected(self):
         self.assertEqual(list(self.trigger), ["workflow_call"])
         self.assertEqual(self.job["environment"], "shared-datasets-production")
         self.assertEqual(
             self.job["concurrency"],
-            {"group": "prod-terraform-state-${{ inputs.sync_name }}", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-sync", "cancel-in-progress": False},
         )
         self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "main")
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])
