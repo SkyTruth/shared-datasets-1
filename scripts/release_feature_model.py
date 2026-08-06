@@ -406,9 +406,11 @@ def find_identity_ambiguities(
         geometry_hash_value = str(record.get("geometry_hash") or "").strip()
         properties_hash_value = str(record.get("properties_hash") or "").strip()
         baseline_geometry = baseline_geometry_by_key.get(identity_key_from_record(record))
-        if baseline_geometry is not None and baseline_geometry == geometry_hash_value:
-            key_corroborated += 1
-            continue
+        # Corroboration only suppresses a record that would otherwise be
+        # escalated. Applying it earlier would also swallow the records that
+        # were never in question, making the published count read as though
+        # most of a release had been ambiguous.
+        corroborated = baseline_geometry is not None and baseline_geometry == geometry_hash_value
         geometry_records = by_geometry.get(geometry_hash_value, ())
         properties_records = by_properties.get(properties_hash_value, ())
         geometry_matches = tuple(sorted({feature_id for feature_id, _hash in geometry_records}))
@@ -419,6 +421,9 @@ def find_identity_ambiguities(
             if not geometry_matches:
                 continue
             if len(geometry_matches) == 1 and geometry_properties_hashes == (properties_hash_value,):
+                continue
+            if corroborated:
+                key_corroborated += 1
                 continue
             ambiguities.append(
                 IdentityAmbiguity(
@@ -436,6 +441,9 @@ def find_identity_ambiguities(
         if not geometry_matches and not properties_matches:
             continue
         if geometry_matches == properties_matches and len(geometry_matches) == 1:
+            continue
+        if corroborated:
+            key_corroborated += 1
             continue
         if geometry_matches and not properties_matches:
             ambiguity_type = "same_geometry_changed_properties"
