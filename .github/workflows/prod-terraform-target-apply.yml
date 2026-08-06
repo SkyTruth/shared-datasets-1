@@ -66,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state
+      group: prod-terraform-state-${{ inputs.sync_name }}
       cancel-in-progress: false
 
     steps:
@@ -138,7 +138,7 @@ jobs:
             [[ -z "${tf_var}" ]] && continue
             plan_args+=("-var=${tf_var}")
           done <<< "${TF_VARS}"
-          terraform -chdir="${TERRAFORM_DIR}" plan "${plan_args[@]}"
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir="${TERRAFORM_DIR}" plan "${plan_args[@]}"
 
       - name: Export Terraform plan JSON
         run: terraform -chdir="${TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/target-apply.tfplan" > "${RUNNER_TEMP}/target-apply.tfplan.json"
@@ -164,7 +164,7 @@ jobs:
           python scripts/terraform_plan_allowlist.py "${enforce_args[@]}"
 
       - name: Terraform apply
-        run: terraform -chdir="${TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/target-apply.tfplan"
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir="${TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/target-apply.tfplan"
 
       - name: Wait after apply
         if: ${{ inputs.post_apply_wait_seconds > 0 }}

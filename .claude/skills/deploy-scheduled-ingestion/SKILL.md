@@ -28,6 +28,20 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Verify alert coverage after adding or changing scheduled jobs. Cron failure alerts should cover future jobs by default through project/region-level filters, labels, or another durable grouping; avoid per-job allowlists unless there is a documented reason.
 - Distinguish Cloud Monitoring notification channels from the local Terraform apply-summary webhook. A working Monitoring Slack channel does not prove `shared-datasets-slack-webhook-url` has a Secret Manager version, and vice versa.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
+- Give each production Terraform workflow its own `prod-terraform-state-<name>`
+  concurrency lane with `cancel-in-progress: false`. A shared lane looks safe
+  but is not: GitHub keeps only one pending run per group and cancels the older
+  one, so a merge touching shared paths silently drops deploys while reporting
+  success.
+- Separate lanes are only safe because every production `plan` and `apply` runs
+  through `scripts/terraform_retry.sh`. `-lock-timeout` waits for a lock that is
+  *held*, but the GCS backend fails fatally when two runs race to create the
+  lock file, which is what simultaneous lanes produce. The wrapper retries that
+  case and only that case.
+- A deploy must not start a canary while an execution of the same job is
+  running. Skip by default and say so; a duplicate rebuilds an entire release
+  before discovering it is redundant. Cancel the in-flight run only via the
+  explicit `cancel_running_canary` input, when replacing known-bad code.
 
 ## Job boundaries
 

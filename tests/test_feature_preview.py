@@ -47,7 +47,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertEqual(steps["Check out preview control plane"]["with"]["ref"], "main")
         self.assertEqual(steps["Check out selected feature branch"]["with"]["ref"], "${{ github.ref }}")
         self.assertEqual(steps["Check out selected feature branch"]["with"]["path"], "preview-source")
-        self.assertNotIn("terraform -chdir=terraform/envs/prod", all_runs)
+        self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", all_runs)
         self.assertNotIn("-target=", all_runs)
 
     def test_preview_terraform_uses_isolated_preview_resources(self):
@@ -189,7 +189,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("--force-access-tier private", workflow)
         self.assertIn("--metadata-sidecar-autoload-max-bytes 33554432", workflow)
         self.assertIn("Publish preview catalog web bundle", workflow)
-        self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
+        self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
         self.assertNotIn("Enforce preview reset resource-change allowlist", workflow)
         self.assertNotIn("Refusing preview reset", workflow)
@@ -227,7 +227,7 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("preview-source", workflow)
         self.assertNotIn("docker build", workflow)
         self.assertNotIn("feature_preview_service_image=", workflow)
-        self.assertNotIn("terraform -chdir=terraform/envs/prod", workflow)
+        self.assertNotIn("terraform_retry.sh\" -chdir=terraform/envs/prod", workflow)
         self.assertNotIn("-target=", workflow)
         self.assertNotIn("legacy_preview_project_iam_exact", workflow)
         self.assertNotIn("feature-preview-service@shared-datasets-1.iam.gserviceaccount.com", workflow)
@@ -348,11 +348,11 @@ class FeaturePreviewTests(unittest.TestCase):
 
     def test_prod_terraform_sync_workflows_share_state_concurrency(self):
         reusable = (REPO_ROOT / ".github/workflows/prod-terraform-target-apply.yml").read_text()
-        self.assertIn("group: prod-terraform-state", reusable)
+        self.assertIn("group: prod-terraform-state-${{ inputs.sync_name }}", reusable)
         self.assertIn("cancel-in-progress: false", reusable)
 
         pmtiles = PMTILES_CDN_SYNC_WORKFLOW.read_text()
-        self.assertIn("group: prod-terraform-state", pmtiles)
+        self.assertIn("group: prod-terraform-state-pmtiles-cdn-sync", pmtiles)
         self.assertIn("cancel-in-progress: false", pmtiles)
 
         for workflow_path in (

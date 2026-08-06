@@ -52,7 +52,7 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-metadata-service", "cancel-in-progress": False},
         )
         self.assertEqual(deploy_steps["Check out repository"]["with"]["ref"], "main")
 
@@ -90,7 +90,7 @@ class MetadataServiceWorkflowTests(unittest.TestCase):
             "terraform -chdir=terraform/envs/prod show -json",
             deploy_steps["Export Terraform plan JSON"]["run"],
         )
-        self.assertIn("terraform -chdir=terraform/envs/prod apply", deploy_steps["Terraform apply"]["run"])
+        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", deploy_steps["Terraform apply"]["run"])
         self.assertLess(
             list(deploy_steps).index("Enforce metadata-service resource-change allowlist"),
             list(deploy_steps).index("Terraform apply"),

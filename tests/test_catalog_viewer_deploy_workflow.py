@@ -38,7 +38,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
-            {"group": "prod-terraform-state", "cancel-in-progress": False},
+            {"group": "prod-terraform-state-catalog-viewer", "cancel-in-progress": False},
         )
         self.assertEqual(env["TF_REGISTRY_CLIENT_TIMEOUT"], "60")
         self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")
@@ -68,7 +68,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
             {"google_project_iam_member.github_actions_pmtiles_cdn_secret_iam_policy_manager"},
         )
         self.assertIn(
-            "terraform -chdir=terraform/envs/prod apply",
+            "terraform_retry.sh\" -chdir=terraform/envs/prod apply",
             steps["Terraform apply Secret Manager IAM bootstrap"]["run"],
         )
         self.assertEqual(steps["Wait for Secret Manager IAM propagation"]["run"], "sleep 30")
@@ -107,7 +107,7 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
             "terraform -chdir=terraform/envs/prod show -json",
             steps["Export Terraform plan JSON"]["run"],
         )
-        self.assertIn("terraform -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
+        self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])
         self.assertLess(
             step_names.index("Enforce catalog-viewer resource-change allowlist"),
             step_names.index("Terraform apply"),

@@ -21,6 +21,11 @@ on:
       - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      cancel_running_canary:
+        description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
+        required: false
+        type: boolean
+        default: false
       resume_scheduler:
         description: "Resume sea-ice-daily after deploy, canary, and validation pass."
         required: false
@@ -54,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state
+      group: prod-terraform-state-sea-ice-daily
       cancel-in-progress: false
 
     steps:
@@ -198,7 +203,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir=terraform/envs/prod plan \
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -out="${RUNNER_TEMP}/sea-ice-daily.tfplan" \
             -target=module.sea_ice_daily_job.google_cloud_run_v2_job.this \
@@ -253,7 +258,7 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/sea-ice-daily.tfplan"
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/sea-ice-daily.tfplan"
 
       - name: Confirm deployed digest
         run: |
@@ -266,7 +271,41 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve in-flight canary
+        id: inflight
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+        run: |
+          set -euo pipefail
+
+          # A merge that only touches workflow files still rebuilds the image and
+          # would start a second canary alongside one already publishing. That
+          # duplicate rebuilds the whole release before discovering it is
+          # redundant. Skip by default; cancel only when deliberately deploying
+          # a fix over a run executing known-bad code.
+          running="$(gcloud run jobs executions list \
+            --job="${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format='value(metadata.name,status.runningCount)' 2>/dev/null \
+            | awk '$2 != "" && $2 != "0" {print $1; exit}')"
+
+          if [[ -z "${running}" ]]; then
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${CANCEL_RUNNING_CANARY}" == "true" ]]; then
+            echo "Cancelling in-flight execution ${running} before the replacement canary."
+            gcloud run jobs executions cancel "${running}" \
+              --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --quiet
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "run_canary=false" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
+
       - name: Execute sea-ice-daily canary
+        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
         run: |
           set -euo pipefail
 

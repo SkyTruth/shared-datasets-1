@@ -21,6 +21,11 @@ on:
       - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      cancel_running_canary:
+        description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
+        required: false
+        type: boolean
+        default: false
       canary_run_date:
         description: "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish."
         required: false
@@ -55,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state
+      group: prod-terraform-state-eamlis-monthly
       cancel-in-progress: false
 
     steps:
@@ -152,7 +157,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          terraform -chdir=terraform/envs/prod plan \
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -out="${RUNNER_TEMP}/eamlis-monthly.tfplan" \
             -target=module.eamlis_monthly_job.google_cloud_run_v2_job.this \
@@ -207,7 +212,7 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
 
       - name: Confirm deployed digest
         run: |
@@ -220,7 +225,41 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve in-flight canary
+        id: inflight
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+        run: |
+          set -euo pipefail
+
+          # A merge that only touches workflow files still rebuilds the image and
+          # would start a second canary alongside one already publishing. That
+          # duplicate rebuilds the whole release before discovering it is
+          # redundant. Skip by default; cancel only when deliberately deploying
+          # a fix over a run executing known-bad code.
+          running="$(gcloud run jobs executions list \
+            --job="${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format='value(metadata.name,status.runningCount)' 2>/dev/null \
+            | awk '$2 != "" && $2 != "0" {print $1; exit}')"
+
+          if [[ -z "${running}" ]]; then
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${CANCEL_RUNNING_CANARY}" == "true" ]]; then
+            echo "Cancelling in-flight execution ${running} before the replacement canary."
+            gcloud run jobs executions cancel "${running}" \
+              --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --quiet
+            echo "run_canary=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "run_canary=false" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
+
       - name: Execute eamlis-monthly canary
+        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
         env:
           CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |

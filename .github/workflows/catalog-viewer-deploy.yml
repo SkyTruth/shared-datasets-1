@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state
+      group: prod-terraform-state-catalog-viewer
       cancel-in-progress: false
 
     steps:
@@ -125,7 +125,7 @@ jobs:
 
       - name: Terraform plan Secret Manager IAM bootstrap
         run: |
-          terraform -chdir=terraform/envs/prod plan \
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" \
@@ -166,14 +166,14 @@ jobs:
           PY
 
       - name: Terraform apply Secret Manager IAM bootstrap
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan"
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan"
 
       - name: Wait for Secret Manager IAM propagation
         run: sleep 30
 
       - name: Terraform plan
         run: |
-          terraform -chdir=terraform/envs/prod plan \
+          bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
             -refresh=false \
             -out="${RUNNER_TEMP}/catalog-viewer.tfplan" \
@@ -232,4 +232,4 @@ jobs:
           PY
 
       - name: Terraform apply
-        run: terraform -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer.tfplan"
+        run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer.tfplan"
