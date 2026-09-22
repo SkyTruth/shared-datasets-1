@@ -65,8 +65,12 @@ jobs:
     name: Apply ${{ inputs.sync_name }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
+    # All jobs that write prod state share this queue, including deploys.
+    # Hold it from plan through allowlist validation and saved-plan apply.
+    # queue: max retains pending jobs instead of replacing an earlier sync.
     concurrency:
-      group: prod-terraform-state-${{ inputs.sync_name }}
+      group: prod-terraform-state
+      queue: max
       cancel-in-progress: false
 
     steps:

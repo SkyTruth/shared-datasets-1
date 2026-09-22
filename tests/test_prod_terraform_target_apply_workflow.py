@@ -34,7 +34,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertEqual(self.job["environment"], "shared-datasets-production")
         self.assertEqual(
             self.job["concurrency"],
-            {"group": "prod-terraform-state-${{ inputs.sync_name }}", "cancel-in-progress": False},
+            {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
         self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "main")
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])

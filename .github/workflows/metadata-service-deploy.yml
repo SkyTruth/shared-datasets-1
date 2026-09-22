@@ -85,7 +85,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
-      group: prod-terraform-state-metadata-service
+      group: prod-terraform-state
+      queue: max
       cancel-in-progress: false
 
     steps:

@@ -28,16 +28,28 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Verify alert coverage after adding or changing scheduled jobs. Cron failure alerts should cover future jobs by default through project/region-level filters, labels, or another durable grouping; avoid per-job allowlists unless there is a documented reason.
 - Distinguish Cloud Monitoring notification channels from the local Terraform apply-summary webhook. A working Monitoring Slack channel does not prove `shared-datasets-slack-webhook-url` has a Secret Manager version, and vice versa.
 - Do not use Terraform for changing dataset files under `latest/`, `releases/`, or `runs/`.
-- Give each production Terraform workflow its own `prod-terraform-state-<name>`
-  concurrency lane with `cancel-in-progress: false`. A shared lane looks safe
-  but is not: GitHub keeps only one pending run per group and cancels the older
-  one, so a merge touching shared paths silently drops deploys while reporting
-  success.
-- Separate lanes are only safe because every production `plan` and `apply` runs
-  through `scripts/terraform_retry.sh`. `-lock-timeout` waits for a lock that is
-  *held*, but the GCS backend fails fatally when two runs race to create the
-  lock file, which is what simultaneous lanes produce. The wrapper retries that
-  case and only that case.
+- Every job that plans or applies production Terraform must use job-level
+  concurrency with the literal group `prod-terraform-state`, `queue: max`, and
+  `cancel-in-progress: false`. This includes reusable state syncs and all
+  deployment/CDN jobs. Keep plan, JSON export, allowlist validation, and
+  saved-plan apply in the same queued job; another state writer between plan
+  and apply makes the saved plan stale.
+- GitHub Actions retains up to 100 pending jobs with `queue: max`. The default
+  queue replaces pending jobs even when `cancel-in-progress` is false. Queue
+  overflow is still canceled: report it and dispatch the affected workflow
+  again from reviewed `main` after capacity is available.
+- Serialize the existing whole jobs, including image builds and canary checks.
+  Longer queue waits are an accepted tradeoff. Put no matching queue on a
+  reusable-workflow caller or its parent workflow: only the execution job owns
+  it. Preserve bootstrap `needs` dependencies. Preview Terraform uses separate
+  state and keeps its own queue.
+- Before changing the shared queue, drain active and queued production runs
+  using the old workflow configuration. Verify post-merge jobs complete without
+  overlapping production writer jobs or canceled pending work.
+- Keep `scripts/terraform_retry.sh` for bounded lock-error retries. It is not a
+  substitute for serialization and cannot repair `Saved plan is stale`.
+  Non-lock failures must exit immediately; do not automatically regenerate or
+  apply a new plan outside the existing allowlist validation sequence.
 - A deploy must not start a canary while an execution of the same job is
   running. Skip by default and say so; a duplicate rebuilds an entire release
   before discovering it is redundant. Cancel the in-flight run only via the
