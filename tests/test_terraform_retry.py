@@ -8,10 +8,10 @@ create-race: two runs starting together produced
       * writing ".../default.tflock" failed: Error 412 ... conditionNotMet
       * storage: object doesn't exist
 
-and the backend treats that compound error as fatal rather than retryable. The
-lanes were reverted. They can only come back on top of a retry that is actually
-exercised, which is what these tests do — including that it never masks a real
-Terraform failure.
+and the backend treats that compound error as fatal rather than retryable.
+Production jobs now serialize the whole plan/validate/apply sequence. The
+bounded wrapper still handles lock errors, but cannot repair a stale saved
+plan and must never mask a real Terraform failure.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def fake_terraform(script_body: str) -> tuple[str, Path]:
     return str(binary), counter
 
 
-def run_wrapper(binary: str, *, attempts: int = 5, delay: int = 0) -> subprocess.CompletedProcess[str]:
+def run_wrapper(binary: str, *, attempts: int = 5, delay: int = 0, operation: str = "plan") -> subprocess.CompletedProcess[str]:
     env = {
         **os.environ,
         "TERRAFORM_BIN": binary,
@@ -67,7 +67,7 @@ def run_wrapper(binary: str, *, attempts: int = 5, delay: int = 0) -> subprocess
         "TERRAFORM_RETRY_BASE_DELAY": str(delay),
     }
     return subprocess.run(
-        [str(WRAPPER), "plan", "-input=false"],
+        [str(WRAPPER), operation, "-input=false"],
         capture_output=True,
         text=True,
         env=env,
@@ -115,6 +115,15 @@ class TerraformRetryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(counter.read_text().strip(), "1")
 
+    def test_stale_saved_plan_fails_without_retrying_or_replanning(self):
+        binary, counter = fake_terraform('echo "Error: Saved plan is stale"; exit 3')
+
+        result = run_wrapper(binary, operation="apply")
+
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(counter.read_text().strip(), "1")
+        self.assertIn("Saved plan is stale", result.stdout)
+
     def test_persistent_contention_eventually_gives_up_with_the_original_status(self):
         binary, counter = fake_terraform(f"cat <<'EOF'\n{LOCK_ERROR}EOF\nexit 2")
 
@@ -139,7 +148,7 @@ class TerraformRetryTests(unittest.TestCase):
 
 
 class WrapperIsUsedForProdMutationsTests(unittest.TestCase):
-    """Every prod plan/apply must go through the wrapper, or lanes are unsafe."""
+    """Preserve bounded lock-error handling for every prod plan/apply."""
 
     WORKFLOWS = (
         "prod-terraform-target-apply.yml",

@@ -141,7 +141,7 @@ def assert_protected_terraform_sync(
     testcase.assertEqual(job["environment"], "shared-datasets-production")
     testcase.assertEqual(
         job["concurrency"],
-        {"group": "prod-terraform-state-pmtiles-cdn-sync", "cancel-in-progress": False},
+        {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
     testcase.assertIn("may only apply from main", steps["Validate main ref"]["run"])

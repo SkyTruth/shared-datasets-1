@@ -65,15 +65,12 @@ jobs:
     name: Apply ${{ inputs.sync_name }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
-    # Every caller of this workflow shares one lane on purpose. Separate lanes
-    # let two syncs plan against the same state, and whichever applies second
-    # finds its saved plan stale -- Terraform refuses it, correctly, because the
-    # state moved after the plan was made. Retrying cannot help: the plan is
-    # invalid, not blocked. These syncs are idempotent and re-run on the next
-    # merge, so serializing them costs little. Job deploys keep their own lanes,
-    # because a cancelled deploy is silently not deployed.
+    # All jobs that write prod state share this queue, including deploys.
+    # Hold it from plan through allowlist validation and saved-plan apply.
+    # queue: max retains pending jobs instead of replacing an earlier sync.
     concurrency:
-      group: prod-terraform-state-sync
+      group: prod-terraform-state
+      queue: max
       cancel-in-progress: false
 
     steps:

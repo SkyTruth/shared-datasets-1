@@ -125,12 +125,19 @@ FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS = (
     "ref: ${{ github.ref }}",
     "Select the branch or tag to deploy from the workflow branch dropdown.",
 )
-# Matches literal prod chdir applies and parameterized applies such as
-# `terraform -chdir="${TERRAFORM_DIR}" apply` in the reusable target-apply
-# workflow, including applies with flags between -chdir and apply on the
-# same line; combined with a terraform/envs/prod mention to exclude
-# preview-only workflows.
-TERRAFORM_APPLY_RE = re.compile(r"terraform +-chdir=\S+[^\n]* apply\b")
+# Match the direct CLI and the repo-owned wrapper, including quoted paths.
+# Inspect execution steps, never workflow-wide comments or unrelated jobs.
+TERRAFORM_COMMAND_RE = re.compile(
+    r'''(?:^|\s)(?:terraform|["']?[^\s"']*terraform_retry\.sh["']?)\s+(?P<args>[^\n]+)''',
+    re.MULTILINE,
+)
+TERRAFORM_WRITE_RE = re.compile(r"(?:^|\s)(?:plan|apply)(?:\s|$)")
+PROD_TERRAFORM_CONCURRENCY = {
+    "group": "prod-terraform-state",
+    "queue": "max",
+    "cancel-in-progress": False,
+}
+TARGET_APPLY_WORKFLOW = "./.github/workflows/prod-terraform-target-apply.yml"
 
 
 @dataclass(frozen=True)
@@ -431,6 +438,32 @@ def check_no_local_terraform_apply_guidance(repo_root: Path) -> list[str]:
     return errors
 
 
+def job_uses_prod_terraform(workflow: dict, job: dict) -> bool:
+    # Parameterized directories are declared in workflow/job env, defaults, or
+    # workflow_call inputs. Include those declarations, but not sibling jobs.
+    declarations = yaml.safe_dump({
+        "env": workflow.get("env"),
+        "defaults": workflow.get("defaults"),
+        "triggers": workflow.get("on", workflow.get(True)),
+        "job": job,
+    })
+    for step in job.get("steps", []):
+        run = "\n".join(
+            line for line in step.get("run", "").splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        run = re.sub(r"\\\n\s*", " ", run)
+        for match in TERRAFORM_COMMAND_RE.finditer(run):
+            args = match["args"]
+            if not TERRAFORM_WRITE_RE.search(args):
+                continue
+            if "terraform/envs/preview" in args:
+                continue
+            if "terraform/envs/prod" in args or "terraform/envs/prod" in declarations:
+                return True
+    return False
+
+
 def check_workflow_boundaries(repo_root: Path) -> list[str]:
     workflows_dir = repo_root / ".github" / "workflows"
     if not workflows_dir.exists():
@@ -442,6 +475,15 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
         rel = path.relative_to(repo_root)
         if not text and path.stat().st_size > 0:
             errors.append(f"{rel}: workflow file is not valid UTF-8, so boundary checks cannot run")
+            continue
+
+        try:
+            workflow = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            errors.append(f"{rel}: workflow YAML cannot be parsed: {exc}")
+            continue
+        if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+            errors.append(f"{rel}: workflow must declare a jobs mapping")
             continue
 
         if any(marker in text for marker in WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS):
@@ -464,15 +506,42 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
         if "terraform -chdir=terraform/envs/preview apply" in text and "terraform -chdir=terraform/envs/prod" in text:
             errors.append(f"{rel}: preview Terraform apply workflows must stay under terraform/envs/preview")
 
-        if "terraform/envs/prod" in text and TERRAFORM_APPLY_RE.search(text):
+        for job_name, job in workflow["jobs"].items():
+            if not isinstance(job, dict):
+                errors.append(f"{rel}: job {job_name} must be a mapping")
+                continue
+            is_caller = job.get("uses") == TARGET_APPLY_WORKFLOW
+            is_writer = job_uses_prod_terraform(workflow, job)
+            if not (is_caller or is_writer):
+                continue
+            parent_concurrency = workflow.get("concurrency", {})
+            parent_group = parent_concurrency.get("group") if isinstance(parent_concurrency, dict) else parent_concurrency
+            if parent_group == PROD_TERRAFORM_CONCURRENCY["group"]:
+                errors.append(f"{rel}: parent workflow must not hold the production Terraform queue")
+            if is_caller:
+                if "concurrency" in job:
+                    errors.append(f"{rel}: job {job_name}: reusable Terraform caller must leave concurrency to the execution job")
+                continue
+            concurrency = job.get("concurrency")
+            if (
+                concurrency != PROD_TERRAFORM_CONCURRENCY
+                or concurrency.get("cancel-in-progress") is not False
+            ):
+                errors.append(
+                    f"{rel}: job {job_name}: missing prod Terraform state concurrency; "
+                    "require group: prod-terraform-state, queue: max, cancel-in-progress: false on this job"
+                )
+            job_text = "\n".join(
+                step.get("run", "") + "\n" + "\n".join(str(value) for value in step.get("env", {}).values())
+                for step in job.get("steps", [])
+            )
             required = {
                 "main ref validation": WORKFLOW_MAIN_REF_GUARD,
-                "prod Terraform state concurrency": "group: prod-terraform-state",
                 "resource-change allowlist": "allowed_exact",
             }
             for label, marker in required.items():
-                if marker not in text:
-                    errors.append(f"{rel}: prod Terraform apply workflow is missing {label}")
+                if marker not in job_text:
+                    errors.append(f"{rel}: job {job_name}: prod Terraform job is missing {label}")
 
     return errors
 

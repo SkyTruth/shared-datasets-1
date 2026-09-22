@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
+
+import yaml
 
 from scripts import repo_guardrails
 
@@ -13,6 +16,108 @@ CATALOG_HEAD = "asset_slug,title\nexample-asset,New title\n"
 
 
 class RepoGuardrailsTests(unittest.TestCase):
+    def check_workflow_fixture(self, workflow):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github/workflows"
+            directory.mkdir(parents=True)
+            (directory / "apply.yml").write_text(yaml.safe_dump(workflow))
+            return repo_guardrails.check_workflow_boundaries(root)
+
+    def production_workflow(self, command):
+        return {
+            "on": {"workflow_call": {"inputs": {
+                "terraform_dir": {"default": "terraform/envs/prod", "type": "string"},
+            }}},
+            "env": {"TERRAFORM_DIR": "${{ inputs.terraform_dir }}"},
+            "jobs": {"apply": {
+                "concurrency": {
+                    "group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False,
+                },
+                "steps": [{"run": '\n'.join([
+                    'if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then exit 1; fi',
+                    'allowed_exact="example"',
+                    command,
+                ])}],
+            }},
+        }
+
+    def test_production_queue_contract_for_direct_and_wrapped_commands(self):
+        for executable in ('terraform', 'bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh"'):
+            for directory in ('terraform/envs/prod', '"${TERRAFORM_DIR}"'):
+                for operation in ('plan', 'apply'):
+                    command = f'{executable} -chdir={directory} \\\n  {operation} -input=false'
+                    workflow = self.production_workflow(command)
+                    with self.subTest(command=command):
+                        self.assertEqual(self.check_workflow_fixture(workflow), [])
+                    for field, value in (
+                        ('group', 'prod-terraform-state-another-writer'),
+                        ('group', 'prod-terraform-state-${{ inputs.sync_name }}'),
+                        ('queue', None),
+                        ('queue', 'single'),
+                        ('cancel-in-progress', True),
+                        ('cancel-in-progress', None),
+                        ('cancel-in-progress', 0),
+                    ):
+                        changed = deepcopy(workflow)
+                        concurrency = changed['jobs']['apply']['concurrency']
+                        if value is None:
+                            del concurrency[field]
+                        else:
+                            concurrency[field] = value
+                        with self.subTest(command=command, field=field, value=value):
+                            errors = self.check_workflow_fixture(changed)
+                            self.assertTrue(any('job apply: missing prod Terraform state concurrency' in e for e in errors), errors)
+
+    def test_unrelated_job_or_workflow_concurrency_does_not_protect_writer(self):
+        for location in ('unrelated_job', 'parent_workflow'):
+            workflow = self.production_workflow('terraform -chdir=terraform/envs/prod apply plan.tfplan')
+            concurrency = workflow['jobs']['apply'].pop('concurrency')
+            if location == 'unrelated_job':
+                workflow['jobs']['unrelated'] = {'concurrency': concurrency, 'steps': [{'run': 'echo ready'}]}
+            else:
+                workflow['concurrency'] = concurrency
+            with self.subTest(location=location):
+                errors = self.check_workflow_fixture(workflow)
+                self.assertTrue(any('job apply: missing prod Terraform state concurrency' in e for e in errors), errors)
+
+    def test_reusable_callers_do_not_hold_the_execution_queue(self):
+        workflow = {'jobs': {'sync': {'uses': repo_guardrails.TARGET_APPLY_WORKFLOW}}}
+        self.assertEqual(self.check_workflow_fixture(workflow), [])
+        for location in ('job', 'parent'):
+            changed = deepcopy(workflow)
+            owner = changed['jobs']['sync'] if location == 'job' else changed
+            owner['concurrency'] = dict(repo_guardrails.PROD_TERRAFORM_CONCURRENCY)
+            with self.subTest(location=location):
+                errors = self.check_workflow_fixture(changed)
+                self.assertTrue(any('caller must leave concurrency' in e or 'parent workflow must not hold' in e for e in errors), errors)
+
+    def test_preview_job_does_not_inherit_sibling_production_queue_requirement(self):
+        workflow = self.production_workflow('terraform -chdir=terraform/envs/prod apply plan.tfplan')
+        workflow['jobs']['preview'] = {
+            'steps': [{'run': 'terraform -chdir=terraform/envs/preview apply plan.tfplan'}],
+        }
+        self.assertFalse(repo_guardrails.job_uses_prod_terraform(workflow, workflow['jobs']['preview']))
+
+    def test_all_production_execution_jobs_share_the_queue(self):
+        found = set()
+        root = Path(__file__).resolve().parents[1]
+        for path in (root / '.github/workflows').glob('*.yml'):
+            workflow = yaml.safe_load(path.read_text())
+            for name, job in workflow['jobs'].items():
+                if repo_guardrails.job_uses_prod_terraform(workflow, job):
+                    found.add((path.name, name))
+                    self.assertEqual(job['concurrency'], repo_guardrails.PROD_TERRAFORM_CONCURRENCY)
+        self.assertEqual(found, {
+            ('prod-terraform-target-apply.yml', 'sync'),
+            ('wdpa-monthly-deploy.yml', 'deploy'),
+            ('sea-ice-daily-deploy.yml', 'deploy'),
+            ('eamlis-monthly-deploy.yml', 'deploy'),
+            ('metadata-service-deploy.yml', 'deploy'),
+            ('catalog-viewer-deploy.yml', 'deploy'),
+            ('pmtiles-cdn-sync.yml', 'sync'),
+        })
+
     def test_catalog_csv_changes_require_matching_asset_doc_change(self):
         changes = [repo_guardrails.ChangedFile("M", repo_guardrails.CATALOG_PATH)]
 
