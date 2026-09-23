@@ -1,3 +1,5 @@
+import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
+
 const state = {
   catalog: null,
   assets: [],
@@ -5,6 +7,7 @@ const state = {
   selectedSlug: null,
   selectedSlugs: [],
   mapModule: null,
+  mapRequestSerial: 0,
   basemap: "map",
   versionBySlug: {},
   layerByReference: {},
@@ -145,7 +148,6 @@ const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FIELD_SAFE_LOCALE_RE = /^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$/;
 const LOCALIZED_METADATA_FILE_RE = /\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/;
 const DEFAULT_SHARED_DATASETS_BUCKET = "skytruth-shared-datasets-1";
-const DEFAULT_ARTIFACTS_BASE_URL = "https://tiles.skytruth.org/artifacts";
 const CATALOG_VIEWER_SUGGESTED_METADATA_SIDECAR_AUTOLOAD_MAX_BYTES = 24 * 1024 * 1024;
 const CATALOG_VIEWER_METADATA_SIDECAR_AUTOLOAD_META = "shared-datasets-metadata-sidecar-autoload-max-bytes";
 const FEATURE_METADATA_INTERACTIVE_LOOKUP_LIMIT = 100;
@@ -198,6 +200,7 @@ async function hydrateReleaseIndex(asset) {
     }
     return applyReleaseIndex(asset, await response.json());
   } catch (error) {
+    asset.release_error = `Release history unavailable. ${error.message}`;
     console.warn(`Could not load release index for ${asset.slug}:`, error);
     return false;
   }
@@ -208,15 +211,16 @@ function releaseIndexUrl(asset) {
 }
 
 function applyReleaseIndex(asset, releaseIndex) {
-  if (!releaseIndex || releaseIndex.schema_version !== 1 || releaseIndex.asset_slug !== asset.slug) return false;
+  if (!releaseIndex || releaseIndex.schema_version !== 1 || releaseIndex.asset_slug !== asset.slug) throw new Error("Invalid release index identity.");
   const versions = versionsFromReleaseIndex(asset, releaseIndex);
+  delete asset.release_error;
 
   asset.versions = versions;
   asset.latest_release = releaseIndex.latest_release || null;
   asset.latest_run = releaseIndex.latest_run || null;
   asset.release_index_updated_at = releaseIndex.updated_at || "";
   const latestDate = String(asset.latest_release?.date || "").trim();
-  if (versions.length && !RELEASE_DATE_RE.test(latestDate)) {
+  if (!RELEASE_DATE_RE.test(latestDate) || !versions.some((version) => version.date === latestDate)) {
     throw new Error(`release index for ${asset.slug} is missing latest_release.date`);
   }
   const latestVersion = versions.find((version) => version.date === latestDate);
@@ -232,7 +236,8 @@ function applyReleaseIndex(asset, releaseIndex) {
 }
 
 function versionsFromReleaseIndex(asset, releaseIndex) {
-  const releases = Array.isArray(releaseIndex.releases) ? releaseIndex.releases : [];
+  if (!Array.isArray(releaseIndex.releases)) throw new Error("Release index releases must be an array.");
+  const releases = releaseIndex.releases;
   const versions = [];
   const seenDates = new Set();
 
@@ -285,16 +290,7 @@ function versionsFromReleaseIndex(asset, releaseIndex) {
 }
 
 function releaseFileForFormat(files, formatName, preferredPath = "") {
-  const format = String(formatName || "").trim();
-  if (!format) return null;
-  const preferredName = basename(preferredPath);
-  if (preferredName) {
-    const exact = files.find(
-      (file) => String(file?.format || "").trim() === format && releaseFilePath(file).endsWith(`/${preferredName}`)
-    );
-    if (exact) return exact;
-  }
-  return files.find((file) => String(file?.format || "").trim() === format) || null;
+  return releaseFile(files, formatName, preferredPath);
 }
 
 function releaseFilePath(file) {
@@ -308,9 +304,10 @@ function releaseFileSha256(file) {
 }
 
 function releaseFiles(files) {
-  return files
-    .filter((file) => releaseFilePath(file))
-    .map((file) => ({ ...file, path: releaseFilePath(file) }));
+  return files.map((file) => {
+    if (!file || typeof file !== "object" || !releaseFilePath(file)) throw new Error("Invalid release file path.");
+    return {...file};
+  });
 }
 
 function releaseFormats(asset, files) {
@@ -331,24 +328,6 @@ function basename(path) {
 function gsToHttps(path) {
   const match = String(path || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
   return match ? `https://storage.googleapis.com/${match[1]}/${match[2]}` : path;
-}
-
-function gsToArtifactUrl(path) {
-  const match = String(path || "").match(/^gs:\/\/([^/]+)\/(.+)$/);
-  if (!match) {
-    return "";
-  }
-  const bucket = match[1];
-  const objectName = match[2];
-  const expectedBucket = String(state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET);
-  if (bucket !== expectedBucket) {
-    return "";
-  }
-  const encodedPath = objectName
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `${DEFAULT_ARTIFACTS_BASE_URL}/${encodedPath}`;
 }
 
 function wireEvents() {
@@ -697,7 +676,8 @@ function renderDocsLink(asset) {
 }
 
 function renderMultiDetail(assets) {
-  const mapAssets = selectedReferences(assets).filter((asset) => asset.pmtiles_url);
+  const references = selectedReferences(assets);
+  const mapAssets = references.filter((asset) => asset.pmtiles_url);
   elements.empty.hidden = true;
   elements.detail.hidden = false;
   elements.detail.classList.add("multi-detail");
@@ -716,7 +696,7 @@ function renderMultiDetail(assets) {
       : `Rendering ${mapAssets.length} of ${assets.length} selected datasets with PMTiles previews. Cmd-click rows to add or remove datasets.`;
   renderVersionSelector({ versions: [] });
   renderSelectionLegend(assets);
-  renderPmtiles(mapAssets);
+  renderPmtiles(references);
 }
 
 function renderLastRun(asset) {
@@ -775,31 +755,15 @@ function renderVersionSelector(asset) {
 }
 
 function selectedVersionValue(asset) {
-  const versions = Array.isArray(asset.versions) ? asset.versions : [];
-  const saved = state.versionBySlug[asset.slug];
-  if (saved === "latest" || versions.some((version) => version.date === saved)) {
-    return saved;
-  }
-  return "latest";
-}
-
-function latestVersionForAsset(asset) {
-  const versions = Array.isArray(asset?.versions) ? asset.versions : [];
-  const latestDate = String(asset?.latest_release?.date || "").trim();
-  if (latestDate) {
-    return versions.find((candidate) => String(candidate?.date || "").trim() === latestDate) || null;
-  }
-  return versions[0] || null;
+  return state.versionBySlug[asset.slug] || "latest";
 }
 
 function selectedReference(asset) {
-  const selected = selectedVersionValue(asset);
-  if (selected === "latest") {
-    const latestVersion = latestVersionForAsset(asset);
-    return latestVersion ? { ...asset, ...latestVersion, pmtiles_url: asset.pmtiles_url || latestVersion.pmtiles_url } : asset;
+  try {
+    return selectReleaseReference(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+  } catch (error) {
+    return {...asset, files: [], pmtiles_url: null, public_url: "", canonical_path: "", release_error: error.message};
   }
-  const version = asset.versions.find((candidate) => candidate.date === selected);
-  return version ? { ...asset, ...version } : asset;
 }
 
 function renderSelectionLegend(assets) {
@@ -1109,7 +1073,8 @@ function renderFgbDownload(asset, reference = selectedReference(asset)) {
     return;
   }
 
-  const version = selectedVersionValue(asset);
+  const version = reference.date || "latest";
+  elements.downloadFgb._reference = reference;
   const filename = basename(reference.canonical_path) || `${asset.slug}.fgb`;
   elements.downloadFgb.hidden = false;
   elements.downloadFgb.textContent = "Download FGB";
@@ -1167,13 +1132,15 @@ async function handleFgbDownloadClick(event) {
   const slug = elements.downloadFgb.dataset.slug || "";
   const version = elements.downloadFgb.dataset.version || "latest";
   const filename = elements.downloadFgb.dataset.filename || `${slug}.fgb`;
+  const reference = elements.downloadFgb._reference;
   setFgbDownloadBusy("Preparing");
   try {
-    const response = await fetch(downloadUrlRequestUrl(slug, version), { credentials: "include", cache: "no-store" });
+    const response = await fetch(downloadUrlRequestUrl(slug, version, reference?.canonical_file), { credentials: "include", cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.error || `download URL returned HTTP ${response.status}`);
     }
+    if (reference?.release_snapshot_key) assertArtifactResponse(payload, reference, reference.canonical_file);
     const downloadUrl = String(payload.download_url || "").trim();
     if (!downloadUrl) {
       throw new Error("download URL response did not include download_url");
@@ -1187,12 +1154,13 @@ async function handleFgbDownloadClick(event) {
   }
 }
 
-function downloadUrlRequestUrl(slug, version) {
+function downloadUrlRequestUrl(slug, version, file) {
   const params = new URLSearchParams({
     slug,
     format: "fgb",
     version: version || "latest",
   });
+  if (file) params.set("generation", artifactGeneration(file.generation));
   return `/api/download-url?${params.toString()}`;
 }
 
@@ -1230,11 +1198,24 @@ function renderSelectedPmtiles() {
     return;
   }
   renderSelectionLegend(assets.length > 1 ? assets : []);
-  renderPmtiles(selectedReferences(assets).filter((asset) => asset.pmtiles_url));
+  renderPmtiles(selectedReferences(assets));
 }
 
 async function renderPmtiles(assets) {
-  const rawMapAssets = (Array.isArray(assets) ? assets : [assets]).filter((asset) => asset?.pmtiles_url);
+  const requestSerial = ++state.mapRequestSerial;
+  state.mapModule?.cancelMapPreview();
+  const references = Array.isArray(assets) ? assets : [assets];
+  const failure = references.find((asset) => asset?.release_error);
+  if (failure) {
+    state.featureLookupSerial += 1;
+    clearFeatureInspector();
+    document.querySelector("#map-preview").replaceChildren(elements.mapStatus);
+    elements.mapSection.hidden = false;
+    elements.mapStatus.hidden = false;
+    elements.mapStatus.textContent = `Map unavailable. ${failure.release_error}`;
+    return;
+  }
+  const rawMapAssets = references.filter((asset) => asset?.pmtiles_url);
   setZoomSelectionEnabled(false);
   if (!rawMapAssets.length) {
     elements.pmtilesRow.hidden = true;
@@ -1266,11 +1247,9 @@ async function renderPmtiles(assets) {
   clearFeatureInspector();
 
   try {
-    if (!state.mapModule) {
-      const version = encodeURIComponent(state.catalog?.generated_at || "1");
-      state.mapModule = await import(`./map-preview.js?v=${version}`);
-    }
-    await state.mapModule.renderMapPreview({
+    const mapModule = await loadMapModule();
+    if (requestSerial !== state.mapRequestSerial) return;
+    await mapModule.renderMapPreview({
       container: document.querySelector("#map-preview"),
       status: elements.mapStatus,
       assets: mapAssets,
@@ -1284,11 +1263,21 @@ async function renderPmtiles(assets) {
       onFeatureSelect: handleFeatureSelect,
       loadFeatureMetadataColorValues,
     });
+    if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
   } catch (error) {
+    if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
   }
+}
+
+async function loadMapModule() {
+  if (!state.mapModule) {
+    const version = encodeURIComponent(state.catalog?.generated_at || "1");
+    state.mapModule = await import(`./map-preview.js?v=${version}`);
+  }
+  return state.mapModule;
 }
 
 async function handleFeatureSelect(features) {
@@ -1344,6 +1333,7 @@ async function enrichFeatureMetadata(features) {
           enrichedByKey.set(featureLookupKey(feature), enrichFeature(feature, item));
         }
       } catch (error) {
+        for (const feature of group.features) enrichedByKey.set(featureLookupKey(feature), {...feature, metadataUnavailable: error.message});
         console.warn(`Could not load feature metadata for ${group.assetSlug}:`, error);
       }
     })
@@ -1400,9 +1390,11 @@ function featureLookupGroups(features) {
     if (!featureId || !assetSlug || !release) {
       continue;
     }
-    const key = `${assetSlug}\n${release}\n${locale}`;
+    const reference = feature.releaseReference;
+    if (!reference?.release_snapshot_key) continue;
+    const key = `${snapshotKey(reference)}\n${locale}`;
     if (!groups.has(key)) {
-      groups.set(key, { assetSlug, release, locale, ids: new Set(), features: [] });
+      groups.set(key, { assetSlug, release, locale, reference, ids: new Set(), features: [] });
     }
     const group = groups.get(key);
     group.ids.add(featureId);
@@ -1412,9 +1404,12 @@ function featureLookupGroups(features) {
 }
 
 async function lookupFeatureMetadata(group) {
-  const asset = assetReferenceForRelease(group.assetSlug, group.release);
+  const asset = group.reference;
+  const sidecar = metadataSidecarFileForReference(asset, group.locale);
+  if (!sidecar) throw new Error("This release has no metadata sidecar.");
+  artifactGeneration(sidecar.generation);
   if (catalogViewerShouldAutoloadFeatureMetadata(asset, group.release, group.locale)) {
-    const index = await featureMetadataIndex(group.assetSlug, group.release, group.locale);
+    const index = await featureMetadataIndex(asset, group.locale);
     return lookupFeatureMetadataFromIndex(group.ids, index);
   }
   if (featureMetadataLookupCanLoad(asset)) {
@@ -1456,12 +1451,13 @@ async function lookupFeatureMetadataViaApi(group) {
   if (!response.ok) {
     throw new Error(payload.error || payload.message || `feature metadata lookup returned HTTP ${response.status}`);
   }
+  if (!lookupMatchesReference(payload, group.reference)) throw new Error("Metadata snapshot is unavailable or changed. Reload the catalog and reselect.");
   const lookup = new Map();
   const items = Array.isArray(payload.items) ? payload.items : [];
   for (const item of items) {
     const featureId = String(item?.feature_id || "").trim();
     if (featureId) {
-      lookup.set(featureId, item);
+      lookup.set(featureId, {...item, metadataLocaleMessage: group.locale ? "Source-language metadata shown; bounded lookup does not provide the selected translation." : ""});
     }
   }
   for (const featureId of group.ids) {
@@ -1584,13 +1580,13 @@ function featureMetadataLookupApiUrl(assetSlug, release) {
   return `/v1/assets/${safeAssetSlug}/releases/${safeRelease}:lookup`;
 }
 
-async function featureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
-  const key = featureMetadataCacheKey(assetSlug, release, locale);
+async function featureMetadataIndex(reference, locale = state.metadataLocale) {
+  const key = featureMetadataCacheKey(reference, locale);
   if (state.featureMetadataCache.has(key)) {
     return state.featureMetadataCache.get(key);
   }
   if (!state.featureMetadataRequests.has(key)) {
-    const request = downloadFeatureMetadataIndex(assetSlug, release, locale)
+    const request = downloadFeatureMetadataIndex(reference, locale)
       .then((lookup) => {
         state.featureMetadataCache.set(key, lookup);
         return lookup;
@@ -1603,12 +1599,11 @@ async function featureMetadataIndex(assetSlug, release, locale = state.metadataL
   return state.featureMetadataRequests.get(key);
 }
 
-async function downloadFeatureMetadataIndex(assetSlug, release, locale = state.metadataLocale) {
-  const reference = assetReferenceForRelease(assetSlug, release);
+async function downloadFeatureMetadataIndex(reference, locale = state.metadataLocale) {
   const sidecarFile = metadataSidecarFileForReference(reference, locale);
   const downloadUrl =
     publicFeatureMetadataSidecarUrl(reference, sidecarFile) ||
-    (await privateFeatureMetadataSidecarUrl(assetSlug, release, locale));
+    (await privateFeatureMetadataSidecarUrl(reference, locale));
   if (!downloadUrl) {
     throw new Error("feature metadata sidecar is unavailable for this catalog viewer");
   }
@@ -1690,7 +1685,7 @@ async function loadFeatureMetadataColorValues(asset, field) {
       unavailableReason: featureMetadataSidecarAutoloadUnavailableReason(asset, locale),
     };
   }
-  const index = await featureMetadataIndex(assetSlug, release, locale);
+  const index = await featureMetadataIndex(asset, locale);
   const valuesByFeatureId = new Map();
   for (const [featureId, item] of index.entries()) {
     const properties = item?.properties && typeof item.properties === "object" ? item.properties : {};
@@ -1711,12 +1706,12 @@ async function featureMetadataSchemaFields(asset, release = featureMetadataRelea
   if (!assetSlug || !releaseDate || !featureMetadataSchemaCanLoad(asset)) {
     return [];
   }
-  const key = `${assetSlug}\n${releaseDate}`;
+  const key = artifactKey(releaseSchemaFileForReference(asset));
   if (state.featureMetadataSchemaCache.has(key)) {
     return state.featureMetadataSchemaCache.get(key);
   }
   if (!state.featureMetadataSchemaRequests.has(key)) {
-    const request = downloadFeatureMetadataSchemaFields(assetSlug, releaseDate)
+    const request = downloadFeatureMetadataSchemaFields(asset)
       .then((fields) => {
         state.featureMetadataSchemaCache.set(key, fields);
         return fields;
@@ -1729,11 +1724,10 @@ async function featureMetadataSchemaFields(asset, release = featureMetadataRelea
   return state.featureMetadataSchemaRequests.get(key);
 }
 
-async function downloadFeatureMetadataSchemaFields(assetSlug, release) {
-  const reference = assetReferenceForRelease(assetSlug, release);
+async function downloadFeatureMetadataSchemaFields(reference) {
   const schemaFile = releaseSchemaFileForReference(reference);
   const downloadUrl =
-    publicFeatureMetadataSchemaUrl(reference, schemaFile) || (await privateFeatureMetadataSchemaUrl(assetSlug, release));
+    publicFeatureMetadataSchemaUrl(reference, schemaFile) || (await privateFeatureMetadataSchemaUrl(reference));
   if (!downloadUrl) {
     throw new Error("feature metadata schema is unavailable for this catalog viewer");
   }
@@ -1766,59 +1760,50 @@ function featureMetadataValueIsEmpty(value) {
   return String(value).trim() === "";
 }
 
-async function privateFeatureMetadataSidecarUrl(assetSlug, release, locale = state.metadataLocale) {
-  return privateFeatureMetadataDownloadUrl(assetSlug, release, "metadata", locale);
+async function privateFeatureMetadataSidecarUrl(reference, locale = state.metadataLocale) {
+  return privateFeatureMetadataDownloadUrl(reference, "metadata", locale);
 }
 
-async function privateFeatureMetadataSchemaUrl(assetSlug, release) {
-  return privateFeatureMetadataDownloadUrl(assetSlug, release, "schema");
+async function privateFeatureMetadataSchemaUrl(reference) {
+  return privateFeatureMetadataDownloadUrl(reference, "schema");
 }
 
-async function privateFeatureMetadataDownloadUrl(assetSlug, release, format, locale = state.metadataLocale) {
-  if (!catalogViewerApiAvailable()) {
-    return "";
-  }
-  const response = await fetch(featureMetadataApiDownloadUrl(assetSlug, release, format, locale), {
-    cache: "no-store",
-    credentials: "include",
-    headers: { Accept: "application/json" },
+async function privateFeatureMetadataDownloadUrl(reference, format, locale = state.metadataLocale) {
+  if (!catalogViewerApiAvailable()) return "";
+  const file = format === "metadata" ? metadataSidecarFileForReference(reference, locale) : releaseSchemaFileForReference(reference);
+  if (!file) return "";
+  const response = await fetch(featureMetadataApiDownloadUrl(reference, format, locale), {
+    cache: "no-store", credentials: "include", headers: {Accept: "application/json"},
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `feature metadata download URL returned HTTP ${response.status}`);
-  }
-  const downloadUrl = String(payload.download_url || "").trim();
-  if (!downloadUrl) {
-    throw new Error("feature metadata download URL response did not include download_url");
-  }
-  return downloadUrl;
+  if (!response.ok) throw new Error(payload.error || `feature metadata download URL returned HTTP ${response.status}`);
+  assertArtifactResponse(payload, reference, file);
+  if (!payload.download_url) throw new Error("feature metadata download URL response did not include download_url");
+  return payload.download_url;
 }
 
-function featureMetadataApiDownloadUrl(assetSlug, release, format = "metadata", locale = state.metadataLocale) {
-  const params = new URLSearchParams({
-    slug: assetSlug,
-    format,
-    version: release || "latest",
-  });
+function featureMetadataApiDownloadUrl(reference, format = "metadata", locale = state.metadataLocale) {
+  const file = format === "metadata" ? metadataSidecarFileForReference(reference, locale) : releaseSchemaFileForReference(reference);
+  const params = new URLSearchParams({slug: reference.slug, format, version: reference.date, generation: artifactGeneration(file.generation)});
   const normalizedLocale = normalizeMetadataLocale(locale);
-  if (normalizedLocale) {
-    params.set("locale", normalizedLocale);
-  }
+  if (format === "metadata" && normalizedLocale) params.set("locale", normalizedLocale);
   return `/api/download-url?${params.toString()}`;
 }
 
 function publicFeatureMetadataSidecarUrl(asset, sidecarFile) {
+  if (!sidecarFile?.generation) return "";
   if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
     return "";
   }
-  return gsToArtifactUrl(releaseFilePath(sidecarFile));
+  return artifactUrl(sidecarFile, {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
 }
 
 function publicFeatureMetadataSchemaUrl(asset, schemaFile) {
+  if (!schemaFile?.generation) return "";
   if (String(asset?.access_tier || "public").toLowerCase() !== "public") {
     return "";
   }
-  return gsToArtifactUrl(releaseFilePath(schemaFile));
+  return artifactUrl(schemaFile, {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
 }
 
 function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMetadataRelease(asset), locale = state.metadataLocale) {
@@ -1826,7 +1811,7 @@ function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMeta
     return false;
   }
   const sidecarFile = metadataSidecarFileForReference(asset, locale);
-  if (!sidecarFile) {
+  if (!sidecarFile?.generation) {
     return false;
   }
   if (!featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile)) {
@@ -1839,7 +1824,7 @@ function catalogViewerShouldAutoloadFeatureMetadata(asset, release = featureMeta
 }
 
 function featureMetadataLookupCanLoad(asset) {
-  return Boolean(metadataSidecarFileForReference(asset, "")) && catalogViewerApiAvailable();
+  return Boolean(metadataSidecarFileForReference(asset, "")?.generation) && catalogViewerApiAvailable();
 }
 
 function publicFeatureMetadataLookupCanLoad(asset, locale = state.metadataLocale) {
@@ -1853,8 +1838,8 @@ function featureMetadataSidecarWithinCatalogViewerBudget(sidecarFile) {
 }
 
 function featureMetadataSidecarSize(sidecarFile) {
-  const size = Number(sidecarFile?.size);
-  return Number.isFinite(size) && size >= 0 ? size : null;
+  const size = sidecarFile?.size;
+  return Number.isSafeInteger(size) && size >= 0 ? size : null;
 }
 
 function featureMetadataSidecarAutoloadUnavailableReason(asset, locale = state.metadataLocale) {
@@ -1862,6 +1847,7 @@ function featureMetadataSidecarAutoloadUnavailableReason(asset, locale = state.m
   if (!sidecarFile) {
     return "feature metadata sidecar is unavailable for this catalog viewer";
   }
+  if (!sidecarFile.generation) return "Exact metadata generation unavailable; metadata coloring is disabled.";
   const size = featureMetadataSidecarSize(sidecarFile);
   if (size === null) {
     return "feature metadata sidecar size is unknown; catalog-viewer autoload is disabled";
@@ -1894,7 +1880,7 @@ function featureMetadataSchemaCanLoad(asset) {
     return false;
   }
   const schemaFile = releaseSchemaFileForReference(asset);
-  if (!schemaFile) {
+  if (!schemaFile?.generation) {
     return false;
   }
   if (publicFeatureMetadataSchemaUrl(asset, schemaFile)) {
@@ -1911,35 +1897,19 @@ function catalogViewerApiAvailable() {
   return true;
 }
 
-function featureMetadataCacheKey(assetSlug, release, locale = state.metadataLocale) {
-  return `${assetSlug}\n${release || "latest"}\n${normalizeMetadataLocale(locale)}`;
+function featureMetadataCacheKey(reference, locale = state.metadataLocale) {
+  return artifactKey(metadataSidecarFileForReference(reference, normalizeMetadataLocale(locale)));
 }
 
 function featureMetadataRelease(asset) {
-  return String(asset?.date || asset?.latest_release?.date || asset?.last_updated || "latest").trim();
-}
-
-function assetReferenceForRelease(assetSlug, release) {
-  const asset = state.assets.find((candidate) => candidate.slug === assetSlug);
-  if (!asset) {
-    return null;
-  }
-  const releaseDate = String(release || "latest").trim();
-  const latestDate = String(asset.latest_release?.date || asset.last_updated || "").trim();
-  if (releaseDate === "latest" || releaseDate === latestDate) {
-    const latestVersion = latestVersionForAsset(asset);
-    return latestVersion ? { ...asset, ...latestVersion } : asset;
-  }
-  const version = Array.isArray(asset.versions)
-    ? asset.versions.find((candidate) => String(candidate?.date || "").trim() === releaseDate)
-    : null;
-  return version ? { ...asset, ...version } : asset;
+  return String(asset?.date || "latest");
 }
 
 function enrichFeature(feature, item) {
   const featureId = featureIdFor(feature);
   return {
     ...feature,
+    metadataLocaleMessage: item.metadataLocaleMessage || "",
     geometryHash: item.geometry_hash || feature.geometryHash || "",
     propertiesHash: item.properties_hash || feature.propertiesHash || "",
     provenance: item.provenance || feature.provenance || null,
@@ -1951,7 +1921,7 @@ function enrichFeature(feature, item) {
 }
 
 function featureLookupKey(feature) {
-  return `${feature?.assetSlug || ""}\n${feature?.release || ""}\n${featureIdFor(feature)}\n${feature?.sourceLayer || ""}`;
+  return `${feature.releaseReference ? snapshotKey(feature.releaseReference) : ""}\n${featureIdFor(feature)}\n${feature?.sourceLayer || ""}`;
 }
 
 function featureIdFor(feature) {
@@ -2067,23 +2037,11 @@ function metadataSidecarFiles(asset) {
 }
 
 function releaseFilesForReference(asset) {
-  const files = Array.isArray(asset?.latest_release?.files)
-    ? asset.latest_release.files
-    : Array.isArray(asset?.files)
-      ? asset.files
-      : [];
-  return files;
+  return asset?.release_snapshot_key ? asset.files : [];
 }
 
 function releaseSchemaFileForReference(asset) {
-  return (
-    releaseFilesForReference(asset).find((file) => {
-      const path = releaseFilePath(file);
-      const role = String(file?.role || "").trim();
-      const format = String(file?.format || "").trim();
-      return path.endsWith(".schema.json") && (role === "schema" || format === "schema");
-    }) || null
-  );
+  return releaseFile(releaseFilesForReference(asset), "schema");
 }
 
 function metadataFileLocale(file) {
@@ -2096,19 +2054,7 @@ function metadataFileLocale(file) {
 }
 
 function metadataSidecarFileForReference(asset, locale = state.metadataLocale) {
-  const files = metadataSidecarFiles(asset);
-  const normalizedLocale = normalizeMetadataLocale(locale);
-  if (normalizedLocale) {
-    const localized = files.find((file) => {
-      const path = releaseFilePath(file);
-      const declaredLocale = metadataFileLocale(file);
-      return path.endsWith(`.metadata.${normalizedLocale}.ndjson.gz`) && (!declaredLocale || declaredLocale === normalizedLocale);
-    });
-    if (localized) {
-      return localized;
-    }
-  }
-  return files.find((file) => releaseFilePath(file).endsWith(".metadata.ndjson.gz") && !metadataFileLocale(file)) || null;
+  return metadataFile(releaseFilesForReference(asset), normalizeMetadataLocale(locale));
 }
 
 function renderMetadataSidecarPath(asset) {
@@ -2116,6 +2062,15 @@ function renderMetadataSidecarPath(asset) {
   const path = releaseFilePath(file);
   elements.metadataRow.hidden = !path;
   elements.metadata.textContent = path;
+  let note = elements.metadataRow.querySelector(".metadata-capability-note");
+  if (!note) {
+    note = document.createElement("span");
+    note.className = "metadata-capability-note";
+    elements.metadataRow.append(note);
+  }
+  const schema = releaseSchemaFileForReference(asset);
+  note.textContent = file && !file.generation ? "Metadata unavailable: exact generation missing." :
+    schema && !schema.generation ? "Metadata coloring unavailable: schema generation missing." : "";
 }
 
 function formatLocaleLabel(locale) {
@@ -2303,10 +2258,11 @@ function colorReferenceKey(asset) {
 }
 
 function mapReferenceKey(asset) {
-  return `${asset.slug}|${selectedVersionValue(asset)}`;
+  return snapshotKey(asset);
 }
 
 function clearFeatureInspector() {
+  state.featureLookupSerial += 1;
   elements.featureInspector.hidden = true;
   elements.featureInspector.replaceChildren();
   state.inspectedFeatures = [];
@@ -2480,6 +2436,8 @@ function appendFeatureTable(container, entries) {
 }
 
 function featureMetadataUnavailableMessage(feature) {
+  if (feature.metadataUnavailable) return `Metadata unavailable. ${feature.metadataUnavailable}`;
+  if (feature.metadataLocaleMessage) return feature.metadataLocaleMessage;
   if (feature?.metadataLookupSkipped) {
     return "Metadata lookup skipped for this overlapping hit; zoom in or click a more precise point.";
   }
@@ -2554,6 +2512,7 @@ async function openDocs(asset) {
 }
 
 function withPmtilesCacheBust(asset) {
+  if (asset.release_snapshot_key) return asset;
   return {
     ...asset,
     pmtiles_url: cacheBustedUrl(pmtilesPreviewUrl(asset), pmtilesCacheKey(asset)),

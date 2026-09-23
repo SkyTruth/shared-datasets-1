@@ -13,6 +13,11 @@ import {
   SharedDatasetMetadataSidecarResolution,
   SharedDatasetReleaseIndex,
   resolveSharedDatasetMetadataSidecar,
+  normalizeArtifactGeneration,
+  resolveSharedDatasetRelease,
+  selectReleaseFile,
+  validateReleaseArtifact,
+  SharedDatasetReleaseFile,
   sharedDatasetArtifactUrlFromGsUri
 } from './artifact-url.js';
 
@@ -33,7 +38,8 @@ export type SharedDatasetLayerSidecar = SharedDatasetMetadataSidecarResolution &
 };
 
 export type SharedDatasetLayer = {
-  ref: SharedDatasetCatalogRef;
+  ref: Omit<SharedDatasetCatalogRef, 'url'> & {url: string | null};
+  pmtiles: {file: SharedDatasetReleaseFile; gsUri: string; generation: string} | null;
   releaseIndexUrl: string | null;
   releaseIndex: SharedDatasetReleaseIndex | null;
   resolvedRelease: string | null;
@@ -60,7 +66,7 @@ const defaultFetchJson: FetchSharedDatasetCatalogJson = async url => {
 
   const response = await globalThis.fetch(url);
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw Object.assign(new Error(`HTTP ${response.status}`), {status: response.status});
   }
   return response.json();
 };
@@ -75,14 +81,6 @@ const defaultFetchBytes: FetchSharedDatasetMetadataBytes = async url => {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.arrayBuffer();
-};
-
-const releaseDate = (release: unknown) => {
-  const date =
-    release && typeof release === 'object' && !Array.isArray(release)
-      ? (release as Record<string, unknown>).date
-      : null;
-  return typeof date === 'string' && date.trim() ? date.trim() : null;
 };
 
 const resolveReleaseIndexUrl = (
@@ -115,7 +113,7 @@ const parseReleaseIndexJson = (
   }
   const releaseIndex = releaseIndexJson as SharedDatasetReleaseIndex;
   const indexSlug = normalizeSharedDatasetAssetSlug(releaseIndex.asset_slug);
-  if (indexSlug && indexSlug !== assetSlug) {
+  if (indexSlug !== assetSlug) {
     throw new SharedDatasetCatalogResolutionError(
       `Unable to parse shared dataset release index: asset_slug ${indexSlug} does not match ${assetSlug}`
     );
@@ -131,15 +129,11 @@ export const resolveSharedDatasetLayer = async (
   const ref = await resolveSharedDatasetPmtilesRef(normalizedSlug, options);
   const catalogUrl = options.catalogUrl ?? DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL;
   const releaseIndexUrl = resolveReleaseIndexUrl(ref, catalogUrl);
-  if (!releaseIndexUrl) {
-    return {
-      ref,
-      releaseIndexUrl: null,
-      releaseIndex: null,
-      resolvedRelease: releaseDate(ref.latestRelease),
-      sidecar: null
-    };
-  }
+  const legacyLayer = (): SharedDatasetLayer => {
+    if (options.version && options.version !== 'latest') throw new SharedDatasetCatalogResolutionError('Requested release was not found: no release index');
+    return {ref, pmtiles: null, releaseIndexUrl: null, releaseIndex: null, resolvedRelease: null, sidecar: null};
+  };
+  if (!releaseIndexUrl) return legacyLayer();
 
   const fetchJson =
     options.fetchReleaseIndexJson ?? options.fetchJson ?? defaultFetchJson;
@@ -147,31 +141,41 @@ export const resolveSharedDatasetLayer = async (
   try {
     releaseIndexJson = await fetchJson(releaseIndexUrl);
   } catch (error) {
+    if (error && typeof error === 'object' && 'status' in error && error.status === 404) return legacyLayer();
     throw new SharedDatasetCatalogResolutionError(
       `Unable to load shared dataset release index: ${getErrorMessage(error)}`
     );
   }
   const releaseIndex = parseReleaseIndexJson(releaseIndexJson, normalizedSlug ?? '');
 
+  const release = resolveSharedDatasetRelease(releaseIndex, options.version || 'latest');
+  const file = selectReleaseFile(release.files!, 'pmtiles', ref.pmtilesPath || '');
+  if (!file) throw new SharedDatasetCatalogResolutionError('Selected release does not include PMTiles');
+  validateReleaseArtifact(file, normalizedSlug!, String(release.date), ref.pmtilesPath || '');
+  const generation = normalizeArtifactGeneration(file.generation);
+  const gsUri = String(file.path);
+  const tileUrl = sharedDatasetArtifactUrlFromGsUri(gsUri, {...options, generation});
   const sidecar = resolveSharedDatasetMetadataSidecar({
     releaseIndex,
     version: options.version,
     locale: options.locale
   });
+  if (sidecar) {
+    validateReleaseArtifact(sidecar.file, normalizedSlug!, String(release.date), ref.pmtilesPath || '');
+    sharedDatasetArtifactUrlFromGsUri(sidecar.gsUri, {...options, generation: sidecar.generation});
+  }
   return {
-    ref,
+    ref: {...ref, url: ref.accessTier === 'public' ? tileUrl : null},
+    pmtiles: {file, gsUri, generation},
     releaseIndexUrl,
     releaseIndex,
-    resolvedRelease:
-      sidecar?.resolvedVersion ??
-      releaseDate(releaseIndex.latest_release) ??
-      releaseDate(ref.latestRelease),
+    resolvedRelease: String(release.date),
     sidecar: sidecar
       ? {
           ...sidecar,
           url:
             ref.accessTier === 'public'
-              ? sharedDatasetArtifactUrlFromGsUri(sidecar.gsUri, options)
+              ? sharedDatasetArtifactUrlFromGsUri(sidecar.gsUri, {...options, generation: sidecar.generation})
               : null
         }
       : null
