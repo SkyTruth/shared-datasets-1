@@ -49,11 +49,16 @@ The CSV columns are:
 feature_id,field,locale,source_value_hash,value,review_state,notes
 ```
 
-`feature_id`, `field`, `locale`, `source_value_hash`, and `value` are required.
+`feature_id`, `field`, `locale`, `source_value_hash`, and `value` columns are required.
 `review_state` and `notes` are optional. `source_value_hash` must be computed
 from the current canonical property value using
 `scripts/feature_metadata_localization.py`; stale rows are skipped and reported
-when the canonical value changes.
+when the canonical value changes. Successful rows require a nonblank `value`.
+A failed machine task uses `review_state=translation_failed` and an empty `value`;
+it is retryable work, never an applied translation. Older helpers reject these
+rows, so update the local translation helpers together. When completing a failed
+row manually, supply the translated value and change its state to
+`human_reviewed`.
 
 Generated locale sidecars are derived artifacts:
 
@@ -105,7 +110,27 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    too large for the local helper. Use
    `scripts/feature_metadata_document_translate.py export` to create the
    two-column `hash,text` workbook shard(s) and manifest, and use its `import`
-   command to ingest returned translated workbooks by manifest row order.
+   command to ingest returned translated workbooks by intact hashes. The exact
+   `hash,text` header and every hash must survive translation. Rows and shards
+   may be reordered; filenames and argument order do not identify a shard.
+   Every exported shard and hash must appear exactly once, with no extra rows.
+   The v2 manifest binds the canonical/schema snapshots, task keys, completed
+   exclusions, and collection options. Keep it alongside the workbooks.
+
+   V1 manifests cannot prove that task history. Re-export using current
+   canonical/schema/CSV files and the same approved locales/fields. Keep old
+   translated workbooks and transfer text to the new workbook only by verified
+   intact hashes; never infer correspondence by row position. Restore damaged
+   hashes from a verifiable original or retranslate. Changed source/schema or
+   a missing formerly completed CSV task also requires a fresh export. Import
+   preserves current human translations completed while documents were away.
+   When no `--translation-source` is supplied, an existing output CSV is read
+   and preserved automatically.
+
+   V2 records every eligible feature/field/locale task, so manifest size grows
+   with task count, not just distinct source text. The current export/import
+   pipeline still holds metadata/tasks/workbook rows in memory; sharding limits
+   individual workbook size, not total memory use.
 4. Keep one row per `feature_id`, field, locale, and source-value hash. Duplicate
    translation keys fail validation.
 5. Generate every localized sidecar represented in the CSV:
@@ -123,9 +148,36 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
   --report "$WORK_ROOT/vector-assets/example-asset/reports/localization-summary.json"
 ```
 
-6. Review the reports. Stale translations may be acceptable only when they are
+6. Review file validity and completion separately. The machine CLI exits 0 when
+   its requested work completes, 1 when it commits a valid partial CSV after
+   provider failures, and 2 on validation or `--on-error fail` errors. Save the
+   report and CSV after exit 1, then rerun the same command: successful/human
+   rows remain, and failed/new current keys are retried. Do not use
+   `--refresh-current` merely to retry a provider outage; it explicitly replaces
+   current successful work too. Default `--on-error source` now records empty
+   failed tasks and lets materialization retain canonical values. `skip` omits
+   failed tasks but still exits 1; `fail` preserves the previous CSV.
+
+   Untouched legacy `source_provided` rows are recognized as failures only
+   when their exact old Google failure notes and fallback value match the
+   current canonical value/hash. Genuine source-provided rows and corrected
+   values retain their provenance. Non-string work still requires the explicit
+   `--stringify-non-string` policy; legacy notes do not enable it.
+
+   Localization's `valid` describes the generated file;
+   `requested_rows_complete` describes only rows requested in that CSV, not
+   coverage of every possible field/locale. Failed/stale rows leave canonical
+   values and are counted as unresolved, never applied translations.
+   Stale translations may be acceptable only when they are
    intentionally skipped and documented; otherwise refresh the source hash and
    translated value from the current canonical metadata.
+   Local outputs use validated sibling candidates and atomic replacement per
+   file. Inputs and output/report aliases are protected; `--fail-on-stale`
+   refuses before replacement. A later locale/report failure can leave earlier
+   files committed. Review the per-file results and rerun; there is no batch
+   rollback. Input/output fingerprints catch changes observed before commit,
+   but do not lock out arbitrary editors. These local checks do not establish
+   remote generation freshness or authorize uploads.
 7. Publish translation updates through the reviewed dataset publish workflow.
    Include the translation CSV and generated localized sidecars in staged
    publish candidates, or rely on the

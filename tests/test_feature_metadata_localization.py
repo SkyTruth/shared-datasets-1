@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import contextlib
+import io
+from unittest import mock
+
+import pytest
+
+from scripts import feature_metadata_machine_translate as machine
+from scripts import translation_local_io
+
 import csv
 import tempfile
 import unittest
@@ -211,6 +220,186 @@ class FeatureMetadataLocalizationTests(unittest.TestCase):
             fields = feature_metadata_localization.resolved_translatable_fields(schema=schema, fields=[])
 
         self.assertEqual(fields, {"name"})
+
+
+# Integrity regressions exercise real files and the public local/CLI boundaries.
+
+
+def localization_fixture(tmp_path, *, empty=False, stale=False):
+    canonical = tmp_path / "example-asset.metadata.ndjson.gz"
+    source = tmp_path / "translations.csv"
+    output = tmp_path / "example-asset.metadata.es.ndjson.gz"
+    release_feature_model.write_metadata_sidecar(
+        [] if empty else [sidecar_record("1", VALID_HASH_A, {"name": "Alpha"})], canonical,
+    )
+    machine.write_translation_source(source, [] if empty else [{
+        "feature_id": "1", "field": "name", "locale": "es",
+        "source_value_hash": feature_metadata_localization.source_value_hash("Old" if stale else "Alpha"),
+        "value": "Alfa", "review_state": "human_reviewed", "notes": "",
+    }])
+    return canonical, source, output
+
+
+def materialize(canonical, source, output, **kwargs):
+    return feature_metadata_localization.materialize_locale_sidecar(
+        canonical_sidecar=canonical, translation_source=source, output_sidecar=output,
+        locale="es", translatable_fields={"name"}, **kwargs,
+    )
+
+
+@pytest.mark.parametrize("protected_name", ["canonical", "source", "schema"])
+@pytest.mark.parametrize("alias_kind", ["same", "symlink", "hardlink"])
+def test_materialization_refuses_all_input_aliases(tmp_path, protected_name, alias_kind):
+    canonical, source, output = localization_fixture(tmp_path)
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}")
+    protected = {"canonical": canonical, "source": source, "schema": schema}[protected_name]
+    before = {path: path.read_bytes() for path in (canonical, source, schema)}
+    if alias_kind == "same":
+        output = protected
+    elif alias_kind == "symlink":
+        output.symlink_to(protected)
+    else:
+        output.hardlink_to(protected)
+    with pytest.raises(translation_local_io.TranslationLocalIOError):
+        materialize(canonical, source, output, protected_inputs=[schema])
+    assert all(path.read_bytes() == value for path, value in before.items())
+
+
+def test_fail_on_stale_preserves_previous_output(tmp_path):
+    canonical, source, output = localization_fixture(tmp_path, stale=True)
+    output.write_bytes(b"previous verified output")
+    with pytest.raises(feature_metadata_localization.FeatureMetadataLocalizationError, match="stale"):
+        materialize(canonical, source, output, fail_on_stale=True)
+    assert output.read_bytes() == b"previous verified output"
+
+
+@pytest.mark.parametrize("defect", ["midstream", "identity", "missing_record"])
+def test_candidate_failure_does_not_replace_final(tmp_path, defect):
+    canonical, source, output = localization_fixture(tmp_path)
+    original = release_feature_model.write_metadata_sidecar
+    output.write_bytes(b"verified")
+
+    def corrupt_writer(records, path):
+        def corrupt():
+            for record in records:
+                if defect == "missing_record":
+                    continue
+                record = dict(record)
+                if defect == "identity":
+                    record["geometry_hash"] = VALID_HASH_B
+                yield record
+                if defect == "midstream":
+                    raise OSError("fixture interrupted gzip")
+        original(corrupt(), path)
+
+    with mock.patch.object(release_feature_model, "write_metadata_sidecar", side_effect=corrupt_writer):
+        with pytest.raises((feature_metadata_localization.FeatureMetadataLocalizationError, OSError)):
+            materialize(canonical, source, output)
+    assert output.read_bytes() == b"verified"
+    assert len(list(release_feature_model.read_metadata_sidecar(canonical))) == 1
+
+
+def test_valid_empty_source_is_not_treated_as_truncation(tmp_path):
+    canonical, source, output = localization_fixture(tmp_path, empty=True)
+    report = materialize(canonical, source, output)
+    assert report.valid and report.feature_count == 0
+    assert list(release_feature_model.read_metadata_sidecar(output)) == []
+
+
+def test_malformed_canonical_preserves_final(tmp_path):
+    canonical, source, output = localization_fixture(tmp_path)
+    canonical.write_bytes(b"invalid gzip")
+    output.write_bytes(b"verified")
+    with pytest.raises(OSError):
+        materialize(canonical, source, output)
+    assert output.read_bytes() == b"verified"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_cli_report_cannot_replace_input_or_sidecar(tmp_path, batch):
+    canonical, source, output = localization_fixture(tmp_path)
+    before = canonical.read_bytes()
+    args = ["--canonical-sidecar", str(canonical), "--translation-source", str(source),
+            "--locale", "es", "--translatable-field", "name"]
+    args += ["--all-locales", "--output-dir", str(tmp_path)] if batch else ["--output-sidecar", str(output)]
+    for report in (canonical, source, output):
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert feature_metadata_localization.main([*args, "--report", str(report)]) == 2
+        assert canonical.read_bytes() == before
+        assert not output.exists()
+
+
+@pytest.mark.parametrize("later", ["sidecar", "report"])
+def test_earlier_locale_cannot_refresh_later_output_expectation(tmp_path, later):
+    canonical, source, first = localization_fixture(tmp_path)
+    later_path = (tmp_path / "example-asset.metadata.fr.ndjson.gz" if later == "sidecar"
+                  else tmp_path / "reports" / "example-asset.metadata.fr.ndjson.gz.report.json")
+    later_path.parent.mkdir(exist_ok=True)
+    later_path.write_bytes(b"original later output")
+    original = release_feature_model.write_metadata_sidecar
+    calls = 0
+
+    def edit_later(records, path):
+        nonlocal calls
+        original(records, path)
+        calls += 1
+        if calls == 1:
+            later_path.write_bytes(b"human edited later output")
+
+    with mock.patch.object(release_feature_model, "write_metadata_sidecar", side_effect=edit_later):
+        with pytest.raises(translation_local_io.TranslationLocalIOError, match="changed"):
+            feature_metadata_localization.materialize_locale_sidecars(
+                canonical_sidecar=canonical, translation_source=source, output_dir=tmp_path,
+                locales=["es", "fr"], translatable_fields={"name"}, report_dir=tmp_path / "reports",
+            )
+    assert first.exists()
+    assert later_path.read_bytes() == b"human edited later output"
+
+
+def test_cli_snapshot_precedes_schema_allowlist_read(tmp_path):
+    canonical, source, output = localization_fixture(tmp_path)
+    schema = tmp_path / "schema.json"
+    schema.write_text(release_feature_model.canonical_json(release_feature_model.build_release_schema(
+        asset_slug="example-asset", release="2026-05-01",
+        fields=[release_feature_model.ReleaseSchemaField("name", "String")],
+    )))
+    original = feature_metadata_localization.resolved_translatable_fields
+
+    def parse_then_edit(**kwargs):
+        result = original(**kwargs)
+        schema.write_text(schema.read_text() + "\n")
+        return result
+
+    with mock.patch.object(feature_metadata_localization, "resolved_translatable_fields", side_effect=parse_then_edit):
+        with contextlib.redirect_stderr(io.StringIO()):
+            assert feature_metadata_localization.main([
+                "--canonical-sidecar", str(canonical), "--translation-source", str(source),
+                "--schema", str(schema), "--locale", "es", "--output-sidecar", str(output),
+            ]) == 2
+    assert not output.exists()
+
+
+def test_batch_snapshot_precedes_locale_csv_read(tmp_path):
+    canonical, source, output = localization_fixture(tmp_path)
+    original = feature_metadata_localization.read_translation_source
+    calls = 0
+
+    def read_then_edit(*args, **kwargs):
+        nonlocal calls
+        rows = original(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            source.write_text(source.read_text().replace("Alfa", "human correction"))
+        return rows
+
+    with mock.patch.object(feature_metadata_localization, "read_translation_source", side_effect=read_then_edit):
+        with pytest.raises(translation_local_io.TranslationLocalIOError, match="changed"):
+            feature_metadata_localization.materialize_locale_sidecars(
+                canonical_sidecar=canonical, translation_source=source, output_dir=tmp_path,
+                locales=None, translatable_fields={"name"},
+            )
+    assert not output.exists() and "human correction" in source.read_text()
 
 
 if __name__ == "__main__":
