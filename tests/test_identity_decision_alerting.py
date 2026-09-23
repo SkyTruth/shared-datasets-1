@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -150,6 +151,26 @@ class DecisionAlertCopyTests(unittest.TestCase):
 
 
 class AlertPolicyTests(unittest.TestCase):
+    def test_alert_policy_role_can_create_log_notification_rules(self):
+        iam = (MONITORING_TF.parent / "monitoring_alert_policy_iam.tf").read_text(encoding="utf-8")
+        role = iam.split('resource "google_project_iam_custom_role" "monitoring_alert_policy_manager"', 1)[1]
+        role = role.split("\nresource ", 1)[0]
+        permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.DOTALL)
+        self.assertIsNotNone(permissions)
+        self.assertEqual(
+            set(re.findall(r'^\s*"([^"]+)"', permissions.group(1), re.MULTILINE)),
+            {
+                "logging.notificationRules.create",
+                "monitoring.alertPolicies.create",
+                "monitoring.alertPolicies.delete",
+                "monitoring.alertPolicies.get",
+                "monitoring.alertPolicies.list",
+                "monitoring.alertPolicies.update",
+                "monitoring.notificationChannels.get",
+                "monitoring.notificationChannels.list",
+            },
+        )
+
     def test_decision_policy_matches_the_marker_at_warning_severity(self):
         monitoring = MONITORING_TF.read_text(encoding="utf-8")
 
