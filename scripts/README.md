@@ -280,7 +280,14 @@ publisher workflow promotes the reviewed canonical objects so no-clobber and
 generation preconditions stay enforced, then deletes the promoted scratch source
 objects with their source-generation preconditions. Remaining pending-publish
 prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
-`Scratch cleanup audit` workflow.
+`Scratch cleanup audit` workflow's age-based abandonment policy: warn when the
+newest object is 60 days old, and select for deletion at 90 days only when its
+name, generation, and update time still match the warning. A first warning after
+day 90 can become eligible on the next audit. The auditor does not infer
+publication from historical content matches or inspect PR status. Exact-object
+generation preconditions protect replacements; deletion is not atomic across
+the prefix. Dry-run summaries list candidates and the actual zero deleted
+objects.
 
 Publishing concierge planning and first-upload workflow guidance live in:
 
