@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import csv
 import datetime as dt
 import json
 import sys
@@ -23,7 +22,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from rich import print
 
-from scripts.gcs_asset import APPROVED_DATA_EXTENSIONS, get_client
+from scripts.gcs_asset import get_client
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
@@ -41,7 +40,6 @@ class BlobRecord:
     size: int
     updated: dt.datetime
     generation: str
-    crc32c: str
 
 
 @dataclass(frozen=True)
@@ -79,6 +77,13 @@ def ensure_aware_utc(value: dt.datetime) -> dt.datetime:
     return value.astimezone(dt.UTC)
 
 
+def object_generation(blob: storage.Blob) -> str:
+    generation = str(blob.generation)
+    if not generation.isascii() or not generation.isdecimal() or int(generation) <= 0:
+        raise ValueError(f"Invalid object generation for {blob.name}: {generation!r}")
+    return generation
+
+
 def blob_record(blob: storage.Blob) -> BlobRecord:
     updated = blob.updated
     if updated is None:
@@ -87,8 +92,7 @@ def blob_record(blob: storage.Blob) -> BlobRecord:
         name=blob.name,
         size=int(blob.size or 0),
         updated=ensure_aware_utc(updated),
-        generation=str(blob.generation),
-        crc32c=str(blob.crc32c or ""),
+        generation=object_generation(blob),
     )
 
 
@@ -124,48 +128,6 @@ def group_pending_blobs(blobs: list[BlobRecord]) -> list[PendingProposal]:
     return proposals
 
 
-def asset_roots_by_slug(catalog_path: Path, *, bucket: str) -> dict[str, str]:
-    roots: dict[str, str] = {}
-    with catalog_path.open(newline="") as file_obj:
-        for row in csv.DictReader(file_obj):
-            slug = (row.get("asset_slug") or "").strip()
-            canonical_path = (row.get("canonical_path") or "").strip()
-            prefix = f"gs://{bucket}/"
-            if not slug or not canonical_path.startswith(prefix):
-                continue
-            object_name = canonical_path.removeprefix(prefix)
-            if "/latest/" in object_name:
-                roots[slug] = object_name.split("/latest/", 1)[0]
-            elif "/releases/" in object_name:
-                roots[slug] = object_name.split("/releases/", 1)[0]
-    return roots
-
-
-def is_release_data_match_candidate(blob: BlobRecord) -> bool:
-    return Path(blob.name).suffix.lower() in APPROVED_DATA_EXTENSIONS and bool(blob.crc32c)
-
-
-def proposal_has_matching_release(
-    proposal: PendingProposal,
-    release_blobs: list[BlobRecord],
-) -> bool:
-    releases_by_name: dict[str, list[BlobRecord]] = defaultdict(list)
-    for release_blob in release_blobs:
-        releases_by_name[Path(release_blob.name).name].append(release_blob)
-
-    for scratch_blob in proposal.blobs:
-        if not is_release_data_match_candidate(scratch_blob):
-            continue
-        for release_blob in releases_by_name.get(Path(scratch_blob.name).name, []):
-            if (
-                scratch_blob.size == release_blob.size
-                and scratch_blob.crc32c
-                and scratch_blob.crc32c == release_blob.crc32c
-            ):
-                return True
-    return False
-
-
 def marker_matches_current_state(marker: WarningMarker | None, proposal: PendingProposal) -> bool:
     if marker is None:
         return False
@@ -183,7 +145,6 @@ def classify_proposal(
     now: dt.datetime,
     warn_age_days: int,
     delete_age_days: int,
-    has_matching_release: bool,
     warning_marker: WarningMarker | None,
 ) -> dict[str, object]:
     newest = proposal.newest_blob
@@ -201,8 +162,7 @@ def classify_proposal(
         "age_days": round(age_days, 2),
     }
 
-    if has_matching_release:
-        return {**base, "action": "delete", "reason": "matching-release"}
+    # This is an age-based abandonment policy, not proof of publication or PR status.
     if age_days >= delete_age_days and warned_for_current_state:
         return {**base, "action": "delete", "reason": "stale-after-warning"}
     if age_days >= warn_age_days and not warned_for_current_state:
@@ -230,37 +190,26 @@ def load_warning_markers(client: storage.Client, *, bucket: str) -> dict[tuple[s
             continue
         asset_slug = parts[0]
         proposal_id = parts[1].removesuffix(".json")
+        generation = object_generation(blob)
         try:
-            payload = json.loads(blob.download_as_text())
+            payload = json.loads(blob.download_as_text(if_generation_match=int(generation)))
         except json.JSONDecodeError:
-            continue
+            payload = None
+        state_fields = ("newest_object_name", "newest_generation", "newest_updated")
+        if not isinstance(payload, dict) or not all(
+            isinstance(payload.get(field), str) and payload[field] for field in state_fields
+        ):
+            # Invalid evidence cannot authorize deletion. Retain the observed
+            # marker generation so a new warning can replace it with a CAS.
+            payload = {}
         markers[(asset_slug, proposal_id)] = WarningMarker(
             name=blob.name,
-            generation=str(blob.generation),
-            newest_object_name=str(payload.get("newest_object_name", "")),
-            newest_generation=str(payload.get("newest_generation", "")),
-            newest_updated=str(payload.get("newest_updated", "")),
+            generation=generation,
+            newest_object_name=payload.get("newest_object_name", ""),
+            newest_generation=payload.get("newest_generation", ""),
+            newest_updated=payload.get("newest_updated", ""),
         )
     return markers
-
-
-def release_records_for_proposals(
-    client: storage.Client,
-    *,
-    bucket: str,
-    catalog_path: Path,
-    proposals: list[PendingProposal],
-) -> dict[str, list[BlobRecord]]:
-    asset_roots = asset_roots_by_slug(catalog_path, bucket=bucket)
-    needed_slugs = {proposal.asset_slug for proposal in proposals}
-    records: dict[str, list[BlobRecord]] = {}
-    for asset_slug in sorted(needed_slugs):
-        asset_root = asset_roots.get(asset_slug)
-        if not asset_root:
-            records[asset_slug] = []
-            continue
-        records[asset_slug] = list_records(client, bucket=bucket, prefix=f"{asset_root}/releases/")
-    return records
 
 
 def write_warning_marker(
@@ -315,12 +264,13 @@ def append_markdown_summary(path: Path, summary: dict[str, object]) -> None:
         "## Scratch Cleanup Audit",
         "",
         f"- Pending prefixes scanned: `{summary['proposal_count']}`",
-        f"- Prefixes warned: `{len(summary['warnings'])}`",
-        f"- Prefixes deleted: `{len(summary['deletions'])}`",
+        f"- Warning candidates: `{len(summary['warnings'])}`",
+        f"- Deletion candidates: `{len(summary['deletions'])}`",
+        f"- Objects deleted: `{summary['deleted_object_count']}`",
         f"- Prefixes kept: `{len(summary['kept'])}`",
         f"- Dry run: `{summary['dry_run']}`",
     ]
-    for heading, key in (("Warnings", "warnings"), ("Deletions", "deletions")):
+    for heading, key in (("Warning candidates", "warnings"), ("Deletion candidates", "deletions")):
         items = summary[key]
         if not items:
             continue
@@ -338,7 +288,6 @@ def run_cleanup(
     *,
     client: storage.Client,
     bucket: str,
-    catalog_path: Path,
     now: dt.datetime,
     warn_age_days: int,
     delete_age_days: int,
@@ -348,25 +297,17 @@ def run_cleanup(
     pending_blobs = list_records(client, bucket=bucket, prefix=PENDING_PREFIX)
     proposals = group_pending_blobs(pending_blobs)
     warning_markers = load_warning_markers(client, bucket=bucket)
-    releases_by_slug = release_records_for_proposals(
-        client,
-        bucket=bucket,
-        catalog_path=catalog_path,
-        proposals=proposals,
-    )
 
     decisions: list[dict[str, object]] = []
     proposals_by_key = {(proposal.asset_slug, proposal.proposal_id): proposal for proposal in proposals}
     for proposal in proposals:
         marker = warning_markers.get((proposal.asset_slug, proposal.proposal_id))
-        has_match = proposal_has_matching_release(proposal, releases_by_slug.get(proposal.asset_slug, []))
         decisions.append(
             classify_proposal(
                 proposal,
                 now=now,
                 warn_age_days=warn_age_days,
                 delete_age_days=delete_age_days,
-                has_matching_release=has_match,
                 warning_marker=marker,
             )
         )
@@ -424,12 +365,6 @@ def run_cleanup(
 @app.command("run")
 def run_command(
     bucket: str = typer.Option(DEFAULT_BUCKET, help="Shared datasets bucket name."),
-    catalog: Path = typer.Option(
-        Path("catalog/shared-datasets-catalog.csv"),
-        exists=True,
-        dir_okay=False,
-        help="Catalog CSV used to locate canonical release roots.",
-    ),
     warn_age_days: int = typer.Option(DEFAULT_WARN_AGE_DAYS, min=1, help="Warn when newest prefix object is this old."),
     delete_age_days: int = typer.Option(
         DEFAULT_DELETE_AGE_DAYS,
@@ -439,13 +374,12 @@ def run_command(
     apply_changes: bool = typer.Option(False, "--apply/--dry-run", help="Apply warning markers and deletions."),
     summary_path: Optional[Path] = typer.Option(None, help="Append a Markdown summary to this path."),
 ) -> None:
-    """Audit pending-publish scratch prefixes and optionally clean eligible ones."""
+    """Audit pending proposals using the age-based abandonment policy."""
     if warn_age_days >= delete_age_days:
         raise typer.BadParameter("warn-age-days must be less than delete-age-days")
     summary = run_cleanup(
         client=get_client(),
         bucket=bucket,
-        catalog_path=catalog,
         now=dt.datetime.now(dt.UTC),
         warn_age_days=warn_age_days,
         delete_age_days=delete_age_days,
