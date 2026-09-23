@@ -32,7 +32,7 @@ jobs:
       - name: Check out trusted repository code
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,26 +53,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gdal-bin
 
-      - name: Detect reviewed mutation plans
+      - name: Validate checked-in proposed mutation plan
         id: detect
-        run: |
-          python scripts/reviewed_dataset_plan.py detect \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --github-output "${GITHUB_OUTPUT}"
-
-      - name: Extract publish plan from PR body
-        if: ${{ steps.detect.outputs.has_publish_plan == 'true' }}
-        run: |
-          python scripts/reviewed_dataset_plan.py extract publish \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --output publish-plan.json
-
-      - name: Extract delete plan from PR body
-        if: ${{ steps.detect.outputs.has_delete_plan == 'true' }}
-        run: |
-          python scripts/reviewed_dataset_plan.py extract delete \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --output delete-plan.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/dataset_mutation_authorization.py preview
 
       - name: Collect proposed catalog row from PR
         if: ${{ steps.detect.outputs.has_publish_plan == 'true' || steps.detect.outputs.has_delete_plan == 'true' }}

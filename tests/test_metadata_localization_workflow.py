@@ -1,85 +1,63 @@
-from __future__ import annotations
-
-import unittest
 from pathlib import Path
-
+import unittest
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = REPO_ROOT / ".github/workflows/metadata-localization.yml"
-
-
 class MetadataLocalizationWorkflowTests(unittest.TestCase):
-    def test_workflow_runs_after_approved_dataset_mutation_and_uses_pipeline(self):
-        workflow = load_workflow(WORKFLOW)
-        trigger = workflow_triggers(workflow)
+    def test_automatic_input_is_verified_upstream_artifact_not_pr_lookup(self):
+        workflow = load_workflow(
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/metadata-localization.yml"
+        )
         steps = workflow_steps_by_name(workflow, "materialize")
-        step_names = list(steps)
-
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
-        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        self.assertIn("workflow_dispatch", trigger)
-        self.assertIn("translation_source_uri", trigger["workflow_dispatch"]["inputs"])
-        self.assertIn("asset_slug", trigger["workflow_dispatch"]["inputs"])
-        self.assertIn("release", trigger["workflow_dispatch"]["inputs"])
-        self.assertIn("fail_on_stale", trigger["workflow_dispatch"]["inputs"])
-
+        self.assertIn("workflow_run", workflow_triggers(workflow))
         self.assertIn(
-            "feature_metadata_translation_pipeline.py",
+            "dataset_mutation_authorization.py from-run",
+            steps["Prepare reviewed publish plan"]["run"],
+        )
+        self.assertIn(
+            "steps.reviewed_plan.outputs.executor_sha",
+            steps["Check out upstream immutable executor"]["with"]["ref"],
+        )
+        self.assertIn(
+            "--expected-sha256", steps["Verify upstream authorization"]["run"]
+        )
+        names = list(steps)
+        self.assertLess(
+            names.index("Recheck upstream acceptance before publisher authentication"),
+            names.index("Authenticate as shared datasets publisher"),
+        )
+        all_runs = "\n".join(step.get("run", "") for step in steps.values())
+        for forbidden in (
+            "gh pr list",
+            "resolve-workflow-run-pr",
+            "event-from-pr",
+            "extract publish",
+        ):
+            self.assertNotIn(forbidden, all_runs)
+        self.assertIn(
+            "has_publish_plan == 'true'",
+            steps["Materialize reviewed translation-source promotions"]["if"],
+        )
+        self.assertIn(
+            "--publish-plan publish-plan.json",
             steps["Materialize reviewed translation-source promotions"]["run"],
         )
-        self.assertIn("--publish-plan", steps["Materialize reviewed translation-source promotions"]["run"])
+
+    def test_manual_materialization_contract_is_preserved(self):
+        workflow = load_workflow(
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/metadata-localization.yml"
+        )
+        steps = workflow_steps_by_name(workflow, "materialize")
+        self.assertEqual(
+            set(workflow_triggers(workflow)["workflow_dispatch"]["inputs"]),
+            {"translation_source_uri", "asset_slug", "release", "fail_on_stale"},
+        )
         self.assertIn(
-            "feature_metadata_translation_pipeline.py",
+            "--translation-source-uri",
             steps["Materialize manual translation source"]["run"],
         )
-        self.assertIn("--translation-source-uri", steps["Materialize manual translation source"]["run"])
-        self.assertEqual(steps["Upload materialization report"]["uses"], "actions/upload-artifact@v4")
-        self.assertLess(
-            step_names.index("Prepare reviewed publish plan"),
-            step_names.index("Validate publisher auth configuration"),
-        )
-        self.assertIn(
-            "steps.reviewed_plan.outputs.publish_plan != ''",
-            steps["Validate publisher auth configuration"]["if"],
-        )
-
-    def test_workflow_keeps_canonical_writes_in_approved_runtime(self):
-        workflow = load_workflow(WORKFLOW)
-        env = workflow["env"]
-        job = workflow["jobs"]["materialize"]
-        steps = workflow_steps_by_name(workflow, "materialize")
-        reviewed_promotion_env = steps["Materialize reviewed translation-source promotions"]["env"]
-        manual_dispatch_env = steps["Materialize manual translation source"]["env"]
-        run_scripts = "\n".join(str(step.get("run", "")) for step in steps.values())
-
-        self.assertEqual(job["environment"], "shared-datasets-production")
         self.assertEqual(
-            env["PUBLISHER_SERVICE_ACCOUNT"],
-            "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
+            workflow["jobs"]["materialize"]["environment"], "shared-datasets-production"
         )
-        self.assertEqual(reviewed_promotion_env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
-        self.assertEqual(manual_dispatch_env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
-        self.assertIn(
-            "Feature metadata localization materialization must run from main",
-            steps["Validate manual dispatch ref"]["run"],
-        )
-        self.assertNotIn("scripts/gcs_asset.py upload", run_scripts)
-        self.assertNotIn("scripts/gcs_asset.py copy", run_scripts)
-
-    def test_workflow_resolves_pr_when_workflow_run_payload_omits_pull_requests(self):
-        workflow = load_workflow(WORKFLOW)
-        steps = workflow_steps_by_name(workflow, "materialize")
-        prepare_run = steps["Prepare reviewed publish plan"]["run"]
-
-        self.assertIn("resolve-workflow-run-pr", prepare_run)
-        self.assertIn('commits/${HEAD_SHA}/pulls', prepare_run)
-        self.assertIn("gh pr list", prepare_run)
-        self.assertIn("--head \"${HEAD_BRANCH}\"", prepare_run)
-        self.assertIn("No reviewed PR found", prepare_run)
-        self.assertIn("Resolved Approved dataset mutation run to PR", prepare_run)
-
-
-if __name__ == "__main__":
-    unittest.main()

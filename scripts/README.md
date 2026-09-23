@@ -238,7 +238,8 @@ when available and falls back to the canonical sidecar when it is not.
 `feature_metadata_translation_pipeline.py` is the GitHub Actions pipeline entry
 point for reviewed translation-source updates. The
 `Feature metadata localization materialization` workflow runs after the
-approved dataset mutation workflow succeeds, extracts any promoted
+approved dataset mutation workflow succeeds, verifies its exact repository,
+workflow/run identity and immutable authorization artifact, then extracts promoted
 `{asset-slug}.metadata-translations.csv` objects from the reviewed publish
 plan, downloads the sibling canonical sidecar and schema, materializes all
 available locale sidecars, and uploads those generated sidecars with current
@@ -336,9 +337,11 @@ pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
 objects, or promotes data. Do not use it to run Terraform apply; production
 Terraform still routes through protected PR workflows. When `next` asks for scratch
 staging, run `scripts/gcs_asset.py upload` separately and provide the staged URI
-and generation as evidence. `render-pr` validates the final fenced
-`shared-datasets-publish-plan` with `scripts/reviewed_dataset_plan.py`, the same
-schema used by the protected promotion workflow.
+and generation as evidence. `render-pr` writes an immutable checked-in document
+and renders its matching `shared-datasets-publish-plan` fence using
+`scripts/reviewed_dataset_plan.py`. Include the generated document in the PR.
+For manual/delete/combined plans, use `reviewed_dataset_plan.py prepare`; see
+[plan preparation and migration](../.github/dataset-plans/README.md).
 
 `start` requires an explicit request classification and only proceeds for
 `canonical-publish`. It also blocks duplicate first-upload asset slugs unless

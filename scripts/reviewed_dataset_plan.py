@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Validate reviewed dataset mutation plans embedded in PR bodies."""
+"""Prepare and validate immutable, reviewed dataset mutation documents."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import os
 import pathlib
 import re
 import sys
@@ -41,201 +41,75 @@ class PlanValidationError(ValueError):
     """Raised when a reviewed mutation plan is malformed or unsafe."""
 
 
+PLAN_DIRECTORY = ".github/dataset-plans"
+FINALIZATION_VERSION = "finalize-promoted-release-v1"
+
+
+def strict_json_loads(raw: str | bytes) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise PlanValidationError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def invalid_constant(value: str) -> None:
+        raise PlanValidationError(f"non-finite JSON value: {value}")
+
+    try:
+        return json.loads(
+            raw, object_pairs_hook=object_pairs, parse_constant=invalid_constant
+        )
+    except (ValueError, UnicodeError) as exc:
+        raise PlanValidationError(f"invalid JSON: {exc}") from exc
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        + "\n"
+    ).encode("utf-8")
+
+
+def sha256(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def require_fields(value: Any, allowed: set[str], *, label: str) -> None:
+    if not isinstance(value, dict):
+        raise PlanValidationError(f"{label} must be an object")
+    unknown = set(value) - allowed
+    if unknown:
+        raise PlanValidationError(
+            f"{label} unknown fields: {', '.join(sorted(unknown))}"
+        )
+
+
+def unique_targets(values: list[str], *, label: str) -> None:
+    if len(values) != len(set(values)):
+        raise PlanValidationError(f"{label} contains duplicate destinations")
+
+
 def find_fenced_json(body: str, fence_name: str) -> str | None:
     pattern = re.compile(
         rf"```(?:json\s+)?{re.escape(fence_name)}\s*\n(.*?)\n```",
         flags=re.DOTALL | re.IGNORECASE,
     )
-    match = pattern.search(body)
-    return match.group(1) if match else None
+    matches = pattern.findall(body)
+    if len(matches) > 1:
+        raise PlanValidationError(f"multiple {fence_name} fences are ambiguous")
+    return matches[0] if matches else None
 
 
 def extract_fenced_json(body: str, fence_name: str) -> dict[str, Any] | None:
     raw = find_fenced_json(body, fence_name)
     if raw is None:
         return None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise PlanValidationError(f"{fence_name} JSON is invalid: {exc}") from exc
+    payload = strict_json_loads(raw)
     if not isinstance(payload, dict):
         raise PlanValidationError(f"{fence_name} must be a JSON object")
     return payload
-
-
-def event_body(event_path: str | os.PathLike[str]) -> str:
-    event = json.loads(pathlib.Path(event_path).read_text())
-    return event.get("pull_request", {}).get("body") or ""
-
-
-def pr_api_payload_to_event(
-    pr: dict[str, Any],
-    *,
-    repository: str,
-    default_branch: str,
-    allow_merged: bool = False,
-) -> dict[str, Any]:
-    errors = []
-    is_open = pr.get("state") == "open"
-    is_merged = pr.get("state") == "closed" and pr.get("merged") is True
-    if not is_open and not (allow_merged and is_merged):
-        if allow_merged:
-            errors.append("PR must be open or merged")
-        else:
-            errors.append("PR must be open")
-    if pr.get("head", {}).get("repo", {}).get("full_name") != repository:
-        errors.append("PR head repository must match this repository")
-    if pr.get("base", {}).get("repo", {}).get("full_name") != repository:
-        errors.append("PR base repository must match this repository")
-    if pr.get("base", {}).get("ref") != default_branch:
-        errors.append(f"PR base branch must be {default_branch}")
-    if errors:
-        raise PlanValidationError("; ".join(errors))
-    return {"pull_request": pr}
-
-
-def first_workflow_run_pr_number(event: dict[str, Any]) -> str | None:
-    pull_requests = event.get("workflow_run", {}).get("pull_requests") or []
-    for pull_request in pull_requests:
-        number = pull_request.get("number") if isinstance(pull_request, dict) else None
-        if number is not None and str(number).isdigit():
-            return str(number)
-    return None
-
-
-def repository_name_from_payload(payload: Any) -> str:
-    if not isinstance(payload, dict):
-        return ""
-    full_name = payload.get("full_name") or payload.get("nameWithOwner")
-    if full_name:
-        return str(full_name)
-    name = payload.get("name")
-    owner = payload.get("owner")
-    if isinstance(owner, dict):
-        owner_name = owner.get("login") or owner.get("name")
-    else:
-        owner_name = owner
-    if owner_name and name:
-        return f"{owner_name}/{name}"
-    return ""
-
-
-def pr_candidate_number(candidate: dict[str, Any]) -> str | None:
-    number = candidate.get("number")
-    if number is not None and str(number).isdigit():
-        return str(number)
-    return None
-
-
-def pr_candidate_base_ref(candidate: dict[str, Any]) -> str:
-    base = candidate.get("base") if isinstance(candidate.get("base"), dict) else {}
-    return str(base.get("ref") or candidate.get("baseRefName") or "")
-
-
-def pr_candidate_head_ref(candidate: dict[str, Any]) -> str:
-    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
-    return str(head.get("ref") or candidate.get("headRefName") or "")
-
-
-def pr_candidate_head_sha(candidate: dict[str, Any]) -> str:
-    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
-    return str(head.get("sha") or candidate.get("headRefOid") or "")
-
-
-def pr_candidate_merge_sha(candidate: dict[str, Any]) -> str:
-    merge_commit = candidate.get("mergeCommit") if isinstance(candidate.get("mergeCommit"), dict) else {}
-    return str(candidate.get("merge_commit_sha") or merge_commit.get("oid") or "")
-
-
-def pr_candidate_head_repo(candidate: dict[str, Any]) -> str:
-    head = candidate.get("head") if isinstance(candidate.get("head"), dict) else {}
-    return repository_name_from_payload(head.get("repo") or candidate.get("headRepository"))
-
-
-def pr_candidate_base_repo(candidate: dict[str, Any]) -> str:
-    base = candidate.get("base") if isinstance(candidate.get("base"), dict) else {}
-    return repository_name_from_payload(base.get("repo") or candidate.get("baseRepository"))
-
-
-def pr_candidate_is_merged(candidate: dict[str, Any]) -> bool:
-    state = str(candidate.get("state") or "").lower()
-    return (
-        candidate.get("merged") is True
-        or bool(candidate.get("merged_at") or candidate.get("mergedAt"))
-        or state == "merged"
-    )
-
-
-def pr_candidate_is_eligible(
-    candidate: dict[str, Any],
-    *,
-    repository: str,
-    default_branch: str,
-) -> bool:
-    if pr_candidate_number(candidate) is None:
-        return False
-    base_ref = pr_candidate_base_ref(candidate)
-    if base_ref and base_ref != default_branch:
-        return False
-    for repo_name in (pr_candidate_head_repo(candidate), pr_candidate_base_repo(candidate)):
-        if repo_name and repo_name != repository:
-            return False
-    return True
-
-
-def select_workflow_run_pr_candidate(
-    candidates: list[Any],
-    *,
-    repository: str,
-    default_branch: str,
-    head_sha: str,
-    head_branch: str,
-) -> dict[str, Any] | None:
-    eligible = [
-        candidate
-        for candidate in candidates
-        if isinstance(candidate, dict)
-        and pr_candidate_is_eligible(candidate, repository=repository, default_branch=default_branch)
-    ]
-    if not eligible:
-        return None
-
-    def score(candidate: dict[str, Any]) -> tuple[int, int, int, int]:
-        sha_values = {pr_candidate_head_sha(candidate), pr_candidate_merge_sha(candidate)}
-        sha_match = int(bool(head_sha and head_sha in sha_values))
-        branch_match = int(bool(head_branch and pr_candidate_head_ref(candidate) == head_branch))
-        merged = int(pr_candidate_is_merged(candidate))
-        return (sha_match, branch_match, merged, int(pr_candidate_number(candidate) or 0))
-
-    return max(eligible, key=score)
-
-
-def resolve_workflow_run_pr_number(
-    event: dict[str, Any],
-    *,
-    repository: str,
-    default_branch: str,
-    commit_prs: list[Any] | None = None,
-    branch_prs: list[Any] | None = None,
-) -> str | None:
-    direct = first_workflow_run_pr_number(event)
-    if direct is not None:
-        return direct
-
-    workflow_run = event.get("workflow_run", {})
-    head_sha = str(workflow_run.get("head_sha") or "")
-    head_branch = str(workflow_run.get("head_branch") or "")
-    for candidates in (commit_prs or [], branch_prs or []):
-        candidate = select_workflow_run_pr_candidate(
-            candidates if isinstance(candidates, list) else [],
-            repository=repository,
-            default_branch=default_branch,
-            head_sha=head_sha,
-            head_branch=head_branch,
-        )
-        if candidate is not None:
-            return pr_candidate_number(candidate)
-    return None
 
 
 def object_name_from_uri(uri: str, *, bucket: str, label: str) -> str:
@@ -247,6 +121,12 @@ def object_name_from_uri(uri: str, *, bucket: str, label: str) -> str:
         raise PlanValidationError(f"{label} must be an object URI, not a bucket root")
     if name.endswith("/"):
         raise PlanValidationError(f"{label} must name an object, not a prefix")
+    if (
+        any(part in {"", ".", ".."} for part in name.split("/"))
+        or "\\" in name
+        or any(ord(c) < 32 for c in name)
+    ):
+        raise PlanValidationError(f"{label} has an invalid object path")
     if any(char in name for char in WILDCARD_CHARS):
         raise PlanValidationError(f"{label} must not contain wildcard characters")
     return name
@@ -271,12 +151,16 @@ def validate_delete_object_name(name: str, *, label: str) -> None:
 
 
 def require_slug_and_proposal(plan: dict[str, Any]) -> tuple[str, str]:
-    asset_slug = str(plan.get("asset_slug", ""))
-    proposal_id = str(plan.get("proposal_id", ""))
+    asset_slug = plan.get("asset_slug", "")
+    proposal_id = plan.get("proposal_id", "")
+    if not isinstance(asset_slug, str) or not isinstance(proposal_id, str):
+        raise PlanValidationError("asset_slug and proposal_id must be strings")
     if not SLUG_RE.fullmatch(asset_slug):
         raise PlanValidationError("asset_slug must be lowercase kebab-case")
-    if not PROPOSAL_RE.fullmatch(proposal_id):
-        raise PlanValidationError("proposal_id may contain only letters, digits, dots, underscores, and hyphens")
+    if not PROPOSAL_RE.fullmatch(proposal_id) or proposal_id in {".", ".."}:
+        raise PlanValidationError(
+            "proposal_id may contain only letters, digits, dots, underscores, and hyphens"
+        )
     return asset_slug, proposal_id
 
 
@@ -286,22 +170,31 @@ def normalize_numeric_generation(value: Any, *, label: str, required: bool) -> s
             raise PlanValidationError(f"{label} is required")
         return ""
     generation = str(value)
-    if not generation.isdigit():
+    if isinstance(value, bool) or not re.fullmatch(r"[1-9][0-9]*", generation):
         raise PlanValidationError(f"{label} must be numeric")
     return generation
 
 
-def normalize_compatibility_waiver(raw: Any, *, asset_slug: str, label: str) -> dict[str, Any] | None:
+def normalize_compatibility_waiver(
+    raw: Any, *, asset_slug: str, label: str
+) -> dict[str, Any] | None:
     if raw in (None, ""):
         return None
     if not isinstance(raw, dict):
         raise PlanValidationError(f"{label} must be an object")
+    require_fields(
+        raw,
+        {"asset_slug", "blocked_changes", *WAIVER_REQUIRED_TEXT_FIELDS},
+        label=label,
+    )
     if raw.get("asset_slug") != asset_slug:
         raise PlanValidationError(f"{label}.asset_slug must match the publish plan asset_slug")
 
     normalized: dict[str, Any] = {"asset_slug": asset_slug}
     for key in WAIVER_REQUIRED_TEXT_FIELDS:
-        value = str(raw.get(key, "")).strip()
+        if not isinstance(raw.get(key, ""), str):
+            raise PlanValidationError(f"{label}.{key} must be a string")
+        value = raw.get(key, "").strip()
         if not value:
             raise PlanValidationError(f"{label}.{key} is required")
         normalized[key] = value
@@ -312,13 +205,22 @@ def normalize_compatibility_waiver(raw: Any, *, asset_slug: str, label: str) -> 
     normalized_changes: list[dict[str, str]] = []
     for index, change in enumerate(blocked_changes, start=1):
         if not isinstance(change, dict):
-            raise PlanValidationError(f"{label}.blocked_changes[{index}] must be an object")
+            raise PlanValidationError(
+                f"{label}.blocked_changes[{index}] must be an object"
+            )
+        require_fields(
+            change, {"kind", "field"}, label=f"{label}.blocked_changes[{index}]"
+        )
         kind = str(change.get("kind", "")).strip()
         field = str(change.get("field", "")).strip()
         if kind not in SCHEMA_COMPATIBILITY_BLOCKING_KINDS:
-            raise PlanValidationError(f"{label}.blocked_changes[{index}].kind is not a blocking schema change kind")
+            raise PlanValidationError(
+                f"{label}.blocked_changes[{index}].kind is not a blocking schema change kind"
+            )
         if not field:
-            raise PlanValidationError(f"{label}.blocked_changes[{index}].field is required")
+            raise PlanValidationError(
+                f"{label}.blocked_changes[{index}].field is required"
+            )
         normalized_changes.append({"kind": kind, "field": field})
 
     normalized["blocked_changes"] = normalized_changes
@@ -358,7 +260,9 @@ def normalize_slug_list(raw: Any, *, label: str) -> list[str]:
     return normalized
 
 
-def normalize_breaking_changes(raw: Any, *, label: str = "breaking_changes") -> list[dict[str, Any]]:
+def normalize_breaking_changes(
+    raw: Any, *, label: str = "breaking_changes"
+) -> list[dict[str, Any]]:
     if raw in (None, ""):
         return []
     if not isinstance(raw, list):
@@ -368,17 +272,26 @@ def normalize_breaking_changes(raw: Any, *, label: str = "breaking_changes") -> 
         item_label = f"{label}[{index}]"
         if not isinstance(change, dict):
             raise PlanValidationError(f"{item_label} must be an object")
+        require_fields(
+            change,
+            {"category", "summary", "consumer_action", "affected_surfaces"},
+            label=item_label,
+        )
         category = str(change.get("category", "")).strip()
         if category not in BREAKING_CHANGE_CATEGORIES:
             allowed = ", ".join(sorted(BREAKING_CHANGE_CATEGORIES))
-            raise PlanValidationError(f"{item_label}.category must be one of: {allowed}")
+            raise PlanValidationError(
+                f"{item_label}.category must be one of: {allowed}"
+            )
         summary = str(change.get("summary", "")).strip()
         if not summary:
             raise PlanValidationError(f"{item_label}.summary is required")
         consumer_action = str(change.get("consumer_action", "")).strip()
         if not consumer_action:
             raise PlanValidationError(f"{item_label}.consumer_action is required")
-        surfaces = normalize_string_list(change.get("affected_surfaces"), label=f"{item_label}.affected_surfaces")
+        surfaces = normalize_string_list(
+            change.get("affected_surfaces"), label=f"{item_label}.affected_surfaces"
+        )
         normalized.append(
             {
                 "category": category,
@@ -409,7 +322,20 @@ def require_cache_sensitive_metadata(
             raise PlanValidationError(f"{label}.content_type must be 'application/json' for _catalog/web/catalog.json")
 
 
-def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET) -> dict[str, Any]:
+def normalize_publish_plan(
+    plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
+) -> dict[str, Any]:
+    require_fields(
+        plan,
+        {
+            "asset_slug",
+            "proposal_id",
+            "promotions",
+            "breaking_changes",
+            "release_index_asset_slugs",
+        },
+        label="publish plan",
+    )
     asset_slug, proposal_id = require_slug_and_proposal(plan)
     promotions = plan.get("promotions")
     if not isinstance(promotions, list) or not promotions:
@@ -432,17 +358,36 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
     for index, raw in enumerate(promotions, start=1):
         if not isinstance(raw, dict):
             raise PlanValidationError(f"promotions[{index}] must be an object")
+        require_fields(
+            raw,
+            {
+                "source_uri",
+                "source_generation",
+                "destination_uri",
+                "destination_generation",
+                "content_type",
+                "cache_control",
+                "compatibility_waiver",
+            },
+            label=f"promotions[{index}]",
+        )
         source_uri = str(raw.get("source_uri", ""))
         destination_uri = str(raw.get("destination_uri", ""))
         if not source_uri.startswith(expected_source_prefix):
-            raise PlanValidationError(f"promotions[{index}].source_uri must start with {expected_source_prefix}")
-        object_name_from_uri(source_uri, bucket=bucket, label=f"promotions[{index}].source_uri")
+            raise PlanValidationError(
+                f"promotions[{index}].source_uri must start with {expected_source_prefix}"
+            )
+        object_name_from_uri(
+            source_uri, bucket=bucket, label=f"promotions[{index}].source_uri"
+        )
         destination_name = object_name_from_uri(
             destination_uri,
             bucket=bucket,
             label=f"promotions[{index}].destination_uri",
         )
-        validate_canonical_object_name(destination_name, label=f"promotions[{index}].destination_uri")
+        validate_canonical_object_name(
+            destination_name, label=f"promotions[{index}].destination_uri"
+        )
         source_generation = normalize_numeric_generation(
             raw.get("source_generation", ""),
             label=f"promotions[{index}].source_generation",
@@ -453,8 +398,10 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
             label=f"promotions[{index}].destination_generation",
             required=False,
         )
-        content_type = "" if raw.get("content_type") is None else str(raw.get("content_type", ""))
-        cache_control = "" if raw.get("cache_control") is None else str(raw.get("cache_control", ""))
+        if any(raw.get(key) is not None and not isinstance(raw[key], str) for key in ("content_type", "cache_control")):
+            raise PlanValidationError(f"promotions[{index}] metadata must be strings")
+        content_type = raw.get("content_type") or ""
+        cache_control = raw.get("cache_control") or ""
         if len(content_type) > 200:
             raise PlanValidationError(f"promotions[{index}].content_type is too long")
         if len(cache_control) > 500:
@@ -483,10 +430,21 @@ def normalize_publish_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
             }
         )
 
+    unique_targets(
+        [item["destination_uri"] for item in normalized["promotions"]],
+        label="promotions",
+    )
     return normalized
 
 
-def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET) -> dict[str, Any]:
+def normalize_delete_plan(
+    plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET
+) -> dict[str, Any]:
+    require_fields(
+        plan,
+        {"asset_slug", "proposal_id", "deletions", "breaking_changes"},
+        label="delete plan",
+    )
     asset_slug, proposal_id = require_slug_and_proposal(plan)
     deletions = plan.get("deletions")
     if not isinstance(deletions, list) or not deletions:
@@ -504,8 +462,13 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
     for index, raw in enumerate(deletions, start=1):
         if not isinstance(raw, dict):
             raise PlanValidationError(f"deletions[{index}] must be an object")
+        require_fields(
+            raw, {"uri", "generation", "reason"}, label=f"deletions[{index}]"
+        )
         uri = str(raw.get("uri", ""))
-        object_name = object_name_from_uri(uri, bucket=bucket, label=f"deletions[{index}].uri")
+        object_name = object_name_from_uri(
+            uri, bucket=bucket, label=f"deletions[{index}].uri"
+        )
         validate_delete_object_name(object_name, label=f"deletions[{index}].uri")
         generation = normalize_numeric_generation(
             raw.get("generation", ""),
@@ -514,7 +477,9 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
         )
         reason = str(raw.get("reason", "")).strip()
         if len(reason) < 12:
-            raise PlanValidationError(f"deletions[{index}].reason must explain why deletion is required")
+            raise PlanValidationError(
+                f"deletions[{index}].reason must explain why deletion is required"
+            )
 
         normalized["deletions"].append(
             {
@@ -524,111 +489,121 @@ def normalize_delete_plan(plan: dict[str, Any], *, bucket: str = DEFAULT_BUCKET)
             }
         )
 
+    unique_targets([item["uri"] for item in normalized["deletions"]], label="deletions")
     return normalized
 
 
-def compact_plan_summary(plan_type: str, normalized: dict[str, Any]) -> dict[str, Any]:
-    summary = {
-        "asset_slug": normalized.get("asset_slug", ""),
-        "proposal_id": normalized.get("proposal_id", ""),
-        "plan_type": plan_type,
-    }
-    if plan_type == "publish":
-        promotions = normalized.get("promotions", [])
-        summary.update(
-            {
-                "promotion_count": len(promotions),
-                "new_destination_count": sum(1 for item in promotions if not item.get("destination_generation")),
-                "replacement_count": sum(1 for item in promotions if item.get("destination_generation")),
-                "compatibility_waiver_count": sum(1 for item in promotions if item.get("compatibility_waiver")),
-                "breaking_change_count": len(normalized.get("breaking_changes", [])),
-                "release_index_rebuild_count": len(normalized.get("release_index_asset_slugs", [])),
-            }
+def normalize_document(document: Any) -> dict[str, Any]:
+    require_fields(
+        document,
+        {"plan_version", "publish", "delete", "finalization_version"},
+        label="plan document",
+    )
+    if type(document.get("plan_version")) is not int or document["plan_version"] != 1:
+        raise PlanValidationError("plan_version must be 1")
+    if document.get("finalization_version") != FINALIZATION_VERSION:
+        raise PlanValidationError("unsupported finalization_version")
+    normalized = {"plan_version": 1, "finalization_version": FINALIZATION_VERSION}
+    for kind, normalize in (
+        ("publish", normalize_publish_plan),
+        ("delete", normalize_delete_plan),
+    ):
+        if kind in document:
+            normalized[kind] = normalize(document[kind])
+    payloads = [
+        normalized[kind] for kind in ("publish", "delete") if kind in normalized
+    ]
+    if not payloads:
+        raise PlanValidationError("plan document needs publish and/or delete")
+    if len({(p["asset_slug"], p["proposal_id"]) for p in payloads}) != 1:
+        raise PlanValidationError(
+            "publish and delete must identify the same asset/proposal"
         )
-    else:
-        summary["deletion_count"] = len(normalized.get("deletions", []))
-        summary["breaking_change_count"] = len(normalized.get("breaking_changes", []))
-    return summary
-
-
-def command_detect(args: argparse.Namespace) -> int:
-    body = event_body(args.event_path)
-    result = {
-        "has_publish_plan": find_fenced_json(body, "shared-datasets-publish-plan") is not None,
-        "has_delete_plan": find_fenced_json(body, "shared-datasets-delete-plan") is not None,
+    promoted = {
+        p["destination_uri"]
+        for p in normalized.get("publish", {}).get("promotions", [])
     }
-    if args.github_output:
-        with pathlib.Path(args.github_output).open("a") as output:
-            for key, value in result.items():
-                output.write(f"{key}={str(value).lower()}\n")
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
+    deleted = {p["uri"] for p in normalized.get("delete", {}).get("deletions", [])}
+    if promoted & deleted:
+        raise PlanValidationError("publish and delete destinations conflict")
+    return normalized
 
 
-def command_extract(args: argparse.Namespace) -> int:
-    body = event_body(args.event_path)
-    if args.plan_type == "publish":
-        plan = extract_fenced_json(body, "shared-datasets-publish-plan")
-        if plan is None:
-            raise PlanValidationError("PR body must contain a fenced shared-datasets-publish-plan JSON block")
-        normalized = normalize_publish_plan(plan, bucket=args.bucket)
+def document_path(document: dict[str, Any]) -> str:
+    normalized = normalize_document(document)
+    plan = normalized.get("publish") or normalized["delete"]
+    return f"{PLAN_DIRECTORY}/{plan['asset_slug']}/{plan['proposal_id']}/{sha256(canonical_bytes(normalized))}.json"
+
+
+def read_document(raw: bytes, *, path: str) -> dict[str, Any]:
+    document = normalize_document(strict_json_loads(raw))
+    if raw != canonical_bytes(document):
+        raise PlanValidationError(
+            "checked-in plan must contain exact canonical bytes; run prepare"
+        )
+    if path != document_path(document):
+        raise PlanValidationError(
+            "checked-in plan path does not match its digest/asset/proposal"
+        )
+    return document
+
+
+def write_document(
+    document: dict[str, Any], *, repo_root: pathlib.Path
+) -> pathlib.Path:
+    document = normalize_document(document)
+    path = repo_root / document_path(document)
+    if not path.parent.resolve().is_relative_to(repo_root.resolve()):
+        raise PlanValidationError("plan directory escapes repository")
+    if path.exists():
+        if path.is_symlink() or path.read_bytes() != canonical_bytes(document):
+            raise PlanValidationError(
+                f"refusing to replace altered immutable plan: {path}"
+            )
     else:
-        plan = extract_fenced_json(body, "shared-datasets-delete-plan")
-        if plan is None:
-            raise PlanValidationError("PR body must contain a fenced shared-datasets-delete-plan JSON block")
-        normalized = normalize_delete_plan(plan, bucket=args.bucket)
-
-    payload = json.dumps(normalized, indent=2, sort_keys=True) + "\n"
-    if args.output:
-        pathlib.Path(args.output).write_text(payload)
-    if args.quiet:
-        return 0
-    if args.print_plan or not args.output:
-        print(payload, end="")
-    else:
-        print(json.dumps(compact_plan_summary(args.plan_type, normalized), indent=2, sort_keys=True))
-    return 0
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as output:
+            output.write(canonical_bytes(document))
+    return path
 
 
-def command_event_from_pr(args: argparse.Namespace) -> int:
-    pr = json.loads(pathlib.Path(args.pr_json).read_text())
-    if not isinstance(pr, dict):
-        raise PlanValidationError("PR API payload must be a JSON object")
-    event = pr_api_payload_to_event(
-        pr,
-        repository=args.repository,
-        default_branch=args.default_branch,
-        allow_merged=args.allow_merged,
-    )
-    payload = json.dumps(event, indent=2, sort_keys=True) + "\n"
-    if args.output:
-        pathlib.Path(args.output).write_text(payload)
-    print(payload, end="")
-    return 0
+def render_document(document: dict[str, Any]) -> str:
+    document = normalize_document(document)
+    result = f"Checked-in plan: `{document_path(document)}`\n\nSHA-256: `{sha256(canonical_bytes(document))}`\n"
+    for kind in ("publish", "delete"):
+        if kind in document:
+            result += f"\n```shared-datasets-{kind}-plan\n{canonical_bytes(document[kind]).decode()}```\n"
+    return result
 
 
-def load_json_list(path: str | None, *, label: str) -> list[Any]:
-    if not path:
-        return []
-    payload = json.loads(pathlib.Path(path).read_text())
-    if not isinstance(payload, list):
-        raise PlanValidationError(f"{label} must be a JSON list")
-    return payload
+def check_rendered_body(body: str, document: dict[str, Any]) -> None:
+    for kind, normalize in (
+        ("publish", normalize_publish_plan),
+        ("delete", normalize_delete_plan),
+    ):
+        payload = extract_fenced_json(body, f"shared-datasets-{kind}-plan")
+        if (normalize(payload) if payload is not None else None) != document.get(kind):
+            raise PlanValidationError(
+                f"{kind} fence must match checked-in plan; regenerate the PR body"
+            )
 
 
-def command_resolve_workflow_run_pr(args: argparse.Namespace) -> int:
-    event = json.loads(pathlib.Path(args.event_path).read_text())
-    if not isinstance(event, dict):
-        raise PlanValidationError("workflow_run event payload must be a JSON object")
-    pr_number = resolve_workflow_run_pr_number(
-        event,
-        repository=args.repository,
-        default_branch=args.default_branch,
-        commit_prs=load_json_list(args.commit_prs_json, label="commit PR candidates"),
-        branch_prs=load_json_list(args.branch_prs_json, label="branch PR candidates"),
-    )
-    if pr_number:
-        print(pr_number)
+def command_prepare(args: argparse.Namespace) -> int:
+    document = {"plan_version": 1, "finalization_version": FINALIZATION_VERSION}
+    for kind in ("publish", "delete"):
+        path = getattr(args, kind)
+        if path:
+            document[kind] = strict_json_loads(pathlib.Path(path).read_bytes())
+    if args.body:
+        if args.publish or args.delete:
+            raise PlanValidationError("use --body or payload files, not both")
+        body = pathlib.Path(args.body).read_text()
+        for kind in ("publish", "delete"):
+            payload = extract_fenced_json(body, f"shared-datasets-{kind}-plan")
+            if payload is not None:
+                document[kind] = payload
+    write_document(document, repo_root=pathlib.Path(args.repo_root))
+    print(render_document(document), end="")
     return 0
 
 
@@ -636,55 +611,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    detect = subparsers.add_parser("detect", help="Detect publish/delete plan fences in a pull request event.")
-    detect.add_argument("--event-path", required=True, help="Path to the GitHub event JSON payload.")
-    detect.add_argument("--github-output", help="Optional GITHUB_OUTPUT path for job outputs.")
-    detect.set_defaults(func=command_detect)
-
-    extract = subparsers.add_parser("extract", help="Extract and validate a reviewed mutation plan.")
-    extract.add_argument("plan_type", choices=("publish", "delete"))
-    extract.add_argument("--event-path", required=True, help="Path to the GitHub event JSON payload.")
-    extract.add_argument("--bucket", default=DEFAULT_BUCKET, help="Expected shared datasets bucket.")
-    extract.add_argument("--output", help="Optional path for normalized plan JSON.")
-    extract.add_argument(
-        "--print-plan",
-        action="store_true",
-        help="Print the full normalized plan even when --output is set. By default --output prints only a compact summary.",
+    prepare = subparsers.add_parser(
+        "prepare",
+        help="Write a checked-in immutable plan and render its PR fences; grants no approval.",
     )
-    extract.add_argument("--quiet", action="store_true", help="Write --output without printing anything.")
-    extract.set_defaults(func=command_extract)
-
-    event_from_pr = subparsers.add_parser(
-        "event-from-pr",
-        help="Validate a same-repo PR API payload and wrap it like a pull_request event.",
+    prepare.add_argument("--publish", help="Publish payload JSON path.")
+    prepare.add_argument("--delete", help="Delete payload JSON path.")
+    prepare.add_argument(
+        "--body", help="Migrate a local legacy PR body into a new unapproved document."
     )
-    event_from_pr.add_argument("--pr-json", required=True, help="Path to a GitHub REST pulls/{number} response.")
-    event_from_pr.add_argument("--repository", required=True, help="Expected owner/name repository.")
-    event_from_pr.add_argument("--default-branch", required=True, help="Expected base branch.")
-    event_from_pr.add_argument(
-        "--allow-merged",
-        action="store_true",
-        help="Accept already-merged same-repo PRs for approved self-authored fallback dispatch.",
-    )
-    event_from_pr.add_argument("--output", help="Optional path for wrapped event JSON.")
-    event_from_pr.set_defaults(func=command_event_from_pr)
-
-    resolve_workflow_run_pr = subparsers.add_parser(
-        "resolve-workflow-run-pr",
-        help="Resolve the reviewed PR number for a workflow_run event using optional GitHub PR candidates.",
-    )
-    resolve_workflow_run_pr.add_argument("--event-path", required=True, help="Path to the workflow_run event JSON.")
-    resolve_workflow_run_pr.add_argument("--repository", required=True, help="Expected owner/name repository.")
-    resolve_workflow_run_pr.add_argument("--default-branch", required=True, help="Expected base branch.")
-    resolve_workflow_run_pr.add_argument(
-        "--commit-prs-json",
-        help="Optional JSON list from the GitHub commit-associated PR endpoint.",
-    )
-    resolve_workflow_run_pr.add_argument(
-        "--branch-prs-json",
-        help="Optional JSON list from gh pr list for the workflow_run head branch.",
-    )
-    resolve_workflow_run_pr.set_defaults(func=command_resolve_workflow_run_pr)
+    prepare.add_argument("--repo-root", default=".")
+    prepare.set_defaults(func=command_prepare)
 
     return parser
 

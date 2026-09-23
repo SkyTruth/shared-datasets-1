@@ -32,7 +32,6 @@ from scripts import catalog_csv
 
 CATALOG_CSV_PATH = str(catalog_csv.DEFAULT_CATALOG_CSV)
 SCHEMA_SUFFIXES = {".fgb", ".geojson", ".ndgeojson", ".csv"}
-REQUIRED_REVIEWER = "jonaraphael"
 BREAKING_ALERT_MARKER_PREFIX = "shared-datasets-breaking-alert"
 CATALOG_ROW_FILES = (
     ("current-catalog-row.json", "--current-catalog-row-json"),
@@ -119,56 +118,36 @@ def download_promotion_source(promotion: dict[str, Any], dataset_path: pathlib.P
     )
 
 
-def command_check_approved_review(args: argparse.Namespace) -> int:
-    reviews = json.loads(pathlib.Path(args.reviews_json).read_text())
-    approved = [
-        review
-        for review in reviews
-        if review.get("state") == "APPROVED"
-        and review.get("user", {}).get("login") == REQUIRED_REVIEWER
-    ]
-    if not approved:
-        print(f"Merged PR does not have an APPROVED review from {REQUIRED_REVIEWER}", file=sys.stderr)
-        return 1
-    return 0
-
-
-def remote_catalog_text(ref: str) -> str | None:
+def remote_catalog_text(ref: str) -> str:
     if not ref:
-        return None
+        raise ValueError("exact catalog revision is required")
     quoted_ref = urllib.parse.quote(ref, safe="")
-    try:
-        payload = gh_api_json(f"repos/{repository()}/contents/{CATALOG_CSV_PATH}?ref={quoted_ref}")
-    except subprocess.CalledProcessError as exc:
-        print(f"Could not read catalog at {ref}: {exc}")
-        return None
-    return base64.b64decode(str(payload.get("content") or "")).decode("utf-8")
+    payload = gh_api_json(
+        f"repos/{repository()}/contents/{CATALOG_CSV_PATH}?ref={quoted_ref}"
+    )
+    return base64.b64decode(payload["content"]).decode("utf-8")
 
 
 def first_parent(ref: str) -> str:
     if not ref:
-        return ""
+        raise ValueError("exact merge revision is required")
     quoted_ref = urllib.parse.quote(ref, safe="")
-    try:
-        payload = gh_api_json(f"repos/{repository()}/commits/{quoted_ref}")
-    except subprocess.CalledProcessError as exc:
-        print(f"Could not inspect merge commit {ref}: {exc}")
-        return ""
+    payload = gh_api_json(f"repos/{repository()}/commits/{quoted_ref}")
     parents = payload.get("parents") or []
-    return str(parents[0].get("sha") or "") if parents else ""
+    if not parents or not parents[0].get("sha"):
+        raise ValueError("merge commit has no baseline parent")
+    return str(parents[0]["sha"])
 
 
 def command_collect_catalog_rows(args: argparse.Namespace) -> int:
     asset_slug = plan_asset_slug()
     event = json.loads(pathlib.Path(args.event_path).read_text())
     pull_request = event.get("pull_request") or {}
-    proposed_ref = str(pull_request.get("merge_commit_sha") or pull_request.get("head", {}).get("sha") or "")
-    current_ref = first_parent(proposed_ref) or str(pull_request.get("base", {}).get("sha") or "")
+    proposed_ref = str(pull_request["merge_commit_sha"])
+    current_ref = first_parent(proposed_ref)
 
     current_text = remote_catalog_text(current_ref)
     proposed_text = remote_catalog_text(proposed_ref)
-    if proposed_text is None and pathlib.Path(CATALOG_CSV_PATH).exists():
-        proposed_text = pathlib.Path(CATALOG_CSV_PATH).read_text()
 
     if current_text:
         row = catalog_csv.catalog_row_from_text(current_text, asset_slug, label="current catalog")
@@ -188,12 +167,8 @@ def command_collect_catalog_rows(args: argparse.Namespace) -> int:
 def command_collect_proposed_catalog_row(args: argparse.Namespace) -> int:
     asset_slug = plan_asset_slug()
     ref = urllib.parse.quote(args.head_sha, safe="")
-    try:
-        payload = gh_api_json(f"repos/{repository()}/contents/{CATALOG_CSV_PATH}?ref={ref}")
-    except subprocess.CalledProcessError as exc:
-        print(f"Could not read proposed catalog at {args.head_sha}: {exc}")
-        return 0
-    content = base64.b64decode(str(payload.get("content") or "")).decode("utf-8")
+    payload = gh_api_json(f"repos/{repository()}/contents/{CATALOG_CSV_PATH}?ref={ref}")
+    content = base64.b64decode(payload["content"]).decode("utf-8")
     row = catalog_csv.catalog_row_from_text(content, asset_slug, label="proposed catalog")
     if row:
         pathlib.Path("proposed-catalog-row.json").write_text(json.dumps(row, indent=2, sort_keys=True) + "\n")
@@ -695,13 +670,6 @@ def command_delete_canonical_objects(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-
-    check_review = subparsers.add_parser(
-        "check-approved-review",
-        help=f"Require an APPROVED review from {REQUIRED_REVIEWER} in a reviews JSON payload.",
-    )
-    check_review.add_argument("--reviews-json", required=True)
-    check_review.set_defaults(func=command_check_approved_review)
 
     collect_rows = subparsers.add_parser(
         "collect-catalog-rows",
