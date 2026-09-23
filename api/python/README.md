@@ -273,7 +273,7 @@ Important `DatasetRef` fields:
 | `ref.last_updated` | Indexed release date, or empty for an unpinned/latest-only reference. |
 | `ref.generation` | Exact GCS artifact generation after fetch; optional on resolve. |
 | `ref.sha256`, `ref.size` | Verified SHA-256 and byte size after fetch; optional index expectations on dated resolve. |
-| `ref.release_index_generation` | Generation of the index response when available; absent for no-index assets. |
+| `ref.release_index_generation` | Generation of the index response used for indexed release selection, when available; absent for latest-only fallback from a missing or valid empty index. |
 | `ref.resolved_id` | Fetched lineage includes `#generation=...`; an unpinned latest alias returns `{slug}@latest`. |
 
 Common errors:
