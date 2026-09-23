@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import concurrent.futures
+import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 from urllib.error import HTTPError
+from urllib.parse import parse_qs, urlsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +38,7 @@ from skytruth_shared_datasets import (  # noqa: E402
     split_gs_uri,
 )
 from skytruth_shared_datasets import cli as sdk_cli  # noqa: E402
+from skytruth_shared_datasets import catalog as sdk  # noqa: E402
 
 
 FIXTURE_CSV = """asset_slug,title,category,subcategory,status,lifecycle_reason,lifecycle_date,successor_asset_slug,consumer_guidance,access_tier,owner,update_cadence,canonical_path,canonical_format,available_formats,metadata_paths,localized_name_locales,localized_name_review_states,has_pmtiles,has_geojson,has_csv,source,license,citation,notes
@@ -41,19 +47,53 @@ example-table,Example Table,700-non-geographic-reference,730-units-codes-lookups
 """
 
 
+class StorageError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(f"storage HTTP {code}")
+
+
+class FakeResponse(io.BytesIO):
+    def __init__(self, payload: bytes, **headers):
+        super().__init__(payload)
+        self.headers = {"Content-Length": str(len(payload)), **headers}
+
+
 class FakeGcsBlob:
-    def __init__(self, *, text: str = "", content: bytes = b"") -> None:
+    def __init__(self, *, text: str = "", content: bytes = b"", generation: int = 1, error=None) -> None:
         self.text = text
         self.content = content
+        self.generation = generation
+        self.error = error
         self.downloads = []
+        self.preconditions = []
 
-    def download_as_text(self, timeout):
+    @property
+    def size(self):
+        return len(self.text.encode() if self.text else self.content)
+
+    def reload(self, *, timeout):
+        if self.error:
+            raise self.error
+
+    def download_as_text(self, timeout, *, if_generation_match=None):
+        self._check(if_generation_match)
         self.downloads.append(("text", timeout))
         return self.text
 
-    def download_to_filename(self, filename, timeout):
+    def download_to_filename(self, filename, timeout, *, if_generation_match, raw_download):
+        self._check(if_generation_match)
+        assert raw_download is True
         self.downloads.append(("file", timeout))
         Path(filename).write_bytes(self.content)
+
+    def _check(self, generation):
+        if self.error:
+            raise self.error
+        if generation is not None:
+            self.preconditions.append(generation)
+            if generation != self.generation:
+                raise StorageError(412)
 
 
 class FakeGcsBucket:
@@ -61,15 +101,20 @@ class FakeGcsBucket:
         self.client = client
         self.bucket_name = bucket_name
 
-    def blob(self, object_name: str) -> FakeGcsBlob:
+    def blob(self, object_name: str, *, generation=None) -> FakeGcsBlob:
         self.client.requests.append((self.bucket_name, object_name))
-        return self.client.blobs[(self.bucket_name, object_name)]
+        self.client.bindings.append((self.bucket_name, object_name, generation))
+        blob = self.client.blobs.get((self.bucket_name, object_name), FakeGcsBlob(error=StorageError(404)))
+        if generation is not None and generation != blob.generation:
+            return FakeGcsBlob(error=StorageError(404))
+        return blob
 
 
 class FakeGcsClient:
     def __init__(self, blobs: dict[tuple[str, str], FakeGcsBlob]) -> None:
         self.blobs = blobs
         self.requests: list[tuple[str, str]] = []
+        self.bindings = []
 
     def bucket(self, bucket_name: str) -> FakeGcsBucket:
         return FakeGcsBucket(self, bucket_name)
@@ -397,7 +442,7 @@ class SharedDatasetSdkTests(unittest.TestCase):
 
         def fake_urlopen(request, timeout):
             calls.append((request.full_url, timeout))
-            return io.BytesIO(json.dumps(release_index).encode())
+            return FakeResponse(json.dumps(release_index).encode())
 
         with mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=fake_urlopen):
             versions = catalog.versions("example-vector")
@@ -449,15 +494,17 @@ class SharedDatasetSdkTests(unittest.TestCase):
             self.assertEqual(path.name, "example-vector.fgb")
             self.assertEqual(path.read_bytes(), b"dated bytes")
             self.assertEqual(ref.last_updated, "2026-04-30")
-            self.assertEqual(ref.resolved_id, "example-vector@2026-04-30")
+            self.assertEqual(ref.resolved_id, "example-vector@2026-04-30#generation=1")
 
     def test_fetch_downloads_to_cache_and_reuses_cache(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
         calls = []
 
         def fake_urlopen(request, timeout):
-            calls.append((request.full_url, timeout))
-            return io.BytesIO(b"dataset bytes")
+            calls.append((request.full_url, request.get_method()))
+            if "_catalog/releases/" in request.full_url:
+                raise HTTPError(request.full_url, 404, "missing index", {}, None)
+            return FakeResponse(b"dataset bytes", **{"x-goog-generation": "1"})
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=fake_urlopen):
             first = catalog.fetch("example-vector", format="fgb", cache_dir=tmp)
@@ -468,11 +515,11 @@ class SharedDatasetSdkTests(unittest.TestCase):
             self.assertEqual(first.cache_path, second.cache_path)
             self.assertEqual(first.cache_path, forced.cache_path)
             self.assertEqual(first.last_updated, "")
-            self.assertEqual(first.resolved_id, "example-vector@latest")
+            self.assertEqual(first.resolved_id, "example-vector@latest#generation=1")
             path = first.cache_path
             assert path is not None
             self.assertEqual(path.read_bytes(), b"dataset bytes")
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(sum("?generation=1" in url and method == "GET" for url, method in calls), 2)
             self.assertEqual(path.name, "example-vector.fgb")
             self.assertIn("latest", path.parts)
 
@@ -489,9 +536,9 @@ class SharedDatasetSdkTests(unittest.TestCase):
             assert path is not None
             self.assertEqual(path.read_bytes(), b"gcs dataset bytes")
             self.assertEqual(fetched_ref.gs_uri, ref.gs_uri)
-            self.assertEqual(fetched_ref.resolved_id, "example-vector@latest")
+            self.assertEqual(fetched_ref.resolved_id, "example-vector@latest#generation=1")
 
-        self.assertEqual(client.requests, [(bucket_name, object_name)])
+        self.assertEqual(client.requests, [(bucket_name, "_catalog/releases/example-vector.json"), (bucket_name, object_name), (bucket_name, object_name)])
         self.assertEqual(blob.downloads, [("file", 60.0)])
 
     def test_magic_helpers_use_authenticated_gcs_client(self):
@@ -542,22 +589,21 @@ class SharedDatasetSdkTests(unittest.TestCase):
         )
         self.assertEqual(pmtiles_ref.url, "https://tiles.skytruth.org/pmtiles/public/example-vector.pmtiles")
         self.assertEqual(fetched_ref.last_updated, "")
-        self.assertEqual(fetched_ref.resolved_id, "example-vector@latest")
+        self.assertEqual(fetched_ref.resolved_id, "example-vector@latest#generation=1")
         self.assertEqual(
             client.requests,
             [
                 ("example-bucket", "catalog.csv"),
-                (
-                    "example-bucket",
-                    "100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb",
-                ),
+                ("example-bucket", "_catalog/releases/example-vector.json"),
+                ("example-bucket", "100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb"),
+                ("example-bucket", "100-geographic-reference/110-boundaries/example-vector/latest/example-vector.fgb"),
             ],
         )
 
     def test_fetch_reports_download_failures(self):
         catalog = Catalog.from_csv_text(FIXTURE_CSV)
         with tempfile.TemporaryDirectory() as tmp, mock.patch("skytruth_shared_datasets.catalog.urlopen", side_effect=OSError("failed")):
-            with self.assertRaises(FetchError):
+            with self.assertRaises(CatalogLoadError):
                 catalog.fetch("example-vector", format="fgb", cache_dir=tmp)
 
     def test_real_repo_catalog_parses_and_active_assets_resolve(self):
@@ -660,6 +706,409 @@ class SharedDatasetCliTests(unittest.TestCase):
         self.assertEqual(calls[0][2]["version"], "2026-04-30")
         self.assertEqual(calls[0][2]["access"], "public")
         self.assertEqual(stdout.getvalue().strip(), str(cache_path))
+
+
+class ExactArtifactFetchTests(unittest.TestCase):
+    root = "100-geographic-reference/110-boundaries/example-vector"
+    index_key = ("example-bucket", "_catalog/releases/example-vector.json")
+
+    def setUp(self):
+        work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR", str(Path(tempfile.gettempdir()) / "shared-datasets-1")))
+        work_root.mkdir(parents=True, exist_ok=True)
+        self.tmp = tempfile.TemporaryDirectory(prefix="python-sdk-cache-test-", dir=work_root)
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = Path(self.tmp.name)
+        # Legacy callers may still supply a static CSV date. It is never lineage.
+        csv_text = FIXTURE_CSV.replace("asset_slug,title,", "asset_slug,title,last_updated,").replace(
+            "example-vector,Example Vector,", "example-vector,Example Vector,2026-01-01,"
+        ).replace("example-table,Example Table,", "example-table,Example Table,,")
+        self.catalog = Catalog.from_csv_text(csv_text)
+        self.client = FakeGcsClient({})
+        self.index = {"schema_version": 1, "asset_slug": "example-vector", "latest_release": None, "releases": []}
+        self.index_generation = 100
+
+    def publish(self, date="2026-01-01", content=b"January", generation=10, *, omit=()):
+        name = f"{self.root}/releases/{date}/example-vector.fgb"
+        blob = FakeGcsBlob(content=content, generation=generation)
+        self.client.blobs[("example-bucket", name)] = blob
+        entry = {"format": "fgb", "path": f"gs://example-bucket/{name}", "generation": generation,
+                 "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+        for key in omit:
+            entry.pop(key)
+        self.index["releases"] = [release for release in self.index["releases"] if release["date"] != date]
+        self.index["releases"].append({"date": date, "files": [entry]})
+        self.index["latest_release"] = {"date": date}
+        self.save_index()
+        return blob, entry
+
+    def save_index(self):
+        self.index_generation += 1
+        self.client.blobs[self.index_key] = FakeGcsBlob(text=json.dumps(self.index), generation=self.index_generation)
+
+    def fetch(self, **kwargs):
+        return self.catalog.fetch("example-vector", cache_dir=self.cache, access="gcs", client=self.client, **kwargs)
+
+    def test_latest_follows_index_with_static_or_absent_csv_date(self):
+        for with_date in (True, False):
+            with self.subTest(with_date=with_date):
+                if not with_date:
+                    self.catalog = Catalog.from_csv_text(FIXTURE_CSV)
+                old, _ = self.publish()
+                first = self.fetch()
+                current, entry = self.publish("2026-09-22", b"September", 20)
+                second = self.fetch()
+                self.assertEqual(second.cache_path.read_bytes(), b"September")
+                self.assertEqual(second.last_updated, "2026-09-22")
+                self.assertEqual(second.gs_uri, entry["path"])
+                self.assertEqual(second.generation, 20)
+                self.assertEqual(second.sha256, entry["sha256"])
+                self.assertEqual(second.size, 9)
+                self.assertEqual(second.release_index_generation, self.index_generation)
+                self.assertEqual(second.resolved_id, "example-vector@2026-09-22#generation=20")
+                self.assertNotEqual(first.cache_path, second.cache_path)
+                self.assertEqual(first.cache_path.read_bytes(), b"January")
+                self.assertTrue(all(value == 20 for value in current.preconditions))
+                self.assertTrue(all(value == 10 for value in old.preconditions))
+
+    def test_same_date_replacement_changes_cache_identity_and_lineage(self):
+        self.publish()
+        first = self.fetch()
+        self.publish(content=b"Updated", generation=11)
+        second = self.fetch()
+        self.assertEqual(first.last_updated, second.last_updated)
+        self.assertNotEqual(first.resolved_id, second.resolved_id)
+        self.assertNotEqual(first.cache_path, second.cache_path)
+        self.assertEqual(first.cache_path.read_bytes(), b"January")
+        self.assertEqual(second.cache_path.read_bytes(), b"Updated")
+
+    def test_same_size_tamper_and_truncation_are_repaired(self):
+        blob, _ = self.publish()
+        original = self.fetch()
+        for content in (b"corrupt", b"short"):
+            with self.subTest(content=content):
+                original.cache_path.write_bytes(content)
+                repaired = self.fetch()
+                self.assertEqual(repaired.cache_path.read_bytes(), b"January")
+        self.assertEqual(len(blob.downloads), 3)
+        self.fetch()
+        self.assertEqual(len(blob.downloads), 3)
+
+    def test_unverified_or_wrong_cache_records_cannot_authorize_reuse(self):
+        blob, _ = self.publish()
+        ref = self.fetch()
+        record_path = ref.cache_path.with_name(ref.filename + ".verified.json")
+        original = record_path.read_text()
+        bad_records = [None, "{", "[]", original.replace('"generation": 10', '"generation": true'),
+                       original.replace('"generation": 10', '"generation": 9'),
+                       original.replace('"sha256": "', '"sha256": "f')]
+        for bad in bad_records:
+            with self.subTest(record=bad):
+                if bad is None:
+                    record_path.unlink()
+                else:
+                    record_path.write_text(bad)
+                before = len(blob.downloads)
+                self.fetch()
+                self.assertEqual(len(blob.downloads), before + 1)
+
+    def test_checksum_disagreement_fails_even_with_cached_or_legacy_artifact(self):
+        for omit in ((), ("generation",)):
+            with self.subTest(omit=omit):
+                blob, entry = self.publish(omit=omit)
+                good = self.fetch()
+                entry["sha256"] = "f" * 64
+                self.save_index()
+                with self.assertRaisesRegex(FetchError, "SHA-256"):
+                    self.fetch()
+                self.assertEqual(good.cache_path.read_bytes(), b"January")
+                self.assertEqual(blob.generation, 10)
+
+    def test_size_disagreement_fails_without_replacing_existing_cache(self):
+        self.publish()
+        good = self.fetch()
+        self.index["releases"][0]["files"][0]["size"] = 1
+        self.save_index()
+        with self.assertRaisesRegex(FetchError, "size"):
+            self.fetch()
+        self.assertEqual(good.cache_path.read_bytes(), b"January")
+
+    def test_missing_generation_observes_object_without_inventing_original_bytes(self):
+        blob, _ = self.publish(omit=("generation", "sha256", "size"))
+        result = self.fetch()
+        self.assertEqual(result.generation, blob.generation)
+        self.assertEqual(result.last_updated, "2026-01-01")
+        self.assertEqual(result.sha256, hashlib.sha256(blob.content).hexdigest())
+        self.assertEqual(blob.preconditions, [10])
+
+    def test_no_index_and_empty_index_preserve_latest_only_assets(self):
+        name = f"{self.root}/latest/example-vector.fgb"
+        blob = FakeGcsBlob(content=b"old", generation=10)
+        self.client.blobs[("example-bucket", name)] = blob
+        first = self.fetch()
+        self.assertEqual(first.last_updated, "")
+        self.assertEqual(first.resolved_id, "example-vector@latest#generation=10")
+        self.save_index()
+        blob.generation = 11
+        blob.content = b"new"
+        second = self.fetch()
+        self.assertEqual(second.cache_path.read_bytes(), b"new")
+        self.assertNotEqual(first.cache_path, second.cache_path)
+        with self.assertRaises(UnsupportedVersionError):
+            self.fetch(version="2026-01-01")
+        self.client.blobs.pop(self.index_key)
+        with self.assertRaises(UnsupportedVersionError):
+            self.fetch(version="2026-01-01")
+        with self.assertRaises(UnsupportedVersionError):
+            self.catalog.resolve("example-vector", version="2026-01-01", access="gcs", client=self.client)
+
+    def test_offline_permission_and_malformed_index_never_fall_back(self):
+        self.publish()
+        self.fetch()
+        for failure in (StorageError(403), StorageError(401), TimeoutError("offline"), OSError("network")):
+            with self.subTest(failure=failure):
+                self.client.requests.clear()
+                self.client.blobs[self.index_key].error = failure
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+                self.assertEqual(self.client.requests, [self.index_key])
+        self.client.blobs[self.index_key].error = None
+        for text in ("{", "[]", '{"releases":[],"releases":[]}', '{"releases": [], "latest_release": false}'):
+            with self.subTest(text=text):
+                self.client.blobs[self.index_key].text = text
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+
+    def test_malformed_identity_metadata_and_ambiguous_releases_are_rejected(self):
+        for key, value in (("generation", True), ("generation", 0), ("generation", "01"),
+                           ("generation", 1.5), ("generation", None), ("size", True), ("size", -1),
+                           ("sha256", None), ("sha256", "bad")):
+            with self.subTest(key=key, value=value):
+                _, entry = self.publish()
+                entry[key] = value
+                self.save_index()
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+        self.publish()
+        self.index["releases"].append(dict(self.index["releases"][0]))
+        self.save_index()
+        with self.assertRaisesRegex(CatalogLoadError, "Duplicate release date"):
+            self.fetch()
+        self.publish()
+        self.index["releases"][0]["files"] *= 2
+        self.save_index()
+        with self.assertRaisesRegex(CatalogLoadError, "Duplicate release artifact"):
+            self.fetch()
+
+    def test_missing_or_inconsistent_latest_pointer_is_not_legacy(self):
+        for latest in (None, {"date": "2026-12-01"}, {"date": "2026-01-01", "files": []}):
+            with self.subTest(latest=latest):
+                self.publish()
+                self.index["latest_release"] = latest
+                self.save_index()
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+
+    def test_requested_historical_version_uses_its_own_artifact(self):
+        self.publish()
+        self.publish("2026-09-22", b"new", 20)
+        old = self.fetch(version="2026-01-01")
+        self.assertEqual(old.cache_path.read_bytes(), b"January")
+        with self.assertRaises(UnsupportedVersionError):
+            self.fetch(version="2026-02-01")
+        with self.assertRaises(UnsupportedFormatError):
+            self.fetch(format="csv")
+
+    def test_path_boundary_and_canonical_file_selection(self):
+        _, entry = self.publish()
+        companion = dict(entry, path=entry["path"].replace("example-vector.fgb", "example-vector-points.fgb"))
+        self.index["releases"][0]["files"].insert(0, companion)
+        self.save_index()
+        self.assertEqual(self.fetch().gs_uri, entry["path"])
+        duplicate_canonical = dict(entry, path=entry["path"].replace("/example-vector.fgb", "/other/example-vector.fgb"))
+        self.index["releases"][0]["files"].append(duplicate_canonical)
+        self.save_index()
+        with self.assertRaisesRegex(CatalogLoadError, "Ambiguous"):
+            self.fetch()
+        for bad in ("gs://other-bucket/a", entry["path"].replace("/releases/", "/latest/"),
+                    entry["path"].replace("/example-vector.fgb", "/../other.fgb"), "https://untrusted.test/a"):
+            with self.subTest(path=bad):
+                self.publish()
+                self.index["releases"][0]["files"][0]["path"] = bad
+                self.save_index()
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+
+    def test_requested_pmtiles_format_selects_main_not_points_companion(self):
+        _, entry = self.publish()
+        main = dict(entry, format="pmtiles", path=entry["path"].replace(".fgb", ".pmtiles"))
+        points = dict(main, path=main["path"].replace("example-vector.pmtiles", "example-vector-points.pmtiles"))
+        self.index["releases"][0]["files"] = [entry, points, main]
+        self.save_index()
+        ref = self.catalog.resolve("example-vector", "pmtiles", version="2026-01-01", access="gcs", client=self.client)
+        self.assertEqual(ref.gs_uri, main["path"])
+        self.index["releases"][0]["files"].append(dict(main, path=main["path"].replace("/example-vector.pmtiles", "/other/example-vector.pmtiles")))
+        self.save_index()
+        with self.assertRaisesRegex(CatalogLoadError, "Ambiguous"):
+            self.catalog.resolve("example-vector", "pmtiles", version="2026-01-01", access="gcs", client=self.client)
+
+    def test_default_metadata_does_not_pick_localized_companion(self):
+        _, entry = self.publish()
+        canonical = dict(entry, format="metadata", path=entry["path"].replace(".fgb", ".metadata.ndjson.gz"))
+        localized = dict(canonical, locale="es", path=canonical["path"].replace(".metadata.", ".metadata.es."))
+        self.index["releases"][0]["files"] = [localized, canonical]
+        self.save_index()
+        ref = self.catalog.resolve("example-vector", "metadata", version="2026-01-01", access="gcs", client=self.client)
+        self.assertEqual(ref.gs_uri, canonical["path"])
+
+    def test_generation_change_after_resolution_fails_without_alias_retry(self):
+        blob, _ = self.publish()
+        download = sdk._download_artifact
+        def changed(ref, path, **kwargs):
+            blob.generation = 11
+            blob.content = b"changed"
+            return download(ref, path, **kwargs)
+        with mock.patch.object(sdk, "_download_artifact", side_effect=changed):
+            with self.assertRaises(FetchError):
+                self.fetch()
+        self.assertFalse(any(self.cache.rglob("*.verified.json")))
+        self.assertFalse(any("/latest/" in name for _, name in self.client.requests))
+
+    def test_latest_change_between_index_and_download_keeps_selected_snapshot(self):
+        self.publish()
+        download = sdk._download_artifact
+        def changed(ref, path, **kwargs):
+            self.publish("2026-09-22", b"new", 20)
+            return download(ref, path, **kwargs)
+        with mock.patch.object(sdk, "_download_artifact", side_effect=changed):
+            result = self.fetch()
+        self.assertEqual(result.cache_path.read_bytes(), b"January")
+        self.assertEqual(result.generation, 10)
+        self.assertEqual(self.fetch().cache_path.read_bytes(), b"new")
+
+    def test_interrupted_download_or_record_write_is_not_usable_cache(self):
+        blob, _ = self.publish()
+        def partial(ref, path, **kwargs):
+            path.write_bytes(b"partial")
+            raise OSError("interrupted download")
+        with mock.patch.object(sdk, "_download_artifact", side_effect=partial):
+            with self.assertRaises(FetchError):
+                self.fetch()
+        self.assertFalse(any(path.is_file() for path in self.cache.rglob("*")))
+        with mock.patch.object(sdk, "_write_cache_record", side_effect=OSError("interrupted record write")):
+            with self.assertRaises(FetchError):
+                self.fetch()
+        self.assertFalse(any(self.cache.rglob("*.verified.json")))
+        repaired = self.fetch()
+        self.assertEqual(repaired.cache_path.read_bytes(), b"January")
+        self.assertEqual(len(blob.downloads), 2)
+        with mock.patch.object(sdk, "_download_artifact", side_effect=partial):
+            with self.assertRaises(FetchError):
+                self.fetch(force=True)
+        self.assertEqual(self.fetch().cache_path.read_bytes(), b"January")
+
+    def test_concurrent_fetches_share_only_complete_immutable_cache(self):
+        blob, _ = self.publish()
+        barrier = threading.Barrier(2)
+        download = sdk._download_artifact
+        def concurrent_download(ref, path, **kwargs):
+            barrier.wait(timeout=5)
+            return download(ref, path, **kwargs)
+        with mock.patch.object(sdk, "_download_artifact", side_effect=concurrent_download):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: self.fetch(), range(2)))
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0].cache_path.read_bytes(), b"January")
+        before = len(blob.downloads)
+        self.fetch()
+        self.assertEqual(len(blob.downloads), before)
+
+    def test_old_cache_ignored_and_alias_resolution_stays_local_unpinned(self):
+        alias = self.catalog.resolve("example-vector", "pmtiles")
+        self.assertEqual(alias.last_updated, "")
+        self.assertEqual(alias.resolved_id, "example-vector@latest")
+        self.assertIsNone(alias.generation)
+        self.assertEqual(alias.url, "https://tiles.skytruth.org/pmtiles/public/example-vector.pmtiles")
+        old = self.cache / "example-vector/fgb/2026-01-01/example-vector.fgb"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(b"unverified")
+        self.publish()
+        new = self.fetch()
+        self.assertEqual(old.read_bytes(), b"unverified")
+        self.assertNotEqual(old, new.cache_path)
+        self.assertIn("v2", new.cache_path.parts)
+
+    def test_index_disappearing_or_changing_after_stat_is_not_absent(self):
+        self.publish()
+        blob = self.client.blobs[self.index_key]
+        for code in (404, 412):
+            with self.subTest(code=code), mock.patch.object(blob, "download_as_text", side_effect=StorageError(code)):
+                self.client.requests.clear()
+                with self.assertRaises(CatalogLoadError):
+                    self.fetch()
+                self.assertEqual(self.client.requests, [self.index_key])
+
+    def test_public_index_permission_failure_does_not_trigger_legacy_head(self):
+        requests = []
+        def denied(request, timeout):
+            requests.append(request)
+            raise HTTPError(request.full_url, 403, "denied", {}, None)
+        with mock.patch.object(sdk, "urlopen", side_effect=denied):
+            with self.assertRaises(CatalogLoadError):
+                self.catalog.fetch("example-vector", cache_dir=self.cache)
+        self.assertEqual(len(requests), 1)
+        self.assertIn("_catalog/releases/", requests[0].full_url)
+
+    def test_public_http_generation_binding_without_adc(self):
+        _, entry = self.publish()
+        calls = []
+        def fetch_http(request, timeout):
+            calls.append(request)
+            if "_catalog/releases/" in request.full_url:
+                return FakeResponse(json.dumps(self.index).encode(), **{"x-goog-generation": "101"})
+            self.assertEqual(parse_qs(urlsplit(request.full_url).query), {"generation": ["10"]})
+            self.assertEqual(request.get_header("Accept-encoding"), "gzip")
+            return FakeResponse(b"January", **{"x-goog-generation": "10"})
+        with mock.patch.object(sdk, "urlopen", side_effect=fetch_http), mock.patch.object(sdk, "_default_storage_client", side_effect=AssertionError("unexpected ADC")):
+            result = self.catalog.fetch("example-vector", cache_dir=self.cache)
+        self.assertEqual(result.gs_uri, entry["path"])
+        self.assertEqual(result.release_index_generation, 101)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.cache_path.read_bytes(), b"January")
+
+    def test_public_legacy_head_and_replaced_or_truncated_response(self):
+        mode = ["good"]
+        calls = []
+        def fetch_http(request, timeout):
+            calls.append(request)
+            if "_catalog/releases/" in request.full_url:
+                raise HTTPError(request.full_url, 404, "no index", {}, None)
+            if request.get_method() == "HEAD":
+                return FakeResponse(b"January", **{"x-goog-generation": "10"})
+            self.assertIn("?generation=10", request.full_url)
+            if mode[0] == "replaced":
+                return FakeResponse(b"Updated", **{"x-goog-generation": "11"})
+            if mode[0] == "truncated":
+                return FakeResponse(b"short", **{"x-goog-generation": "10", "Content-Length": "7"})
+            return FakeResponse(b"January", **{"x-goog-generation": "10"})
+        with mock.patch.object(sdk, "urlopen", side_effect=fetch_http):
+            result = self.catalog.fetch("example-vector", cache_dir=self.cache)
+            self.assertEqual(result.last_updated, "")
+            self.assertEqual([request.get_method() for request in calls], ["GET", "HEAD", "GET"])
+            for bad in ("replaced", "truncated"):
+                mode[0] = bad
+                with self.subTest(mode=bad), self.assertRaises(FetchError):
+                    self.catalog.fetch("example-vector", cache_dir=self.cache, force=True)
+            self.assertEqual(result.cache_path.read_bytes(), b"January")
+
+    def test_private_adc_download_is_bound_to_generation(self):
+        self.catalog = Catalog.from_csv_text(FIXTURE_CSV.replace("active,,,,,public", "active,,,,,private"))
+        blob, _ = self.publish()
+        with mock.patch.object(sdk, "urlopen", side_effect=AssertionError("unexpected public HTTP")):
+            result = self.fetch()
+        self.assertEqual(result.access_tier, "private")
+        self.assertEqual(blob.preconditions, [10])
+        self.assertIn(("example-bucket", f"{self.root}/releases/2026-01-01/example-vector.fgb", 10), self.client.bindings)
+        self.assertEqual(self.client.blobs[self.index_key].preconditions, [101])
 
 
 if __name__ == "__main__":

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass, field, replace
@@ -173,6 +175,10 @@ class DatasetRef:
     last_updated: str
     access_tier: AccessTier = "public"
     cache_path: Path | None = None
+    generation: int | None = None
+    sha256: str | None = None
+    size: int | None = None
+    release_index_generation: int | None = None
 
     @property
     def filename(self) -> str:
@@ -180,7 +186,8 @@ class DatasetRef:
 
     @property
     def resolved_id(self) -> str:
-        return f"{self.slug}@{self.last_updated or 'latest'}"
+        identity = f"{self.slug}@{self.last_updated or 'latest'}"
+        return f"{identity}#generation={self.generation}" if self.generation is not None else identity
 
 
 class Catalog:
@@ -313,26 +320,7 @@ class Catalog:
         timeout: float = 10.0,
     ) -> dict[str, Any]:
         """Fetch the JSON release index for one asset."""
-        asset = self.get(slug)
-        release_index_uri = release_index_uri_for_asset(asset)
-        try:
-            access_mode = _normalize_access(access)
-            if access_mode == "public":
-                text = _read_url(gs_to_catalog_url(release_index_uri), timeout=timeout)
-            else:
-                text = _read_gcs_text(release_index_uri, client=client, timeout=timeout)
-            payload = json.loads(text)
-        except Exception as exc:
-            if isinstance(exc, SharedDatasetsError):
-                raise
-            raise CatalogLoadError(f"Could not load release index for {slug!r}: {exc}") from exc
-        if not isinstance(payload, dict):
-            raise CatalogLoadError(f"Release index for {slug!r} is not a JSON object")
-        if payload.get("asset_slug") not in (None, slug):
-            raise CatalogLoadError(f"Release index asset_slug mismatch for {slug!r}")
-        releases = payload.get("releases")
-        if releases is not None and not isinstance(releases, list):
-            raise CatalogLoadError(f"Release index for {slug!r} has invalid releases")
+        payload, _generation = _read_release_index(self.get(slug), access=access, client=client, timeout=timeout)
         return payload
 
     def resolve(
@@ -349,7 +337,9 @@ class Catalog:
     ) -> DatasetRef:
         """Resolve an asset to its canonical GCS URI and a browser-facing URL.
 
-        ``gs_uri`` is the stable object identity. For PMTiles, ``url`` defaults
+        Latest resolution is a local, unpinned alias mapping, with no verified
+        release date. Use :meth:`fetch` for exact artifact identity and bytes.
+        For PMTiles, ``url`` defaults
         to the shared SkyTruth PMTiles CDN. Other formats retain
         ``storage.googleapis.com`` URL construction for diagnostics and exact
         object references, but production consumers should download through
@@ -360,24 +350,13 @@ class Catalog:
         asset = self.get(slug)
         if version != "latest":
             version_date = _parse_version(version)
-            release_index = self.versions(slug, access=access, client=client, timeout=timeout)
-            gs_uri, resolved_format = release_path_for_version(
-                asset=asset,
-                release_index=release_index,
-                version=version_date,
-                format=format,
-            )
+            try:
+                release_index, index_generation = _read_release_index(asset, access=access, client=client, timeout=timeout)
+            except _ReleaseIndexNotFound as exc:
+                raise UnsupportedVersionError(f"{slug!r} has no indexed release {version_date}") from exc
             if web_base_url or (url_strategy and _normalize_url_strategy(url_strategy) != "public_gcs"):
                 raise ValueError("Dated releases resolve to exact GCS object URLs; CDN URL strategy is only supported for latest")
-            return DatasetRef(
-                slug=asset.slug,
-                title=asset.title,
-                format=resolved_format,
-                gs_uri=gs_uri,
-                url=gs_to_https(gs_uri),
-                last_updated=version_date,
-                access_tier=asset.access_tier,
-            )
+            return _release_ref(asset, release_index, version_date, format, index_generation=index_generation)
         gs_uri = asset.path_for_format(format)
         resolved_format = _normalize_format(format or asset.canonical_format)
         resolved_web_base_url = web_base_url
@@ -394,7 +373,7 @@ class Catalog:
                 web_base_url=resolved_web_base_url,
                 access_tier=asset.access_tier,
             ),
-            last_updated=asset.last_updated,
+            last_updated="",
             access_tier=asset.access_tier,
         )
 
@@ -410,38 +389,47 @@ class Catalog:
         client=None,
         version: str = "latest",
     ) -> DatasetRef:
-        """Fetch a dataset into the local cache and return its resolved reference."""
-        ref = self.resolve(
-            slug,
-            format,
-            version=version,
-            access=access,
-            client=client,
-            timeout=timeout,
-        )
-        destination = _cache_path(ref, cache_dir)
-        fetched_ref = replace(ref, cache_path=destination)
-        if destination.exists() and not force:
-            return fetched_ref
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
-        os.close(fd)
-        temp_path = Path(temp_name)
+        """Fetch one generation-pinned artifact and verify its local cache bytes."""
+        asset = self.get(slug)
+        access_mode = _normalize_access(access)
+        if version != "latest":
+            _parse_version(version)
         try:
-            access_mode = _normalize_access(access)
-            if access_mode == "public":
-                public_url = gs_to_https(ref.gs_uri)
-                request = Request(public_url, headers={"User-Agent": USER_AGENT})
-                with urlopen(request, timeout=timeout) as response, temp_path.open("wb") as file_obj:
-                    shutil.copyfileobj(response, file_obj)
-            else:
-                _download_gcs_to_path(ref.gs_uri, temp_path, client=client, timeout=timeout)
-            temp_path.replace(destination)
+            release_index, index_generation = _read_release_index(asset, access=access_mode, client=client, timeout=timeout)
+        except _ReleaseIndexNotFound as exc:
+            if version != "latest":
+                raise UnsupportedVersionError(f"{slug!r} has no indexed release {version}") from exc
+            release_index, index_generation = {"releases": [], "latest_release": None}, None
+        if version == "latest" and not release_index["releases"] and release_index.get("latest_release") is None:
+            # A missing/empty index is the explicit legacy latest-only contract.
+            ref = self.resolve(slug, format)
+        else:
+            ref = _release_ref(asset, release_index, version, format, index_generation=index_generation)
+        try:
+            if ref.generation is None:
+                ref = _observe_artifact(ref, access=access_mode, client=client, timeout=timeout)
+            destination = _cache_path(ref, cache_dir)
+            if not force:
+                cached = _verified_cache(ref, destination)
+                if cached is not None:
+                    return cached
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+            os.close(fd)
+            temp_path = Path(temp_name)
+            try:
+                _download_artifact(ref, temp_path, access=access_mode, client=client, timeout=timeout)
+                sha256, size = _file_digest(temp_path)
+                _check_integrity(ref, sha256, size)
+                fetched = replace(ref, cache_path=destination, sha256=sha256, size=size)
+                temp_path.replace(destination)
+                _write_cache_record(fetched, destination)
+                return fetched
+            finally:
+                temp_path.unlink(missing_ok=True)
         except Exception as exc:
-            temp_path.unlink(missing_ok=True)
-            hint = f" {AUTHENTICATED_GCS_HINT}" if str(access).strip().lower() == "gcs" else ""
-            raise FetchError(f"Could not download {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
-        return fetched_ref
+            hint = f" {AUTHENTICATED_GCS_HINT}" if access_mode == "gcs" else ""
+            raise FetchError(f"Could not fetch {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
 
 
 def resolve_dataset(
@@ -556,52 +544,277 @@ def release_index_uri_for_asset(asset: CatalogAsset) -> str:
     return f"gs://{bucket_name}/{RELEASE_INDEX_PREFIX}/{asset.slug}.json"
 
 
-def release_path_for_version(
-    *,
-    asset: CatalogAsset,
-    release_index: Mapping[str, Any],
-    version: str,
-    format: str | None,
-) -> tuple[str, str]:
-    resolved_format = _normalize_format(format or asset.canonical_format)
-    releases = release_index.get("releases") or []
+class _ReleaseIndexNotFound(CatalogLoadError):
+    """The index object is definitively absent, not unreadable or malformed."""
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CatalogLoadError(f"Duplicate JSON key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _integer(value: Any, label: str, *, minimum: int = 0) -> int:
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]*", value):
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise CatalogLoadError(f"{label} must be an integer >= {minimum}")
+    return value
+
+
+def _sha256(value: Any) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        raise CatalogLoadError("sha256 must contain exactly 64 hexadecimal characters")
+    return value.lower()
+
+
+def _index_date(value: Any) -> str:
+    try:
+        if not isinstance(value, str):
+            raise ValueError("not a string")
+        return _parse_version(value)
+    except ValueError as exc:
+        raise CatalogLoadError(f"Invalid release date: {value!r}") from exc
+
+
+def _read_release_index(asset: CatalogAsset, *, access: AccessMode, client, timeout: float) -> tuple[dict[str, Any], int | None]:
+    uri = release_index_uri_for_asset(asset)
+    access_mode = _normalize_access(access)
+    try:
+        if access_mode == "public":
+            request = Request(gs_to_catalog_url(uri), headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
+            with urlopen(request, timeout=timeout) as response:
+                text = response.read().decode("utf-8")
+                raw_generation = response.headers.get("x-goog-generation")
+        else:
+            bucket, name = split_gs_uri(uri)
+            blob = (client or _default_storage_client()).bucket(bucket).blob(name)
+            try:
+                blob.reload(timeout=timeout)
+            except Exception as exc:
+                if getattr(exc, "code", None) == 404:
+                    raise _ReleaseIndexNotFound(f"Release index for {asset.slug!r} was not found") from exc
+                raise
+            raw_generation = blob.generation
+            generation = _integer(raw_generation, "release index generation", minimum=1)
+            text = blob.download_as_text(timeout=timeout, if_generation_match=generation)
+    except _ReleaseIndexNotFound:
+        raise
+    except Exception as exc:
+        if access_mode == "public" and getattr(exc, "code", None) == 404:
+            raise _ReleaseIndexNotFound(f"Release index for {asset.slug!r} was not found") from exc
+        raise CatalogLoadError(f"Could not load release index for {asset.slug!r}: {exc}") from exc
+    try:
+        payload = json.loads(text, object_pairs_hook=_unique_json_object)
+    except (ValueError, UnicodeError) as exc:
+        raise CatalogLoadError(f"Invalid release index JSON for {asset.slug!r}: {exc}") from exc
+    _validate_release_index(payload, asset)
+    generation = None if raw_generation is None else _integer(raw_generation, "release index generation", minimum=1)
+    return payload, generation
+
+
+def _validate_release_index(payload: Any, asset: CatalogAsset) -> None:
+    if not isinstance(payload, dict):
+        raise CatalogLoadError(f"Release index for {asset.slug!r} is not a JSON object")
+    if "schema_version" in payload and (type(payload["schema_version"]) is not int or payload["schema_version"] != 1):
+        raise CatalogLoadError("Unsupported release index schema_version")
+    if payload.get("asset_slug", asset.slug) != asset.slug:
+        raise CatalogLoadError(f"Release index asset_slug mismatch for {asset.slug!r}")
+    releases = payload.get("releases")
+    if not isinstance(releases, list):
+        raise CatalogLoadError("Release index releases must be an array")
+    dates = set()
     for release in releases:
-        if not isinstance(release, Mapping) or release.get("date") != version:
-            continue
-        files = release.get("files") or []
-        for file_entry in files:
-            if not isinstance(file_entry, Mapping):
-                continue
-            if _normalize_format(str(file_entry.get("format") or "")) != resolved_format:
-                continue
-            path = str(file_entry.get("path") or "")
-            if not path:
-                raise CatalogLoadError(
-                    f"Release index for {asset.slug!r} release {version} format "
-                    f"{resolved_format!r} is missing an explicit path"
-                )
-            split_gs_uri(path)
-            return path, resolved_format
-        available = ", ".join(
-            sorted(
-                {
-                    _normalize_format(str(item.get("format") or ""))
-                    for item in files
-                    if isinstance(item, Mapping) and item.get("format")
-                }
-            )
-        ) or "none"
-        raise UnsupportedFormatError(
-            f"{asset.slug!r} release {version} does not publish format {resolved_format!r}; "
-            f"available formats: {available}"
-        )
-    raise UnsupportedVersionError(f"{asset.slug!r} does not have release version {version}")
+        if not isinstance(release, dict):
+            raise CatalogLoadError("Release entries must be JSON objects")
+        date = _index_date(release.get("date"))
+        if date in dates:
+            raise CatalogLoadError(f"Duplicate release date: {date}")
+        dates.add(date)
+        files = release.get("files")
+        if not isinstance(files, list):
+            raise CatalogLoadError(f"Release {date} files must be an array")
+        paths = set()
+        for entry in files:
+            if not isinstance(entry, dict):
+                raise CatalogLoadError("Release file entries must be JSON objects")
+            path = entry.get("path")
+            if not isinstance(path, str) or not path:
+                raise CatalogLoadError("Release file is missing an explicit path")
+            _validate_artifact_path(asset, path, date)
+            if path in paths:
+                raise CatalogLoadError(f"Duplicate release artifact: {path}")
+            paths.add(path)
+            if not isinstance(entry.get("format"), str) or not entry["format"].strip():
+                raise CatalogLoadError("Release artifact format must be a nonempty string")
+            for key, minimum in (("generation", 1), ("size", 0)):
+                if key in entry:
+                    _integer(entry[key], key, minimum=minimum)
+            if "sha256" in entry:
+                _sha256(entry["sha256"])
+    latest = payload.get("latest_release")
+    if latest is not None:
+        if not isinstance(latest, dict):
+            raise CatalogLoadError("latest_release must be an object or null")
+        latest_date = _index_date(latest.get("date"))
+        selected = next((release for release in releases if release["date"] == latest_date), None)
+        if selected is None:
+            raise CatalogLoadError("latest_release does not name an indexed release")
+        if "files" in latest and latest["files"] != selected["files"]:
+            raise CatalogLoadError("latest_release files disagree with the indexed release")
+
+
+def _validate_artifact_path(asset: CatalogAsset, path: str, date: str) -> None:
+    try:
+        bucket, name = split_gs_uri(path)
+        catalog_bucket, canonical_name = split_gs_uri(asset.canonical_path)
+    except ValueError as exc:
+        raise CatalogLoadError(f"Invalid release artifact URI: {path!r}") from exc
+    root = re.split(r"/(?:latest|releases)/", canonical_name, maxsplit=1)[0]
+    if (bucket != catalog_bucket or not name.startswith(f"{root}/releases/{date}/")
+            or any(part in {"", ".", ".."} for part in name.split("/"))):
+        raise CatalogLoadError("Release artifact must be inside this asset's dated release root")
+
+
+def _release_ref(asset: CatalogAsset, index: Mapping[str, Any], version: str, format: str | None, *, index_generation: int | None) -> DatasetRef:
+    if version == "latest":
+        latest = index.get("latest_release")
+        if not isinstance(latest, dict):
+            raise CatalogLoadError("Nonempty release history has no latest_release pointer")
+        version = latest["date"]
+    release = next((entry for entry in index["releases"] if entry["date"] == version), None)
+    if release is None:
+        raise UnsupportedVersionError(f"{asset.slug!r} does not have release version {version}")
+    resolved_format = _normalize_format(format or asset.canonical_format)
+    candidates = [entry for entry in release["files"] if _normalize_format(entry["format"]) == resolved_format]
+    if resolved_format == "metadata":
+        candidates = [entry for entry in candidates if entry["path"].endswith(".metadata.ndjson.gz") and not entry.get("locale")]
+    if not candidates:
+        raise UnsupportedFormatError(f"{asset.slug!r} release {version} does not publish format {resolved_format!r}")
+    if resolved_format == asset.canonical_format:
+        preferred_name = asset.canonical_path.rsplit("/", 1)[-1]
+    elif resolved_format in LATEST_FILE_EXTENSIONS:
+        preferred_name = f"{asset.slug}{LATEST_FILE_EXTENSIONS[resolved_format]}"
+    else:
+        preferred_name = None
+    preferred = [entry for entry in candidates if entry["path"].rsplit("/", 1)[-1] == preferred_name]
+    if preferred:
+        candidates = preferred
+    if len(candidates) != 1:
+        raise CatalogLoadError(f"Ambiguous {resolved_format!r} artifacts for {asset.slug!r} release {version}")
+    entry = candidates[0]
+    generation = _integer(entry["generation"], "generation", minimum=1) if "generation" in entry else None
+    return DatasetRef(
+        slug=asset.slug, title=asset.title, format=resolved_format, gs_uri=entry["path"],
+        url=_artifact_url(entry["path"], generation), last_updated=version, access_tier=asset.access_tier,
+        generation=generation, sha256=_sha256(entry["sha256"]) if "sha256" in entry else None,
+        size=_integer(entry["size"], "size") if "size" in entry else None, release_index_generation=index_generation,
+    )
+
+
+def _artifact_url(uri: str, generation: int | None) -> str:
+    url = gs_to_https(uri)
+    return f"{url}?generation={generation}" if generation is not None else url
+
+
+def _observe_artifact(ref: DatasetRef, *, access: AccessMode, client, timeout: float) -> DatasetRef:
+    if access == "public":
+        request = Request(gs_to_https(ref.gs_uri), method="HEAD", headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"})
+        with urlopen(request, timeout=timeout) as response:
+            generation = _integer(response.headers.get("x-goog-generation"), "object generation", minimum=1)
+            size = _integer(response.headers.get("Content-Length"), "object size")
+    else:
+        bucket, name = split_gs_uri(ref.gs_uri)
+        blob = (client or _default_storage_client()).bucket(bucket).blob(name)
+        blob.reload(timeout=timeout)
+        generation = _integer(blob.generation, "object generation", minimum=1)
+        size = _integer(blob.size, "object size")
+    if ref.size is not None and size != ref.size:
+        raise FetchError("Observed object size disagrees with release index")
+    return replace(ref, generation=generation, size=size, url=_artifact_url(ref.gs_uri, generation))
+
+
+def _download_artifact(ref: DatasetRef, destination: Path, *, access: AccessMode, client, timeout: float) -> None:
+    assert ref.generation is not None
+    if access == "public":
+        request = Request(ref.url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"})
+        with urlopen(request, timeout=timeout) as response, destination.open("wb") as handle:
+            actual = response.headers.get("x-goog-generation")
+            if actual is not None and _integer(actual, "response generation", minimum=1) != ref.generation:
+                raise FetchError("Downloaded object generation disagrees with resolved artifact")
+            shutil.copyfileobj(response, handle)
+            length = response.headers.get("Content-Length")
+            if length is not None and handle.tell() != _integer(length, "response size"):
+                raise FetchError("Downloaded object is truncated or has an incorrect Content-Length")
+    else:
+        bucket, name = split_gs_uri(ref.gs_uri)
+        blob = (client or _default_storage_client()).bucket(bucket).blob(name, generation=ref.generation)
+        blob.download_to_filename(str(destination), timeout=timeout, if_generation_match=ref.generation, raw_download=True)
+
+
+def _file_digest(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _check_integrity(ref: DatasetRef, sha256: str, size: int) -> None:
+    if ref.sha256 is not None and sha256 != ref.sha256:
+        raise FetchError("Artifact SHA-256 disagrees with release index")
+    if ref.size is not None and size != ref.size:
+        raise FetchError("Artifact size disagrees with release index")
 
 
 def _cache_path(ref: DatasetRef, cache_dir: str | os.PathLike[str] | None) -> Path:
+    assert ref.generation is not None
     root = Path(cache_dir) if cache_dir is not None else _default_cache_dir()
-    last_updated = ref.last_updated or "latest"
-    return root / ref.slug / ref.format / last_updated / ref.filename
+    identity = hashlib.sha256(f"{ref.gs_uri}\n{ref.generation}".encode()).hexdigest()
+    if any(part in {"", ".", ".."} for part in (ref.slug, ref.format, ref.filename)):
+        raise FetchError("Artifact cache path contains an invalid component")
+    return root / "v2" / quote(ref.slug, safe="") / quote(ref.format, safe="") / (ref.last_updated or "latest") / identity / quote(ref.filename, safe="")
+
+
+def _cache_record_path(destination: Path) -> Path:
+    return destination.with_name(destination.name + ".verified.json")
+
+
+def _verified_cache(ref: DatasetRef, destination: Path) -> DatasetRef | None:
+    try:
+        record = json.loads(_cache_record_path(destination).read_text(), object_pairs_hook=_unique_json_object)
+        if not isinstance(record, dict) or record.get("gs_uri") != ref.gs_uri:
+            return None
+        if _integer(record.get("generation"), "cached generation", minimum=1) != ref.generation:
+            return None
+        recorded_sha = _sha256(record.get("sha256"))
+        recorded_size = _integer(record.get("size"), "cached size")
+        sha256, size = _file_digest(destination)
+        if sha256 != recorded_sha or size != recorded_size:
+            return None
+        _check_integrity(ref, sha256, size)
+        return replace(ref, sha256=sha256, size=size, cache_path=destination)
+    except (OSError, ValueError, CatalogLoadError, FetchError):
+        # Local cache is disposable. It cannot establish upstream release identity.
+        return None
+
+
+def _write_cache_record(ref: DatasetRef, destination: Path) -> None:
+    record = {"gs_uri": ref.gs_uri, "generation": ref.generation, "sha256": ref.sha256, "size": ref.size}
+    fd, name = tempfile.mkstemp(prefix=".verification.", dir=destination.parent)
+    temp_path = Path(name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(record, handle, sort_keys=True)
+            handle.write("\n")
+        temp_path.replace(_cache_record_path(destination))
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def _default_cache_dir() -> Path:
@@ -622,13 +835,6 @@ def _read_gcs_text(uri: str, *, client=None, timeout: float) -> str:
     storage_client = client or _default_storage_client()
     blob = storage_client.bucket(bucket_name).blob(object_name)
     return blob.download_as_text(timeout=timeout)
-
-
-def _download_gcs_to_path(uri: str, destination: Path, *, client=None, timeout: float) -> None:
-    bucket_name, object_name = split_gs_uri(uri)
-    storage_client = client or _default_storage_client()
-    blob = storage_client.bucket(bucket_name).blob(object_name)
-    blob.download_to_filename(str(destination), timeout=timeout)
 
 
 def _default_storage_client():
