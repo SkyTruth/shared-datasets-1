@@ -25,8 +25,23 @@ uv run python scripts/gcs_asset.py publish-release \
   --dry-run
 ```
 
+Before execution writes anything, it copies every planned artifact and metadata
+upload into a private temporary directory and verifies each planned size and
+SHA-256. Schema and native validation, manifest-template reads, and uploads use
+those copies. Changes to the originals after capture do not change the uploaded
+bytes. Allow temporary disk space for the entire input set under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
+execution removes its own copies on exit. These copies are not durable recovery
+checkpoints. A partial remote publication still needs explicit repair.
+
 If intentionally publishing only a subset of catalog-listed formats, name each
 unchanged companion explicitly with `--allow-stale-format`.
+
+`finalize_promoted_release_metadata.py` pins each manifest/run-record read to
+its observed generation and replaces only that generation. A concurrent change
+refuses finalization; it is not adopted as a new replacement precondition. This
+protects each JSON replacement, but does not make multiple object writes atomic
+or bind the current artifact-stat-based finalizer to a publication receipt.
 
 Catalog and asset README generation lives in:
 

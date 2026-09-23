@@ -740,7 +740,9 @@ def validate_outputs(
     if pmtiles_magic_error is not None:
         errors.append(pmtiles_magic_error)
 
-    if fgb_path.exists() and shutil.which("ogrinfo"):
+    if not shutil.which("ogrinfo"):
+        errors.append("ogrinfo is required to validate FGB output.")
+    elif fgb_path.exists():
         fgb_summary, fgb_summary_errors = ogrinfo_fgb_summary(fgb_path)
         errors.extend(fgb_summary_errors)
         if fgb_summary is not None:
@@ -772,7 +774,9 @@ def validate_outputs(
             if missing_fgb:
                 errors.append(f"FGB is missing required propert{'y' if len(missing_fgb) == 1 else 'ies'}: {', '.join(missing_fgb)}")
 
-    if pmtiles_path.exists() and shutil.which(pmtiles_bin):
+    if not shutil.which(pmtiles_bin):
+        errors.append(f"{pmtiles_bin} is required for PMTiles verify/show validation.")
+    elif pmtiles_path.exists():
         completed = subprocess.run(
             [pmtiles_bin, "verify", str(pmtiles_path)],
             check=False,
@@ -845,8 +849,8 @@ def validate_outputs(
                     "Decoded PMTiles z0 feature count does not match point profile count: "
                     f"{decoded_feature_count} != {profile.point_feature_count}"
                 )
-    elif required_pmtiles_property_tuple or exact_pmtiles_property_tuple:
-        errors.append("Could not verify required PMTiles properties with tippecanoe-decode.")
+    else:
+        errors.append("Could not decode a representative PMTiles tile with tippecanoe-decode.")
 
     return VectorValidationResult(
         fgb_path=str(fgb_path),
