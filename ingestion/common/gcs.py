@@ -67,6 +67,67 @@ class GcsPublisher:
             return None
         return json.loads(blob.download_as_text())
 
+    def load_generated_identity_baseline(
+        self, asset: ReleaseAsset,
+    ) -> release_feature_model.GeneratedIdentityBaseline:
+        """Read one generation-bound allocation baseline, never guess legacy state.
+
+        Publication must separately claim this snapshot before exposing new IDs.
+        A successful read is not a publication lock.
+        """
+        manifest_name = asset.latest_object(".manifest.json")
+        manifest_blob = self.bucket.blob(manifest_name)
+        try:
+            manifest_blob.reload()
+        except NotFound:
+            root = manifest_name.rsplit("/latest/", 1)[0] + "/"
+            if any(self.bucket.list_blobs(prefix=root + "latest/")) or any(self.bucket.list_blobs(prefix=root + "releases/")):
+                raise RuntimeError(f"{asset.slug} has existing objects but no verified manifest; reviewed historical sequence migration required")
+            return release_feature_model.GeneratedIdentityBaseline.genesis()
+        generation = manifest_blob.generation
+        if type(generation) is not int or generation <= 0:
+            raise RuntimeError("observed manifest generation must be a positive integer")
+        try:
+            manifest_bytes = manifest_blob.download_as_bytes(if_generation_match=generation)
+            manifest = json.loads(manifest_bytes)
+            if not isinstance(manifest, dict):
+                raise release_feature_model.ReleaseFeatureModelError("manifest must be an object")
+            release = manifest.get("release")
+            release_date = dt.date.fromisoformat(release)
+            artifacts = release_feature_model.validate_release_manifest(
+                manifest, expected_asset_slug=asset.slug, expected_release=release, require_generations=True,
+            )
+            # Reject legacy before fetching a large sidecar. Old numeric marks
+            # may already have regressed and are not evidence of continuity.
+            release_feature_model.generated_baseline_from_manifest(manifest, ())
+            metadata = artifacts["metadata"]
+            expected_name = asset.release_object(release_date, ".metadata.ndjson.gz")
+            if metadata["path"] != f"gs://{self.bucket.name}/{expected_name}":
+                raise release_feature_model.ReleaseFeatureModelError("baseline metadata must name this asset's exact release artifact")
+            metadata_generation = metadata.get("generation")
+            if type(metadata_generation) is not int or metadata_generation <= 0:
+                raise release_feature_model.ReleaseFeatureModelError("baseline metadata generation must be a positive integer")
+            metadata_bytes = self.bucket.blob(expected_name, generation=metadata_generation).download_as_bytes(if_generation_match=metadata_generation)
+            if release_feature_model.sha256_hex(metadata_bytes) != str(metadata["sha256"]).removeprefix("sha256:"):
+                raise release_feature_model.ReleaseFeatureModelError("baseline metadata SHA-256 mismatch")
+            validation = release_feature_model.validate_sidecar_records(
+                release_feature_model.read_metadata_sidecar_bytes(metadata_bytes, label=metadata["path"]), expected_asset_slug=asset.slug, expected_release=release,
+            )
+            if not validation.valid:
+                raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
+            expected_count = manifest.get("validation", {}).get("feature_count")
+            if type(expected_count) is not int or expected_count != validation.feature_count:
+                raise release_feature_model.ReleaseFeatureModelError("baseline metadata count disagrees with manifest")
+            return release_feature_model.generated_baseline_from_manifest(
+                manifest, release_feature_model.read_metadata_sidecar_bytes(metadata_bytes, label=metadata["path"]),
+                snapshot=release_feature_model.GeneratedIdentitySnapshot(
+                    f"gs://{self.bucket.name}/{manifest_name}", generation,
+                    release_feature_model.sha256_hex(manifest_bytes),
+                ),
+            )
+        except (ValueError, TypeError, KeyError, NotFound, PreconditionFailed) as exc:
+            raise RuntimeError(f"{asset.slug} generated identity baseline is unavailable or unverified: {exc}") from exc
+
     def load_latest_metadata_records(self, asset: ReleaseAsset) -> list[dict[str, Any]] | None:
         object_name = asset.latest_object(".metadata.ndjson.gz")
         blob = self.bucket.blob(object_name)

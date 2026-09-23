@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from ingestion.common import feature_metadata
-from release_streaming_helpers import write_generated_release
+from release_streaming_helpers import write_generated_release, synthetic_baseline
 from scripts import release_feature_model as model
 
 
@@ -34,20 +34,37 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             {"feature_id": "9", "identity_key": ["retired"], "geometry_hash": VALID_HASH_B, "properties_hash": VALID_HASH_B},
         ]
 
-        assigned = model.assign_generated_feature_ids((["b"], ["a"], ["c"]), previous_records=previous)
+        assigned = model.assign_generated_feature_ids((["b"], ["a"], ["c"]), baseline=synthetic_baseline(previous)).ids_by_key
 
         self.assertEqual(assigned[("a",)], "7")
         self.assertEqual(assigned[("b",)], "10")
         self.assertEqual(assigned[("c",)], "11")
 
+    def test_sequence_does_not_reuse_id_deleted_two_releases_ago(self):
+        baseline = model.GeneratedIdentityBaseline.genesis()
+        observed = []
+        for names in (("A", "B"), ("A",), ("A", "C"), ("A", "B", "C")):
+            allocation = model.assign_generated_feature_ids(((name,) for name in names), baseline=baseline)
+            assigned = allocation.ids_by_key
+            observed.append(list(assigned.values()))
+            baseline = synthetic_baseline(
+                [{"feature_id": value, "identity_key": key} for key, value in assigned.items()],
+                next_feature_id=allocation.next_feature_id,
+            )
+        self.assertEqual(observed, [["1", "2"], ["1"], ["1", "3"], ["1", "4", "3"]])
+
     def test_generated_sequence_source_fields_accepts_one_or_two_fields(self):
         one_field = model.build_identity_metadata(
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
+            next_generated_feature_id_before_release=1,
+            next_generated_feature_id_after_release=1,
         )
         two_fields = model.build_identity_metadata(
             strategy="generated_sequence_source_fields",
             source_fields=["source_layer", "PRIMKEY"],
+            next_generated_feature_id_before_release=1,
+            next_generated_feature_id_after_release=1,
         )
 
         self.assertEqual(one_field["source_fields"], ["SITE_PID"])
@@ -60,6 +77,8 @@ class ReleaseFeatureModelTests(unittest.TestCase):
             model.build_identity_metadata(
                 strategy="generated_sequence_source_fields",
                 source_fields=["week", "region", "country"],
+                next_generated_feature_id_before_release=1,
+                next_generated_feature_id_after_release=1,
             )
 
     def test_generated_sequence_uses_single_url_unfriendly_source_field_as_identity_key(self):
@@ -154,9 +173,9 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         assigned = model.assign_generated_feature_ids(
             [["new"]],
-            previous_records=previous,
+            baseline=synthetic_baseline(previous),
             feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
-        )
+        ).ids_by_key
 
         self.assertEqual(assigned[("new",)], "7")
         self.assertEqual(model.unresolved_identity_ambiguities([ambiguity], resolutions), ())
@@ -197,9 +216,9 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
         assigned = model.assign_generated_feature_ids(
             [["same"]],
-            previous_records=previous,
+            baseline=synthetic_baseline(previous),
             force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
-        )
+        ).ids_by_key
 
         self.assertEqual(assigned[("same",)], "10")
 
@@ -403,3 +422,65 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeneratedSequenceBoundaryTests(unittest.TestCase):
+    def test_empty_releases_and_retry_carry_sequence(self):
+        baseline = synthetic_baseline(next_feature_id=100)
+        for _ in range(3):
+            allocation = model.assign_generated_feature_ids([], baseline=baseline)
+            self.assertEqual(allocation.next_feature_id, 100)
+            baseline = synthetic_baseline(next_feature_id=allocation.next_feature_id)
+        first = model.assign_generated_feature_ids([['new']], baseline=baseline)
+        retry = model.assign_generated_feature_ids([['new']], baseline=baseline)
+        self.assertEqual(first, retry)
+        self.assertEqual(first.ids_by_key, {('new',): '100'})
+
+    def test_reuse_and_force_new_cannot_lower_highwater(self):
+        baseline = synthetic_baseline([{'feature_id': '7', 'identity_key': ['old']}], next_feature_id=100)
+        reused = model.assign_generated_feature_ids([['new']], baseline=baseline, feature_id_overrides={('new',): '7'})
+        self.assertEqual((reused.ids_by_key[('new',)], reused.next_feature_id), ('7', 100))
+        forced = model.assign_generated_feature_ids([['old']], baseline=baseline, force_new_identity_keys=[['old']])
+        self.assertEqual((forced.ids_by_key[('old',)], forced.next_feature_id), ('100', 101))
+        for override in ('8', '100', 'bad'):
+            with self.subTest(override=override), self.assertRaises(model.ReleaseFeatureModelError):
+                model.assign_generated_feature_ids([['new']], baseline=baseline, feature_id_overrides={('new',): override})
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, 'multiple identities'):
+            model.assign_generated_feature_ids([['old'], ['new']], baseline=baseline, feature_id_overrides={('new',): '7'})
+
+    def test_corrupt_baselines_fail_at_construction(self):
+        for value in (None, True, False, 0, -1, '100', 1.5, 10**64 + 1):
+            with self.subTest(value=value), self.assertRaises(model.ReleaseFeatureModelError):
+                synthetic_baseline(next_feature_id=value) if value is not None else model.GeneratedIdentityBaseline((), None, 'r1')
+        for value in (1, 7):
+            with self.subTest(value=value), self.assertRaisesRegex(model.ReleaseFeatureModelError, 'exceed'):
+                synthetic_baseline([{'feature_id': '7', 'identity_key': ['old']}], next_feature_id=value)
+
+    def test_sequence_exhaustion_preserves_final_id_and_reuse(self):
+        last = 10**64 - 1
+        allocated = model.assign_generated_feature_ids([['last']], baseline=synthetic_baseline(next_feature_id=last))
+        self.assertEqual(allocated.ids_by_key[('last',)], str(last))
+        self.assertEqual(allocated.next_feature_id, 10**64)
+        baseline = synthetic_baseline([{'feature_id': str(last), 'identity_key': ['last']}], next_feature_id=allocated.next_feature_id)
+        self.assertEqual(model.assign_generated_feature_ids([['last']], baseline=baseline).next_feature_id, 10**64)
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, 'exhausted'):
+            model.assign_generated_feature_ids([['new']], baseline=baseline)
+
+    def test_archive_legacy_is_readable_but_never_allocation_authority(self):
+        identity = model.build_identity_metadata(strategy='generated_sequence_source_fields', source_fields=['key'], next_generated_feature_id_before_release=1, next_generated_feature_id_after_release=2)
+        identity.pop('sequence_state_version')
+        identity.pop('next_generated_feature_id_before_release')
+        for value in (None, 2):
+            identity['next_generated_feature_id_after_release'] = value
+            model.validate_identity_metadata(identity)
+            with self.assertRaisesRegex(model.ReleaseFeatureModelError, 'migration required'):
+                model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, ())
+        for value in (True, 0, -1, '2', 1.5):
+            identity['next_generated_feature_id_after_release'] = value
+            with self.assertRaises(model.ReleaseFeatureModelError):
+                model.validate_identity_metadata(identity)
+
+    def test_new_writer_requires_before_after_and_refuses_regression(self):
+        for before, after in ((None, 2), (1, None), (4, 3), (True, 3), (1, False)):
+            with self.subTest(before=before, after=after), self.assertRaises(model.ReleaseFeatureModelError):
+                model.build_identity_metadata(strategy='generated_sequence_content_hash', next_generated_feature_id_before_release=before, next_generated_feature_id_after_release=after)

@@ -77,9 +77,6 @@ def content_hashes(
     )
 
 
-IDENTITY_BASELINE_FIELDS = ("feature_id", "geometry_hash", "properties_hash", "identity_key")
-
-
 def identity_baseline_records(
     records: Iterable[Mapping[str, Any]],
     *,
@@ -98,26 +95,7 @@ def identity_baseline_records(
     projection discards them.
     """
 
-    baseline: list[dict[str, Any]] = []
-    for record in records:
-        payload = asdict(record) if is_dataclass(record) and not isinstance(record, type) else dict(record)
-        properties = payload.get("properties")
-        if exclude_properties and isinstance(properties, Mapping):
-            properties_hash = release_feature_model.properties_hash(
-                properties,
-                exclude_properties=exclude_properties,
-            )
-            payload["properties_hash"] = properties_hash
-            geometry_hash = str(payload.get("geometry_hash") or "")
-            if geometry_hash:
-                payload["identity_key"] = list(
-                    release_feature_model.content_identity_key(
-                        geometry_hash_value=geometry_hash,
-                        properties_hash_value=properties_hash,
-                    )
-                )
-        baseline.append({field: payload[field] for field in IDENTITY_BASELINE_FIELDS if field in payload})
-    return baseline
+    return list(release_feature_model.project_identity_records(records, exclude_properties=exclude_properties))
 
 
 class SchemaAccumulator:
@@ -160,14 +138,14 @@ class SchemaAccumulator:
 def assign_generated_feature_ids(
     identity_keys: Iterable[Sequence[str]],
     *,
-    previous_records: Iterable[Mapping[str, Any]] | None = None,
+    baseline: release_feature_model.GeneratedIdentityBaseline,
     feature_id_overrides: Mapping[Sequence[str], str] | None = None,
     force_new_identity_keys: Iterable[Sequence[str]] = (),
-) -> dict[tuple[str, ...], str]:
+) -> release_feature_model.GeneratedFeatureAllocation:
     try:
         return release_feature_model.assign_generated_feature_ids(
             identity_keys,
-            previous_records=previous_records,
+            baseline=baseline,
             feature_id_overrides=feature_id_overrides,
             force_new_identity_keys=force_new_identity_keys,
         )
@@ -390,7 +368,7 @@ def write_generated_id_release(
     enriched_features_path: Path,
     sidecar_path: Path,
     source_fields: Sequence[str] = (),
-    previous_records: Iterable[Mapping[str, Any]] | None = None,
+    baseline: release_feature_model.GeneratedIdentityBaseline,
     identity_resolution_decisions: Iterable[Mapping[str, Any]] | None = None,
     identity_excluded_properties: Sequence[str] = (),
     identity_ambiguity_match_properties: bool = True,
@@ -406,7 +384,7 @@ def write_generated_id_release(
        any output exists.
     2. Re-read the source and stream each enriched feature and sidecar record
        straight to disk, accumulating only the release schema, the feature
-       count, and the highest assigned feature_id.
+       count, and the validated allocation sequence.
 
     Peak memory is therefore proportional to the identity data (a key and two
     hashes per feature) rather than to the release payload, which is what makes
@@ -415,19 +393,13 @@ def write_generated_id_release(
     Raises if any ambiguity is left unresolved by `identity_resolution_decisions`.
     """
 
-    identity_baseline = identity_baseline_records(
-        previous_records or (),
-        exclude_properties=identity_excluded_properties,
-    )
+    identity_baseline = baseline.records
     planned = _plan_generated_identities(
         open_features(),
         asset_slug=asset_slug,
         source_fields=source_fields,
         identity_excluded_properties=identity_excluded_properties,
     )
-    if not planned:
-        raise RuntimeError(f"{asset_slug} metadata sidecar would be empty")
-
     scan = release_feature_model.find_identity_ambiguities(
         (
             {
@@ -467,22 +439,16 @@ def write_generated_id_release(
             release=release,
             ambiguities=unresolved,
         )
-    ids_by_key = assign_generated_feature_ids(
+    allocation = assign_generated_feature_ids(
         (row.identity_key for row in planned),
-        previous_records=identity_baseline,
+        baseline=baseline,
         feature_id_overrides=release_feature_model.resolved_feature_id_overrides(resolutions),
         force_new_identity_keys=release_feature_model.resolved_force_new_identity_keys(resolutions),
     )
-    # The baseline is only needed to decide identity. Release it before the
-    # write pass so the previous release's hashes do not sit alongside the
-    # current release's buffers.
-    del identity_baseline
 
     schema = SchemaAccumulator()
-    highest_feature_id = 0
 
     def _release_records() -> Iterator[Mapping[str, Any]]:
-        nonlocal highest_feature_id
         with enriched_features_path.open("w", encoding="utf-8") as enriched_file:
             plan_index = 0
             for ordinal, feature in enumerate(open_features(), start=1):
@@ -493,7 +459,7 @@ def write_generated_id_release(
                     # Collapsed duplicate of an already-emitted identity key.
                     continue
                 plan_index += 1
-                feature_id = ids_by_key[row.identity_key]
+                feature_id = allocation.ids_by_key[row.identity_key]
                 provenance_payload = {
                     **dict(provenance),
                     "source_row_number": row.ordinal,
@@ -514,8 +480,6 @@ def write_generated_id_release(
                 )
                 enriched_file.write(canonical_json(enriched_feature) + "\n")
                 schema.observe(sidecar)
-                if feature_id.isdigit():
-                    highest_feature_id = max(highest_feature_id, int(feature_id))
                 if sidecar_sink is not None:
                     sidecar_sink(sidecar)
                 yield sidecar
@@ -533,7 +497,7 @@ def write_generated_id_release(
     return GeneratedIdentityRelease(
         feature_count=written,
         schema_payload=schema.payload(asset_slug=asset_slug, release=release),
-        next_generated_feature_id=highest_feature_id + 1,
+        next_generated_feature_id=allocation.next_feature_id,
         identity_decisions=release_feature_model.build_identity_decisions(
             ambiguities_detected=len(scan.ambiguities),
             key_corroborated=scan.key_corroborated_count,
