@@ -665,28 +665,44 @@ npm publish --access public
 ```
 
 Trusted Publishing is configured for follow-up releases; do not create a
-long-lived `NPM_TOKEN` for this workflow. Follow-up releases use the
-`Publish TypeScript SDK` workflow. It runs automatically on pushes to `main`
-that change publishable package content under `api/typescript/src/`,
-`api/typescript/README.md`, `api/typescript/package.json`,
-`api/typescript/package-lock.json`, `api/typescript/tsconfig.json`, or the
-workflow file, and it can still be run manually from `main`. Before publishing,
-the workflow compares `api/typescript/package.json` to the current npm registry
-version. If the repo version is not ahead of npm and publishable package content
-changed, the workflow bumps `package.json` and `package-lock.json`, commits the
-metadata update back to `main`, and publishes that version. Automatic bumps are
-minor by default; use a commit message trailer such as
-`typescript-sdk-release: patch`, `typescript-sdk-release: minor`, or
-`typescript-sdk-release: major` when a package-content change needs a specific
-semver level.
-
-When publishing, the workflow uses Node 24, runs `npm ci`, `npm test`,
-`npm pack --dry-run`, and then publishes through npm's GitHub Actions OIDC
-handshake:
+long-lived `NPM_TOKEN`. Prepare each release in a reviewed PR. Changes to SDK
+source, the packed README, either package manifest, or `tsconfig.json` require a
+higher stable `major.minor.patch` version. Choose the appropriate semver level
+and update both manifests from `api/typescript/`, for example:
 
 ```bash
-npm publish --access public
+npm version --no-git-tag-version minor
+npm test
+npm run test:pack
 ```
+
+Commit `package.json` and `package-lock.json` with the package changes. The
+`TypeScript SDK validation` workflow checks the PR's version increase, runs the
+SDK tests on Node 24, and installs the actual tarball into a separate consumer
+that exercises the root/server runtime exports and TypeScript declarations.
+Ordinary CI also retains Node 22 coverage. Test/workflow-only changes outside
+the packed package do not require a release. Prerelease versions are not
+supported by this stable-release workflow.
+
+Merging a versioned package change to `main` triggers `Publish TypeScript SDK`.
+It checks the merged version, repeats the tests, packs and validates the package,
+and publishes that exact tarball through npm's GitHub Actions OIDC handshake.
+The workflow has read-only repository access: it never edits versions, commits,
+or pushes. Commit-message bump trailers have no effect.
+
+The publisher compares the reviewed version with all published stable versions.
+A new version must be higher; retrying an existing version succeeds without
+publishing only when the packed bytes match its registry integrity. Changed
+bytes require another reviewed version. Missing or malformed registry metadata
+and network/authentication failures stop the release. A workflow-only push with
+no package/version change skips publication. Manual dispatch from `main` retries
+the checked-out version with the same integrity rules; it never invents a bump.
+An older workflow retry cannot move the npm latest tag backwards.
+
+The release uses Node 24 and npm trusted publishing (npm 11.5.1 or later). No
+local `npm publish` is needed for a normal release. The Node 24 check should be
+required by branch protection; adding a workflow does not change repository
+protection settings.
 
 The npm trusted-publisher settings should remain:
 
