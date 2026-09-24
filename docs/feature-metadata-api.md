@@ -66,6 +66,8 @@ Rules:
   "manifest_generation": 125,
   "schema_generation": 124,
   "index_load_id": "load-1",
+  "sidecar_uri": "gs://skytruth-shared-datasets-1/.../releases/2026-05-01/example-asset.metadata.ndjson.gz",
+  "sidecar_generation": 126,
   "items": [
     {
       "feature_id": "1",
@@ -93,6 +95,15 @@ Rules:
   "deduplicated_lookup_count": 2
 }
 ```
+
+`sidecar_uri` and `sidecar_generation` describe the identity actually enforced by
+the serving backend, not merely the resolver's requested identity. The GCS
+sidecar backend reports its pinned/cache identity. Firestore and legacy backends
+currently return null for both fields because they do not prove a particular
+same-date sidecar generation. A successful lookup or `index_load_id` alone is
+not that proof. Consumers joining exact tiles must match asset, concrete date,
+sidecar path, and generation before enrichment; an unverified result leaves
+compact tile properties available. No new Firestore provenance scheme is implied.
 
 Duplicate IDs preserve request order in `items`; the backend lookup is
 deduplicated. Missing IDs are item-level `"found": false` results in a `200`
@@ -142,10 +153,13 @@ For API-backed catalog feature inspection, the browser first calls the
 same-origin lookup API for the clicked `feature_id` values:
 
 ```http
-POST /v1/assets/{slug}/releases/{release_or_latest}:lookup
+POST /v1/assets/{slug}/releases/{captured_release}:lookup
 ```
 
-This keeps click inspection bounded for large sidecars such as event feeds. If
+This keeps click inspection bounded for large sidecars such as event feeds.
+The browser verifies the returned canonical sidecar identity against the mounted
+layer. The API returns canonical values, so the inspector labels them as source
+language when a different metadata language is selected. If
 that endpoint is not available, the static public catalog viewer falls back to
 the release sidecar. Public assets resolve the sidecar from the hydrated release
 index and fetch it directly from:
@@ -158,7 +172,7 @@ For authorized private sidecar inspection through the IAP-protected catalog
 viewer, the browser calls the download resolver for one metadata sidecar URL:
 
 ```http
-GET /api/download-url?slug={slug}&format=metadata&version={release_or_latest}&locale=es
+GET /api/download-url?slug={slug}&format=metadata&version={captured_release}&generation={generation}&locale=es
 ```
 
 The resolver first looks for `{asset-slug}.metadata.es.ndjson.gz` in the
@@ -169,7 +183,7 @@ responses include `requested_locale`, `resolved_locale`, and
 still fetches exactly one metadata sidecar and parses the same record shape.
 When the resolver is used for public assets, `download_url` is a public Cloud
 CDN artifact URL under
-`https://tiles.skytruth.org/artifacts/{bucket-object-path}`. For private
+`https://tiles.skytruth.org/artifacts/{bucket-object-path}?generation={generation}`. For private
 production assets, the resolver may return one signed Cloud CDN URL under
 `https://tiles.skytruth.org/private/{bucket-object-path}`. Local development,
 feature-preview buckets, or deployments without metadata CDN signing configured

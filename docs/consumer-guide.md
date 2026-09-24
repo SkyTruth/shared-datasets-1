@@ -208,6 +208,24 @@ import {
 
 Do not import the server entrypoint from browser bundles.
 
+For coherent tiles and feature attributes, `resolveSharedDatasetLayer` captures a
+concrete release and object generations for both artifacts. `version` selects
+both tiles and metadata; a missing date fails. Optional sidecar absence preserves
+the selected date. Cache by path and generation, because a date can be replaced.
+Public indexed URLs include `generation`; indexed restricted layers return a
+nullable `ref.url` plus the exact `pmtiles` descriptor. Transition those callers
+to an app-owned authorized URL route that reselects the catalog artifact, checks
+the expected generation, and signs it with the existing server helper's
+`generation` option. Verify the returned identity before mounting. The catalog
+viewer implements this flow for its own IAP policy.
+
+Catalog-only `resolveSharedDatasetPmtilesRef(s)` and the tiered session flow below
+remain latest-alias helpers. A coherent resolver can return a map-only alias
+when an index is definitively absent, but it returns no dated lineage or metadata
+join. Invalid/unavailable indexes and explicit missing releases fail rather than
+silently changing to latest. See the [TypeScript layer contract](../api/typescript/README.md#layer-and-metadata-resolution)
+for nullable URL migration and exact signing examples.
+
 ## PMTiles Browser Access
 
 Latest PMTiles use a tiered CDN URL:

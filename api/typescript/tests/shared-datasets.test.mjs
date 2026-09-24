@@ -189,6 +189,12 @@ const releaseIndexFixture = {
   ]
 };
 
+// Exact release fixtures include every tile/sidecar identity, not just dates.
+for (const release of releaseIndexFixture.releases) {
+  release.files.forEach(file => { file.generation = 102; });
+  release.files.push({format: 'pmtiles', path: `gs://example-bucket/example-public-layer/releases/${release.date}/example-public-layer.pmtiles`, generation: 101});
+}
+
 const getPortableFiles = async dir => {
   const entries = await readdir(dir, { withFileTypes: true });
   const files = await Promise.all(
@@ -354,6 +360,7 @@ test('resolves metadata sidecars and public artifact URLs from release indexes',
   assert.equal(
     resolveSharedDatasetMetadataSidecar({
       releaseIndex: {
+        schema_version: 1,
         latest_release: { date: '2026-01-15', files: [] },
         releases: [{ date: '2026-01-15', files: [] }]
       }
@@ -394,7 +401,7 @@ test('resolves metadata sidecars and public artifact URLs from release indexes',
   });
   assert.equal(
     publicUrl.url,
-    'https://tiles.example.test/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz'
+    'https://tiles.example.test/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz?generation=102'
   );
   assert.throws(
     () =>
@@ -423,7 +430,7 @@ test('resolves layers with release-pinned metadata sidecars', async () => {
   });
   assert.equal(
     layer.ref.url,
-    'https://tiles.skytruth.org/pmtiles/public/example-public-layer.pmtiles'
+    'https://tiles.skytruth.org/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.pmtiles?generation=101'
   );
   assert.equal(layer.releaseIndexUrl, releaseIndexUrl);
   assert.equal(layer.resolvedRelease, '2026-01-15');
@@ -431,7 +438,7 @@ test('resolves layers with release-pinned metadata sidecars', async () => {
   assert.equal(layer.sidecar.metadataLocaleFallback, false);
   assert.equal(
     layer.sidecar.url,
-    'https://tiles.skytruth.org/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz'
+    'https://tiles.skytruth.org/artifacts/example-public-layer/releases/2026-01-15/example-public-layer.metadata.es.ndjson.gz?generation=102'
   );
 
   const pinned = await resolveSharedDatasetLayer('example-public-layer', {
@@ -468,7 +475,7 @@ test('resolves layers with release-pinned metadata sidecars', async () => {
     fetchJson: async url =>
       url === DEFAULT_SHARED_DATASETS_CATALOG_JSON_URL
         ? privateCatalog
-        : { ...releaseIndexFixture, asset_slug: 'example-private-layer' },
+        : JSON.parse(JSON.stringify(releaseIndexFixture).replaceAll('example-public-layer', 'example-private-layer')),
     bucketName: 'example-bucket'
   });
   assert.equal(privateLayer.sidecar.url, null);
@@ -879,6 +886,7 @@ test('resolves PMTiles refs from shared-datasets catalog JSON', async () => {
       ]
     },
     releaseIndexUrl: '../releases/example-public-layer.json',
+    pmtilesPath: null,
     source: 'Example source',
     sourceUrl: 'https://example.test/source',
     status: 'active',
@@ -1118,4 +1126,87 @@ test('package source and docs avoid internal deployment details', async () => {
   );
 
   assert.deepEqual(matches.sort(), []);
+});
+
+
+test('coherent release selections never combine aliases, dates or generations', async () => {
+  const fixture = JSON.parse(await readFile(path.resolve(packageRoot, '../../tests/fixtures/historical-consumers.json'), 'utf8'));
+  const resolve = (index, version = '2026-01-01', tier = 'public') => resolveSharedDatasetLayer('example-layer', {
+    version, bucketName: 'example-bucket',
+    fetchJson: async () => ({assets: [{...fixture.asset, access_tier: tier}]}),
+    fetchReleaseIndexJson: async () => index
+  });
+  const old = await resolve(fixture.index);
+  assert.equal(old.resolvedRelease, '2026-01-01');
+  assert.match(old.ref.url, /releases\/2026-01-01\/example-layer.pmtiles\?generation=101$/);
+  assert.match(old.sidecar.url, /generation=102$/);
+  await assert.rejects(resolve(fixture.index, '2020-01-01'), /not found/);
+  const noSidecar = structuredClone(fixture.index);
+  noSidecar.releases[1].files = noSidecar.releases[1].files.filter(f => f.format !== 'metadata');
+  const bare = await resolve(noSidecar);
+  assert.equal(bare.resolvedRelease, '2026-01-01');
+  assert.equal(bare.sidecar, null);
+  for (const tier of ['private', 'internal']) {
+    const restricted = await resolve(fixture.index, '2026-01-01', tier);
+    assert.equal(restricted.ref.url, null);
+    assert.equal(restricted.pmtiles.generation, '101');
+    assert.equal(restricted.sidecar.url, null);
+  }
+});
+
+test('exact layers reject invalid identity and ambiguous variants while preserving optional metadata', async () => {
+  const fixture = JSON.parse(await readFile(path.resolve(packageRoot, '../../tests/fixtures/historical-consumers.json'), 'utf8'));
+  const resolve = (index, asset = fixture.asset) => resolveSharedDatasetLayer(asset.slug, {
+    version:'2026-01-01', bucketName:'example-bucket', fetchJson:async()=>({assets:[asset]}), fetchReleaseIndexJson:async()=>index
+  });
+  const changed = structuredClone(fixture.index);
+  changed.releases[1].files[1].generation = 999;
+  const before = await resolve(fixture.index);
+  const after = await resolve(changed);
+  assert.notEqual(before.ref.url, after.ref.url);
+  assert.equal(before.pmtiles.generation, '101');
+  for (const value of [true, false, null, 0, -1, 1.5, '', '01', 9007199254740992, '18446744073709551616']) {
+    const bad = structuredClone(fixture.index); bad.releases[1].files[1].generation = value;
+    await assert.rejects(resolve(bad), /generation/);
+  }
+  for (const change of [
+    index => {index.schema_version = true;},
+    index => {delete index.releases;},
+    index => {index.releases.push(index.releases[0]);},
+    index => {index.latest_release = {date:'2026-08-01'};},
+    index => {index.releases[1].files.push(null);},
+    index => {index.releases[1].files[1].path = 'gs://example-bucket/secret.pmtiles';},
+    index => {index.releases[1].files[2].path = index.releases[1].files[2].path.replace('example-bucket','other-bucket');},
+    index => {index.releases[1].files[1].size = null;},
+    index => {index.releases[1].files[1].sha256 = 'bad';},
+    index => {delete index.releases[1].files[1].generation;}
+  ]) {
+    const bad = structuredClone(fixture.index); change(bad);
+    await assert.rejects(resolve(bad), SharedDatasetCatalogResolutionError);
+  }
+  const multiple = structuredClone(fixture.index);
+  const tile = multiple.releases[1].files[1];
+  multiple.releases[1].files.unshift({...tile,path:tile.path.replace('.pmtiles','-points.pmtiles')});
+  assert.equal((await resolve(multiple)).pmtiles.gsUri, before.pmtiles.gsUri);
+  await assert.rejects(resolve(multiple,{...fixture.asset,pmtiles_path:fixture.asset.pmtiles_path.replace('.pmtiles','-absent.pmtiles')}),/Ambiguous/);
+  const signed = getSignedSharedDatasetArtifactUrl(before.pmtiles.gsUri, Buffer.from('0123456789abcdef'), {
+    bucketName:'example-bucket',generation:before.pmtiles.generation,now:()=>0
+  });
+  const [unsigned, signature] = signed.split('&Signature=');
+  assert.match(unsigned,/generation=101&Expires=/);
+  assert.equal(decodeURIComponent(signature),toUrlSafeBase64(crypto.createHmac('sha1',Buffer.from('0123456789abcdef')).update(unsigned).digest()));
+});
+
+test('definitive index absence preserves only an unpinned latest alias; errors are not absence', async () => {
+  const fixture = JSON.parse(await readFile(path.resolve(packageRoot, '../../tests/fixtures/historical-consumers.json'), 'utf8'));
+  const resolve = (version, error) => resolveSharedDatasetLayer(fixture.asset.slug, {
+    version,bucketName:'example-bucket',fetchJson:async()=>({assets:[fixture.asset]}),fetchReleaseIndexJson:async()=>{throw error;}
+  });
+  const absent = Object.assign(new Error('HTTP 404'),{status:404});
+  const latest = await resolve('latest',absent);
+  assert.equal(latest.ref.url,fixture.asset.pmtiles_url);
+  assert.equal(latest.resolvedRelease,null);
+  assert.equal(latest.sidecar,null);
+  await assert.rejects(resolve('2026-01-01',absent),/not found/);
+  for(const error of [new Error('timeout'),Object.assign(new Error('denied'),{status:403})]) await assert.rejects(resolve('latest',error),/Unable to load/);
 });
