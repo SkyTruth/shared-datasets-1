@@ -6,11 +6,7 @@ on:
       - main
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: read
-  id-token: write
-  issues: write
-  pull-requests: read
+permissions: {}
 
 env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
@@ -20,7 +16,7 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  alert:
+  route:
     if: >-
       ${{
         github.event.pull_request.head.repo.full_name == github.repository &&
@@ -28,11 +24,67 @@ jobs:
         github.event.pull_request.draft == false
       }}
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      potential_mutation: ${{ steps.classify.outputs.potential_mutation }}
+    steps:
+      - name: Classify potential mutation intent
+        id: classify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const expected = context.payload.pull_request;
+            const repository = context.payload.repository;
+            const request = { ...context.repo, pull_number: expected.number };
+            const sameRepo = repo => repo?.id === repository.id && repo?.full_name === repository.full_name;
+            const validate = pr => {
+              if (!Number.isSafeInteger(expected.number) || expected.number <= 0 ||
+                  pr.number !== expected.number || pr.state !== 'open' || pr.draft !== false ||
+                  !sameRepo(pr.head?.repo) || !sameRepo(pr.base?.repo) ||
+                  pr.head?.sha !== expected.head.sha || !/^[a-f0-9]{40}$/.test(pr.head.sha) ||
+                  pr.base?.ref !== 'main' || pr.base?.sha !== expected.base.sha ||
+                  !/^[a-f0-9]{40}$/.test(pr.base.sha) ||
+                  (pr.body !== null && typeof pr.body !== 'string')) {
+                throw new Error('PR identity/state changed or is invalid; rerun against the current PR.');
+              }
+            };
+            const { data: pr } = await github.rest.pulls.get(request);
+            validate(pr);
+            const files = await github.paginate(github.rest.pulls.listFiles, { ...request, per_page: 100 });
+            if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 0 || pr.changed_files >= 3000 ||
+                !Array.isArray(files) || files.length !== pr.changed_files ||
+                files.some(file => !file || typeof file.filename !== 'string' || !file.filename ||
+                  (file.previous_filename !== undefined &&
+                    (typeof file.previous_filename !== 'string' || !file.previous_filename))) ||
+                new Set(files.map(file => file.filename)).size !== files.length) {
+              throw new Error('PR file enumeration is invalid or incomplete; mutation intent is unknown.');
+            }
+            const { data: current } = await github.rest.pulls.get(request);
+            validate(current);
+            if (current.body !== pr.body || current.changed_files !== pr.changed_files) {
+              throw new Error('PR changed during mutation routing; rerun against the current PR.');
+            }
+            const planPath = path => typeof path === 'string' &&
+              path.startsWith('.github/dataset-plans/') && path.endsWith('.json');
+            const planFile = files.some(file => planPath(file.filename) || planPath(file.previous_filename));
+            const planFence = /```\s*(?:json\s+)?shared-datasets-(?:publish|delete)-plan\b/i.test(pr.body || '');
+            core.setOutput('potential_mutation', planFile || planFence);
+
+  alert:
+    needs: route
+    if: ${{ needs.route.result == 'success' && needs.route.outputs.potential_mutation == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: read
     steps:
       - name: Check out trusted repository code
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.base.sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,26 +105,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gdal-bin
 
-      - name: Detect reviewed mutation plans
+      - name: Validate checked-in proposed mutation plan
         id: detect
-        run: |
-          python scripts/reviewed_dataset_plan.py detect \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --github-output "${GITHUB_OUTPUT}"
-
-      - name: Extract publish plan from PR body
-        if: ${{ steps.detect.outputs.has_publish_plan == 'true' }}
-        run: |
-          python scripts/reviewed_dataset_plan.py extract publish \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --output publish-plan.json
-
-      - name: Extract delete plan from PR body
-        if: ${{ steps.detect.outputs.has_delete_plan == 'true' }}
-        run: |
-          python scripts/reviewed_dataset_plan.py extract delete \
-            --event-path "${GITHUB_EVENT_PATH}" \
-            --output delete-plan.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/dataset_mutation_authorization.py preview
 
       - name: Collect proposed catalog row from PR
         if: ${{ steps.detect.outputs.has_publish_plan == 'true' || steps.detect.outputs.has_delete_plan == 'true' }}

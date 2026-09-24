@@ -17,6 +17,7 @@ export type SharedDatasetReleaseFile = {
   role?: string | null;
   path?: string | null;
   locale?: string | null;
+  generation?: number | string | null;
   [key: string]: unknown;
 };
 
@@ -37,6 +38,7 @@ export type SharedDatasetReleaseIndex = {
 export type SharedDatasetArtifactUrlOptions = {
   bucketName?: string;
   artifactBaseUrl?: string;
+  generation?: string | number | null;
 };
 
 export type SharedDatasetMetadataSidecarOptions = {
@@ -59,6 +61,7 @@ export type SharedDatasetMetadataSidecarResolution = {
   metadataLocaleFallback: boolean;
   file: SharedDatasetReleaseFile;
   gsUri: string;
+  generation: string;
   filename: string;
 };
 
@@ -84,7 +87,8 @@ export const sharedDatasetArtifactUrlFromGsUri = (
   gsUri: string,
   {
     bucketName = DEFAULT_SHARED_DATASETS_BUCKET,
-    artifactBaseUrl = DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE
+    artifactBaseUrl = DEFAULT_SHARED_DATASETS_ARTIFACTS_URL_BASE,
+    generation
   }: SharedDatasetArtifactUrlOptions = {}
 ) => {
   const match = String(gsUri || '').match(/^gs:\/\/([^/]+)\/(.+)$/);
@@ -109,7 +113,7 @@ export const sharedDatasetArtifactUrlFromGsUri = (
     );
   }
   const encodedObjectPath = segments.map(encodeURIComponent).join('/');
-  return `${artifactBaseUrl.replace(/\/+$/, '')}/${encodedObjectPath}`;
+  return `${artifactBaseUrl.replace(/\/+$/, '')}/${encodedObjectPath}${generation == null ? '' : `?generation=${normalizeArtifactGeneration(generation)}`}`;
 };
 
 export const resolveSharedDatasetMetadataSidecar = ({
@@ -124,13 +128,14 @@ export const resolveSharedDatasetMetadataSidecar = ({
     );
   }
   const requestedLocale = normalizeSharedDatasetMetadataLocale(locale);
-  const release = releaseForVersion(releaseIndex, requestedVersion);
-  if (!release) return null;
+  const release = resolveSharedDatasetRelease(releaseIndex, requestedVersion);
 
   const file = metadataFileForLocale(release.files, requestedLocale);
   if (!file) return null;
 
   const gsUri = String(file.path || '').trim();
+  validateReleaseArtifact(file, releaseIndex.asset_slug || '', String(release.date));
+  const generation = normalizeArtifactGeneration(file.generation);
   const resolvedLocale = metadataLocaleForFile(file);
   return {
     requestedVersion,
@@ -140,6 +145,7 @@ export const resolveSharedDatasetMetadataSidecar = ({
     metadataLocaleFallback: Boolean(requestedLocale && requestedLocale !== resolvedLocale),
     file,
     gsUri,
+    generation,
     filename: gsUri.split('/').filter(Boolean).pop() || ''
   } satisfies SharedDatasetMetadataSidecarResolution;
 };
@@ -157,29 +163,54 @@ export const resolvePublicSharedDatasetMetadataSidecarUrl = (
   if (!sidecar) return null;
   return {
     ...sidecar,
-    url: sharedDatasetArtifactUrlFromGsUri(sidecar.gsUri, options)
+    url: sharedDatasetArtifactUrlFromGsUri(sidecar.gsUri, {...options, generation: sidecar.generation})
   } satisfies SharedDatasetPublicMetadataSidecarUrlResolution;
 };
 
-const releaseForVersion = (
-  releaseIndex: SharedDatasetReleaseIndex,
-  requestedVersion: string
-) => {
-  const releases = Array.isArray(releaseIndex.releases)
-    ? releaseIndex.releases.filter(isRelease)
-    : [];
-  if (requestedVersion === 'latest') {
-    const latest = isRelease(releaseIndex.latest_release)
-      ? releaseIndex.latest_release
-      : null;
-    const latestDate = String(latest?.date || '');
-    return (
-      (latestDate ? releases.find(release => release.date === latestDate) : null) ||
-      latest ||
-      null
-    );
+export const normalizeArtifactGeneration = (value: unknown): string => {
+  const text = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value;
+  if (typeof text !== 'string' || !/^[1-9][0-9]{0,19}$/.test(text) || BigInt(text) > 18446744073709551615n) {
+    throw new SharedDatasetCatalogResolutionError('Artifact generation must be an exact positive 64-bit integer; legacy unpinned artifacts cannot form an exact layer');
   }
-  return releases.find(release => release.date === requestedVersion) || null;
+  return text;
+};
+
+export const resolveSharedDatasetRelease = (index: SharedDatasetReleaseIndex, version: string = 'latest'): SharedDatasetRelease => {
+  const validDate = (value: unknown) => typeof value === 'string' && RELEASE_DATE_RE.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+  if (version !== 'latest' && !validDate(version)) throw new SharedDatasetCatalogResolutionError('Version must be latest or YYYY-MM-DD');
+  if (index.schema_version !== 1 || !Array.isArray(index.releases)) throw new SharedDatasetCatalogResolutionError('Invalid release index schema or releases');
+  const dates = new Set<string>();
+  for (const release of index.releases) {
+    if (!isRelease(release) || !validDate(release.date) || !Array.isArray(release.files) || release.files.some(f => !f || typeof f !== 'object' || Array.isArray(f)) || dates.has(String(release.date))) throw new SharedDatasetCatalogResolutionError('Invalid or duplicate release entry');
+    dates.add(String(release.date));
+  }
+  if (!dates.has(String(index.latest_release?.date || ''))) throw new SharedDatasetCatalogResolutionError('Invalid release index latest pointer');
+  const date = version === 'latest' ? index.latest_release?.date : version;
+  const release = index.releases.find(r => r.date === date);
+  if (!release) throw new SharedDatasetCatalogResolutionError(`Requested release ${date || version} was not found`);
+  return release;
+};
+
+export const selectReleaseFile = (files: SharedDatasetReleaseFile[], format: string, preferredPath = '') => {
+  const candidates = files.filter(f => f && typeof f === 'object' && f.format === format);
+  const preferred = basename(preferredPath);
+  const matches = preferred ? candidates.filter(f => basename(String(f.path || '')) === preferred) : [];
+  const selected = matches.length ? matches : candidates;
+  if (selected.length > 1) throw new SharedDatasetCatalogResolutionError(`Ambiguous release ${format} files`);
+  return selected[0] || null;
+};
+
+export const validateReleaseArtifact = (file: SharedDatasetReleaseFile, slug: string, date: string, preferredPath = '') => {
+  const path = String(file.path || '');
+  const match = path.match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (!match || match[2].split('/').some(s => !s || s === '.' || s === '..') || !path.endsWith(`/${slug}/releases/${date}/${match[2].split('/').at(-1)}`)) throw new SharedDatasetCatalogResolutionError('Artifact is outside the selected asset release');
+  if (preferredPath) {
+    const root = preferredPath.split(/\/(?:latest|releases)\//)[0];
+    if (!path.startsWith(`${root}/releases/${date}/`)) throw new SharedDatasetCatalogResolutionError('Artifact is outside the catalog asset root');
+  }
+  if (Object.hasOwn(file, 'generation')) normalizeArtifactGeneration(file.generation);
+  if (Object.hasOwn(file, 'sha256') && (typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(file.sha256))) throw new SharedDatasetCatalogResolutionError('Invalid artifact checksum');
+  if (Object.hasOwn(file, 'size') && (typeof file.size !== 'number' || !Number.isSafeInteger(file.size) || file.size < 0)) throw new SharedDatasetCatalogResolutionError('Invalid artifact size');
 };
 
 const isRelease = (value: unknown): value is SharedDatasetRelease =>
@@ -190,16 +221,12 @@ const metadataFileForLocale = (
   locale: string
 ) => {
   const safeFiles = Array.isArray(files) ? files : [];
-  if (locale) {
-    const localized = safeFiles.find(
-      file => isMetadataFile(file) && metadataLocaleForFile(file) === locale
-    );
-    if (localized) return localized;
+  for (const candidateLocale of locale ? [locale, ''] : ['']) {
+    const matches = safeFiles.filter(file => isMetadataFile(file) && metadataLocaleForFile(file) === candidateLocale);
+    if (matches.length > 1) throw new SharedDatasetCatalogResolutionError('Ambiguous metadata sidecars');
+    if (matches.length) return matches[0];
   }
-  return (
-    safeFiles.find(file => isMetadataFile(file) && metadataLocaleForFile(file) === '') ||
-    null
-  );
+  return null;
 };
 
 const isMetadataFile = (file: SharedDatasetReleaseFile) => {

@@ -100,13 +100,24 @@ canonical_uri = ref.gs_uri
 
 `fetch_dataset` loads the catalog from
 `gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv`, resolves
-the requested format, downloads the current object with ADC, and returns a
-`DatasetRef`.
+the requested format through the release index, and downloads that exact dated
+artifact generation with ADC. The returned `DatasetRef` identifies the verified
+bytes even when the catalog CSV has not changed since the previous release.
 
-For lineage, job records, model artifacts, reports, or joins that request
-`version="latest"`, record `ref.resolved_id`, such as
-`wdpa-marine@2026-05-02`. Do not record `wdpa-marine@latest` and do not infer a
-version from the cache path.
+For lineage, record the fetched `ref.gs_uri` and `ref.resolved_id`, such as
+`wdpa-marine@2026-05-02#generation=1777680000000000`, together. The generation
+suffix distinguishes corrective replacements on the same release date; the URI
+distinguishes artifacts and formats. `ref.sha256` and `ref.size` describe the
+verified local bytes. Do not infer a version from the cache path. Previously
+stored IDs without a generation are not retroactively made exact.
+
+Legacy assets with no release index (HTTP/GCS 404), or a valid empty index, still
+support `version="latest"`. The SDK observes and pins their current object
+generation; `last_updated` remains empty and `resolved_id` is
+`{slug}@latest#generation={generation}`. This identifies observed bytes without
+inventing a release date. An older index without file-generation metadata also
+uses a freshly observed object generation and enforces any supplied size/hash;
+it cannot certify unknown originally published bytes.
 
 ## Resolve Without Downloading
 
@@ -124,9 +135,17 @@ print(ref.access_tier)  # public
 print(ref.cache_path)   # None; resolve_dataset does not download bytes
 ```
 
-PMTiles latest URLs default to the tiered shared CDN URL. Exact dated PMTiles
-release references keep their exact object identity and are not a promise of
-anonymous public access. For advertised file companions, the SDK derives the
+`Catalog.resolve(..., version="latest")` maps catalog metadata to an unpinned
+alias locally, without fetching the release index or object. `resolve_dataset`
+first loads the catalog using ADC, then performs the same mapping. These latest
+references have no verified release date or generation; `resolved_id` is
+`{slug}@latest`, regardless of a legacy CSV date. Use `fetch_dataset` once when
+both bytes and artifact lineage matter.
+
+PMTiles alias URLs default to the tiered shared CDN URL. Dated resolve reads the
+release index and includes a generation when that index records one; it does not
+download or hash the object. A missing explicit date fails instead of falling
+back to latest. Exact GCS references are not a promise of anonymous public access. For advertised file companions, the SDK derives the
 stable latest object as `latest/{asset-slug}.{extension}` from the catalog's
 canonical `/latest/` root. Formats without a deterministic file path, including
 a noncanonical Zarr companion, still require an explicit path and fail loudly.
@@ -224,8 +243,9 @@ and fall back to the canonical sidecar when that locale is absent. Localized
 sidecars keep the same record shape with translated display values already
 materialized into `properties`.
 
-Persist the resolved release date in lineage records; every sidecar record
-embeds its `release` value.
+Every sidecar record embeds its `release` value. Persist the fetched URI and
+generation-bearing `resolved_id` as artifact lineage, because a date alone does
+not distinguish same-release corrections.
 
 ## API Reference
 
@@ -246,11 +266,15 @@ Important `DatasetRef` fields:
 |---|---|
 | `ref.slug` | Catalog asset slug. |
 | `ref.format` | Resolved format. |
-| `ref.gs_uri` | Durable GCS object identity. |
-| `ref.url` | Browser-facing URL for the resolved object. PMTiles latest defaults to the CDN URL. |
+| `ref.gs_uri` | Alias for latest resolve; exact dated artifact path for indexed fetch. Record it with `generation` for byte identity. |
+| `ref.url` | Browser-facing alias for latest resolve; generation-selected GCS URL after fetch. |
 | `ref.access_tier` | `public`, `private`, or `internal`. |
 | `ref.cache_path` | Local downloaded path after `fetch_dataset`; `None` after `resolve_dataset`. |
-| `ref.resolved_id` | Stable lineage value, such as `wdpa-marine@2026-05-02`. |
+| `ref.last_updated` | Indexed release date, or empty for an unpinned/latest-only reference. |
+| `ref.generation` | Exact GCS artifact generation after fetch; optional on resolve. |
+| `ref.sha256`, `ref.size` | Verified SHA-256 and byte size after fetch; optional index expectations on dated resolve. |
+| `ref.release_index_generation` | Generation of the index response used for indexed release selection, when available; absent for latest-only fallback from a missing or valid empty index. |
+| `ref.resolved_id` | Fetched lineage includes `#generation=...`; an unpinned latest alias returns `{slug}@latest`. |
 
 Common errors:
 
@@ -272,8 +296,9 @@ https://tiles.skytruth.org/pmtiles/private/{slug}.pmtiles
 https://tiles.skytruth.org/pmtiles/internal/{slug}.pmtiles
 ```
 
-The SDK keeps the canonical `gs://` identity in `DatasetRef.gs_uri` and exposes
-the browser URL in `DatasetRef.url`.
+For latest resolve, the SDK keeps the canonical `gs://` alias in
+`DatasetRef.gs_uri` and exposes the browser URL in `DatasetRef.url`. Fetching is
+separate: it returns the exact artifact URI and generation it verified.
 
 Apps with their own PMTiles route can override only the browser base URL:
 
@@ -300,20 +325,41 @@ and backend data reads should use authenticated GCS.
 
 ## Cache Behavior
 
-By default, downloads are cached under:
+Downloads use a versioned local cache:
 
 ```text
-~/.cache/skytruth-shared-datasets/{slug}/{format}/{last_updated}/{filename}
+~/.cache/skytruth-shared-datasets/v2/{slug}/{format}/{release-or-latest}/{identity-digest}/{filename}
 ```
 
-Override the cache root with `SKYTRUTH_SHARED_DATASETS_CACHE` or the
-`cache_dir` argument:
+The identity digest includes the complete GCS URI and generation. Each entry
+has a small `.verified.json` record containing URI, generation, size and SHA-256.
+Every cache hit rechecks the file's size and SHA-256 and any release-index
+integrity expectations. Changed releases and same-date replacements receive
+separate cache entries. Old date-only caches are left untouched and are not
+trusted or migrated automatically.
+
+Override the cache root with `SKYTRUTH_SHARED_DATASETS_CACHE` or `cache_dir`:
 
 ```python
-ref = fetch_dataset("wdpa-marine", "fgb", cache_dir="/tmp/shared-datasets-cache")
+ref = fetch_dataset("wdpa-marine", "fgb", cache_dir="/tmp/shared-datasets-1/sdk-cache")
 ```
 
-Pass `force=True` to download again even when the cache path already exists.
+`force=True` re-downloads while retaining generation and integrity checks.
+Downloads stream into temporary files and are hashed in a separate bounded
+file pass before atomic installation. Interrupted downloads or incomplete cache
+records cannot become trusted hits. Corrupt entries are re-downloaded; failed
+repairs raise an error rather than returning unverified bytes. Concurrent
+fetches may duplicate a download but install only the same pinned identity.
+
+The SDK resolves the current artifact before cache lookup. It does not provide
+an offline mode: unavailable/forbidden/malformed indexes fail, even if older
+bytes exist locally. Only a definitive missing index or valid empty index
+permits the explicit latest-only path. A selected release missing the requested
+format, an ambiguous artifact, a changed generation, or a checksum/size mismatch
+fails without switching to another artifact. After correcting the cause, retry
+the fetch to resolve a fresh snapshot. Public downloads stay anonymous; ADC
+reads use generation preconditions. Neither path creates signed URLs or changes
+access policy.
 
 ## CLI
 

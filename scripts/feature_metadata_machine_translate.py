@@ -19,18 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import feature_metadata_localization, release_feature_model  # noqa: E402
+from scripts import feature_metadata_localization, release_feature_model, translation_local_io  # noqa: E402
 
 
-TRANSLATION_COLUMNS = (
-    "feature_id",
-    "field",
-    "locale",
-    "source_value_hash",
-    "value",
-    "review_state",
-    "notes",
-)
+TRANSLATION_COLUMNS = feature_metadata_localization.REQUIRED_TRANSLATION_COLUMNS + feature_metadata_localization.OPTIONAL_TRANSLATION_COLUMNS
 DEFAULT_TARGET_OVERRIDES = {
     "es_419": "es",
     "pt_br": "pt",
@@ -211,42 +203,20 @@ def translation_key(row: Mapping[str, Any]) -> tuple[str, str, str, str]:
 def read_existing_rows(path: Path | None) -> list[dict[str, str]]:
     if path is None or not path.exists():
         return []
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = list(reader.fieldnames or [])
-        missing = [name for name in TRANSLATION_COLUMNS[:5] if name not in fieldnames]
-        if missing:
-            raise FeatureMetadataMachineTranslateError(
-                f"existing translation source is missing required column(s): {', '.join(missing)}"
-            )
-        unsupported = sorted(set(fieldnames) - set(TRANSLATION_COLUMNS))
-        if unsupported:
-            raise FeatureMetadataMachineTranslateError(
-                f"existing translation source has unsupported column(s): {', '.join(unsupported)}"
-            )
-        rows: list[dict[str, str]] = []
-        seen: dict[tuple[str, str, str, str], int] = {}
-        for row_number, raw_row in enumerate(reader, start=2):
-            row = {name: str(raw_row.get(name) or "") for name in TRANSLATION_COLUMNS}
-            feature_id, field, locale, digest = translation_key(row)
-            if not feature_id:
-                raise FeatureMetadataMachineTranslateError(f"{path}:{row_number}: feature_id is required")
-            release_feature_model.validate_feature_id(feature_id)
-            if not field:
-                raise FeatureMetadataMachineTranslateError(f"{path}:{row_number}: field is required")
-            if not row["value"]:
-                raise FeatureMetadataMachineTranslateError(f"{path}:{row_number}: value is required")
-            row["locale"] = locale
-            row["source_value_hash"] = digest
-            key = (feature_id, field, locale, digest)
-            previous = seen.get(key)
-            if previous is not None:
-                raise FeatureMetadataMachineTranslateError(
-                    f"{path}:{row_number}: duplicate translation key first seen on row {previous}"
-                )
-            seen[key] = row_number
-            rows.append(row)
-    return rows
+    rows = feature_metadata_localization.read_translation_source(path)
+    return [{name: getattr(row, name) for name in TRANSLATION_COLUMNS} for row in rows]
+
+
+def completed_keys(
+    rows: Sequence[Mapping[str, Any]], records: Sequence[Mapping[str, Any]]
+) -> set[tuple[str, str, str, str]]:
+    properties = {str(record["feature_id"]): record["properties"] for record in records}
+    return {
+        translation_key(row) for row in rows
+        if not feature_metadata_localization.translation_failed(
+            row, properties.get(str(row["feature_id"]), {}).get(str(row["field"]))
+        )
+    }
 
 
 def source_text_for_translation(value: Any, *, stringify_non_string: bool) -> str | None:
@@ -318,7 +288,7 @@ def collect_tasks(
                     )
                 )
     absent_fields = sorted(set(fields) - fields_seen)
-    if absent_fields:
+    if absent_fields and records:
         raise FeatureMetadataMachineTranslateError(
             "requested field(s) were not present in any metadata record: " + ", ".join(absent_fields)
         )
@@ -403,8 +373,6 @@ def translate_unique_values(
                 raise FeatureMetadataMachineTranslateError(
                     f"translation failed for target {target!r}, value {source_text!r}: {exc}"
                 ) from exc
-            if on_error == "source":
-                return pair, source_text, f"{type(exc).__name__}: {exc}"
             return pair, None, f"{type(exc).__name__}: {exc}"
         return pair, translated, None
 
@@ -446,13 +414,17 @@ def translate_unique_values(
     return translations, failures
 
 
-def write_translation_source(path: Path, rows: Sequence[Mapping[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(TRANSLATION_COLUMNS), lineterminator="\n")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: str(row.get(name) or "") for name in TRANSLATION_COLUMNS})
+def write_translation_source(
+    path: Path, rows: Sequence[Mapping[str, str]], *,
+    expected: Sequence[translation_local_io.FileSnapshot] = (), protected: Sequence[Path] = (),
+) -> None:
+    with translation_local_io.candidate_output(path, expected=expected, protected=protected) as candidate:
+        with candidate.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(TRANSLATION_COLUMNS), lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({name: str(row.get(name) or "") for name in TRANSLATION_COLUMNS})
+        feature_metadata_localization.read_translation_source(candidate)
 
 
 def generate_translation_source(
@@ -485,6 +457,13 @@ def generate_translation_source(
 ) -> dict[str, Any]:
     if workers < 1:
         raise FeatureMetadataMachineTranslateError("--workers must be at least 1")
+    if review_state == feature_metadata_localization.FAILED_REVIEW_STATE:
+        raise FeatureMetadataMachineTranslateError("successful --review-state cannot be translation_failed")
+    protected = [canonical_sidecar, *([schema] if schema else [])]
+    if existing_translation_source and existing_translation_source.absolute() != translation_source.absolute():
+        protected.append(existing_translation_source)
+    translation_local_io.validate_paths(inputs=protected, outputs=[translation_source])
+    expected = translation_local_io.snapshots([*protected, translation_source])
     normalized_locales = feature_metadata_localization.parse_locale_arguments(locales)
     if not normalized_locales:
         raise FeatureMetadataMachineTranslateError("at least one --locale is required")
@@ -510,7 +489,7 @@ def generate_translation_source(
         locale: translator_target_for_locale(locale, target_overrides or {})
         for locale in normalized_locales
     }
-    existing_keys = {translation_key(row) for row in existing_rows}
+    existing_keys = completed_keys(existing_rows, records)
     keys_to_skip = set() if refresh_current else existing_keys
     tasks, stats = collect_tasks(
         records=records,
@@ -522,10 +501,9 @@ def generate_translation_source(
         skip_numeric_strings=skip_numeric_strings,
     )
     current_keys = {task.key for task in tasks}
-    if refresh_current:
-        existing_rows = [row for row in existing_rows if translation_key(row) not in current_keys]
+    existing_rows = [row for row in existing_rows if translation_key(row) not in current_keys]
 
-    factory = translator_factory or deep_translator_factory(provider)
+    factory = translator_factory or (deep_translator_factory(provider) if tasks else None)
     translations, failures = translate_unique_values(
         tasks,
         translator_factory=factory,
@@ -545,20 +523,20 @@ def generate_translation_source(
     for task in tasks:
         pair = (task.target, task.source_text)
         translated = translations.get(pair)
-        if translated is None:
+        failed = failures.get(pair)
+        if failed and on_error == "skip":
             skipped_error_rows += 1
             continue
-        failed = failures.get(pair)
         generated_rows.append(
             {
                 "feature_id": task.feature_id,
                 "field": task.field,
                 "locale": task.locale,
                 "source_value_hash": task.source_value_hash,
-                "value": translated,
-                "review_state": "source_provided" if failed else review_state,
+                "value": "" if failed else translated,
+                "review_state": feature_metadata_localization.FAILED_REVIEW_STATE if failed else review_state,
                 "notes": (
-                    f"machine translation failed; source value retained; provider={provider}; target={task.target}"
+                    f"machine translation failed; provider={provider}; target={task.target}"
                     if failed
                     else f"provider={provider}; target={task.target}"
                 ),
@@ -566,19 +544,16 @@ def generate_translation_source(
         )
 
     output_rows = [*existing_rows, *generated_rows]
-    seen_output_keys: dict[tuple[str, str, str, str], int] = {}
-    for row_number, row in enumerate(output_rows, start=2):
-        key = translation_key(row)
-        previous = seen_output_keys.get(key)
-        if previous is not None:
-            raise FeatureMetadataMachineTranslateError(
-                f"output would contain duplicate translation key on row {row_number}; first seen on row {previous}"
-            )
-        seen_output_keys[key] = row_number
-    write_translation_source(translation_source, output_rows)
+    write_translation_source(translation_source, output_rows, expected=expected, protected=protected)
+    failed_keys = [list(task.key) for task in tasks if (task.target, task.source_text) in failures]
 
     return {
         "valid": True,
+        "complete": not failed_keys,
+        "successful_task_count": len(tasks) - len(failed_keys),
+        "failed_task_count": len(failed_keys),
+        "failed_task_keys": failed_keys,
+        "outstanding_current_task_count": len(failed_keys),
         "translation_source_schema": feature_metadata_localization.TRANSLATION_SOURCE_SCHEMA,
         "provider": provider,
         "canonical_sidecar": str(canonical_sidecar),
@@ -641,7 +616,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Consecutive failures before remaining values fail fast. 0 disables the breaker.",
     )
     parser.add_argument("--review-state", default="machine_translated")
-    parser.add_argument("--on-error", choices=("fail", "source", "skip"), default="source")
+    parser.add_argument("--on-error", choices=("fail", "source", "skip"), default="source", help="source: persist failed tasks for canonical fallback; skip: omit failed tasks; fail: preserve CSV and abort. Partial work exits 1.")
     parser.add_argument("--no-preserve-existing", action="store_true")
     parser.add_argument("--refresh-current", action="store_true")
     parser.add_argument("--stringify-non-string", action="store_true")
@@ -661,6 +636,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        report_expected = translation_local_io.snapshots([args.report]) if args.report else ()
+        if args.report:
+            translation_local_io.validate_paths(
+                inputs=[args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else []), *([args.existing_translation_source] if args.existing_translation_source else [])],
+                outputs=[args.report],
+            )
         report = generate_translation_source(
             canonical_sidecar=args.canonical_sidecar,
             translation_source=args.translation_source,
@@ -687,21 +668,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             progress=args.progress,
             progress_interval_seconds=args.progress_interval_seconds,
         )
+        if args.report:
+            translation_local_io.write_json(args.report, report, expected=report_expected, protected=[args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else []), *([args.existing_translation_source] if args.existing_translation_source else [])])
     except (
         FeatureMetadataMachineTranslateError,
         feature_metadata_localization.FeatureMetadataLocalizationError,
         release_feature_model.ReleaseFeatureModelError,
         OSError,
+        csv.Error,
         json.JSONDecodeError,
     ) as exc:
-        print(f"feature-metadata-machine-translate failed: {exc}", file=sys.stderr)
+        print(f"feature-metadata-machine-translate failed: {exc}; earlier per-file commits may remain", file=sys.stderr)
         return 2
     payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(payload, encoding="utf-8")
     print(payload, end="")
-    return 0
+    return 0 if report["complete"] else 1
 
 
 if __name__ == "__main__":

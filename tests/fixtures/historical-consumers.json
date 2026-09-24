@@ -1,0 +1,146 @@
+{
+  "asset": {
+    "slug": "example-layer",
+    "access_tier": "public",
+    "canonical_format": "fgb",
+    "canonical_path": "gs://example-bucket/category/subcategory/example-layer/latest/example-layer.fgb",
+    "pmtiles_path": "gs://example-bucket/category/subcategory/example-layer/latest/example-layer.pmtiles",
+    "pmtiles_url": "https://tiles.skytruth.org/pmtiles/public/example-layer.pmtiles",
+    "public_url": "https://example.test/latest/example-layer.fgb",
+    "available_formats": [
+      "fgb",
+      "pmtiles"
+    ],
+    "has_pmtiles": true,
+    "has_csv": false,
+    "has_geojson": false,
+    "release_index_url": "https://example.test/releases/example-layer.json"
+  },
+  "index": {
+    "schema_version": 1,
+    "asset_slug": "example-layer",
+    "latest_release": {
+      "date": "2026-09-22",
+      "files": [
+        {
+          "format": "fgb",
+          "role": "fgb",
+          "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.fgb",
+          "generation": 200,
+          "size": 100,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "format": "pmtiles",
+          "role": "pmtiles",
+          "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.pmtiles",
+          "generation": 201,
+          "size": 100,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "format": "metadata",
+          "role": "metadata",
+          "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.metadata.ndjson.gz",
+          "generation": 202,
+          "size": 100,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "format": "schema",
+          "role": "schema",
+          "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.schema.json",
+          "generation": 203,
+          "size": 100,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    "releases": [
+      {
+        "date": "2026-09-22",
+        "files": [
+          {
+            "format": "fgb",
+            "role": "fgb",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.fgb",
+            "generation": 200,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "pmtiles",
+            "role": "pmtiles",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.pmtiles",
+            "generation": 201,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "metadata",
+            "role": "metadata",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.metadata.ndjson.gz",
+            "generation": 202,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "schema",
+            "role": "schema",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-09-22/example-layer.schema.json",
+            "generation": 203,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      {
+        "date": "2026-01-01",
+        "files": [
+          {
+            "format": "fgb",
+            "role": "fgb",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.fgb",
+            "generation": 100,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "pmtiles",
+            "role": "pmtiles",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+            "generation": 101,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "metadata",
+            "role": "metadata",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+            "generation": 102,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "format": "schema",
+            "role": "schema",
+            "path": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.schema.json",
+            "generation": 103,
+            "size": 100,
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    ]
+  },
+  "features": {
+    "2026-01-01": {
+      "feature_id": "old1",
+      "name": "Old footprint"
+    },
+    "2026-09-22": {
+      "feature_id": "new2",
+      "name": "New footprint"
+    }
+  }
+}

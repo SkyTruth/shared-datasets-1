@@ -7,6 +7,7 @@ Describe the asset, infrastructure, ingestion, tooling, or documentation change.
 - [ ] Ran relevant tests or documented why they were not run.
 - [ ] For bucket-facing changes, ran the compliance audit or explained remaining findings.
 - [ ] For remote object changes, listed every changed `gs://` path and generation precondition.
+- [ ] For canonical mutations, added one immutable `.github/dataset-plans/` document using the concierge or `reviewed_dataset_plan.py prepare`, and included its matching rendered fence/path/digest below.
 
 ## Dataset Admission
 

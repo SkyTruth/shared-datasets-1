@@ -19,10 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts import feature_metadata_localization, feature_metadata_machine_translate, release_feature_model  # noqa: E402
+from scripts import feature_metadata_localization, feature_metadata_machine_translate, release_feature_model, translation_local_io  # noqa: E402
 
 
-MANIFEST_SCHEMA = "feature_metadata_document_translation_manifest_v1"
+MANIFEST_SCHEMA = "feature_metadata_document_translation_manifest_v2"
 DEFAULT_MAX_SHARD_ROWS = 60_000
 DEFAULT_MAX_SHARD_CHARS = 1_000_000
 DEFAULT_DIRECT_THRESHOLD_SECONDS = 30 * 60
@@ -59,8 +59,7 @@ def cell_xml(row_number: int, col_number: int, value: str) -> str:
     return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{xml_text(value)}</t></is></c>'
 
 
-def write_xlsx_rows(path: Path, rows: Sequence[Sequence[str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def write_xlsx_rows(path: Path, rows: Sequence[Sequence[str]], *, expected: Sequence[translation_local_io.FileSnapshot] = (), protected: Sequence[Path] = ()) -> None:
     row_xml = []
     for row_number, row in enumerate(rows, start=1):
         cells = "".join(cell_xml(row_number, col_number, str(value)) for col_number, value in enumerate(row, start=1))
@@ -110,13 +109,14 @@ def write_xlsx_rows(path: Path, rows: Sequence[Sequence[str]]) -> None:
   <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
 </styleSheet>
 """
-    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types)
-        archive.writestr("_rels/.rels", root_rels)
-        archive.writestr("xl/workbook.xml", workbook)
-        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
-        archive.writestr("xl/styles.xml", styles)
-        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    with translation_local_io.candidate_output(path, expected=expected, protected=protected) as candidate:
+        with zipfile.ZipFile(candidate, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("[Content_Types].xml", content_types)
+            archive.writestr("_rels/.rels", root_rels)
+            archive.writestr("xl/workbook.xml", workbook)
+            archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+            archive.writestr("xl/styles.xml", styles)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
 
 
 def element_text(element: ElementTree.Element) -> str:
@@ -132,6 +132,8 @@ def read_shared_strings(archive: zipfile.ZipFile) -> list[str]:
 
 def read_xlsx_rows(path: Path) -> list[list[str]]:
     with zipfile.ZipFile(path) as archive:
+        if len(archive.namelist()) != len(set(archive.namelist())):
+            raise FeatureMetadataDocumentTranslateError(f"duplicate workbook ZIP member: {path}")
         shared_strings = read_shared_strings(archive)
         sheet_name = "xl/worksheets/sheet1.xml"
         if sheet_name not in archive.namelist():
@@ -139,12 +141,19 @@ def read_xlsx_rows(path: Path) -> list[list[str]]:
         root = ElementTree.fromstring(archive.read(sheet_name))
 
     rows: list[list[str]] = []
+    seen_rows: set[str] = set()
     for row in root.findall(".//{*}row"):
+        row_ref = row.attrib.get("r", "")
+        if not re.fullmatch(r"[1-9][0-9]*", row_ref) or row_ref in seen_rows:
+            raise FeatureMetadataDocumentTranslateError(f"invalid or duplicate workbook row reference: {path}")
+        seen_rows.add(row_ref)
         values: dict[int, str] = {}
         next_col = 1
         for cell in row.findall("{*}c"):
             ref = cell.attrib.get("r", "")
             col = column_index(ref) if ref else next_col
+            if col not in (1, 2) or col in values or (ref and ref != f"{column_name(col)}{row_ref}") or cell.find("{*}f") is not None:
+                raise FeatureMetadataDocumentTranslateError(f"invalid/duplicate cell or formula in two-column workbook: {path}")
             next_col = col + 1
             cell_type = cell.attrib.get("t", "")
             value = ""
@@ -152,6 +161,8 @@ def read_xlsx_rows(path: Path) -> list[list[str]]:
                 raw = cell.findtext("{*}v")
                 if raw is not None:
                     try:
+                        if not raw.isdecimal():
+                            raise ValueError("negative/noninteger shared string index")
                         value = shared_strings[int(raw)]
                     except (IndexError, ValueError) as exc:
                         raise FeatureMetadataDocumentTranslateError(f"invalid shared string reference in {path}: {raw}") from exc
@@ -167,8 +178,6 @@ def read_xlsx_rows(path: Path) -> list[list[str]]:
         else:
             rows.append([])
 
-    while rows and not any(value.strip() for value in rows[-1]):
-        rows.pop()
     return rows
 
 
@@ -197,6 +206,8 @@ def parse_locale_mapping(values: Sequence[str], *, option_name: str) -> dict[str
         destination, source = raw.split("=", 1)
         normalized_destination = feature_metadata_localization.normalize_locale(destination)
         normalized_source = feature_metadata_localization.normalize_locale(source)
+        if normalized_destination in mapping:
+            raise FeatureMetadataDocumentTranslateError("duplicate reuse destination locale")
         mapping[normalized_destination] = normalized_source
     return mapping
 
@@ -240,18 +251,22 @@ def collect_pending_tasks(
         locale: feature_metadata_machine_translate.translator_target_for_locale(locale, target_overrides or {})
         for locale in normalized_locales
     }
-    existing_keys = {feature_metadata_machine_translate.translation_key(row) for row in existing_rows}
-    keys_to_skip = set() if refresh_current else existing_keys
+    existing_keys = feature_metadata_machine_translate.completed_keys(existing_rows, records)
     tasks, stats = feature_metadata_machine_translate.collect_tasks(
         records=records,
         fields=normalized_fields,
         locales=normalized_locales,
         target_by_locale=target_by_locale,
-        existing_keys=keys_to_skip,
+        existing_keys=set(),
         stringify_non_string=stringify_non_string,
         skip_numeric_strings=skip_numeric_strings,
     )
+    task_evidence = [{"key": list(task.key), "pending": task.key not in existing_keys} for task in tasks]
+    stats["existing_current_row_count"] = sum(task.key in existing_keys for task in tasks)
+    if not refresh_current:
+        tasks = [task for task in tasks if task.key not in existing_keys]
     report = {
+        "tasks": task_evidence,
         "feature_count": validation.feature_count,
         "locales": normalized_locales,
         "fields": normalized_fields,
@@ -342,7 +357,10 @@ def export_document_workbooks(
     output_stem: str | None = None,
     stringify_non_string: bool = False,
     skip_numeric_strings: bool = False,
+    reserved_outputs: Sequence[Path] = (),
 ) -> dict[str, Any]:
+    inputs = [canonical_sidecar, *([translation_source] if translation_source else []), *([schema] if schema else [])]
+    expected = translation_local_io.snapshots(inputs)
     tasks, _existing_rows, report = collect_pending_tasks(
         canonical_sidecar=canonical_sidecar,
         translation_source=translation_source,
@@ -357,20 +375,26 @@ def export_document_workbooks(
     )
     entries = unique_entries_from_tasks(tasks)
     shards = shard_entries(entries, max_rows=max_shard_rows, max_chars=max_shard_chars)
-    output_dir.mkdir(parents=True, exist_ok=True)
     stem = output_stem or default_output_stem(canonical_sidecar)
+    if not stem or Path(stem).name != stem or stem in {".", ".."}:
+        raise FeatureMetadataDocumentTranslateError("output stem must be a filename stem")
+    workbook_paths = [output_dir / (f"{stem}.for-translate.xlsx" if len(shards) == 1 else f"{stem}.for-translate.part-{index:03d}.xlsx") for index in range(1, len(shards) + 1)]
+    manifest_path = output_dir / f"{stem}.for-translate.manifest.json"
+    translation_local_io.validate_paths(inputs=inputs, outputs=[*workbook_paths, manifest_path, *reserved_outputs])
 
+    destinations = {path: translation_local_io.FileSnapshot.capture(path) for path in [*workbook_paths, manifest_path]}
     manifest_entries: list[dict[str, Any]] = []
     shard_reports: list[dict[str, Any]] = []
     for index, shard in enumerate(shards, start=1):
         filename = f"{stem}.for-translate.xlsx" if len(shards) == 1 else f"{stem}.for-translate.part-{index:03d}.xlsx"
         workbook_path = output_dir / filename
         rows = [["hash", "text"], *[[entry["source_value_hash"], entry["source_text"]] for entry in shard]]
-        write_xlsx_rows(workbook_path, rows)
+        write_xlsx_rows(workbook_path, rows, expected=[*expected, destinations[workbook_path]], protected=[*inputs, *reserved_outputs])
         shard_reports.append(
             {
                 "path": str(workbook_path),
                 "name": filename,
+                "id": shard_id([entry["source_value_hash"] for entry in shard]),
                 "data_row_count": len(shard),
                 "first_data_row": 2 if shard else None,
                 "last_data_row": len(shard) + 1 if shard else None,
@@ -391,6 +415,9 @@ def export_document_workbooks(
     recommendation = "document_translation" if estimate_seconds is not None and estimate_seconds > direct_threshold_seconds else "direct_machine_translate"
     payload = {
         "schema": MANIFEST_SCHEMA,
+        "canonical_sha256": expected[0].sha256,
+        "schema_sha256": translation_local_io.file_sha256(schema) if schema else None,
+        "collection_options": {"stringify_non_string": stringify_non_string, "skip_numeric_strings": skip_numeric_strings},
         "valid": True,
         "canonical_sidecar": str(canonical_sidecar),
         "translation_source": str(translation_source or ""),
@@ -410,84 +437,122 @@ def export_document_workbooks(
         "entries": manifest_entries,
         **report,
     }
-    manifest_path = output_dir / f"{stem}.for-translate.manifest.json"
-    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    validate_manifest(payload)
+    translation_local_io.write_json(manifest_path, payload, expected=[*expected, destinations[manifest_path]], protected=[*inputs, *workbook_paths, *reserved_outputs])
     payload["manifest"] = str(manifest_path)
     return payload
 
 
-def load_manifest(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("schema") != MANIFEST_SCHEMA:
-        raise FeatureMetadataDocumentTranslateError(f"unsupported manifest schema in {path}")
+def shard_id(hashes: Sequence[str]) -> str:
+    return release_feature_model.sha256_hex(release_feature_model.canonical_json(sorted(hashes)))
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise FeatureMetadataDocumentTranslateError(message)
+
+
+def strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        require(key not in result, f"duplicate manifest JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def exact_hash(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None
+
+
+def validate_manifest(payload: Mapping[str, Any]) -> None:
+    require(isinstance(payload, dict) and payload.get("schema") == MANIFEST_SCHEMA,
+            "unsupported manifest; re-export with current canonical/schema/CSV and approved fields/locales; transfer text only by verified intact hashes, never position")
+    for field in ("canonical_sha256", "schema_sha256"):
+        value = payload.get(field)
+        require((field == "schema_sha256" and value is None) or isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None, f"invalid {field}")
+    for field in ("asset_slug", "release"):
+        require(isinstance(payload.get(field), str), f"invalid manifest {field}")
+    for field in ("locales", "fields"):
+        values = payload.get(field)
+        require(isinstance(values, list) and bool(values) and all(isinstance(v, str) and v.strip() == v and bool(v) for v in values), f"invalid manifest {field}")
+        require(len(values) == len(set(values)), f"duplicate manifest {field}")
+    require(all(feature_metadata_localization.normalize_locale(v) == v for v in payload["locales"]), "manifest locales must be normalized")
+    targets = payload.get("target_by_locale")
+    require(isinstance(targets, dict) and set(targets) == set(payload["locales"]) and all(isinstance(v, str) and v.strip() for v in targets.values()), "invalid target mappings")
+    options = payload.get("collection_options")
+    require(isinstance(options, dict) and set(options) == {"stringify_non_string", "skip_numeric_strings"} and all(type(v) is bool for v in options.values()), "invalid collection options")
+    tasks = payload.get("tasks")
+    require(isinstance(tasks, list), "manifest tasks must be a list")
+    keys: set[tuple[str, ...]] = set()
+    pending_hashes: set[str] = set()
+    for task in tasks:
+        require(isinstance(task, dict) and set(task) == {"key", "pending"} and type(task["pending"]) is bool, "invalid manifest task")
+        key = task["key"]
+        require(isinstance(key, list) and len(key) == 4 and all(isinstance(v, str) for v in key), "invalid manifest task key")
+        release_feature_model.validate_feature_id(key[0])
+        require(key[1] in payload["fields"] and key[2] in payload["locales"] and exact_hash(key[3]), "invalid task field/locale/hash")
+        require(tuple(key) not in keys, "duplicate manifest task key")
+        keys.add(tuple(key))
+        if task["pending"]:
+            pending_hashes.add(key[3])
+    shards = payload.get("shards")
     entries = payload.get("entries")
-    if not isinstance(entries, list):
-        raise FeatureMetadataDocumentTranslateError("manifest is missing entries")
+    require(isinstance(shards, list) and bool(shards) and isinstance(entries, list), "manifest requires shards and entries")
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    ids: set[str] = set()
+    for shard in shards:
+        require(isinstance(shard, dict) and isinstance(shard.get("name"), str) and bool(shard["name"]), "invalid shard name")
+        require(shard["name"] not in grouped, "duplicate shard name")
+        require(isinstance(shard.get("id"), str) and shard["id"] not in ids, "duplicate/invalid shard id")
+        ids.add(shard["id"])
+        grouped[shard["name"]] = []
+    hashes: set[str] = set()
+    for entry in entries:
+        require(isinstance(entry, dict) and isinstance(entry.get("shard"), str) and entry["shard"] in grouped, "entry has missing/foreign shard")
+        digest = entry.get("source_value_hash")
+        require(exact_hash(digest) and digest not in hashes, "duplicate/invalid manifest source hash")
+        require(isinstance(entry.get("source_text"), str) and bool(entry["source_text"].strip()), "invalid source text")
+        hashes.add(digest)
+        grouped[entry["shard"]].append(entry)
+    require(hashes == pending_hashes, "manifest entry hashes do not equal pending task hashes")
+    for shard in shards:
+        members = grouped[shard["name"]]
+        require(type(shard.get("data_row_count")) is int and shard["data_row_count"] == len(members), "shard row count mismatch")
+        require(shard["id"] == shard_id([e["source_value_hash"] for e in members]), "shard identity mismatch")
+        require(bool(members) or len(shards) == 1 and not entries, "unexpected empty shard")
+        require([e.get("row_number") for e in members] == list(range(2, len(members) + 2)), "invalid entry row hints")
+    require(type(payload.get("shard_count")) is int and payload["shard_count"] == len(shards), "shard count mismatch")
+    require(type(payload.get("unique_source_value_count")) is int and payload["unique_source_value_count"] == len(entries), "entry count mismatch")
+    require(type(payload.get("requested_task_count")) is int and payload["requested_task_count"] == sum(t["pending"] for t in tasks), "pending task count mismatch")
+
+
+def load_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=strict_object,
+                         parse_constant=lambda value: require(False, f"nonfinite JSON: {value}"))
+    validate_manifest(payload)
     return payload
 
 
-def entries_by_shard(manifest: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for raw_entry in manifest["entries"]:
-        if not isinstance(raw_entry, dict):
-            raise FeatureMetadataDocumentTranslateError("manifest entry must be an object")
-        shard = str(raw_entry.get("shard") or "")
-        source_hash = str(raw_entry.get("source_value_hash") or "")
-        if not shard or not source_hash:
-            raise FeatureMetadataDocumentTranslateError("manifest entries require shard and source_value_hash")
-        grouped.setdefault(shard, []).append(raw_entry)
-    return grouped
-
-
-def translated_values_for_locale(
-    *,
-    locale: str,
-    files: Sequence[Path],
-    manifest: Mapping[str, Any],
-) -> tuple[dict[str, str], int]:
-    shard_reports = list(manifest.get("shards") or [])
-    if len(files) != len(shard_reports):
-        raise FeatureMetadataDocumentTranslateError(
-            f"locale {locale} has {len(files)} translated file(s), expected {len(shard_reports)} from the manifest"
-        )
-    grouped = entries_by_shard(manifest)
+def translated_values_for_locale(*, locale: str, files: Sequence[Path], manifest: Mapping[str, Any]) -> dict[str, str]:
+    expected_ids = {shard["id"] for shard in manifest["shards"]}
+    require(len(files) == len(expected_ids), f"locale {locale}: wrong workbook count; provide each exported shard exactly once")
+    observed_ids: set[str] = set()
     translations: dict[str, str] = {}
-    mismatched_hash_columns = 0
-    for file_path, shard_report in zip(files, shard_reports):
-        shard_name = str(shard_report.get("name") or Path(str(shard_report.get("path") or "")).name)
-        expected_entries = grouped.get(shard_name, [])
-        rows = read_xlsx_rows(file_path)
-        if not rows:
-            raise FeatureMetadataDocumentTranslateError(f"translated workbook is empty for locale {locale}: {file_path}")
-        data_rows = rows[1:]
-        if len(data_rows) < len(expected_entries):
-            raise FeatureMetadataDocumentTranslateError(
-                f"translated workbook has too few data rows for locale {locale}: {file_path}"
-            )
-        for row, expected_entry in zip(data_rows, expected_entries):
-            observed_hash = row[0].strip() if row else ""
-            expected_hash = str(expected_entry["source_value_hash"])
-            if observed_hash and observed_hash != expected_hash:
-                mismatched_hash_columns += 1
-            translated_value = row[1] if len(row) > 1 else ""
-            if not translated_value.strip():
-                raise FeatureMetadataDocumentTranslateError(
-                    f"blank translated value for locale {locale}, shard {shard_name}, row {expected_entry['row_number']}"
-                )
-            translations[expected_hash] = translated_value
-    return translations, mismatched_hash_columns
-
-
-def dedupe_output_rows(rows: Sequence[Mapping[str, str]]) -> None:
-    seen: dict[tuple[str, str, str, str], int] = {}
-    for row_number, row in enumerate(rows, start=2):
-        key = feature_metadata_machine_translate.translation_key(row)
-        previous = seen.get(key)
-        if previous is not None:
-            raise FeatureMetadataDocumentTranslateError(
-                f"output would contain duplicate translation key on row {row_number}; first seen on row {previous}"
-            )
-        seen[key] = row_number
+    for path in files:
+        rows = read_xlsx_rows(path)
+        require(bool(rows) and rows[0] == ["hash", "text"], f"{path}: expected exact hash,text header")
+        shard_values: dict[str, str] = {}
+        for number, row in enumerate(rows[1:], start=2):
+            require(len(row) == 2 and exact_hash(row[0]), f"{path}:{number}: damaged/blank hash or wrong columns; restore verified original hashes or retranslate; no positional recovery")
+            require(row[0] not in shard_values and row[0] not in translations, f"{path}:{number}: duplicate source hash")
+            require(bool(row[1].strip()), f"{path}:{number}: blank translated value")
+            shard_values[row[0]] = row[1]
+        identity = shard_id(list(shard_values))
+        require(identity in expected_ids and identity not in observed_ids, f"{path}: missing/extra/foreign rows or duplicate shard; restore exact exported hash membership")
+        observed_ids.add(identity)
+        translations.update(shard_values)
+    require(observed_ids == expected_ids, "missing translated shard")
+    return translations
 
 
 def import_document_workbooks(
@@ -505,108 +570,79 @@ def import_document_workbooks(
     asset_slug: str | None = None,
     release: str | None = None,
 ) -> dict[str, Any]:
+    if translation_source is None and output_translation_source.exists():
+        translation_source = output_translation_source
+    inputs = [manifest_path, canonical_sidecar, *([schema] if schema else []), *[p for paths in translated_files.values() for p in paths]]
+    if translation_source and translation_source.absolute() != output_translation_source.absolute():
+        inputs.append(translation_source)
+    translation_local_io.validate_paths(inputs=inputs, outputs=[output_translation_source])
+    expected = translation_local_io.snapshots([*inputs, output_translation_source])
     manifest = load_manifest(manifest_path)
-    locales = feature_metadata_localization.parse_locale_arguments(list(manifest.get("locales") or []))
-    fields = parse_csv_argument(list(manifest.get("fields") or []))
-    if not locales or not fields:
-        raise FeatureMetadataDocumentTranslateError("manifest must include locales and fields")
-    reuse_locale = reuse_locale or {}
-    for destination_locale, source_locale in reuse_locale.items():
-        if destination_locale not in locales:
-            raise FeatureMetadataDocumentTranslateError(f"reuse destination locale is not in manifest locales: {destination_locale}")
-        if source_locale not in locales:
-            raise FeatureMetadataDocumentTranslateError(f"reuse source locale is not in manifest locales: {source_locale}")
+    require(translation_local_io.file_sha256(canonical_sidecar) == manifest["canonical_sha256"], "canonical snapshot changed; re-export against current files")
+    require((translation_local_io.file_sha256(schema) if schema else None) == manifest["schema_sha256"], "schema snapshot changed or missing; re-export with the same schema")
+    require(not asset_slug or not manifest["asset_slug"] or asset_slug == manifest["asset_slug"], "asset override disagrees with manifest")
+    require(not release or not manifest["release"] or release == manifest["release"], "release override disagrees with manifest")
+    require(review_state != feature_metadata_localization.FAILED_REVIEW_STATE, "successful review state cannot be translation_failed")
+    locales, fields = manifest["locales"], manifest["fields"]
+    normalized_files: dict[str, list[Path]] = {}
+    for locale, paths in translated_files.items():
+        normalized = feature_metadata_localization.normalize_locale(locale)
+        require(normalized not in normalized_files and normalized in locales, "duplicate/foreign translated locale")
+        normalized_files[normalized] = list(paths)
+    reuse: dict[str, str] = {}
+    for destination, source in (reuse_locale or {}).items():
+        destination = feature_metadata_localization.normalize_locale(destination)
+        source = feature_metadata_localization.normalize_locale(source)
+        require(destination not in reuse and destination not in normalized_files and destination in locales and source in normalized_files,
+                "reuse requires one direct source locale and no duplicate/direct destination; chains/cycles are not supported")
+        reuse[destination] = source
+    require(set(normalized_files) | set(reuse) == set(locales), "missing translated locale files or reuse mapping")
+    translated_by_locale = {locale: translated_values_for_locale(locale=locale, files=files, manifest=manifest) for locale, files in normalized_files.items()}
+    for destination, source in reuse.items():
+        translated_by_locale[destination] = translated_by_locale[source]
 
-    normalized_files = {feature_metadata_localization.normalize_locale(locale): list(paths) for locale, paths in translated_files.items()}
-    translated_by_locale: dict[str, dict[str, str]] = {}
-    hash_mismatch_counts: dict[str, int] = {}
-    for locale, files in normalized_files.items():
-        if locale not in locales:
-            raise FeatureMetadataDocumentTranslateError(f"translated file locale is not in manifest locales: {locale}")
-        translations, mismatch_count = translated_values_for_locale(locale=locale, files=files, manifest=manifest)
-        translated_by_locale[locale] = translations
-        hash_mismatch_counts[locale] = mismatch_count
-    for destination_locale, source_locale in reuse_locale.items():
-        if source_locale not in translated_by_locale:
-            raise FeatureMetadataDocumentTranslateError(
-                f"reuse source locale {source_locale} does not have a translated file"
-            )
-        translated_by_locale[destination_locale] = dict(translated_by_locale[source_locale])
-        hash_mismatch_counts[destination_locale] = hash_mismatch_counts.get(source_locale, 0)
-
-    missing_files = [locale for locale in locales if locale not in translated_by_locale]
-    if missing_files:
-        raise FeatureMetadataDocumentTranslateError(
-            "missing translated file(s) or reuse mapping for locale(s): " + ", ".join(missing_files)
-        )
-
-    tasks, existing_rows, report = collect_pending_tasks(
-        canonical_sidecar=canonical_sidecar,
-        translation_source=translation_source,
-        locales=locales,
-        fields=fields,
-        schema=schema,
-        refresh_current=refresh_current,
-        expected_asset_slug=asset_slug or str(manifest.get("asset_slug") or "") or None,
-        expected_release=release or str(manifest.get("release") or "") or None,
+    all_tasks, existing_rows, report = collect_pending_tasks(
+        canonical_sidecar=canonical_sidecar, translation_source=translation_source,
+        locales=locales, fields=fields, schema=schema, refresh_current=True,
+        expected_asset_slug=asset_slug or manifest["asset_slug"] or None,
+        expected_release=release or manifest["release"] or None,
+        target_overrides=manifest["target_by_locale"], **manifest["collection_options"],
     )
-    current_keys = {task.key for task in tasks}
-    if refresh_current:
-        existing_rows = [row for row in existing_rows if feature_metadata_machine_translate.translation_key(row) not in current_keys]
-
-    generated_rows: list[dict[str, str]] = []
-    missing_translation_count = 0
-    for task in tasks:
-        value = translated_by_locale[task.locale].get(task.source_value_hash)
-        if value is None:
-            missing_translation_count += 1
-            continue
-        source_locale = next((source for destination, source in reuse_locale.items() if destination == task.locale), task.locale)
-        row_notes = notes
-        if source_locale != task.locale:
-            row_notes = f"{notes}; reused_locale={source_locale}"
-        generated_rows.append(
-            {
-                "feature_id": task.feature_id,
-                "field": task.field,
-                "locale": task.locale,
-                "source_value_hash": task.source_value_hash,
-                "value": value,
-                "review_state": review_state,
-                "notes": row_notes,
-            }
-        )
-    if missing_translation_count:
-        raise FeatureMetadataDocumentTranslateError(
-            f"translated workbooks are missing {missing_translation_count} source hash value(s) required by current tasks"
-        )
-
+    current_evidence = report.pop("tasks")
+    current_keys = {task.key for task in all_tasks}
+    require(current_keys == {tuple(task["key"]) for task in manifest["tasks"]}, "manifest task identity does not match canonical tasks; re-export")
+    completed = {tuple(task["key"]) for task in current_evidence if not task["pending"]}
+    exported_pending = {tuple(task["key"]) for task in manifest["tasks"] if task["pending"]}
+    require(current_keys - exported_pending <= completed, "previously completed tasks are now missing/failed; re-export with current CSV")
+    source_text = {task.source_value_hash: task.source_text for task in all_tasks}
+    require(all(source_text.get(entry["source_value_hash"]) == entry["source_text"] for entry in manifest["entries"]), "manifest source text does not match canonical tasks")
+    tasks = [task for task in all_tasks if task.key in exported_pending and (refresh_current or task.key not in completed)]
+    replaced_keys = {task.key for task in tasks}
+    existing_rows = [row for row in existing_rows if feature_metadata_machine_translate.translation_key(row) not in replaced_keys]
+    generated_rows = [
+        {"feature_id": task.feature_id, "field": task.field, "locale": task.locale,
+         "source_value_hash": task.source_value_hash, "value": translated_by_locale[task.locale][task.source_value_hash],
+         "review_state": review_state,
+         "notes": notes + (f"; reused_locale={reuse[task.locale]}" if task.locale in reuse else "")}
+        for task in tasks
+    ]
     output_rows = [*existing_rows, *generated_rows]
-    dedupe_output_rows(output_rows)
-    feature_metadata_machine_translate.write_translation_source(output_translation_source, output_rows)
+    feature_metadata_machine_translate.write_translation_source(output_translation_source, output_rows, expected=expected, protected=inputs)
     return {
-        "schema": MANIFEST_SCHEMA,
-        "valid": True,
-        "manifest": str(manifest_path),
-        "canonical_sidecar": str(canonical_sidecar),
-        "translation_source": str(translation_source or ""),
-        "output_translation_source": str(output_translation_source),
-        "locales": locales,
-        "fields": fields,
-        "refresh_current": refresh_current,
-        **report,
-        "existing_row_count": len(existing_rows),
-        "generated_row_count": len(generated_rows),
-        "output_row_count": len(output_rows),
-        "hash_column_mismatch_count_by_locale": hash_mismatch_counts,
+        **report, "schema": MANIFEST_SCHEMA, "valid": True, "complete": True,
+        "manifest": str(manifest_path), "canonical_sidecar": str(canonical_sidecar),
+        "translation_source": str(translation_source or ""), "output_translation_source": str(output_translation_source),
+        "locales": locales, "fields": fields, "refresh_current": refresh_current,
+        "requested_task_count": len(tasks), "existing_row_count": len(existing_rows),
+        "generated_row_count": len(generated_rows), "output_row_count": len(output_rows),
+        "outstanding_current_task_count": 0,
     }
 
 
-def write_or_print_report(payload: Mapping[str, Any], report_path: Path | None) -> None:
+def write_or_print_report(payload: Mapping[str, Any], report_path: Path | None, *, protected: Sequence[Path], expected: Sequence[translation_local_io.FileSnapshot]) -> None:
     summary = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     if report_path:
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(summary, encoding="utf-8")
+        translation_local_io.write_json(report_path, payload, protected=protected, expected=expected)
     print(summary, end="")
 
 
@@ -614,7 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    export_parser = subparsers.add_parser("export", help="Create two-column .xlsx shards and a row-order manifest.")
+    export_parser = subparsers.add_parser("export", help="Create two-column .xlsx shards and a task/hash-bound manifest.")
     export_parser.add_argument("--canonical-sidecar", required=True, type=Path)
     export_parser.add_argument("--translation-source", type=Path)
     export_parser.add_argument("--output-dir", required=True, type=Path)
@@ -642,7 +678,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--translated-file",
         action="append",
         default=[],
-        help="Translated workbook as locale=path. Repeat in manifest shard order when there are multiple shards.",
+        help="Translated workbook as locale=path. Repeat for all shards in any order; intact hashes identify rows and shards.",
     )
     import_parser.add_argument("--reuse-locale", action="append", default=[], help="Reuse one locale's file for another, destination=source.")
     import_parser.add_argument("--schema", type=Path, help="Optional release schema used to validate requested fields.")
@@ -659,6 +695,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        report_expected = translation_local_io.snapshots([args.report]) if args.report else ()
+        protected = [args.canonical_sidecar, *([args.translation_source] if args.translation_source else []), *([args.schema] if args.schema else [])]
+        if args.command == "import":
+            protected.extend([args.manifest, args.output_translation_source])
+            protected.extend(p for paths in parse_path_mapping(args.translated_file, option_name="--translated-file").values() for p in paths)
+        if args.report:
+            translation_local_io.validate_paths(inputs=protected, outputs=[args.report])
         if args.command == "export":
             payload = export_document_workbooks(
                 canonical_sidecar=args.canonical_sidecar,
@@ -677,6 +720,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 output_stem=args.output_stem,
                 stringify_non_string=args.stringify_non_string,
                 skip_numeric_strings=args.skip_numeric_strings,
+                reserved_outputs=[args.report] if args.report else [],
             )
         else:
             payload = import_document_workbooks(
@@ -693,7 +737,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 asset_slug=args.asset_slug,
                 release=args.release,
             )
-        write_or_print_report(payload, args.report)
+        if args.command == "export":
+            protected.extend([Path(payload["manifest"]), *[Path(shard["path"]) for shard in payload["shards"]]])
+        write_or_print_report(payload, args.report, protected=protected, expected=report_expected)
     except (
         FeatureMetadataDocumentTranslateError,
         feature_metadata_machine_translate.FeatureMetadataMachineTranslateError,
@@ -705,7 +751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         zipfile.BadZipFile,
         ElementTree.ParseError,
     ) as exc:
-        print(f"feature-metadata-document-translate failed: {exc}", file=sys.stderr)
+        print(f"feature-metadata-document-translate failed: {exc}; earlier per-file commits may remain", file=sys.stderr)
         return 2
     return 0
 

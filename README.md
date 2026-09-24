@@ -266,10 +266,10 @@ breaking existing paths.
    also the PR author and GitHub blocks the reviewer request. Include staged
    source URIs/generations, intended canonical destination URIs,
    destination-generation expectations, validation commands, and any needed
-   `content_type` or `cache_control` publish-plan fields. Include a fenced
-   `shared-datasets-publish-plan` JSON block so merge or restricted PR-number
-   dispatch can trigger promotion.
-12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+   `content_type` or `cache_control` publish-plan fields. Use the concierge or
+   `reviewed_dataset_plan.py prepare` to add an immutable plan document and render
+   its matching readable fence; see [plan preparation](.github/dataset-plans/README.md).
+12. After a same-repo PR with a checked-in plan and exact-head approval merges, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects under the `shared-datasets-production` environment. Manual workflow
     dispatch by PR number is restricted to `jonaraphael`. After a successful
@@ -313,8 +313,8 @@ breaking existing paths.
     Include release date/source version, staged source URIs/generations,
     intended canonical destination URIs, destination-generation expectations,
     validation commands, stale companion formats if any, consumer impact, and a
-    fenced `shared-datasets-publish-plan` JSON block.
-12. When `jonaraphael` approves a same-repo PR with a valid publish plan, the
+    checked-in plan document plus its matching `shared-datasets-publish-plan` fence.
+12. After a same-repo PR with a checked-in plan and exact-head approval merges, the
     `Approved dataset mutation` GitHub workflow promotes the listed staged
     objects. Order the plan so dated release objects come before `latest/`, and
     write run records and `_catalog/releases/{asset-slug}.json` only from actual
@@ -339,8 +339,8 @@ breaking existing paths.
 5. Open a focused PR requesting review from `jonaraphael`, unless `jonaraphael`
    is also the PR author and GitHub blocks the reviewer request. Include consumer
    impact, replacement/deprecation state, exact object URIs, generations, and a
-   fenced `shared-datasets-delete-plan` JSON block.
-6. When `jonaraphael` approves a same-repo PR with a valid delete plan, the
+   checked-in plan document plus its matching `shared-datasets-delete-plan` fence.
+6. After a same-repo PR with a checked-in delete plan and exact-head approval merges, the
    `Approved dataset mutation` workflow deletes the listed objects with
    generation preconditions under the publisher identity, then verifies the live
    object is absent.
@@ -361,8 +361,12 @@ Terraform grants Workload Identity access only to the OIDC subject for this
 repository and environment. PR approval by `jonaraphael` is the normal human
 approval gate for automatic promotion. When GitHub blocks self-review because
 `jonaraphael` authored the PR, the `Approved dataset mutation` workflow can be
-dispatched with the PR number by `jonaraphael` only; it applies the same fenced
-plan validation before promotion or deletion. Manual workflow dispatch by PR
+dispatched with the merged PR number by `jonaraphael` only. Both entry points
+verify identical checked-in plan bytes at the reviewed head and merge revisions.
+They recheck effective acceptance before mutation and pass one digest-bound
+artifact across jobs using an exact executor SHA. Open PRs, stale/revoked reviews
+and body-only plans cannot authorize mutations. See the
+[plan format, migration and retry contract](.github/dataset-plans/README.md). Manual workflow dispatch by PR
 number remains restricted to `jonaraphael`. If the GitHub environment is
 also configured with required deployment reviewers, GitHub will pause the publish
 job for that separate environment approval instead of completing from PR approval
@@ -380,10 +384,14 @@ approved workflow can copy reviewed staged bytes into canonical prefixes. After
 successful promotion, the same workflow deletes the promoted scratch source
 objects with generation preconditions. A separate `Scratch cleanup audit`
 workflow runs weekly in the protected production environment: it writes a warning
-marker when a pending-publish prefix has had no object changes for 60 days, deletes
-warned prefixes after 90 days if no object in the prefix changed, and deletes
-pending-publish prefixes that already contain a data file matching a canonical
-release object by filename, size, and CRC32C.
+marker when the newest object in a pending-publish prefix is 60 days old and
+selects the prefix for deletion at 90 days if that object's name, generation,
+and update time still match the warning. This is an age-based abandonment
+policy; it does not inspect PR status or infer completed publication from
+historical content matches. A first warning after day 90 can become eligible on
+the next audit. Each deletion uses the listed object's exact generation, but
+cleanup is not atomic across a prefix. Dry-run reports identify candidates and
+perform no writes.
 The Terraform `scratch_writer_members` variable preserves the current
 scratch-only writer and should be overridden with the approved scratch-only
 group or service account when that identity is ready, before removing any
@@ -835,7 +843,8 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
 - Whether `latest/` or `releases/` paths are changed.
 - Staged `_scratch/pending-publishes/` source URIs and source generations.
 - Intended canonical destination URIs and destination-generation expectations.
-- A fenced `shared-datasets-publish-plan` JSON block if approval should trigger
+- A checked-in `.github/dataset-plans/` document and matching readable
+  `shared-datasets-publish-plan` fence if approval should trigger
   automatic promotion. For intentional release-schema changes, describe the
   schema change, rationale, reviewer, PR reference, and consumer impact in the
   publish plan.
@@ -851,7 +860,8 @@ A PR that changes remote asset organization, ingestion jobs, or access behavior 
   targets are detected automatically where the workflow has enough context;
   semantic contract changes such as feature identity policy or PMTiles lookup
   semantics must be declared explicitly in `breaking_changes`.
-- A fenced `shared-datasets-delete-plan` JSON block if approval should trigger
+- A checked-in `.github/dataset-plans/` document and matching readable
+  `shared-datasets-delete-plan` fence if approval should trigger
   reviewed deletion; every deletion must include exact URI, generation, and
   reason.
 - How the change was validated.

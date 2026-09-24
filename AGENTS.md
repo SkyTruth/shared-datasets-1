@@ -329,8 +329,12 @@ Git and history:
   related repo metadata and workflow files, committing, pushing, and opening a
   PR that requests review from `jonaraphael`, unless `jonaraphael` is also the
   PR author or the user asks to stop before PR. Every canonical object
-  promotion or deletion must be represented in an explicit PR with a fenced
-  publish or delete plan. The automatic canonical mutation path runs only after
+  promotion or deletion must be represented in an explicit PR with a checked-in
+  immutable document under `.github/dataset-plans/` and matching readable publish
+  or delete fences. Use `publishing_concierge.py render-pr` or
+  `reviewed_dataset_plan.py prepare`; see `.github/dataset-plans/README.md`.
+  Approval must target the exact head containing the document; merged body edits
+  cannot change authority. The automatic canonical mutation path runs only after
   that PR merges to `main`; a merged PR must have an approved review from
   `jonaraphael`, except self-authored `jonaraphael` PRs are treated as
   restricted self-acceptance after merge. Do not promote or delete canonical
@@ -384,12 +388,14 @@ A task is complete when:
   staged `_scratch/pending-publishes/` source URIs, source generations, intended
   canonical destination URIs, destination-generation expectations, and validation
   performed. If the PR is expected to promote data after merge, it must include a
-  fenced `shared-datasets-publish-plan` JSON block matching the staged objects
+  checked-in immutable plan document and a matching fenced
+  `shared-datasets-publish-plan` JSON block matching the staged objects
   and generation preconditions.
 - Any opened dataset deletion PR requests review from `jonaraphael`, or records
   the GitHub self-review block when `jonaraphael` is the author, and includes
   exact target object URIs, current generations, rationale, consumer impact,
-  replacement/deprecation state, and a fenced `shared-datasets-delete-plan` JSON
+  replacement/deprecation state, a checked-in immutable plan document, and a
+  matching fenced `shared-datasets-delete-plan` JSON
   block. Prefix, wildcard, and generation-less deletes are not valid.
 - Commands run or validation performed are stated.
 - Any uncertainty is explicitly called out.

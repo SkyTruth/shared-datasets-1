@@ -45,7 +45,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
-ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
+ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "catalog.json"}
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class ObjectStore(Protocol):
 
 
 class UrlSigner(Protocol):
-    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
+    def sign(self, gs_uri: str, expires_at: dt.datetime, *, generation: str | None = None) -> str:
         ...
 
 
@@ -205,11 +205,14 @@ class GcsV4UrlSigner:
             self._client = storage.Client(project=project) if project else storage.Client()
         return self._client
 
-    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
+    def sign(self, gs_uri: str, expires_at: dt.datetime, *, generation: str | None = None) -> str:
+        if generation is not None:
+            generation = artifact_generation(generation)
         bucket_name, object_name = split_gs_uri(gs_uri)
         if bucket_name != self._bucket_name:
             raise ValueError(f"PMTiles object must be in gs://{self._bucket_name}/")
         blob = self.client.bucket(bucket_name).blob(object_name)
+        query_parameters = {"generation": generation} if generation else None
         credentials = self._credentials or default_credentials()
         signing_email = self._service_account_email or getattr(credentials, "service_account_email", None)
         if not signing_email:
@@ -220,6 +223,7 @@ class GcsV4UrlSigner:
                 version="v4",
                 expiration=expires_at,
                 method="GET",
+                query_parameters=query_parameters,
                 credentials=credentials,
             )
 
@@ -229,6 +233,7 @@ class GcsV4UrlSigner:
             version="v4",
             expiration=expires_at,
             method="GET",
+            query_parameters=query_parameters,
             service_account_email=signing_email,
             access_token=credentials.token,
         )
@@ -250,14 +255,17 @@ class CloudCdnSignedUrlSigner:
         self._key_name = key_name
         self._key = key
 
-    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
+    def sign(self, gs_uri: str, expires_at: dt.datetime, *, generation: str | None = None) -> str:
+        if generation is not None:
+            generation = artifact_generation(generation)
         bucket_name, object_name = split_gs_uri(gs_uri)
         if bucket_name != self._bucket_name:
             raise ValueError(f"CDN metadata object must be in gs://{self._bucket_name}/")
         object_path = quote(object_name, safe="/")
         url = f"{self._base_url}{object_path}"
         expires = int(expires_at.timestamp())
-        unsigned_url = f"{url}?Expires={expires}&KeyName={quote(self._key_name, safe='')}"
+        generation_query = f"generation={generation}&" if generation else ""
+        unsigned_url = f"{url}?{generation_query}Expires={expires}&KeyName={quote(self._key_name, safe='')}"
         digest = hmac.new(self._key, unsigned_url.encode("utf-8"), hashlib.sha1).digest()
         signature = base64.urlsafe_b64encode(digest).decode("ascii")
         # Cloud CDN expects raw base64url signature padding; %3D padding is rejected.
@@ -334,6 +342,7 @@ def handle_request(
             path,
             headers,
             catalog_cache=catalog_cache,
+            object_store=object_store,
             signer=signer,
             bucket_name=bucket_name,
             signed_url_ttl_seconds=signed_url_ttl_seconds,
@@ -397,275 +406,194 @@ def handle_feature_lookup(
     )
 
 
-def handle_signed_url(
-    method: str,
-    path: str,
-    headers: Mapping[str, str],
-    *,
-    catalog_cache: CatalogJsonCache,
-    signer: UrlSigner,
-    bucket_name: str,
-    signed_url_ttl_seconds: int,
-    allowed_email_domains: tuple[str, ...],
-    now: Callable[[], dt.datetime],
-) -> Response:
+@dataclass(frozen=True)
+class SelectedArtifact:
+    uri: str
+    release: str | None
+    generation: str | None
+
+    def identity(self) -> dict[str, str | None]:
+        return {"gs_uri": self.uri, "resolved_release": self.release, "generation": self.generation}
+
+
+def artifact_generation(value: Any) -> str:
+    if type(value) is int:
+        value = str(value)
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", value) or int(value) > 2**64 - 1:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact has no valid exact generation")
+    return value
+
+
+def request_parameter(path: str, key: str, default: str = "") -> str:
+    values = parse_qs(urlsplit(path).query, keep_blank_values=True).get(key)
+    if values is None:
+        return default
+    if len(values) != 1 or not values[0]:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, f"invalid {key} parameter")
+    return values[0]
+
+
+def resolve_artifact(asset, format_name, version, *, locale, object_store) -> SelectedArtifact:
+    if format_name not in {"pmtiles", "fgb", "metadata", "schema"}:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb, metadata, or schema")
+    if format_name == "fgb" and asset.get("canonical_format") != "fgb":
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
+    if format_name == "pmtiles" and not asset_has_pmtiles(asset):
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish PMTiles")
+    if version != "latest":
+        try:
+            if not DATE_RE.fullmatch(version):
+                raise ValueError()
+            dt.date.fromisoformat(version)
+        except ValueError as exc:
+            raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD") from exc
+    locale = normalize_metadata_locale(locale)
+    preferred = str(asset.get("pmtiles_path" if format_name == "pmtiles" else "canonical_path") or "")
+    index = read_release_index(object_store, str(asset.get("slug") or ""))
+    if index is None:
+        if version == "latest" and format_name in {"pmtiles", "fgb"}:
+            return SelectedArtifact(preferred, None, None)
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
+    releases = index.get("releases")
+    if not isinstance(releases, list):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index releases field is invalid")
+    by_date = {}
+    for release in releases:
+        if not isinstance(release, dict) or not isinstance(release.get("files"), list):
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid release entry")
+        date = release.get("date")
+        try:
+            if not isinstance(date, str) or not DATE_RE.fullmatch(date) or date in by_date:
+                raise ValueError()
+            dt.date.fromisoformat(date)
+        except ValueError as exc:
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid or duplicate release date") from exc
+        by_date[date] = release
+    latest = index.get("latest_release")
+    if not isinstance(latest, dict) or latest.get("date") not in by_date:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest pointer is invalid")
+    date = latest["date"] if version == "latest" else version
+    release = by_date.get(date)
+    if release is None:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "requested release version was not found")
+    files = release["files"]
+    if any(not isinstance(f, dict) for f in files):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
+    candidates = [f for f in files if f.get("format") == format_name or f.get("role") == format_name]
+    if format_name == "metadata":
+        matches = []
+        for language in ([locale, ""] if locale else [""]):
+            suffix = f".metadata.{language}.ndjson.gz" if language else ".metadata.ndjson.gz"
+            matches = [f for f in candidates if str(f.get("path") or "").endswith(suffix)
+                       and normalize_metadata_locale(str(f.get("locale") or "")) in {"", language}]
+            if matches:
+                break
+        candidates = matches
+    elif format_name == "schema":
+        candidates = [f for f in candidates if str(f.get("path") or "").endswith(".schema.json")]
+    else:
+        matches = [f for f in candidates if basename(str(f.get("path") or "")) == basename(preferred)]
+        candidates = matches or candidates
+    if not candidates:
+        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, f"release does not include {format_name}")
+    if len(candidates) != 1:
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, f"ambiguous release {format_name} files")
+    file = candidates[0]
+    uri = str(file.get("path") or "")
+    root = re.split(r"/(?:latest|releases)/", str(asset.get("canonical_path") or preferred))[0]
+    expected_prefix = f"{root}/releases/{date}/"
+    if not uri.startswith(expected_prefix) or "/" in uri[len(expected_prefix):] or any(p in {".", "..", ""} for p in uri[5:].split("/")):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact is outside the catalog asset release")
+    suffixes = {"fgb": ".fgb", "pmtiles": ".pmtiles", "schema": ".schema.json", "metadata": ".ndjson.gz"}
+    if not uri.endswith(suffixes[format_name]):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact format/path mismatch")
+    generation = artifact_generation(file.get("generation"))
+    if "size" in file and (type(file["size"]) is not int or file["size"] < 0):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid artifact size")
+    if "sha256" in file and (not isinstance(file["sha256"], str) or not re.fullmatch(r"[a-fA-F0-9]{64}", file["sha256"])):
+        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid artifact checksum")
+    return SelectedArtifact(uri, date, generation)
+
+
+def handle_signed_url(method, path, headers, *, catalog_cache, object_store, signer, bucket_name,
+                      signed_url_ttl_seconds, allowed_email_domains, now):
+    return handle_artifact_url(method, path, headers, catalog_cache=catalog_cache, object_store=object_store,
+                              signer=signer, bucket_name=bucket_name, signed_url_ttl_seconds=signed_url_ttl_seconds,
+                              allowed_email_domains=allowed_email_domains, now=now, pmtiles=True)
+
+
+def handle_download_url(method, path, headers, *, catalog_cache, object_store, signer, bucket_name,
+                        signed_url_ttl_seconds, metadata_cdn_signer, metadata_cdn_ttl_seconds,
+                        allowed_email_domains, now):
+    return handle_artifact_url(method, path, headers, catalog_cache=catalog_cache, object_store=object_store,
+                              signer=signer, bucket_name=bucket_name, signed_url_ttl_seconds=signed_url_ttl_seconds,
+                              allowed_email_domains=allowed_email_domains, now=now,
+                              metadata_cdn_signer=metadata_cdn_signer, metadata_cdn_ttl_seconds=metadata_cdn_ttl_seconds)
+
+
+def handle_artifact_url(method, path, headers, *, catalog_cache, object_store, signer, bucket_name,
+                        signed_url_ttl_seconds, allowed_email_domains, now, pmtiles=False,
+                        metadata_cdn_signer=None, metadata_cdn_ttl_seconds=None):
     if method == "OPTIONS":
         return Response(HTTPStatus.NO_CONTENT, api_headers())
     if method not in {"GET", "HEAD"}:
         return json_response(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
-
-    slug = first_query_value(path, "slug")
-    if not slug or not SLUG_RE.fullmatch(slug):
-        return json_response(HTTPStatus.BAD_REQUEST, {"error": "slug must be lowercase kebab-case"})
-
     try:
+        allowed = {"slug", "version", "generation"} if pmtiles else {"slug", "version", "generation", "format", "locale"}
+        if set(parse_qs(urlsplit(path).query, keep_blank_values=True)) - allowed:
+            raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "unsupported artifact request parameter")
+        slug = request_parameter(path, "slug")
+        if not SLUG_RE.fullmatch(slug):
+            raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "slug must be lowercase kebab-case")
         asset = catalog_asset(catalog_cache.get(), slug)
-    except CatalogUnavailable:
-        return json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "catalog unavailable"})
-    if asset is None:
-        return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown asset slug"})
-    if not asset_has_pmtiles(asset):
-        return json_response(HTTPStatus.BAD_REQUEST, {"error": "asset does not publish PMTiles"})
-
-    pmtiles_path = str(asset.get("pmtiles_path") or "")
-    try:
-        pmtiles_bucket, _object_name = split_gs_uri(pmtiles_path)
-    except ValueError:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog PMTiles path is invalid"})
-    if pmtiles_bucket != bucket_name:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog PMTiles path is outside the shared bucket"})
-
-    try:
+        if asset is None:
+            raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "unknown asset slug")
+        format_name = "pmtiles" if pmtiles else request_parameter(path, "format", "fgb").lower()
+        version = request_parameter(path, "version", "latest")
+        locale = request_parameter(path, "locale") if format_name == "metadata" else ""
+        expected = request_parameter(path, "generation")
+        if expected:
+            try:
+                artifact_generation(expected)
+            except DownloadResolutionError as exc:
+                raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "invalid generation parameter") from exc
         access_tier = catalog_access_tier(asset)
-    except ValueError:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog access tier is invalid"})
-    if access_tier in RESTRICTED_ACCESS_TIERS:
-        email = authenticated_user_email(headers)
-        if not email:
-            return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
-        if not email_domain_allowed(email, allowed_email_domains):
-            return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
-        expires_at = now() + dt.timedelta(seconds=signed_url_ttl_seconds)
-        payload = {
-            "pmtiles_url": signer.sign(pmtiles_path, expires_at),
-            "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        }
-        return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
-
-    return json_response(
-        HTTPStatus.OK,
-        {
-            "pmtiles_url": gs_to_https(pmtiles_path),
-            "expires_at": None,
-        },
-        include_body=method != "HEAD",
-    )
-
-
-def handle_download_url(
-    method: str,
-    path: str,
-    headers: Mapping[str, str],
-    *,
-    catalog_cache: CatalogJsonCache,
-    object_store: ObjectStore,
-    signer: UrlSigner,
-    bucket_name: str,
-    signed_url_ttl_seconds: int,
-    metadata_cdn_signer: UrlSigner | None,
-    metadata_cdn_ttl_seconds: int | None,
-    allowed_email_domains: tuple[str, ...],
-    now: Callable[[], dt.datetime],
-) -> Response:
-    if method == "OPTIONS":
-        return Response(HTTPStatus.NO_CONTENT, api_headers())
-    if method not in {"GET", "HEAD"}:
-        return json_response(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method not allowed"})
-
-    slug = first_query_value(path, "slug")
-    if not slug or not SLUG_RE.fullmatch(slug):
-        return json_response(HTTPStatus.BAD_REQUEST, {"error": "slug must be lowercase kebab-case"})
-
-    format_name = (first_query_value(path, "format") or "fgb").lower()
-    version = first_query_value(path, "version") or "latest"
-    locale = first_query_value(path, "locale") if format_name == "metadata" else ""
-    try:
-        catalog = catalog_cache.get()
+        if access_tier in RESTRICTED_ACCESS_TIERS:
+            email = authenticated_user_email(headers)
+            if not email:
+                return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
+            if not email_domain_allowed(email, allowed_email_domains):
+                return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
+        selected = resolve_artifact(asset, format_name, version, locale=locale, object_store=object_store)
+        if split_gs_uri(selected.uri)[0] != bucket_name:
+            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog artifact path is outside the shared bucket")
+        if expected and expected != selected.generation:
+            raise DownloadResolutionError(HTTPStatus.CONFLICT, "selected artifact changed; reload the catalog and reselect")
     except CatalogUnavailable:
         return json_response(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "catalog unavailable"})
-
-    asset = catalog_asset(catalog, slug)
-    if asset is None:
-        return json_response(HTTPStatus.NOT_FOUND, {"error": "unknown asset slug"})
-
-    try:
-        gs_uri = resolve_download_gs_uri(asset, format_name, version, locale=locale, object_store=object_store)
-        download_bucket, _object_name = split_gs_uri(gs_uri)
     except DownloadResolutionError as exc:
         return json_response(exc.status, {"error": exc.message})
     except ValueError:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog download path is invalid"})
-
-    if download_bucket != bucket_name:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog download path is outside the shared bucket"})
-
-    filename = basename(gs_uri) or f"{slug}.{format_name}"
-    try:
-        access_tier = catalog_access_tier(asset)
-    except ValueError:
-        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog access tier is invalid"})
+        return json_response(HTTPStatus.BAD_GATEWAY, {"error": "catalog artifact identity is invalid"})
+    expires_at = None
     if access_tier in RESTRICTED_ACCESS_TIERS:
-        email = authenticated_user_email(headers)
-        if not email:
-            return json_response(HTTPStatus.UNAUTHORIZED, {"error": "IAP identity required"})
-        if not email_domain_allowed(email, allowed_email_domains):
-            return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
-        private_signer = signer
-        private_ttl_seconds = signed_url_ttl_seconds
+        ttl = signed_url_ttl_seconds
         if format_name == "metadata" and metadata_cdn_signer is not None:
-            private_signer = metadata_cdn_signer
-            private_ttl_seconds = metadata_cdn_ttl_seconds or signed_url_ttl_seconds
-        expires_at = now() + dt.timedelta(seconds=private_ttl_seconds)
-        payload = {
-            "download_url": private_signer.sign(gs_uri, expires_at),
-            "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "filename": filename,
-            "gs_uri": gs_uri,
-        }
-        if format_name == "metadata":
-            payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
-        return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
-
-    public_url = (
-        gs_to_public_artifact_url(gs_uri, bucket_name=bucket_name)
-        if format_name in {"metadata", "schema"}
-        else gs_to_https(gs_uri)
-    )
-    payload = {
-        "download_url": public_url,
-        "expires_at": None,
-        "filename": filename,
-        "gs_uri": gs_uri,
-    }
+            signer = metadata_cdn_signer
+            ttl = metadata_cdn_ttl_seconds or ttl
+        expires_at = now() + dt.timedelta(seconds=ttl)
+        url = signer.sign(selected.uri, expires_at, generation=selected.generation)
+    else:
+        url = gs_to_public_artifact_url(selected.uri, bucket_name=bucket_name) if selected.release else gs_to_https(selected.uri)
+        if selected.generation:
+            url += f"?generation={selected.generation}"
+    payload = {**selected.identity(), "pmtiles_url" if pmtiles else "download_url": url,
+               "expires_at": expires_at.replace(microsecond=0).isoformat().replace("+00:00", "Z") if expires_at else None}
+    if not pmtiles:
+        payload["filename"] = basename(selected.uri)
     if format_name == "metadata":
-        payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=gs_uri))
+        payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=selected.uri))
     return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
-
-
-def resolve_download_gs_uri(
-    asset: Mapping[str, Any],
-    format_name: str,
-    version: str,
-    *,
-    locale: str = "",
-    object_store: ObjectStore,
-) -> str:
-    if format_name == "metadata":
-        return resolve_metadata_sidecar_gs_uri(asset, version, locale=locale, object_store=object_store)
-    if format_name == "schema":
-        return resolve_schema_gs_uri(asset, version, object_store=object_store)
-    if format_name != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb, metadata, or schema")
-    if str(asset.get("canonical_format") or "").strip() != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
-    if version != "latest" and not DATE_RE.fullmatch(version):
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
-
-    if version == "latest":
-        gs_uri = str(asset.get("canonical_path") or "").strip()
-    else:
-        gs_uri = release_download_gs_uri(asset, version, object_store=object_store)
-    if not gs_uri:
-        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "requested release version was not found")
-    if not gs_uri.lower().endswith(".fgb"):
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog download path is not an FGB")
-    return gs_uri
-
-
-def resolve_metadata_sidecar_gs_uri(
-    asset: Mapping[str, Any],
-    version: str,
-    *,
-    locale: str = "",
-    object_store: ObjectStore,
-) -> str:
-    if version != "latest" and not DATE_RE.fullmatch(version):
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
-    normalized_locale = normalize_metadata_locale(locale)
-
-    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index is None:
-        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
-    if version == "latest":
-        latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
-        latest_date = str(latest.get("date") or "") if latest else ""
-        if not DATE_RE.fullmatch(latest_date):
-            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest_release.date is invalid")
-        release = release_index_release(release_index, latest_date) or latest
-    else:
-        release = release_index_release(release_index, version)
-    if release:
-        gs_uri = release_file_for_metadata_locale(release.get("files"), normalized_locale)
-        if gs_uri:
-            return gs_uri
-
-    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a metadata sidecar")
-
-
-def resolve_schema_gs_uri(
-    asset: Mapping[str, Any],
-    version: str,
-    *,
-    object_store: ObjectStore,
-) -> str:
-    if version != "latest" and not DATE_RE.fullmatch(version):
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "version must be latest or YYYY-MM-DD")
-    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index is None:
-        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
-    if version == "latest":
-        latest = release_index.get("latest_release") if isinstance(release_index.get("latest_release"), Mapping) else None
-        latest_date = str(latest.get("date") or "") if latest else ""
-        if not DATE_RE.fullmatch(latest_date):
-            raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index latest_release.date is invalid")
-        release = release_index_release(release_index, latest_date) or latest
-    else:
-        release = release_index_release(release_index, version)
-    if release:
-        gs_uri = release_file_for_role(release.get("files"), "schema", ".schema.json")
-        if gs_uri:
-            return gs_uri
-
-    raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include a schema")
-
-
-def release_download_gs_uri(asset: Mapping[str, Any], version: str, *, object_store: ObjectStore) -> str:
-    release_index = read_release_index(object_store, str(asset.get("slug") or ""))
-    if release_index is None:
-        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release index was not found")
-    release = release_index_release(release_index, version)
-    if not release:
-        return ""
-    gs_uri = release_file_for_canonical_format(release.get("files"), "fgb", str(asset.get("canonical_path") or ""))
-    if not gs_uri:
-        raise DownloadResolutionError(HTTPStatus.NOT_FOUND, "release does not include the canonical FGB")
-    return gs_uri
-
-
-def release_file_for_role(files: Any, role: str, suffix: str) -> str:
-    if not isinstance(files, list):
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
-    for file_entry in files:
-        if not isinstance(file_entry, Mapping):
-            continue
-        file_path = str(file_entry.get("path") or "").strip()
-        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
-            continue
-        entry_role = str(file_entry.get("role") or "").strip()
-        entry_format = str(file_entry.get("format") or "").strip()
-        if entry_role == role or entry_format == role:
-            return file_path
-    return ""
 
 
 def normalize_metadata_locale(locale: str) -> str:
@@ -695,38 +623,6 @@ def metadata_locale_payload(*, requested_locale: str, resolved_uri: str) -> dict
     }
 
 
-def release_file_for_metadata_locale(files: Any, locale: str) -> str:
-    if not isinstance(files, list):
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
-    normalized_locale = normalize_metadata_locale(locale)
-    if normalized_locale:
-        localized = release_file_for_exact_metadata_locale(files, normalized_locale)
-        if localized:
-            return localized
-    return release_file_for_exact_metadata_locale(files, "")
-
-
-def release_file_for_exact_metadata_locale(files: list[Any], locale: str) -> str:
-    suffix = f".metadata.{locale}.ndjson.gz" if locale else ".metadata.ndjson.gz"
-    for file_entry in files:
-        if not isinstance(file_entry, Mapping):
-            continue
-        file_path = str(file_entry.get("path") or "").strip()
-        if not file_path.startswith("gs://") or not file_path.endswith(suffix):
-            continue
-        entry_role = str(file_entry.get("role") or "").strip()
-        entry_format = str(file_entry.get("format") or "").strip()
-        if entry_role != "metadata" and entry_format != "metadata":
-            continue
-        declared_locale = normalize_metadata_locale(str(file_entry.get("locale") or ""))
-        if locale and declared_locale and declared_locale != locale:
-            continue
-        if not locale and declared_locale:
-            continue
-        return file_path
-    return ""
-
-
 def read_release_index(object_store: ObjectStore, slug: str) -> Mapping[str, Any] | None:
     if not SLUG_RE.fullmatch(slug):
         return None
@@ -740,39 +636,12 @@ def read_release_index(object_store: ObjectStore, slug: str) -> Mapping[str, Any
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid") from exc
     if not isinstance(payload, Mapping):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index is invalid")
-    if payload.get("schema_version") != 1:
+    if type(payload.get("schema_version")) is not int or payload.get("schema_version") != 1:
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index schema_version is invalid")
     release_slug = str(payload.get("asset_slug") or "")
     if release_slug != slug:
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index asset slug does not match")
     return payload
-
-
-def release_index_release(release_index: Mapping[str, Any], version: str) -> Mapping[str, Any] | None:
-    releases = release_index.get("releases") or []
-    if not isinstance(releases, list):
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release index releases field is invalid")
-    for release in releases:
-        if isinstance(release, Mapping) and str(release.get("date") or "") == version:
-            return release
-    return None
-
-
-def release_file_for_canonical_format(files: Any, format_name: str, canonical_path: str) -> str:
-    if not isinstance(files, list):
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "release files field is invalid")
-    canonical_name = basename(canonical_path)
-    if not canonical_name:
-        raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "catalog canonical path is invalid")
-    for file_entry in files:
-        if not isinstance(file_entry, Mapping):
-            continue
-        if str(file_entry.get("format") or "").strip() != format_name:
-            continue
-        file_path = str(file_entry.get("path") or "").strip()
-        if file_path.startswith("gs://") and basename(file_path) == canonical_name:
-            return file_path
-    return ""
 
 
 def handle_static(method: str, request_path: str, *, object_store: ObjectStore) -> Response:
@@ -829,11 +698,6 @@ def catalog_access_tier(asset: Mapping[str, Any]) -> str:
     if access_tier not in ACCESS_TIERS:
         raise ValueError("invalid access_tier")
     return access_tier
-
-
-def first_query_value(path: str, key: str) -> str:
-    values = parse_qs(urlsplit(path).query).get(key) or []
-    return values[0].strip() if values else ""
 
 
 def basename(path: str) -> str:

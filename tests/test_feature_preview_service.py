@@ -77,7 +77,7 @@ class FakeGcsBucket:
     def __init__(self, blobs: dict[str, FakeGcsBlob]) -> None:
         self.blobs = blobs
 
-    def blob(self, name: str) -> FakeGcsBlob:
+    def blob(self, name: str, *, generation=None) -> FakeGcsBlob:
         return self.blobs.get(name, FakeGcsBlob(name, b"", missing=True))
 
 
@@ -424,8 +424,8 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         sidecar_blob.generation = 1002
         second = index.lookup("wdpa-marine", "2026-06-01", ["2"], sidecar_uri=SIDECAR_URI, sidecar_generation=1002)
 
-        self.assertEqual(first["1"]["properties"]["name"], "A")
-        self.assertEqual(second["2"]["properties"]["name"], "B")
+        self.assertEqual(first.documents["1"]["properties"]["name"], "A")
+        self.assertEqual(second.documents["2"]["properties"]["name"], "B")
         self.assertEqual(sidecar_blob.download_count, 2)
 
     def test_sidecar_lookup_skips_nonmatching_rows_without_full_parse(self):
@@ -558,3 +558,77 @@ class FeaturePreviewServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_lookup_identity_is_enforced_by_backend_not_echoed_from_resolver():
+    from types import SimpleNamespace
+
+    class Firestore:
+        def collection(self, _name):
+            return self
+
+        def document(self, _name):
+            return self
+
+        def get_all(self, _refs):
+            # Same-date stale record: the resolver asks for generation 1001, but
+            # Firestore has no corresponding source-generation enforcement.
+            return [SimpleNamespace(exists=True, to_dict=lambda: sidecar_record("1", name="Stale"))]
+
+    firestore = run.FirestoreFeatureIndex(client=Firestore())
+    sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1", name="Exact")]), generation=1001)
+    gcs = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})))
+    for backend, name, generation in [(firestore, "Stale", None), (gcs, "Exact", 1001), (FakeIndex(), "A", None)]:
+        response = run.handle_request("POST", "/v1/assets/wdpa-marine/releases/2026-06-01:lookup", {}, b'{"ids":["1"]}',
+                                      release_resolver=FakeResolver(), feature_index=backend, require_iap=False)
+        assert response.status == 200
+        payload = json.loads(response.body)
+        assert payload["items"][0]["properties"]["name"] == name
+        assert payload["sidecar_generation"] == generation
+        assert payload["sidecar_uri"] == (SIDECAR_URI if generation else None)
+
+
+def test_backend_never_retries_without_generation_precondition():
+    class UnsafeBlob(FakeGcsBlob):
+        def open(self, mode="rb"):
+            raise AssertionError("an unpinned retry must never occur")
+
+        def download_as_bytes(self):
+            raise AssertionError("an unpinned retry must never occur")
+
+    blob = UnsafeBlob(SIDECAR_OBJECT, b"", generation=1001)
+    backend = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: blob})))
+    response = run.handle_request("POST", "/v1/assets/wdpa-marine/releases/2026-06-01:lookup", {}, b'{"ids":["1"]}',
+                                  release_resolver=FakeResolver(), feature_index=backend, require_iap=False)
+    assert response.status == 503
+
+
+def test_retained_historical_sidecar_reads_exact_generation_or_fails():
+    old = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1", name="Old retained")]), generation=1001)
+    current = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1", name="New current")]), generation=1002)
+
+    class VersionedBucket:
+        def __init__(self, retained):
+            self.retained = retained
+            self.requests = []
+
+        def blob(self, name, generation=None):
+            self.requests.append((name, generation))
+            if generation == 1001 and self.retained:
+                return old
+            if generation is None or generation == 1002:
+                return current
+            return FakeGcsBlob(name, None)
+
+    for retained in [True, False]:
+        bucket = VersionedBucket(retained)
+        backend = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, client=FakeGcsClient(bucket))
+        response = run.handle_request("POST", "/v1/assets/wdpa-marine/releases/2026-06-01:lookup", {}, b'{"ids":["1"]}',
+                                      release_resolver=FakeResolver(), feature_index=backend, require_iap=False)
+        assert bucket.requests == [(SIDECAR_OBJECT, 1001)]
+        assert response.status == (200 if retained else 409)
+        if retained:
+            payload = json.loads(response.body)
+            assert payload["sidecar_generation"] == 1001
+            assert payload["items"][0]["properties"]["name"] == "Old retained"
+        assert current.download_count == 0

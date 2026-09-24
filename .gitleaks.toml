@@ -1,0 +1,16 @@
+title = "Shared datasets secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public deterministic proposal digest in the shared authorization fixture"
+condition = "AND"
+paths = ['''^tests/fixtures/dataset-mutation-authorization-v1\.json$''']
+regexTarget = "secret"
+# Recomputed by test_checked_in_shared_fixture_preserves_replay_contract.
+# This is a SHA-256 of synthetic approval identity fields, not a credential.
+regexes = ['''^0b49eae079e3dbf8ca625d6612909872e665f68c4f46557eb6668fb9d84b9ae1$''']

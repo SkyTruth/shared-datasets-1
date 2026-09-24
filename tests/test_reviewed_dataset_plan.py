@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import contextlib
 import io
 import tempfile
@@ -11,13 +10,6 @@ from scripts import reviewed_dataset_plan
 
 
 BUCKET = "skytruth-shared-datasets-1"
-
-
-def event_path(body: str) -> Path:
-    tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    with tmp:
-        json.dump({"pull_request": {"body": body}}, tmp)
-    return Path(tmp.name)
 
 
 class ReviewedDatasetPlanTests(unittest.TestCase):
@@ -437,283 +429,133 @@ class ReviewedDatasetPlanTests(unittest.TestCase):
                 }
             )
 
-    def test_extract_delete_plan_from_event_file(self):
-        path = event_path(
-            """
-```shared-datasets-delete-plan
-{
-  "asset_slug": "example-asset",
-  "proposal_id": "pr-123",
-  "deletions": [
-    {
-      "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb",
-      "generation": "123",
-      "reason": "Remove wrong latest object after approved replacement."
-    }
-  ]
-}
-```
-"""
-        )
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                code = reviewed_dataset_plan.main(["extract", "delete", "--event-path", str(path)])
-        finally:
-            path.unlink()
+    def test_canonical_document_roundtrip_and_ambiguity_refusals(self):
+        from test_dataset_mutation_authorization import document
+        from copy import deepcopy
 
-        self.assertEqual(code, 0)
+        doc = document()
+        raw = reviewed_dataset_plan.canonical_bytes(doc)
+        path = reviewed_dataset_plan.document_path(doc)
+        self.assertEqual(reviewed_dataset_plan.read_document(raw, path=path), doc)
+        for bad_raw, bad_path in (
+            (raw + b" ", path),
+            (raw, path.replace(".json", "0.json")),
+            (b'{"plan_version":1,"plan_version":1}', path),
+            (b'{"value":NaN}', path),
+        ):
+            with (
+                self.subTest(raw=bad_raw),
+                self.assertRaises(reviewed_dataset_plan.PlanValidationError),
+            ):
+                reviewed_dataset_plan.read_document(bad_raw, path=bad_path)
+        for mutate in (
+            lambda d: d["publish"]["promotions"].append(
+                deepcopy(d["publish"]["promotions"][0])
+            ),
+            lambda d: d["publish"]["promotions"][0].update(source_generation=True),
+            lambda d: d["publish"]["promotions"][0].update(source_generation="0"),
+            lambda d: d["publish"]["promotions"][0].update(extra="hidden"),
+            lambda d: d.update(plan_version=True),
+            lambda d: d.update(finalization_version="arbitrary-command"),
+            lambda d: d["publish"].update(unknown=True),
+        ):
+            bad = deepcopy(doc)
+            mutate(bad)
+            with (
+                self.subTest(mutate=mutate),
+                self.assertRaises(reviewed_dataset_plan.PlanValidationError),
+            ):
+                reviewed_dataset_plan.normalize_document(bad)
 
-    def test_extract_publish_plan_with_output_prints_compact_summary(self):
-        path = event_path(
-            """
-```shared-datasets-publish-plan
-{
-  "asset_slug": "example-asset",
-  "proposal_id": "pr-123",
-  "promotions": [
-    {
-      "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
-      "source_generation": "123",
-      "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb",
-      "destination_generation": "456",
-      "content_type": "application/octet-stream",
-      "cache_control": ""
-    }
-  ]
-}
-```
-"""
-        )
-        output = Path(tempfile.NamedTemporaryFile(suffix=".json", delete=False).name)
-        try:
+    def test_combined_disjoint_plan_and_conflicting_targets(self):
+        from test_dataset_mutation_authorization import document
+
+        doc = document()
+        target = doc["publish"]["promotions"][0]["destination_uri"]
+        doc["delete"] = {
+            "asset_slug": "demo",
+            "proposal_id": "pr-7",
+            "deletions": [
+                {
+                    "uri": target + ".old",
+                    "generation": "9",
+                    "reason": "Remove explicitly obsolete data",
+                }
+            ],
+        }
+        reviewed_dataset_plan.normalize_document(doc)
+        doc["delete"]["deletions"][0]["uri"] = target
+        with self.assertRaisesRegex(
+            reviewed_dataset_plan.PlanValidationError, "conflict"
+        ):
+            reviewed_dataset_plan.normalize_document(doc)
+
+    def test_prepare_cli_creates_identical_file_and_fence_without_overwriting_tampering(
+        self,
+    ):
+        from test_dataset_mutation_authorization import document
+        from scripts import reviewed_dataset_plan as p
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "publish.json"
+            payload.write_bytes(p.canonical_bytes(document()["publish"]))
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                code = reviewed_dataset_plan.main(["extract", "publish", "--event-path", str(path), "--output", str(output)])
-            printed = json.loads(stdout.getvalue())
-            written = json.loads(output.read_text())
-        finally:
-            path.unlink()
-            output.unlink(missing_ok=True)
-
-        self.assertEqual(code, 0)
-        self.assertEqual(printed["promotion_count"], 1)
-        self.assertEqual(printed["replacement_count"], 1)
-        self.assertNotIn("source_uri", stdout.getvalue())
-        self.assertEqual(written["promotions"][0]["source_generation"], "123")
-
-    def test_extract_publish_plan_print_plan_keeps_full_stdout(self):
-        path = event_path(
-            """
-```shared-datasets-publish-plan
-{
-  "asset_slug": "example-asset",
-  "proposal_id": "pr-123",
-  "promotions": [
-    {
-      "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/example-asset.fgb",
-      "source_generation": "123",
-      "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/example-asset/latest/example-asset.fgb"
-    }
-  ]
-}
-```
-"""
-        )
-        output = Path(tempfile.NamedTemporaryFile(suffix=".json", delete=False).name)
-        try:
-            stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
-                code = reviewed_dataset_plan.main(
-                    ["extract", "publish", "--event-path", str(path), "--output", str(output), "--print-plan"]
+                self.assertEqual(
+                    p.main(
+                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
+                    ),
+                    0,
                 )
-        finally:
-            path.unlink()
-            output.unlink(missing_ok=True)
-
-        self.assertEqual(code, 0)
-        self.assertIn("source_uri", stdout.getvalue())
-
-    def test_pr_api_payload_to_event_accepts_open_same_repo_default_branch_pr(self):
-        event = reviewed_dataset_plan.pr_api_payload_to_event(
-            {
-                "state": "open",
-                "merged": False,
-                "body": "reviewed plan",
-                "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
-                "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
-            },
-            repository="SkyTruth/shared-datasets-1",
-            default_branch="main",
-        )
-
-        self.assertEqual(event["pull_request"]["body"], "reviewed plan")
-
-    def test_pr_api_payload_to_event_accepts_merged_pr_when_allowed(self):
-        event = reviewed_dataset_plan.pr_api_payload_to_event(
-            {
-                "state": "closed",
-                "merged": True,
-                "body": "reviewed plan",
-                "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
-                "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
-            },
-            repository="SkyTruth/shared-datasets-1",
-            default_branch="main",
-            allow_merged=True,
-        )
-
-        self.assertEqual(event["pull_request"]["body"], "reviewed plan")
-
-    def test_workflow_run_pr_resolution_uses_commit_associated_prs_when_event_list_is_empty(self):
-        event = {
-            "workflow_run": {
-                "pull_requests": [],
-                "head_sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
-                "head_branch": "codex/wdpa-name-eng-mutation",
-            }
-        }
-        commit_prs = [
-            {
-                "number": 88,
-                "state": "closed",
-                "merged_at": "2026-06-15T17:00:33Z",
-                "head": {
-                    "ref": "codex/wdpa-name-eng-mutation",
-                    "sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
-                    "repo": {"full_name": "SkyTruth/shared-datasets-1"},
-                },
-                "base": {
-                    "ref": "main",
-                    "repo": {"full_name": "SkyTruth/shared-datasets-1"},
-                },
-            }
-        ]
-
-        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
-            event,
-            repository="SkyTruth/shared-datasets-1",
-            default_branch="main",
-            commit_prs=commit_prs,
-        )
-
-        self.assertEqual(pr_number, "88")
-
-    def test_workflow_run_pr_resolution_falls_back_to_head_branch_candidates(self):
-        event = {
-            "workflow_run": {
-                "pull_requests": [],
-                "head_sha": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
-                "head_branch": "codex/wdpa-name-eng-mutation",
-            }
-        }
-        branch_prs = [
-            {
-                "number": 88,
-                "baseRefName": "main",
-                "headRefName": "codex/wdpa-name-eng-mutation",
-                "headRefOid": "7169d5c32889ddbaf258e9f829abaf0ca2fd1d83",
-                "headRepository": {"nameWithOwner": "SkyTruth/shared-datasets-1"},
-                "mergeCommit": {"oid": "d59b5bce28998d3e1f0003c27fa327884cbead37"},
-                "mergedAt": "2026-06-15T17:00:33Z",
-                "state": "MERGED",
-            }
-        ]
-
-        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
-            event,
-            repository="SkyTruth/shared-datasets-1",
-            default_branch="main",
-            branch_prs=branch_prs,
-        )
-
-        self.assertEqual(pr_number, "88")
-
-    def test_workflow_run_pr_resolution_keeps_non_translation_runs_noop_when_no_pr_matches(self):
-        event = {
-            "workflow_run": {
-                "pull_requests": [],
-                "head_sha": "abc123",
-                "head_branch": "docs-only",
-            }
-        }
-        branch_prs = [
-            {
-                "number": 77,
-                "baseRefName": "other-branch",
-                "headRefName": "docs-only",
-                "headRefOid": "abc123",
-                "headRepository": {"nameWithOwner": "SkyTruth/shared-datasets-1"},
-                "state": "MERGED",
-            }
-        ]
-
-        pr_number = reviewed_dataset_plan.resolve_workflow_run_pr_number(
-            event,
-            repository="SkyTruth/shared-datasets-1",
-            default_branch="main",
-            branch_prs=branch_prs,
-        )
-
-        self.assertIsNone(pr_number)
-
-    def test_pr_api_payload_to_event_rejects_closed_unmerged_pr_when_allowing_merged(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "open or merged"):
-            reviewed_dataset_plan.pr_api_payload_to_event(
-                {
-                    "state": "closed",
-                    "merged": False,
-                    "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
-                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
-                },
-                repository="SkyTruth/shared-datasets-1",
-                default_branch="main",
-                allow_merged=True,
-            )
-
-    def test_event_from_pr_cli_allows_merged_pr_with_flag(self):
-        tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        with tmp:
-            json.dump(
-                {
-                    "state": "closed",
-                    "merged": True,
-                    "body": "reviewed plan",
-                    "head": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}},
-                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
-                },
-                tmp,
-            )
-        path = Path(tmp.name)
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                code = reviewed_dataset_plan.main(
-                    [
-                        "event-from-pr",
-                        "--pr-json",
-                        str(path),
-                        "--repository",
-                        "SkyTruth/shared-datasets-1",
-                        "--default-branch",
-                        "main",
-                        "--allow-merged",
-                    ]
+            path = root / p.document_path(document())
+            self.assertEqual(path.read_bytes(), p.canonical_bytes(document()))
+            p.check_rendered_body(stdout.getvalue(), document())
+            path.write_text("tampered")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(
+                    p.main(
+                        ["prepare", "--publish", str(payload), "--repo-root", str(root)]
+                    ),
+                    2,
                 )
-        finally:
-            path.unlink()
 
-        self.assertEqual(code, 0)
+    def test_producer_rejects_dot_proposals_and_escaping_symlink_before_mkdir(self):
+        from test_dataset_mutation_authorization import document
+        from scripts import reviewed_dataset_plan as p
 
-    def test_pr_api_payload_to_event_rejects_fork_pr(self):
-        with self.assertRaisesRegex(reviewed_dataset_plan.PlanValidationError, "head repository"):
-            reviewed_dataset_plan.pr_api_payload_to_event(
-                {
-                    "state": "open",
-                    "head": {"repo": {"full_name": "other/shared-datasets-1"}},
-                    "base": {"repo": {"full_name": "SkyTruth/shared-datasets-1"}, "ref": "main"},
-                },
-                repository="SkyTruth/shared-datasets-1",
-                default_branch="main",
-            )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            outside = Path(tmp) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            (root / ".github").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(p.PlanValidationError, "escapes"):
+                p.write_document(document(), repo_root=root)
+            self.assertEqual(list(outside.iterdir()), [])
+        for proposal in (".", ".."):
+            for kind in ("publish", "delete"):
+                doc = document()
+                if kind == "delete":
+                    target = doc.pop("publish")["promotions"][0]["destination_uri"]
+                    doc["delete"] = {
+                        "asset_slug": "demo",
+                        "proposal_id": proposal,
+                        "deletions": [
+                            {
+                                "uri": target,
+                                "generation": "1",
+                                "reason": "Reviewed obsolete object deletion",
+                            }
+                        ],
+                    }
+                else:
+                    doc["publish"]["proposal_id"] = proposal
+                with (
+                    self.subTest(proposal=proposal, kind=kind),
+                    self.assertRaisesRegex(p.PlanValidationError, "proposal_id"),
+                ):
+                    p.normalize_document(doc)
 
 
 if __name__ == "__main__":

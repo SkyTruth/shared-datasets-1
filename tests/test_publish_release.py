@@ -464,6 +464,180 @@ class PublishReleaseTests(unittest.TestCase):
         manifest_entry = next(item for item in manifest_payload["artifacts"] if item["role"] == "manifest")
         self.assertNotIn("generation", manifest_entry)
 
+    def test_execute_rejects_changed_inputs_before_any_upload(self):
+        for changed in ("fgb", "pmtiles", "metadata", "schema", "manifest", "readme", "catalog"):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                catalog = write_catalog(root)
+                artifacts = write_vector_bundle(root)
+                readme = write_artifact(root, "README.md", b"reviewed readme")
+                remote_catalog = write_artifact(root, "remote-catalog.csv", b"reviewed catalog")
+                bucket = FakeBucket()
+                plan = publish_release.build_publish_plan(
+                    asset_slug="example-asset", release_date="2026-05-01",
+                    publish_dir=None, artifact_overrides=artifacts, catalog_path=catalog,
+                    readme_path=readme, remote_catalog_path=remote_catalog,
+                    client=FakeClient(bucket), schema_reader=lambda _path: [],
+                    schema_compatibility_checker=skip_schema_compatibility,
+                )
+                path = {**artifacts, "readme": readme, "catalog": remote_catalog}[changed]
+                # Same size isolates the digest check from the size check.
+                original = path.read_bytes()
+                path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+                with self.assertRaises(publish_release.PublishReleaseError):
+                    publish_release.execute_publish_plan(
+                        plan, client=FakeClient(bucket), notify=False, update_schema_snapshot=False,
+                    )
+                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+
+    def test_execute_uses_frozen_inputs_when_originals_change_during_upload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = write_catalog(root)
+            artifacts = write_vector_bundle(root)
+            readme = write_artifact(root, "README.md", b"reviewed readme")
+            bucket = FakeBucket()
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset", release_date="2026-05-01",
+                publish_dir=None, artifact_overrides=artifacts, catalog_path=catalog,
+                readme_path=readme, client=FakeClient(bucket), schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
+            )
+            original_bytes = {name: path.read_bytes() for name, path in artifacts.items()}
+            upload = FakeBlob.upload_from_filename
+            upload_paths = []
+
+            def change_originals_then_upload(blob, filename, **kwargs):
+                upload_paths.append(Path(filename))
+                for path in (*artifacts.values(), readme):
+                    path.write_bytes(b"changed after capture")
+                upload(blob, filename, **kwargs)
+
+            with mock.patch.object(FakeBlob, "upload_from_filename", change_originals_then_upload):
+                result = publish_release.execute_publish_plan(
+                    plan, client=FakeClient(bucket), notify=False, update_schema_snapshot=False,
+                )
+            for artifact in plan.artifacts:
+                if artifact.format == "manifest":
+                    continue
+                for destination in (artifact.release_uri, artifact.latest_uri):
+                    blob = bucket.blob(publish_release.object_name_from_uri(destination))
+                    self.assertEqual(blob.data, original_bytes[artifact.format])
+            self.assertEqual(bucket.blob(publish_release.object_name_from_uri(plan.metadata_uploads[0].uri)).data, b"reviewed readme")
+            self.assertEqual(result.warnings, ())
+            self.assertTrue(all(path not in artifacts.values() and path != readme for path in upload_paths))
+            self.assertTrue(all(not path.exists() for path in upload_paths))
+            run = json.loads(bucket.blob(publish_release.object_name_from_uri(plan.run_record_uri)).text)
+            self.assertEqual([item["local_path"] for item in run["artifacts"]], [item.local_path for item in plan.artifacts])
+
+    def test_capture_detects_in_copy_change_and_cleans_private_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = write_catalog(root, canonical_format="csv", available_formats="csv")
+            source = write_artifact(root, "example-asset.csv", b"id\n1\n")
+            bucket = FakeBucket()
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset", release_date="2026-05-01", publish_dir=None,
+                artifact_overrides={"csv": source}, catalog_path=catalog,
+                client=FakeClient(bucket), schema_reader=lambda _path: [],
+                schema_compatibility_checker=skip_schema_compatibility,
+            )
+            copy = publish_release.shutil.copyfile
+
+            def change_during_copy(original, destination):
+                original.write_bytes(b"id\n2\n")
+                return copy(original, destination)
+
+            with (
+                mock.patch.dict("os.environ", {"SHARED_DATASETS_WORKDIR": str(root / "work")}),
+                mock.patch.object(publish_release.shutil, "copyfile", side_effect=change_during_copy),
+                self.assertRaisesRegex(publish_release.PublishReleaseError, "changed since publish plan"),
+            ):
+                publish_release.execute_publish_plan(plan, client=FakeClient(bucket), notify=False)
+            self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+            self.assertEqual(list((root / "work" / "_scratch").iterdir()), [])
+
+    def test_native_and_schema_validation_use_same_snapshots_as_uploads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = write_catalog(root)
+            artifacts = write_vector_bundle(root)
+            bucket = FakeBucket()
+            def checker(**_kwargs):
+                return {"blocked_diffs": [], "warning_diffs": []}
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset", release_date="2026-05-01", publish_dir=None,
+                artifact_overrides=artifacts, catalog_path=catalog, client=FakeClient(bucket),
+                schema_reader=lambda _path: [], schema_compatibility_checker=checker,
+            )
+            checked = []
+
+            def check_native(fgb, pmtiles):
+                checked.extend((fgb, pmtiles))
+                self.assertNotEqual(fgb, artifacts["fgb"])
+                self.assertNotEqual(pmtiles, artifacts["pmtiles"])
+                for path in artifacts.values():
+                    path.write_bytes(b"changed originals")
+                return SimpleNamespace(valid=True)
+
+            with mock.patch.object(publish_release, "default_vector_bundle_validator", side_effect=check_native):
+                publish_release.execute_publish_plan(
+                    plan, client=FakeClient(bucket),
+                    schema_reader=lambda path: self.assertEqual(path, checked[0]) or [],
+                    schema_compatibility_checker=checker,
+                    schema_updater=lambda _slug, path: self.assertEqual(path, checked[0]),
+                    notifier=lambda snapshot_plan, _count: self.assertEqual(Path(snapshot_plan.artifacts[0].local_path), checked[0]),
+                )
+            self.assertTrue(all(not path.exists() for path in checked))
+            self.assertEqual(bucket.blob(publish_release.object_name_from_uri(plan.artifacts[0].release_uri)).data, b"fgb bytes")
+
+    def test_execute_native_failure_precedes_uploads_and_cleans_snapshots(self):
+        for canonical in ("fgb", "cog"):
+            with self.subTest(canonical=canonical), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                catalog = write_catalog(root, canonical_format=canonical, available_formats=canonical)
+                artifacts = write_vector_bundle(root) if canonical == "fgb" else {
+                    "cog": write_artifact(root, "example-asset.tif"),
+                }
+                bucket = FakeBucket()
+                plan = publish_release.build_publish_plan(
+                    asset_slug="example-asset", release_date="2026-05-01", publish_dir=None,
+                    artifact_overrides=artifacts, catalog_path=catalog, client=FakeClient(bucket),
+                    schema_reader=lambda _path: [], schema_compatibility_checker=skip_schema_compatibility,
+                    cog_validator=lambda _path: SimpleNamespace(valid=True),
+                )
+                with (
+                    mock.patch.dict("os.environ", {"SHARED_DATASETS_WORKDIR": str(root / "work")}),
+                    mock.patch.object(publish_release, "default_vector_bundle_validator", return_value=SimpleNamespace(valid=False, errors=("native failure",))),
+                    mock.patch.object(publish_release, "validate_cog", return_value=SimpleNamespace(valid=False, errors=("native failure",))),
+                    self.assertRaisesRegex(publish_release.PublishReleaseError, "native failure"),
+                ):
+                    publish_release.execute_publish_plan(plan, client=FakeClient(bucket), notify=False)
+                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+                self.assertEqual(list((root / "work" / "_scratch").iterdir()), [])
+
+    def test_upload_failure_cleans_snapshots_without_replanning_remote_generations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = write_catalog(root, canonical_format="csv", available_formats="csv")
+            source = write_artifact(root, "example-asset.csv", b"id\n1\n")
+            bucket = FakeBucket()
+            plan = publish_release.build_publish_plan(
+                asset_slug="example-asset", release_date="2026-05-01", publish_dir=None,
+                artifact_overrides={"csv": source}, catalog_path=catalog, client=FakeClient(bucket),
+                schema_reader=lambda _path: [], schema_compatibility_checker=skip_schema_compatibility,
+            )
+            latest = bucket.blob(publish_release.object_name_from_uri(plan.artifacts[0].latest_uri))
+            latest.exists = True
+            latest.generation = 9
+            with (
+                mock.patch.dict("os.environ", {"SHARED_DATASETS_WORKDIR": str(root / "work")}),
+                self.assertRaisesRegex(publish_release.PublishReleaseError, "generation changed"),
+            ):
+                publish_release.execute_publish_plan(plan, client=FakeClient(bucket), notify=False)
+            self.assertEqual(latest.uploads, [])
+            self.assertEqual(list((root / "work" / "_scratch").iterdir()), [])
+
     def test_default_notifier_marks_existing_canonical_object_as_update(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -10,6 +10,7 @@ on:
       - "ingestion/common/**"
       - "ingestion/wdpa_monthly/**"
       - "scripts/feature_metadata_localization.py"
+      - "scripts/translation_local_io.py"
       - "scripts/pmtiles_zoom.py"
       - "scripts/release_feature_model.py"
       - "scripts/slack_notify.py"
@@ -126,7 +127,7 @@ jobs:
           set -euo pipefail
 
           docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" python -c \
-            'import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
+            'import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
 
       - name: Push wdpa-monthly image
         run: |

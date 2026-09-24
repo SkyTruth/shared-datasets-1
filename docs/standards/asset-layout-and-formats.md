@@ -212,7 +212,7 @@ sources of truth. Maintain translations in a compact CSV source named
 feature_id,field,locale,source_value_hash,value,review_state,notes
 ```
 
-`feature_id`, `field`, `locale`, `source_value_hash`, and `value` are required.
+`feature_id`, `field`, `locale`, `source_value_hash`, and `value` columns are required.
 `review_state` and `notes` are optional. `source_value_hash` is the SHA-256 hash
 of the canonical source property value serialized with the release feature
 model's stable JSON rules. During publish/build preparation, generate
@@ -222,6 +222,37 @@ current canonical property hash matches the translation row. Stale rows are
 reported and skipped, untranslated values remain canonical, duplicate
 translation keys fail validation, and the localized sidecar must preserve the
 canonical sidecar's row count, `feature_id`, and `properties_hash` values.
+Successful rows have a nonblank `value`; `review_state` records provenance such
+as `source_provided`, `machine_translated`, `document_translated`, or
+`human_reviewed`. A failed task has `review_state=translation_failed` and an
+empty `value`, is retried by default by machine/document tools, and is never
+applied to a localized sidecar. Genuine source-provided and human work remains
+complete. The old Google failure fallback is recognized only when its exact
+producer notes and value still match the current source hash/value; edited
+values are preserved. Non-string tasks retain their explicit stringification
+policy. Older local helpers reject failed rows, so update the helpers together.
+
+Local generation validates candidate files before atomically replacing each
+final path. It rejects input/output/report aliases, preserves an existing final
+on that file's preparation/validation/replacement failure, and permits validated
+empty canonical sidecars. Atomicity is per file: a later locale/report failure
+can leave earlier files committed. Local fingerprints detect changes observed
+before commit but provide neither an editor lock nor remote-generation safety.
+`--fail-on-stale` refuses replacement; a valid canonical fallback is not proof
+of completed translation work. Machine reports separate `valid`, `complete`
+and outstanding task counts; exit 1 means a valid partial CSV was committed and
+can be retried without replacing successful rows. Localization reports
+`requested_rows_complete` only for translation rows supplied, not whole-asset
+coverage. See the translation skill for retry and report checkpoints.
+
+Document import requires v2 manifests containing canonical/schema hashes,
+complete task identity, pending/completed exclusions and collection options.
+Rows and shards match by intact hashes with exact membership, never by position.
+V1 manifests require re-export; preserve translations by verified hashes only,
+and restore damaged hashes or retranslate. Manifest and in-memory task size
+grow with feature/field/locale combinations; workbook sharding does not bound
+the current pipeline's total memory use.
+
 Use `--all-locales` during publish/build preparation to materialize every
 locale present in the translation source. After a reviewed publish plan promotes
 a new `{asset-slug}.metadata-translations.csv`, the
@@ -417,19 +448,14 @@ files:
     role: metadata_localized
 ```
 
-The metadata translation CSV schema is:
-
-```csv
-feature_id,field,locale,source_value,translated_value,source_value_hash,review_state
-```
-
-`feature_id`, `field`, `locale`, and `source_value_hash` form the translation
-row key. Locale codes use lower-case, ASCII, field-safe BCP 47 tags with hyphens
-normalized to underscores, such as `en`, `es`, `pt_br`, `es_419`, or
-`zh_hans`. Per-value review states must be `source_provided`,
-`machine_translated`, or `human_reviewed`; the asset-doc aggregate
-`review_state` may also be `mixed` when a locale has values from more than one
-state.
+The translation CSV uses the `source_value_hash,value,review_state,notes`
+contract described under the metadata sidecar bundle above, not a separate
+source-value/translated-value schema. `feature_id`, `field`, `locale`, and
+`source_value_hash` form its row key. Locale codes are lower-case, ASCII,
+field-safe BCP 47 tags with hyphens normalized to underscores, such as `es`,
+`pt_br`, `es_419`, and `zh_hans`. Asset-doc aggregate review state describes
+successful translation provenance and may be `mixed`; failed task state is not
+successful provenance.
 
 The canonical FGB must contain unique nonblank URL-safe `feature_id` values, and
 PMTiles must carry the same `feature_id` value as a feature property. For

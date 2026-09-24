@@ -25,8 +25,23 @@ uv run python scripts/gcs_asset.py publish-release \
   --dry-run
 ```
 
+Before execution writes anything, it copies every planned artifact and metadata
+upload into a private temporary directory and verifies each planned size and
+SHA-256. Schema and native validation, manifest-template reads, and uploads use
+those copies. Changes to the originals after capture do not change the uploaded
+bytes. Allow temporary disk space for the entire input set under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
+execution removes its own copies on exit. These copies are not durable recovery
+checkpoints. A partial remote publication still needs explicit repair.
+
 If intentionally publishing only a subset of catalog-listed formats, name each
 unchanged companion explicitly with `--allow-stale-format`.
+
+`finalize_promoted_release_metadata.py` pins each manifest/run-record read to
+its observed generation and replaces only that generation. A concurrent change
+refuses finalization; it is not adopted as a new replacement precondition. This
+protects each JSON replacement, but does not make multiple object writes atomic
+or bind the current artifact-stat-based finalizer to a publication receipt.
 
 Catalog and asset README generation lives in:
 
@@ -238,7 +253,8 @@ when available and falls back to the canonical sidecar when it is not.
 `feature_metadata_translation_pipeline.py` is the GitHub Actions pipeline entry
 point for reviewed translation-source updates. The
 `Feature metadata localization materialization` workflow runs after the
-approved dataset mutation workflow succeeds, extracts any promoted
+approved dataset mutation workflow succeeds, verifies its exact repository,
+workflow/run identity and immutable authorization artifact, then extracts promoted
 `{asset-slug}.metadata-translations.csv` objects from the reviewed publish
 plan, downloads the sibling canonical sidecar and schema, materializes all
 available locale sidecars, and uploads those generated sidecars with current
@@ -280,7 +296,14 @@ publisher workflow promotes the reviewed canonical objects so no-clobber and
 generation preconditions stay enforced, then deletes the promoted scratch source
 objects with their source-generation preconditions. Remaining pending-publish
 prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
-`Scratch cleanup audit` workflow.
+`Scratch cleanup audit` workflow's age-based abandonment policy: warn when the
+newest object is 60 days old, and select for deletion at 90 days only when its
+name, generation, and update time still match the warning. A first warning after
+day 90 can become eligible on the next audit. The auditor does not infer
+publication from historical content matches or inspect PR status. Exact-object
+generation preconditions protect replacements; deletion is not atomic across
+the prefix. Dry-run summaries list candidates and the actual zero deleted
+objects.
 
 Publishing concierge planning and first-upload workflow guidance live in:
 
@@ -336,9 +359,11 @@ pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
 objects, or promotes data. Do not use it to run Terraform apply; production
 Terraform still routes through protected PR workflows. When `next` asks for scratch
 staging, run `scripts/gcs_asset.py upload` separately and provide the staged URI
-and generation as evidence. `render-pr` validates the final fenced
-`shared-datasets-publish-plan` with `scripts/reviewed_dataset_plan.py`, the same
-schema used by the protected promotion workflow.
+and generation as evidence. `render-pr` writes an immutable checked-in document
+and renders its matching `shared-datasets-publish-plan` fence using
+`scripts/reviewed_dataset_plan.py`. Include the generated document in the PR.
+For manual/delete/combined plans, use `reviewed_dataset_plan.py prepare`; see
+[plan preparation and migration](../.github/dataset-plans/README.md).
 
 `start` requires an explicit request classification and only proceeds for
 `canonical-publish`. It also blocks duplicate first-upload asset slugs unless

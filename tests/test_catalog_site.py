@@ -587,3 +587,32 @@ class CatalogSiteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_release_urls_and_variants_use_shared_snapshot_fixture():
+    import copy
+    import pytest
+
+    fixture = json.loads((REPO_ROOT / "tests/fixtures/historical-consumers.json").read_text())
+    asset = fixture["asset"]
+
+    def versions(index, preferred=asset["pmtiles_path"]):
+        return catalog_site.release_versions_from_index(release_index=index, canonical_path=asset["canonical_path"], canonical_format=asset["canonical_format"], available_formats=asset["available_formats"], pmtiles_path=preferred)
+
+    old = versions(fixture["index"])[1]
+    assert old.pmtiles_url.endswith("/releases/2026-01-01/example-layer.pmtiles?generation=101")
+    assert old.public_url.endswith("?generation=100")
+    multi = copy.deepcopy(fixture["index"])
+    tile = multi["releases"][1]["files"][1]
+    multi["releases"][1]["files"].insert(0, {**tile, "path": tile["path"].replace(".pmtiles", "-points.pmtiles")})
+    assert versions(multi)[1].pmtiles_path == old.pmtiles_path
+    with pytest.raises(catalog_site.CatalogSiteError, match="ambiguous"):
+        versions(multi, asset["pmtiles_path"].replace(".pmtiles", "-absent.pmtiles"))
+    for bad_file in [None, {"format": "metadata", "path": "invalid"}]:
+        invalid = copy.deepcopy(fixture["index"])
+        invalid["releases"][1]["files"].append(bad_file)
+        with pytest.raises(catalog_site.CatalogSiteError, match="release file"):
+            versions(invalid)
+    for generation in [True, None, 0, -1, 1.5, "01", "18446744073709551616"]:
+        with pytest.raises(catalog_site.CatalogSiteError, match="generation"):
+            catalog_site.release_artifact_url({**tile, "generation": generation})

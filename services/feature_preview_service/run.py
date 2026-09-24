@@ -62,6 +62,13 @@ class ReleaseResolver(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class LookupResult:
+    documents: dict[str, dict[str, Any]]
+    sidecar_uri: str | None = None
+    sidecar_generation: int | None = None
+
+
 class FeatureIndex(Protocol):
     def lookup(
         self,
@@ -71,7 +78,7 @@ class FeatureIndex(Protocol):
         *,
         sidecar_uri: str,
         sidecar_generation: int | None,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> LookupResult | dict[str, dict[str, Any]]:
         ...
 
 
@@ -170,7 +177,7 @@ class GcsSidecarFeatureIndex:
         *,
         sidecar_uri: str,
         sidecar_generation: int | None,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> LookupResult:
         records = self._lookup_sidecar_records(
             asset_slug=asset_slug,
             release=release,
@@ -178,7 +185,10 @@ class GcsSidecarFeatureIndex:
             sidecar_uri=sidecar_uri,
             sidecar_generation=sidecar_generation,
         )
-        return {feature_id: record for feature_id in feature_ids if (record := records.get(feature_id)) is not None}
+        return LookupResult(
+            {feature_id: record for feature_id in feature_ids if (record := records.get(feature_id)) is not None},
+            sidecar_uri, sidecar_generation,
+        )
 
     def _lookup_sidecar_records(
         self,
@@ -189,7 +199,7 @@ class GcsSidecarFeatureIndex:
         sidecar_uri: str,
         sidecar_generation: int | None,
     ) -> dict[str, dict[str, Any] | None]:
-        if not sidecar_uri or sidecar_generation is None:
+        if not sidecar_uri or type(sidecar_generation) is not int or sidecar_generation <= 0:
             raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is not indexed")
         cache_key = (asset_slug, release, sidecar_uri, sidecar_generation)
         unique_ids = list(dict.fromkeys(feature_ids))
@@ -269,7 +279,7 @@ def open_sidecar_blob(
     if bucket_name != expected_bucket_name:
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar is outside the configured bucket")
 
-    blob = client.bucket(bucket_name).blob(object_name)
+    blob = client.bucket(bucket_name).blob(object_name, generation=sidecar_generation)
     try:
         blob.reload()
     except Exception as exc:
@@ -282,10 +292,7 @@ def open_sidecar_blob(
         raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object generation changed")
 
     try:
-        try:
-            return blob.open("rb", if_generation_match=sidecar_generation)
-        except TypeError:
-            return blob.open("rb")
+        return blob.open("rb", if_generation_match=sidecar_generation)
     except AttributeError:
         return legacy_sidecar_blob_bytes(
             blob,
@@ -303,10 +310,7 @@ def open_sidecar_blob(
 
 def legacy_sidecar_blob_bytes(blob: Any, *, asset_slug: str, release: str, sidecar_generation: int) -> io.BytesIO:
     try:
-        try:
-            payload = blob.download_as_bytes(if_generation_match=sidecar_generation)
-        except TypeError:
-            payload = blob.download_as_bytes()
+        payload = blob.download_as_bytes(if_generation_match=sidecar_generation)
     except Exception as exc:
         if exc.__class__.__name__ == "NotFound":
             raise ApiError(HTTPStatus.CONFLICT, "index_not_ready", "feature preview sidecar object is missing") from exc
@@ -520,13 +524,17 @@ def handle_lookup(
     request = parse_lookup_request(body, max_ids=max_ids, max_fields=max_fields)
     resolved = release_resolver.resolve(asset_slug, release)
     unique_ids = list(dict.fromkeys(request["ids"]))
-    documents = feature_index.lookup(
+    result = feature_index.lookup(
         asset_slug,
         resolved.resolved_release,
         unique_ids,
         sidecar_uri=resolved.sidecar_uri,
         sidecar_generation=resolved.sidecar_generation,
     )
+    # Only the serving backend can attest which source it enforced. Legacy and
+    # Firestore dictionaries deliberately carry no sidecar provenance.
+    lookup = result if isinstance(result, LookupResult) else LookupResult(result)
+    documents = lookup.documents
     items = [
         response_item(feature_id, documents.get(feature_id), request["fields"], request["include_provenance"])
         for feature_id in request["ids"]
@@ -536,6 +544,8 @@ def handle_lookup(
         "requested_release": resolved.requested_release,
         "resolved_release": resolved.resolved_release,
         "release_index_generation": resolved.release_index_generation,
+        "sidecar_uri": lookup.sidecar_uri,
+        "sidecar_generation": lookup.sidecar_generation,
         "items": items,
         "limits": {"max_ids": max_ids, "max_fields": max_fields, "max_response_bytes": max_response_bytes},
     }
