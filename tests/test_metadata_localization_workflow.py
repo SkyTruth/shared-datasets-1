@@ -4,6 +4,21 @@ from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_tri
 
 
 class MetadataLocalizationWorkflowTests(unittest.TestCase):
+    def test_only_expected_executor_checkouts_are_present(self):
+        workflow = load_workflow(
+            Path(__file__).resolve().parents[1] / ".github/workflows/metadata-localization.yml"
+        )
+        checkouts = [
+            (job_name, step.get("with", {}), step.get("if"))
+            for job_name, job in workflow["jobs"].items()
+            for step in job.get("steps", [])
+            if step.get("uses", "").startswith("actions/checkout@")
+        ]
+        self.assertEqual(checkouts, [
+            ("materialize", {"ref": "${{ github.workflow_sha }}"}, None),
+            ("materialize", {"ref": "${{ steps.reviewed_plan.outputs.executor_sha }}"}, "${{ github.event_name == 'workflow_run' }}"),
+        ])
+
     def test_automatic_input_is_verified_upstream_artifact_not_pr_lookup(self):
         workflow = load_workflow(
             Path(__file__).resolve().parents[1]

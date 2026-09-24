@@ -58,6 +58,15 @@ jobs:
       artifact_id: ${{ steps.artifact.outputs.artifact-id }}
 
     steps:
+      - name: Validate main workflow bootstrap
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/publish-dataset.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+
       - name: Check out immutable workflow code
         uses: actions/checkout@v4
         with:

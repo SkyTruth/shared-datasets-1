@@ -55,13 +55,12 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - name: Validate manual dispatch ref
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Validate main workflow bootstrap
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Feature metadata localization materialization must run from main for canonical writes." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/metadata-localization.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
 
