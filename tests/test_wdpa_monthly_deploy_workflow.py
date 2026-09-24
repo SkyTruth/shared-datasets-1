@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from workflow_helpers import (
@@ -18,6 +23,7 @@ DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 REQUIRED_SCRIPT_COPIES = (
     "scripts/feature_metadata_localization.py",
+    "scripts/translation_local_io.py",
     "scripts/pmtiles_zoom.py",
     "scripts/release_feature_model.py",
     "scripts/slack_notify.py",
@@ -63,6 +69,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         import_run = steps["Smoke-test job import closure in image"]["run"]
         self.assertIn("import ingestion.wdpa_monthly.run", import_run)
         self.assertIn("scripts.feature_metadata_localization", import_run)
+        self.assertIn("scripts.translation_local_io", import_run)
         self.assertIn("scripts.vector_asset", import_run)
 
         push_run = steps["Push wdpa-monthly image"]["run"]
@@ -105,6 +112,39 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("RUN_DATE=${CANARY_RUN_DATE}", canary_run)
         watch_run = steps["Watch wdpa-monthly canary"]["run"]
         self.assertIn("gcloud run jobs executions describe", watch_run)
+
+    def test_declared_docker_script_copies_import_without_repo_fallback(self):
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        declared = re.findall(r"^COPY (scripts/\S+\.py) \./(scripts/\S+\.py)$", dockerfile, re.MULTILINE)
+        self.assertTrue(declared)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for source, destination in declared:
+                target = root / destination
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO_ROOT / source, target)
+            result = subprocess.run(
+                [sys.executable, "-I", "-c",
+                 f"import sys; sys.path.insert(0, {str(root)!r}); "
+                 "import scripts.feature_metadata_localization, scripts.translation_local_io; "
+                 f"assert scripts.feature_metadata_localization.__file__.startswith({str(root)!r}); "
+                 "print('declared copies import successfully')"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "declared copies import successfully")
+
+    def test_ci_filter_selects_helper_and_its_behavior_tests(self):
+        ci = load_workflow(REPO_ROOT / ".github/workflows/ci.yml")
+        runs = [str(step.get("run", "")) for job in ci["jobs"].values() for step in job.get("steps", [])]
+        detection = next(run for run in runs if "geospatial_pattern=" in run)
+        pattern = re.search(r"geospatial_pattern='([^']+)'", detection).group(1)
+        for path in ("scripts/translation_local_io.py", "tests/test_translation_local_io.py"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(re.fullmatch(pattern, path))
+        self.assertIsNone(re.fullmatch(pattern, "docs/unrelated.md"))
+        geospatial_pytest = next(run for run in runs if "geospatial-pytest.xml" in run)
+        self.assertIn("tests/test_translation_local_io.py", geospatial_pytest)
 
     def test_wdpa_monthly_dockerfile_copies_scripts_import_closure(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
