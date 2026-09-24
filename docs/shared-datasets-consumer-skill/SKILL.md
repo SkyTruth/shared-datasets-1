@@ -158,7 +158,7 @@ from skytruth_shared_datasets import resolve_dataset
 ref = resolve_dataset("wdpa-marine", "pmtiles")
 print(ref.gs_uri)
 print(ref.url)
-print(ref.resolved_id)
+print(ref.resolved_id)  # wdpa-marine@latest: unpinned alias, not artifact lineage
 ```
 
 Credential rules:
@@ -167,10 +167,15 @@ Credential rules:
 - Grant the runtime identity `roles/storage.objectViewer` on
   `gs://skytruth-shared-datasets-1`.
 - Do not create service account JSON keys.
-- When callers request `version="latest"` and lineage matters, persist
-  `ref.resolved_id`, not `<slug>@latest` and not a cache-path-derived value.
-- When both bytes and lineage are needed, call `fetch_dataset(...)` once and use
-  both `ref.cache_path` and `ref.resolved_id`.
+- Latest `resolve_dataset`/`Catalog.resolve` maps the catalog to an unpinned
+  browser alias; do not treat its `resolved_id` as exact artifact lineage.
+- When bytes and lineage are needed, call `fetch_dataset(...)` once and retain
+  `ref.cache_path`, `ref.gs_uri`, and the generation-bearing `ref.resolved_id`.
+  Indexed fetches resolve one concrete release; latest-only assets without an
+  index record an observed generation without inventing a release date.
+- Use the [Python SDK cache contract](../../api/python/README.md#cache-behavior)
+  for cache migration, integrity and error behavior. Do not add a stale-cache
+  fallback when an index is forbidden, unavailable or malformed.
 
 ## Catalog Discovery
 
@@ -268,7 +273,7 @@ Add focused tests that prove the surfaces touched:
 - Backend Python code that needs only metadata, a durable `gs://` URI, or a
   browser-facing URL uses `resolve_dataset(...)`.
 - Backend Python code that requests `version="latest"` and records lineage
-  persists `ref.resolved_id`.
+  persists fetched `ref.gs_uri` and generation-bearing `ref.resolved_id`.
 
 ## Non-Goals
 

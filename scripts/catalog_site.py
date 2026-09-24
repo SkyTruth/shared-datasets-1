@@ -578,7 +578,7 @@ def load_release_index(release_index_dir: Path | None, slug: str) -> dict[str, A
         raise CatalogSiteError(f"{path}: invalid release index JSON") from error
     if not isinstance(payload, dict):
         raise CatalogSiteError(f"{path}: release index must be a JSON object")
-    if payload.get("schema_version") != 1:
+    if type(payload.get("schema_version")) is not int or payload.get("schema_version") != 1:
         raise CatalogSiteError(f"{path}: release index schema_version must be 1")
     if payload.get("asset_slug") != slug:
         raise CatalogSiteError(f"{path}: release index asset_slug does not match {slug!r}")
@@ -592,7 +592,7 @@ def load_release_index_path(path: Path) -> dict[str, Any]:
         raise CatalogSiteError(f"{path}: invalid release index JSON") from error
     if not isinstance(payload, dict):
         raise CatalogSiteError(f"{path}: release index must be a JSON object")
-    if payload.get("schema_version") != 1:
+    if type(payload.get("schema_version")) is not int or payload.get("schema_version") != 1:
         raise CatalogSiteError(f"{path}: release index schema_version must be 1")
     slug = str(payload.get("asset_slug") or "").strip()
     if not SLUG_RE.fullmatch(slug):
@@ -626,10 +626,10 @@ def release_files(files: list[Any]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for file_entry in files:
         if not isinstance(file_entry, dict):
-            continue
+            raise CatalogSiteError("release file entry must be an object")
         path = release_file_path(file_entry)
         if not path:
-            continue
+            raise CatalogSiteError("release file path must be a gs:// URI")
         normalized_entry = {str(key): value for key, value in file_entry.items() if str(key)}
         normalized_entry["path"] = path
         normalized.append(normalized_entry)
@@ -697,19 +697,25 @@ def basename(path: str) -> str:
 
 
 def release_file_for_format(files: list[Any], format_name: str, preferred_path: str = "") -> dict[str, Any] | None:
-    preferred_name = basename(preferred_path)
-    if preferred_name:
-        for file_entry in files:
-            if not isinstance(file_entry, dict):
-                continue
-            if str(file_entry.get("format") or "").strip() == format_name and release_file_path(file_entry).endswith(
-                f"/{preferred_name}"
-            ):
-                return file_entry
-    for file_entry in files:
-        if isinstance(file_entry, dict) and str(file_entry.get("format") or "").strip() == format_name:
-            return file_entry
-    return None
+    candidates = [entry for entry in files if isinstance(entry, dict) and entry.get("format") == format_name]
+    preferred = [entry for entry in candidates if basename(str(entry.get("path") or "")) == basename(preferred_path)]
+    matches = preferred or candidates
+    if len(matches) > 1:
+        raise CatalogSiteError(f"ambiguous release {format_name} files")
+    return matches[0] if matches else None
+
+
+def release_artifact_url(file: dict[str, Any] | None) -> str | None:
+    if file is None:
+        return None
+    url = gs_to_https(release_file_path(file))
+    if "generation" in file:
+        generation = file["generation"]
+        text = str(generation) if type(generation) is int else generation
+        if not isinstance(text, str) or not re.fullmatch(r"[1-9][0-9]{0,19}", text) or int(text) > 2**64 - 1:
+            raise CatalogSiteError("invalid release artifact generation")
+        url += f"?generation={text}"
+    return url
 
 
 def release_index_latest_release(release_index: dict[str, Any]) -> dict[str, Any]:
@@ -803,9 +809,9 @@ def release_versions_from_index(
             CatalogVersion(
                 date=date,
                 canonical_path=release_canonical_path,
-                public_url=gs_to_https(release_canonical_path),
+                public_url=release_artifact_url(canonical_file),
                 pmtiles_path=release_pmtiles_path or None,
-                pmtiles_url=gs_to_https(release_pmtiles_path) if release_pmtiles_path else None,
+                pmtiles_url=release_artifact_url(release_pmtiles_file),
                 available_formats=release_formats_from_files(available_formats, files),
                 files=normalized_files,
                 source_version=str(release.get("source_version") or ""),
@@ -1240,7 +1246,7 @@ def build_catalog_payload(
 
 def copy_static_files(source_dir: Path, out_dir: Path) -> list[Path]:
     copied: list[Path] = []
-    for name in ("index.html", "styles.css", "app.js", "map-preview.js"):
+    for name in ("index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js"):
         src = source_dir / name
         if not src.exists():
             raise CatalogSiteError(f"missing static source file: {src}")

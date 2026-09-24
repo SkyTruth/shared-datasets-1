@@ -75,8 +75,8 @@ class FakeStore:
                         "latest_release": {
                             "date": "2026-05-01",
                             "files": [
-                                {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
-                                {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
+                                {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH, "generation": 1000},
+                                {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH, "generation": 1003},
                                 {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
                                 {"format": "schema", "path": PUBLIC_SCHEMA_RELEASE_PATH, "generation": 1002},
                                 {
@@ -92,8 +92,8 @@ class FakeStore:
                             {
                                 "date": "2026-05-01",
                                 "files": [
-                                    {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH},
-                                    {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH},
+                                    {"format": "fgb", "path": PUBLIC_FGB_RELEASE_PATH, "generation": 1000},
+                                    {"format": "pmtiles", "path": PUBLIC_PMTILES_RELEASE_PATH, "generation": 1003},
                                     {"format": "metadata", "path": PUBLIC_METADATA_RELEASE_PATH, "generation": 1001},
                                     {"format": "schema", "path": PUBLIC_SCHEMA_RELEASE_PATH, "generation": 1002},
                                     {
@@ -119,8 +119,8 @@ class FakeStore:
                         "latest_release": {
                             "date": "2026-05-01",
                             "files": [
-                                {"format": "fgb", "path": PRIVATE_FGB_PATH},
-                                {"format": "pmtiles", "path": PRIVATE_PATH},
+                                {"format": "fgb", "path": PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"), "generation": 1000},
+                                {"format": "pmtiles", "path": PRIVATE_PATH.replace("/latest/", "/releases/2026-05-01/"), "generation": 1003},
                                 {"format": "schema", "path": PRIVATE_SCHEMA_RELEASE_PATH, "generation": 1002},
                             ],
                         },
@@ -128,8 +128,8 @@ class FakeStore:
                             {
                                 "date": "2026-05-01",
                                 "files": [
-                                    {"format": "fgb", "path": PRIVATE_FGB_PATH},
-                                    {"format": "pmtiles", "path": PRIVATE_PATH},
+                                    {"format": "fgb", "path": PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"), "generation": 1000},
+                                    {"format": "pmtiles", "path": PRIVATE_PATH.replace("/latest/", "/releases/2026-05-01/"), "generation": 1003},
                                     {"format": "schema", "path": PRIVATE_SCHEMA_RELEASE_PATH, "generation": 1002},
                                 ],
                             }
@@ -154,8 +154,8 @@ class FakeSigner:
     def __init__(self) -> None:
         self.calls = []
 
-    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
-        self.calls.append((gs_uri, expires_at))
+    def sign(self, gs_uri: str, expires_at: dt.datetime, *, generation=None) -> str:
+        self.calls.append((gs_uri, expires_at, generation))
         return "https://storage.googleapis.com/signed-private.pmtiles?X-Goog-" + "Signature=abc"
 
 
@@ -163,8 +163,8 @@ class FakeCdnSigner:
     def __init__(self) -> None:
         self.calls = []
 
-    def sign(self, gs_uri: str, expires_at: dt.datetime) -> str:
-        self.calls.append((gs_uri, expires_at))
+    def sign(self, gs_uri: str, expires_at: dt.datetime, *, generation=None) -> str:
+        self.calls.append((gs_uri, expires_at, generation))
         object_name = gs_uri.removeprefix("gs://skytruth-shared-datasets-1/")
         expires = int(expires_at.timestamp())
         return f"https://tiles.skytruth.org/private/{object_name}?Expires={expires}&KeyName=test-key&Signature=abc"
@@ -335,7 +335,7 @@ class CatalogViewerTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
-        self.assertEqual(payload["pmtiles_url"], "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.pmtiles")
+        self.assertEqual(payload["pmtiles_url"], "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.pmtiles?generation=1003")
         self.assertIsNone(payload["expires_at"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(signer.calls, [])
@@ -372,7 +372,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertTrue(payload["pmtiles_url"].startswith("https://storage.googleapis.com/"))
         self.assertEqual(payload["expires_at"], "2026-05-09T12:15:00Z")
         self.assertEqual(response.headers["Cache-Control"], "no-store")
-        self.assertEqual(signer.calls[0][0], PRIVATE_PATH)
+        self.assertEqual(signer.calls[0][0], PRIVATE_PATH.replace("/latest/", "/releases/2026-05-01/"))
         self.assertNotIn("tiles.skytruth.org", payload["pmtiles_url"])
         self.assertNotIn("Location", response.headers)
 
@@ -391,7 +391,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
         self.assertTrue(payload["pmtiles_url"].startswith("https://storage.googleapis.com/"))
-        self.assertEqual(signer.calls[0][0], PRIVATE_PATH)
+        self.assertEqual(signer.calls[0][0], PRIVATE_PATH.replace("/latest/", "/releases/2026-05-01/"))
 
     def test_static_root_serves_generated_index(self):
         store = FakeStore(catalog_payload())
@@ -459,10 +459,10 @@ class CatalogViewerTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(
             payload["download_url"],
-            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.fgb",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.fgb?generation=1000",
         )
         self.assertEqual(payload["expires_at"], None)
-        self.assertEqual(payload["gs_uri"], PUBLIC_FGB_PATH)
+        self.assertEqual(payload["gs_uri"], PUBLIC_FGB_RELEASE_PATH)
         self.assertEqual(payload["filename"], "wdpa-marine.fgb")
         self.assertEqual(signer.calls, [])
 
@@ -483,9 +483,9 @@ class CatalogViewerTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/"))
         self.assertEqual(payload["expires_at"], "2026-05-09T12:15:00Z")
-        self.assertEqual(payload["gs_uri"], PRIVATE_FGB_PATH)
+        self.assertEqual(payload["gs_uri"], PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"))
         self.assertEqual(payload["filename"], "acled-europe-central-asia-aggregated-weekly-admin1.fgb")
-        self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH)
+        self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"))
         self.assertEqual(metadata_cdn_signer.calls, [])
 
     def test_internal_latest_fgb_download_returns_signed_gcs_url(self):
@@ -500,8 +500,8 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         payload = json.loads(response.body)
         self.assertTrue(payload["download_url"].startswith("https://storage.googleapis.com/"))
-        self.assertEqual(payload["gs_uri"], PRIVATE_FGB_PATH)
-        self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH)
+        self.assertEqual(payload["gs_uri"], PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"))
+        self.assertEqual(signer.calls[0][0], PRIVATE_FGB_PATH.replace("/latest/", "/releases/2026-05-01/"))
 
     def test_historical_fgb_download_uses_release_index(self):
         response, _signer = download_url_request("wdpa-marine", version="2026-05-01")
@@ -511,7 +511,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["gs_uri"], PUBLIC_FGB_RELEASE_PATH)
         self.assertEqual(
             payload["download_url"],
-            "https://storage.googleapis.com/skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.fgb",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.fgb?generation=1000",
         )
 
     def test_historical_fgb_download_rejects_release_missing_from_index(self):
@@ -543,7 +543,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_RELEASE_PATH)
         self.assertEqual(
             payload["download_url"],
-            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.ndjson.gz?generation=1001",
         )
         self.assertEqual(payload["filename"], "wdpa-marine.metadata.ndjson.gz")
         self.assertEqual(signer.calls, [])
@@ -593,7 +593,7 @@ class CatalogViewerTests(unittest.TestCase):
         self.assertEqual(payload["gs_uri"], PUBLIC_SCHEMA_RELEASE_PATH)
         self.assertEqual(
             payload["download_url"],
-            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.schema.json",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.schema.json?generation=1002",
         )
         self.assertEqual(payload["filename"], "wdpa-marine.schema.json")
         self.assertEqual(signer.calls, [])
@@ -719,7 +719,7 @@ class CatalogViewerTests(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(
             payload["download_url"],
-            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz",
+            "https://tiles.skytruth.org/artifacts/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-05-01/wdpa-marine.metadata.es.ndjson.gz?generation=1004",
         )
         self.assertEqual(payload["gs_uri"], PUBLIC_METADATA_ES_RELEASE_PATH)
         self.assertEqual(signer.calls, [])
@@ -887,3 +887,103 @@ class CatalogViewerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_exact_release_service_shared_fixture_and_adverse_cases():
+    import copy
+    from services.catalog_viewer import run
+
+    fixture = json.loads((Path(__file__).parent / "fixtures/historical-consumers.json").read_text())
+    asset = fixture["asset"]
+    index = fixture["index"]
+
+    class Store:
+        def read_catalog_json(self):
+            return {"assets": [asset]}
+
+        def read_static(self, name):
+            assert name == "releases/example-layer.json"
+            return StaticObject(json.dumps(index).encode(), "application/json")
+
+    store = Store()
+    signer = FakeSigner()
+
+    def request(query, *, auth=True, download=False):
+        endpoint = "/api/download-url" if download else "/api/pmtiles/signed-url"
+        return handle_request("GET", endpoint + "?slug=example-layer&" + query,
+                              {"X-Goog-Authenticated-User-Email": "accounts.google.com:tester@skytruth.org"} if auth else {},
+                              catalog_cache=CatalogJsonCache(loader=store.read_catalog_json), object_store=store,
+                              signer=signer, bucket_name="example-bucket")
+
+    for tier in ["public", "private", "internal"]:
+        asset["access_tier"] = tier
+        response = request("version=2026-01-01&generation=101")
+        assert response.status == 200
+        payload = json.loads(response.body)
+        assert payload["resolved_release"] == "2026-01-01"
+        assert payload["generation"] == "101"
+        assert "/releases/2026-01-01/" in payload["gs_uri"]
+        if tier == "public":
+            assert payload["pmtiles_url"].endswith("?generation=101")
+        else:
+            assert signer.calls[-1][2] == "101"
+            before = len(signer.calls)
+            assert request("version=2026-01-01&generation=101", auth=False).status == 401
+            assert len(signer.calls) == before
+    assert request("version=2025-01-01").status == 404
+    for query in ["version=2026-01-01&generation=999", "version=latest&generation=101"]:
+        assert request(query).status == 409
+    for query in ["version=bad", "version=2026-02-30", "generation=true", "generation=01", "generation=1&generation=2", "uri=gs://example-bucket/secret"]:
+        assert request(query).status == 400
+    for fmt, generation in [("fgb", 100), ("metadata", 102), ("schema", 103)]:
+        assert request(f"version=2026-01-01&format={fmt}&generation={generation}", download=True).status == 200
+        assert signer.calls[-1][2] == str(generation)
+        assert request(f"version=2026-01-01&format={fmt}&generation=999", download=True).status == 409
+
+    pristine = copy.deepcopy(index)
+    for bad in [True, False, None, 0, -1, 1.5, "", "01", 2**64]:
+        index["releases"][1]["files"][1]["generation"] = bad
+        assert request("version=2026-01-01").status == 502
+    index = copy.deepcopy(pristine)
+    # Later publication replaces one object at the same date.
+    index["releases"][1]["files"][1]["generation"] = 901
+    assert request("version=2026-01-01&generation=101").status == 409
+    assert request("version=2026-01-01&generation=901").status == 200
+    index = copy.deepcopy(pristine)
+    extra = {**index["releases"][1]["files"][1], "path": index["releases"][1]["files"][1]["path"].replace(".pmtiles", "-points.pmtiles")}
+    index["releases"][1]["files"].insert(0, extra)
+    assert request("version=2026-01-01&generation=101").status == 200
+    asset["pmtiles_path"] = asset["pmtiles_path"].replace("example-layer.pmtiles", "missing.pmtiles")
+    assert request("version=2026-01-01").status == 502
+    index = copy.deepcopy(pristine)
+    index["releases"][1]["files"][1]["path"] = "gs://example-bucket/secret.pmtiles"
+    assert request("version=2026-01-01").status == 502
+    index = copy.deepcopy(pristine)
+    index["releases"][1]["files"] = [f for f in index["releases"][1]["files"] if f["format"] != "metadata"]
+    response = request("version=2026-01-01&format=metadata", download=True)
+    assert response.status == 404 and "does not include metadata" in response.body.decode()
+    assert run.static_object_name("/release-reference.js") == "release-reference.js"
+
+
+def test_signed_generation_is_inside_gcs_and_cdn_signature():
+    import base64
+    import hashlib
+    import hmac
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from services.catalog_viewer import run
+
+    calls = []
+    blob = SimpleNamespace(generate_signed_url=lambda **kwargs: calls.append(kwargs) or "https://signed.test/exact")
+    client = SimpleNamespace(bucket=lambda name: SimpleNamespace(blob=lambda name: blob))
+    gcs = run.GcsV4UrlSigner(bucket_name="example-bucket", client=client,
+                             credentials=SimpleNamespace(service_account_email="signer@example.test"))
+    instant = dt.datetime(2026, 9, 22, tzinfo=dt.UTC)
+    with patch.object(run, "credentials_support_direct_signing", return_value=True):
+        gcs.sign("gs://example-bucket/a.pmtiles", instant, generation="101")
+    assert calls[0]["query_parameters"] == {"generation": "101"}
+    cdn = run.CloudCdnSignedUrlSigner(bucket_name="example-bucket", base_url="https://tiles.test/private", key_name="key", key=b"0123456789abcdef")
+    signed = cdn.sign("gs://example-bucket/a.metadata.ndjson.gz", instant, generation="102")
+    unsigned, signature = signed.rsplit("&Signature=", 1)
+    assert "?generation=102&Expires=" in unsigned
+    assert signature == base64.urlsafe_b64encode(hmac.new(b"0123456789abcdef", unsigned.encode(), hashlib.sha1).digest()).decode()

@@ -1,3 +1,5 @@
+import {artifactGeneration, assertArtifactResponse} from "./release-reference.js";
+
 const MAPLIBRE_JS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://unpkg.com/maplibre-gl@5.9.0/dist/maplibre-gl.css";
 const PMTILES_JS = "https://unpkg.com/pmtiles@4.3.0/dist/pmtiles.js";
@@ -345,6 +347,11 @@ function featureMatchesLegendFocus(feature, context) {
   return normalizedValue(feature?.properties?.[field]) === context.focusedLegendValue;
 }
 
+export function cancelMapPreview() {
+  activeRenderSerial += 1;
+  clearActiveMap();
+}
+
 function clearActiveMap() {
   clearFeatureInspectionIndicator();
   clearActiveColorContext();
@@ -532,15 +539,18 @@ function restrictedPmtilesTiers(assets) {
 }
 
 async function resolvePmtilesAccess(asset) {
+  if (asset.release_snapshot_key && pmtilesCanUseSigner(asset) && privateSignerUnavailable) throw new Error("Restricted PMTiles signer unavailable for the selected release.");
   if (!pmtilesCanUseSigner(asset) || privateSignerUnavailable) {
     return asset;
   }
   const signer = privatePmtilesSignerUrl();
   if (!signer.url) {
+    if (asset.release_snapshot_key) throw new Error("Restricted PMTiles signer unavailable for the selected release.");
     return asset;
   }
   const signed = await requestSignedPmtilesUrl(asset, signer);
   if (!signed) {
+    if (asset.release_snapshot_key) throw new Error("Restricted PMTiles signer unavailable for the selected release.");
     return asset;
   }
   return {
@@ -560,6 +570,10 @@ function pmtilesCanUseSigner(asset) {
 async function requestSignedPmtilesUrl(asset, signer) {
   const url = new URL(signer.url, window.location.href);
   url.searchParams.set("slug", asset.slug);
+  if (asset.release_snapshot_key) {
+    url.searchParams.set("version", asset.date);
+    url.searchParams.set("generation", artifactGeneration(asset.pmtiles_file.generation));
+  }
   const response = await fetch(url, {
     cache: "no-store",
     credentials: "include",
@@ -573,6 +587,7 @@ async function requestSignedPmtilesUrl(asset, signer) {
     throw new Error(`Restricted PMTiles signer returned HTTP ${response.status}.`);
   }
   const payload = await response.json();
+  if (asset.release_snapshot_key) assertArtifactResponse(payload, asset, asset.pmtiles_file);
   const signedUrl = String(payload?.pmtiles_url || "");
   if (!signedUrl) {
     throw new Error("Restricted PMTiles signer did not return a PMTiles URL.");
@@ -1533,7 +1548,8 @@ function serializeFeature(feature, source) {
     assetTitle: source.asset.title,
     accessTier: source.asset.access_tier || "",
     color: colorForFeature(properties, source),
-    release: source.asset.date || source.asset.latest_release?.date || source.asset.last_updated || "latest",
+    release: source.asset.date || "latest",
+    releaseReference: source.asset,
     sourceLayer: feature.sourceLayer || feature.layer?.["source-layer"] || "",
     geometryType: feature.geometry?.type || geometryTypeFromLayer(feature.layer?.type),
     properties,

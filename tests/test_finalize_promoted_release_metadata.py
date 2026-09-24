@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import unittest
+from unittest import mock
+
+from google.api_core.exceptions import PreconditionFailed
 
 from scripts import finalize_promoted_release_metadata as finalizer
 from scripts import release_feature_model
@@ -46,7 +50,120 @@ def manifest_payload() -> dict:
     )
 
 
+class JsonStore:
+    """Distinct blob handles model generation snapshots, rather than live aliases."""
+
+    def __init__(self):
+        self.generation = 10
+        self.payload = manifest_payload()
+        self.before_download = lambda: None
+        self.after_upload = lambda: None
+        self.uploads = []
+        self.client = mock.Mock()
+        self.client.bucket.return_value.blob.side_effect = self.blob
+
+    def blob(self, _name):
+        store = self
+
+        class Blob:
+            def reload(self):
+                self.generation = store.generation
+                self.content_type = "application/json"
+                self.size = len(json.dumps(store.payload))
+
+            def download_as_text(self, *, if_generation_match=None):
+                store.before_download()
+                if if_generation_match is not None and if_generation_match != store.generation:
+                    raise PreconditionFailed("generation changed")
+                return json.dumps(store.payload)
+
+            def upload_from_string(self, text, *, content_type, if_generation_match):
+                if if_generation_match != store.generation:
+                    raise PreconditionFailed("generation changed")
+                store.uploads.append(if_generation_match)
+                store.generation += 1
+                store.payload = json.loads(text)
+                self.generation = store.generation
+                self.content_type = content_type
+                self.size = len(text.encode())
+                store.after_upload()
+
+        return Blob()
+
+    def replace_concurrently(self):
+        self.generation += 1
+        self.payload = {"concurrent": True}
+
+
 class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
+    def test_finalizer_refuses_replacement_after_original_read_changes(self):
+        store = JsonStore()
+
+        def derive(payload, **_kwargs):
+            store.replace_concurrently()
+            return payload
+
+        with (
+            mock.patch.object(finalizer, "finalized_manifest_payload", side_effect=derive),
+            mock.patch.object(finalizer.gcs_asset, "require_mutation_allowed"),
+            self.assertRaises(finalizer.FinalizeReleaseMetadataError),
+        ):
+            finalizer.finalize_promoted_release_metadata(
+                {"promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
+            )
+        self.assertEqual(store.payload, {"concurrent": True})
+        self.assertEqual(store.uploads, [])
+
+    def test_finalizer_pins_json_download_to_observed_generation(self):
+        store = JsonStore()
+        store.before_download = store.replace_concurrently
+        with self.assertRaises(finalizer.FinalizeReleaseMetadataError):
+            finalizer.load_json_object(store.client, uri(".manifest.json"))
+        self.assertEqual(store.uploads, [])
+
+    def test_finalizer_reports_upload_generation_without_later_reload(self):
+        store = JsonStore()
+        store.after_upload = store.replace_concurrently
+        with (
+            mock.patch.object(finalizer, "finalized_manifest_payload", side_effect=lambda payload, **_kwargs: payload),
+            mock.patch.object(finalizer.gcs_asset, "require_mutation_allowed"),
+        ):
+            result = finalizer.finalize_promoted_release_metadata(
+                {"promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
+            )
+        self.assertEqual(result["finalized_manifests"][0]["generation"], 11)
+        self.assertEqual(store.generation, 12)
+        self.assertEqual(store.payload, {"concurrent": True})
+
+    def test_finalizer_run_record_also_uses_original_generation(self):
+        manifest_store = JsonStore()
+        run_store = JsonStore()
+        run_store.payload = {"release_paths": [], "latest_paths": []}
+        client = mock.Mock()
+        client.bucket.return_value.blob.side_effect = lambda name: (
+            manifest_store if name.endswith(".manifest.json") else run_store
+        ).blob(name)
+
+        def derive_record(payload, **_kwargs):
+            run_store.replace_concurrently()
+            return payload
+
+        with (
+            mock.patch.object(finalizer, "finalized_manifest_payload", side_effect=lambda payload, **_kwargs: payload),
+            mock.patch.object(finalizer, "finalized_run_record_payload", side_effect=derive_record),
+            mock.patch.object(finalizer.gcs_asset, "require_mutation_allowed"),
+            self.assertRaises(finalizer.FinalizeReleaseMetadataError),
+        ):
+            finalizer.finalize_promoted_release_metadata(
+                {"promotions": [
+                    {"destination_uri": uri(".manifest.json")},
+                    {"destination_uri": f"{ROOT}/runs/{RELEASE}.json"},
+                ]}, client=client,
+            )
+        self.assertEqual(manifest_store.uploads, [10])
+        self.assertEqual(run_store.uploads, [])
+        self.assertEqual(run_store.payload, {"concurrent": True})
+
     def test_finalized_manifest_records_destination_generations(self):
         stats = {
             uri(".fgb"): finalizer.BlobInfo(uri(".fgb"), generation=10, size=100, content_type="application/octet-stream"),

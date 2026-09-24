@@ -161,6 +161,7 @@ Each resolved ref includes:
 type SharedDatasetCatalogRef = {
   accessTier: "public" | "private" | "internal";
   url: string;
+  pmtilesPath: string | null;
   title: string | null;
   description: string | null;
   status: string | null;
@@ -222,7 +223,7 @@ const layer = await resolveSharedDatasetLayer("example-public-layer", {
   locale: userLocale
 });
 
-renderPmtilesLayer(layer.ref.url);
+if (layer.ref.url) renderPmtilesLayer(layer.ref.url);
 
 if (layer.sidecar?.url) {
   const records = await fetchSharedDatasetMetadataRecords(layer.sidecar.url);
@@ -230,14 +231,50 @@ if (layer.sidecar?.url) {
 }
 ```
 
-The returned layer includes `ref` (the PMTiles catalog ref), `releaseIndex`,
-`resolvedRelease` (the concrete `YYYY-MM-DD` release the sidecar came from;
-persist it when lineage matters), and `sidecar` with the resolved locale,
-fallback flag, and artifact URL. `sidecar.url` is `null` for private assets —
-route those through an app-owned signed-URL backend instead. Pass
-`version: "YYYY-MM-DD"` to pin the sidecar to an exact release; the default is
-the release index `latest`, which matches what the `latest/` PMTiles CDN URL
-serves.
+The returned layer includes the selected `ref`, `pmtiles` descriptor
+(`file`, `gsUri`, `generation`), `releaseIndex`, concrete `resolvedRelease`, and
+optional `sidecar`. Both PMTiles and metadata come from the same indexed release;
+public URLs include the indexed object generation. Pass `version: "YYYY-MM-DD"`
+for historical data. The default resolves the index's latest entry once. Retain
+the returned descriptors together and key caches by path and generation, because
+a same-date replacement can change both artifacts.
+
+An explicit missing release, missing PMTiles, ambiguous variant, or indexed
+artifact without a usable generation throws `SharedDatasetCatalogResolutionError`.
+An existing release without a sidecar returns `sidecar: null` without changing
+`resolvedRelease`. If the index is absent (including HTTP 404), only `latest`
+returns a legacy map-only alias with `resolvedRelease`, `pmtiles`, and `sidecar`
+all null; 403, malformed JSON, and network failures do not activate that fallback.
+Custom index fetchers should expose a numeric `status: 404` for definitive absence.
+`resolveSharedDatasetPmtilesRef(s)` remains a catalog-only alias resolver and does
+not promise a coherent metadata join.
+
+For indexed private/internal layers, **both `ref.url` and `sidecar.url` are null**.
+This layer-specific nullability is intentional; catalog-only reference types
+remain unchanged. Send slug, concrete release, and expected generation to your
+existing authorized backend. It must reselect the catalog-owned artifact, reject
+an expected-generation mismatch, and sign the exact descriptor after applying
+its existing access policy. Never accept an arbitrary URI from the browser.
+For example, inside that backend after authorization and selection:
+
+```ts
+const layer = await resolveSharedDatasetLayer(assetSlug, { version: requestedDate });
+if (!layer.pmtiles || layer.pmtiles.generation !== expectedGeneration) {
+  throw new Error("Selected artifact changed; reload the catalog and reselect");
+}
+const pmtilesUrl = getSignedSharedDatasetArtifactUrl(
+  layer.pmtiles.gsUri, signingKey, { generation: layer.pmtiles.generation }
+);
+// Return the selected date/path/generation with the URL; the caller verifies
+// they match its captured layer before mounting it.
+```
+
+Import the signing helper from `@skytruth/shared-datasets/server`. The configured
+artifact route must support the artifact and access policy. This helper signs
+bytes already authorized by your backend; it does not authorize a path. The
+existing tiered session helpers still apply to catalog-only alias workflows.
+If a selected generation is no longer authorized or retained, fail/reselect the
+whole layer rather than loading new metadata into old tiles.
 
 `fetchSharedDatasetMetadataRecords` downloads the sidecar, transparently
 handles both CDN-decompressed NDJSON and raw gzip bytes, parses each line, and
@@ -271,7 +308,8 @@ if (sidecar) {
 
 The resolver tries the requested locale first and falls back to the canonical
 `.metadata.ndjson.gz` sidecar when a localized sidecar is absent. It returns
-`null` when the release index has no metadata sidecar.
+`null` when the selected release has no metadata sidecar. A missing release or
+advertised sidecar without a usable generation throws; it is not optional absence.
 
 Each sidecar is gzip NDJSON with one JSON record per feature:
 
@@ -309,7 +347,9 @@ Server code can sign an exact resolved artifact path:
 ```ts
 import { getSignedSharedDatasetArtifactUrl } from "@skytruth/shared-datasets/server";
 
-const signedUrl = getSignedSharedDatasetArtifactUrl(gsUri, signingKey);
+const signedUrl = getSignedSharedDatasetArtifactUrl(sidecar.gsUri, signingKey, {
+  generation: sidecar.generation
+});
 ```
 
 By default this server helper signs `https://tiles.skytruth.org/private/...`

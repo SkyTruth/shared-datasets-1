@@ -114,8 +114,13 @@ The standard vector build is:
    zoom 8 requires source/profile evidence or a documented override.
 6. Validate the FGB with `ogrinfo`, confirm PMTiles v3 magic bytes, run
    `pmtiles verify`, inspect `pmtiles show`, and decode a representative tile
-   to confirm feature properties.
-   are present for the catalog inspector.
+   to confirm feature properties are present for the catalog inspector.
+
+Vector validation requires `ogrinfo`, `pmtiles verify/show`, and a successful
+representative tile decode with `tippecanoe-decode`. Missing tools or an
+unavailable decode produce `valid: false`; file existence and PMTiles magic
+alone do not establish publish readiness. The metadata lookup validator retains
+its documented geometry-validity exception while requiring these other checks.
 
 Release-oriented vector assets add a feature metadata layer before publication.
 Normalize the source into a release feature model with `feature_id`,
@@ -226,10 +231,15 @@ publisher identity. Prefix deletes, wildcards, and generation-less deletes are
 invalid.
 
 The scheduled `Scratch cleanup audit` workflow is the only standing automated
-prefix cleanup. It writes a warning marker at 60 days of no object changes in a
-`_scratch/pending-publishes/{asset-slug}/{proposal-id}/` prefix, deletes warned
-prefixes after 90 unchanged days, and deletes prefixes that contain a staged data
-file matching a canonical release object by filename, size, and CRC32C.
+prefix cleanup. Its age-based abandonment policy writes a warning when the
+newest object in a `_scratch/pending-publishes/{asset-slug}/{proposal-id}/` prefix
+is 60 days old. At 90 days, the prefix becomes a deletion candidate only if that
+object's name, generation, and update time still match the warning. A first
+warning after day 90 can become eligible on the next audit. Historical content
+matches are not proof of completed publication, and cleanup does not inspect PR
+status. Deletes use each listed object's exact generation; the prefix operation
+is not atomic. Dry-run reports list candidates without writing markers or
+deleting objects.
 
 ```bash
 uv run python scripts/gcs_asset.py delete gs://$SHARED_DATASETS_BUCKET/path/to/object \

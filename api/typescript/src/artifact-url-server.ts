@@ -52,7 +52,7 @@ export const getSignedSharedDatasetArtifactUrl = (
   const expires =
     Math.floor(resolvedConfig.now() / 1000) + resolvedConfig.ttlSeconds;
   const keyName = encodeURIComponent(resolvedConfig.keyName);
-  const unsignedUrl = `${url}?Expires=${expires}&KeyName=${keyName}`;
+  const unsignedUrl = `${url}${url.includes('?') ? '&' : '?'}Expires=${expires}&KeyName=${keyName}`;
   const signature = toUrlSafeBase64(
     crypto.createHmac('sha1', signingKey).update(unsignedUrl).digest()
   );
