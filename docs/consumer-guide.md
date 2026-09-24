@@ -107,6 +107,12 @@ beside the data in `releases/{date}/` and `latest/`:
   or assigned as a monotonic sequence, and what key they are assigned from.
 - `previous_release` and `next_generated_feature_id_after_release` — the
   baseline this release continued from, and where the sequence stands after it.
+  New generated releases also include `sequence_state_version: 1` and
+  `next_generated_feature_id_before_release`. Deleting features does not lower
+  the sequence. Historical manifests without this marker remain readable, but
+  their next-ID values are not sufficient authority for allocating new IDs.
+  A key returning after absence from the immediately prior release receives a
+  new ID; automatic resurrection of its old identity is not provided.
 - `decisions` — the identity questions this release raised and how each was
   settled: `ambiguities_detected`, how many the corroboration policy resolved
   automatically (`auto_resolved_key_corroborated`), how many were

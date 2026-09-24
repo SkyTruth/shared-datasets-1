@@ -499,7 +499,7 @@ feature_identity:
   assignment_key:
   - SITE_PID
   previous_release: 2026-06-05
-  next_generated_id: "18430"
+  next_generated_feature_id_after_release: 18430
 ```
 
 Generated IDs are monotonically increasing decimal strings. Refreshes reuse a
@@ -518,3 +518,20 @@ likely search/filter fields.
 
 Use `templates/dataset_README.template.md` for important assets and
 `templates/dataset_README.minimal.template.md` for small/simple assets.
+
+Generated allocation consumes a verified persisted sequence, not the maximum ID
+in the immediately previous live records. New manifests record
+`sequence_state_version: 1`, `next_generated_feature_id_before_release`, and
+`next_generated_feature_id_after_release`; the latter never decreases, including
+for empty generic metadata releases. Scheduled jobs still reject unexpected
+empty source data. A returning key absent from the immediate baseline receives a
+new ID; this sequence contract does not provide historical identity resurrection.
+The next-ID value `10**64` represents exhaustion: existing IDs remain readable
+and reusable, but no further ID can be allocated under the 64-character contract.
+
+Legacy manifests remain readable, but an old numeric next-ID is not verified
+allocation state. Generated refreshes refuse that baseline until a reviewed,
+generation-bound [sequence migration](../feature-id-sequence-migration.md).
+Source-field IDs and the hash canonicalization algorithms are unchanged.
+Publication also needs exclusive ownership of the captured baseline; a successful
+GCS read or a generation preflight alone does not serialize concurrent writers.

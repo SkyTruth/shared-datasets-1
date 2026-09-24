@@ -168,3 +168,20 @@ docker run --platform linux/amd64 --rm -i \
 
 The sample harness never instantiates a GCS client and leaves outputs in the
 local work directory.
+
+## Generated-ID deployment prerequisite
+
+Generated refreshes load the exact manifest generation and its referenced release
+sidecar generation, carrying the sequence even when the highest live ID vanished.
+Old generated manifests, including numeric next-ID fields, are not trusted as
+allocation authority. A refresh stops until the
+[reviewed sequence migration](../../docs/feature-id-sequence-migration.md) has
+established an evidence-bound baseline. WDPA legacy `ext_id` mappings alone do
+not prove the historic allocation ceiling.
+
+Do not deploy this sequence change until existing assets have a reviewed migration
+and publication enforces exclusive ownership of the captured baseline. A read
+preflight alone does not prevent concurrent publishers from allocating the same
+number. The builder exposes `identity_baseline_snapshot` (manifest path,
+generation, SHA-256), `previous_generated_feature_id`, and `previous_release` for
+that publication boundary. This change performs no migration or deployment.

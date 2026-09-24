@@ -21,7 +21,7 @@ from typing import Any
 from unittest import mock
 
 from ingestion.common import feature_metadata
-from release_streaming_helpers import write_generated_release
+from release_streaming_helpers import write_generated_release, synthetic_baseline
 from scripts import release_feature_model as model
 
 
@@ -57,6 +57,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                 source_fields=["SITE_PID"],
                 enriched_features_path=tmp_path / "enriched.geojsonseq",
                 sidecar_path=tmp_path / "metadata.ndjson.gz",
+                baseline=model.GeneratedIdentityBaseline.genesis(),
             )
 
         self.assertEqual(result.feature_count, 25)
@@ -90,6 +91,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                 source_fields=["SITE_PID"],
                 enriched_features_path=tmp_path / "enriched.geojsonseq",
                 sidecar_path=tmp_path / "metadata.ndjson.gz",
+                baseline=model.GeneratedIdentityBaseline.genesis(),
             )
 
         self.assertEqual(calls, 2)
@@ -207,7 +209,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                         source_fields=["SITE_PID"],
                         enriched_features_path=enriched_path,
                         sidecar_path=sidecar_path,
-                        previous_records=previous_records,
+                        baseline=synthetic_baseline(previous_records),
                     )
 
             self.assertFalse(enriched_path.exists(), "no enriched output may exist for a blocked release")
@@ -294,6 +296,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                     source_fields=["SITE_PID"],
                     enriched_features_path=enriched_path,
                     sidecar_path=tmp_path / "metadata.ndjson.gz",
+                    baseline=model.GeneratedIdentityBaseline.genesis(),
                 )
             self.assertFalse(enriched_path.exists())
 
@@ -318,19 +321,13 @@ class ReleaseStreamingTests(unittest.TestCase):
         self.assertEqual(sidecar[0]["provenance"]["duplicate_source_row_numbers"], [3, 4])
         self.assertNotIn("duplicate_source_row_numbers", sidecar[1]["provenance"])
 
-    def test_empty_source_is_rejected_before_writing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            with self.assertRaisesRegex(RuntimeError, "metadata sidecar would be empty"):
-                feature_metadata.write_generated_id_release(
-                    open_features=lambda: iter([]),
-                    asset_slug="wdpa-marine",
-                    release="2026-08-01",
-                    provenance={},
-                    source_fields=["SITE_PID"],
-                    enriched_features_path=tmp_path / "enriched.geojsonseq",
-                    sidecar_path=tmp_path / "metadata.ndjson.gz",
-                )
+    def test_empty_source_carries_previous_sequence(self):
+        enriched, sidecar, result = write_generated_release(
+            [], asset_slug="wdpa-marine", release="2026-08-01", provenance={},
+            baseline=synthetic_baseline(next_feature_id=100),
+        )
+        self.assertEqual((enriched, sidecar), ([], []))
+        self.assertEqual(result.next_generated_feature_id, 100)
 
     def test_source_shrinking_between_passes_fails_loudly(self):
         features = [geojson_feature(index) for index in range(1, 5)]
@@ -354,6 +351,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                     source_fields=["SITE_PID"],
                     enriched_features_path=tmp_path / "enriched.geojsonseq",
                     sidecar_path=tmp_path / "metadata.ndjson.gz",
+                    baseline=model.GeneratedIdentityBaseline.genesis(),
                 )
 
 
@@ -460,9 +458,10 @@ if __name__ == "__main__":
 class WdpaBuildPipelineTests(unittest.TestCase):
     """Integration coverage for the wdpa-monthly call site of the writer."""
 
-    def _run_build(self, tmp_path: Path) -> tuple[Any, list[str]]:
+    def _run_build(self, tmp_path: Path, indices=(1, 2), **build_kwargs) -> tuple[Any, list[str]]:
         from ingestion.wdpa_monthly import run as wdpa
 
+        build_kwargs.setdefault("baseline", model.GeneratedIdentityBaseline.genesis())
         events: list[str] = []
         asset = wdpa.ASSETS[0]
         source_fields = (
@@ -487,7 +486,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                         "geometry": {"type": "Point", "coordinates": [index, 0]},
                     }
                 )
-                for index in (1, 2)
+                for index in indices
             ]
             output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -504,13 +503,13 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             output.write_text("fgb", encoding="utf-8")
 
         with (
-            mock.patch.object(wdpa, "expected_feature_count", return_value=2),
+            mock.patch.object(wdpa, "expected_feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "build_filtered_gpkg", fake_build_filtered_gpkg),
             mock.patch.object(wdpa, "convert_gpkg_to_geojsonseq", fake_convert_gpkg_to_geojsonseq),
             mock.patch.object(wdpa, "remove_if_exists", fake_remove_if_exists),
             mock.patch.object(wdpa, "build_pmtiles", fake_build_pmtiles),
             mock.patch.object(wdpa, "convert_geojsonseq_to_fgb", fake_convert_geojsonseq_to_fgb),
-            mock.patch.object(wdpa, "feature_count", return_value=2),
+            mock.patch.object(wdpa, "feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "layer_fields", return_value=source_fields + (
                 wdpa.FieldSpec(name="feature_id", type="String"),
                 wdpa.FieldSpec(name="geometry_hash", type="String"),
@@ -521,7 +520,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             mock.patch.object(
                 wdpa,
                 "materialize_localized_metadata",
-                return_value={"applied_translation_count": 2},
+                return_value={"applied_translation_count": len(indices)},
             ),
             mock.patch.object(wdpa.feature_metadata, "validate_release_vector_contract", return_value=None),
         ):
@@ -533,6 +532,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 where="REALM = 'Marine'",
                 workdir=tmp_path,
                 run_date=dt.date(2026, 8, 1),
+                **build_kwargs,
             )
         return outputs, events
 
@@ -558,3 +558,69 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             translation_rows = outputs.metadata_translations.read_text(encoding="utf-8").strip().splitlines()
             self.assertEqual(len(translation_rows), 3)  # header + one row per feature
             self.assertIn("feature_id", translation_rows[0])
+
+    def test_real_builder_preserves_highwater_after_deletion(self):
+        baseline = model.GeneratedIdentityBaseline.genesis()
+        observed = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for number, indices in enumerate(((1, 2), (1,), (1, 3), (1, 2, 3))):
+                directory = Path(tmp) / str(number)
+                directory.mkdir()
+                outputs, _ = self._run_build(directory, indices, baseline=baseline)
+                previous = list(model.read_metadata_sidecar(outputs.metadata))
+                baseline = synthetic_baseline(previous, next_feature_id=outputs.next_generated_feature_id)
+                observed.append(([row["feature_id"] for row in previous], outputs.next_generated_feature_id))
+        self.assertEqual(observed, [(["1", "2"], 3), (["1"], 3), (["1", "3"], 4), (["1", "4", "3"], 5)])
+
+
+class SeaIceSequenceBuilderTests(unittest.TestCase):
+    def test_real_builder_preserves_highwater_and_hash_exclusions(self):
+        from contextlib import ExitStack
+        from ingestion.sea_ice_daily import run as sea_ice
+
+        baseline = synthetic_baseline(next_feature_id=100)
+        def touch_output(_source, output, *_rest):
+            Path(output).write_bytes(b'fixture')
+        def source_stream(_source, output):
+            feature = {'type': 'Feature', 'geometry': {'type': 'Point', 'coordinates': [0, 0]}, 'properties': {'DN': 3, 'ice_date': '2026-08-01'}}
+            Path(output).write_text(json.dumps(feature)+'\n')
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as patches:
+            for name in ('build_ice_mask_raster', 'polygonize_ice_mask', 'filter_ice_polygons', 'convert_gpkg_to_fgb', 'convert_geojsonseq_to_fgb', 'build_pmtiles'):
+                patches.enter_context(mock.patch.object(sea_ice, name, touch_output))
+            patches.enter_context(mock.patch.object(sea_ice, 'convert_fgb_to_geojsonseq', source_stream))
+            patches.enter_context(mock.patch.object(sea_ice, 'feature_count', return_value=1))
+            patches.enter_context(mock.patch.object(sea_ice, 'layer_fields', return_value=('DN', 'ice_date', 'feature_id', 'geometry_hash', 'properties_hash')))
+            patches.enter_context(mock.patch.object(sea_ice, 'validate_pmtiles'))
+            patches.enter_context(mock.patch.object(sea_ice.feature_metadata, 'validate_release_vector_contract'))
+            outputs = sea_ice.build_outputs(source_tif=Path(tmp)/'source.tif', source_date=dt.date(2026, 8, 1), workdir=Path(tmp), baseline=baseline)
+            records = list(model.read_metadata_sidecar(outputs.metadata))
+            self.assertEqual(records[0]['feature_id'], '100')
+            self.assertEqual(records[0]['properties_hash'], model.properties_hash({'DN': 3, 'ice_date': '2026-08-01'}, exclude_properties=('ice_date',)))
+            self.assertEqual((outputs.previous_generated_feature_id, outputs.next_generated_feature_id, outputs.previous_release), (100, 101, baseline.release))
+
+
+class CompactGeneratedBaselineTests(unittest.TestCase):
+    def test_baseline_does_not_copy_or_retain_source_properties(self):
+        class Properties(dict):
+            def __deepcopy__(self, memo):
+                raise AssertionError('full properties must not be copied')
+        payload = Properties({'large': 'payload'})
+        reference = weakref.ref(payload)
+        baseline = model.GeneratedIdentityBaseline(({'feature_id': '1', 'identity_key': ['key'], 'properties': payload},), 100, 'r1')
+        del payload
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertEqual(dict(baseline.records[0]), {'feature_id': '1', 'identity_key': ('key',)})
+
+    def test_manifest_projection_applies_exclusion_before_discarding_payload(self):
+        identity = model.build_identity_metadata(
+            strategy='generated_sequence_content_hash', properties_hash_excluded_properties=['ice_date'],
+            next_generated_feature_id_before_release=100, next_generated_feature_id_after_release=100,
+        )
+        geometry_hash = 'sha256:' + 'a'*64
+        records = [{'feature_id': '1', 'geometry_hash': geometry_hash, 'properties_hash': 'sha256:'+'b'*64, 'properties': {'DN': 3, 'ice_date': 'old'}}]
+        baseline = model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, iter(records))
+        expected_hash = model.properties_hash({'DN': 3})
+        self.assertEqual(baseline.records[0]['properties_hash'], expected_hash)
+        self.assertEqual(baseline.records[0]['identity_key'], (geometry_hash, expected_hash))
+        self.assertNotIn('properties', baseline.records[0])

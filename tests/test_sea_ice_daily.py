@@ -145,6 +145,9 @@ def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ic
         },
         schema_payload=schema_payload,
         next_generated_feature_id=1,
+        previous_generated_feature_id=1,
+        previous_release=None,
+        identity_baseline_snapshot=None,
         identity_decisions={
             "schema_version": 1,
             "policy": "identity_key_corroboration_v1",
@@ -597,6 +600,7 @@ class SeaIceDailyIntegrationTests(unittest.TestCase):
             )
 
             outputs = sea_ice.build_outputs(
+                baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(),
                 source_tif=source_tif,
                 source_date=dt.date(2026, 4, 28),
                 workdir=tmp_path,

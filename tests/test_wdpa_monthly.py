@@ -104,6 +104,10 @@ class FakeBucket:
         return self.blobs[name]
 
 
+    def list_blobs(self, prefix=""):
+        return [blob for blob in self.blobs.values() if blob.exists and blob.name.startswith(prefix)]
+
+
 class FakeClient:
     def __init__(self, bucket: FakeBucket) -> None:
         self._bucket = bucket
@@ -175,6 +179,9 @@ def fake_asset_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=1,
+        previous_generated_feature_id=1,
+        previous_release=None,
+        identity_baseline_snapshot=None,
         identity_decisions={
             "schema_version": 1,
             "policy": "identity_key_corroboration_v1",
@@ -530,7 +537,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         self.assertEqual(record["sha256"]["manifest"], manifest_sha)
         self.assertEqual(json.loads(run_record.text)["sha256"]["manifest"], manifest_sha)
 
-    def test_legacy_wdpa_metadata_sidecar_preserves_generated_ids(self):
+    def test_legacy_wdpa_metadata_requires_reviewed_sequence_migration(self):
         bucket = FakeBucket()
         asset = wdpa.ASSETS[0]
         latest = bucket.blob(asset.latest_object(".metadata.ndjson.gz"))
@@ -557,9 +564,8 @@ class WdpaMonthlyTests(unittest.TestCase):
         )
         publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
 
-        records = wdpa.load_previous_records_for_asset(publisher, asset)
-
-        self.assertEqual(records, [{"feature_id": "42", "identity_key": ["WDPA-1"]}])
+        with self.assertRaisesRegex(RuntimeError, "reviewed historical sequence migration"):
+            publisher.load_generated_identity_baseline(asset)
 
 
 @unittest.skipUnless(
@@ -630,9 +636,17 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
                 where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
                 workdir=tmp_path,
                 run_date=dt.date(2026, 5, 1),
+                baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(),
             )
 
             self.assertEqual(outputs.row_count, 4)
+            self.assertEqual(outputs.previous_generated_feature_id, 1)
+            self.assertEqual(outputs.next_generated_feature_id, 5)
+            self.assertIsNone(outputs.previous_release)
+            self.assertIsNone(outputs.identity_baseline_snapshot)
+            with gzip.open(outputs.metadata, "rt", encoding="utf-8") as stream:
+                records = [json.loads(line) for line in stream]
+            self.assertEqual({record["feature_id"] for record in records}, {"1", "2", "3", "4"})
             self.assertTrue(outputs.fgb.exists())
             self.assertTrue(outputs.pmtiles.exists())
             self.assertTrue(outputs.metadata.exists())

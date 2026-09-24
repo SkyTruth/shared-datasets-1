@@ -116,3 +116,20 @@ blocks before the next untargeted apply; otherwise Terraform will recreate them.
 Do not delete existing GCS releases, latest files, run records, README files, or
 catalog rows as part of cost teardown unless the team explicitly decides to
 remove the dataset asset.
+
+## Generated-ID deployment prerequisite
+
+Generated refreshes load the exact manifest generation and its referenced release
+sidecar generation, carrying the sequence even when the highest live ID vanished.
+Old generated manifests, including numeric next-ID fields, are not trusted as
+allocation authority. A refresh stops until the
+[reviewed sequence migration](../../docs/feature-id-sequence-migration.md) has
+established an evidence-bound baseline. Live records alone do not prove the
+historic allocation ceiling.
+
+Do not deploy this sequence change until existing assets have a reviewed migration
+and publication enforces exclusive ownership of the captured baseline. A read
+preflight alone does not prevent concurrent publishers from allocating the same
+number. The builder exposes `identity_baseline_snapshot` (manifest path,
+generation, SHA-256), `previous_generated_feature_id`, and `previous_release` for
+that publication boundary. This change performs no migration or deployment.

@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
@@ -23,6 +24,9 @@ RELEASE_MANIFEST_SCHEMA_VERSION = 2
 METADATA_SIDECAR_SCHEMA_VERSION = 2
 RELEASE_SCHEMA_SCHEMA_VERSION = 2
 FEATURE_IDENTITY_SCHEMA_VERSION = 1
+GENERATED_SEQUENCE_STATE_VERSION = 1
+GENERATED_SEQUENCE_EXHAUSTED = 10**64
+GENERATED_FEATURE_ID_RE = re.compile(r"^[1-9][0-9]{0,63}$")
 IDENTITY_DECISIONS_SCHEMA_VERSION = 1
 IDENTITY_DECISION_POLICY = "identity_key_corroboration_v1"
 FEATURE_IDENTITY_RESOLUTION_SCHEMA_VERSION = 1
@@ -311,50 +315,156 @@ def normalize_hash_tuple(value: Any, *, label: str) -> tuple[str, ...]:
     return hashes
 
 
+def project_identity_records(
+    records: Iterable[Mapping[str, Any]], *, exclude_properties: Sequence[str] = (),
+) -> Iterable[dict[str, Any]]:
+    """Discard payloads at the boundary after applying the declared hash policy."""
+    for record in records:
+        payload = {field: getattr(record, field) for field in ("feature_id", "geometry_hash", "properties_hash", "identity_key", "properties")} if isinstance(record, SidecarRecord) else record
+        projected = {field: payload[field] for field in ("feature_id", "geometry_hash", "properties_hash", "identity_key") if field in payload}
+        properties = payload.get("properties")
+        if exclude_properties and isinstance(properties, Mapping):
+            projected["properties_hash"] = properties_hash(properties, exclude_properties=exclude_properties)
+            if projected.get("geometry_hash"):
+                projected["identity_key"] = list(content_identity_key(
+                    geometry_hash_value=projected["geometry_hash"], properties_hash_value=projected["properties_hash"],
+                ))
+        yield projected
+
+
+def validate_generated_sequence(value: Any, *, label: str = "next generated feature ID") -> int:
+    if type(value) is not int or not 1 <= value <= GENERATED_SEQUENCE_EXHAUSTED:
+        raise ReleaseFeatureModelError(f"{label} must be an integer between 1 and 10**64 (not bool)")
+    return value
+
+
+@dataclass(frozen=True)
+class GeneratedIdentitySnapshot:
+    """Exact latest manifest observed before a generated release was built."""
+
+    path: str
+    generation: int
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, str) or not self.path.startswith("gs://"):
+            raise ReleaseFeatureModelError("identity snapshot path must be a gs:// URI")
+        if type(self.generation) is not int or self.generation <= 0:
+            raise ReleaseFeatureModelError("identity snapshot generation must be a positive integer")
+        if not isinstance(self.sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.sha256):
+            raise ReleaseFeatureModelError("identity snapshot sha256 must be a lowercase SHA-256 digest")
+
+
+@dataclass(frozen=True)
+class GeneratedIdentityBaseline:
+    """Allocation authority kept together with the previous identity records.
+
+    Local callers explicitly establish provenance. Remote adapters must verify a
+    versioned manifest and its exact sidecar before constructing this value.
+    """
+
+    records: tuple[Mapping[str, Any], ...]
+    next_feature_id: int
+    release: str | None
+    snapshot: GeneratedIdentitySnapshot | None = None
+
+    def __post_init__(self) -> None:
+        validate_generated_sequence(self.next_feature_id)
+        if self.snapshot is not None and not isinstance(self.snapshot, GeneratedIdentitySnapshot):
+            raise ReleaseFeatureModelError("generated baseline snapshot must be a validated snapshot reference")
+        records = tuple(MappingProxyType({
+            field: normalize_identity_key(record[field], label="baseline identity key") if field == "identity_key" and record[field] is not None else record[field]
+            for field in ("feature_id", "geometry_hash", "properties_hash", "identity_key") if field in record
+        }) for record in self.records)
+        mapping = previous_feature_id_mapping(records)
+        if len(mapping) != len(records) or len(set(mapping.values())) != len(mapping):
+            raise ReleaseFeatureModelError("generated baseline has duplicate feature IDs or identity keys")
+        for feature_id in mapping.values():
+            if not GENERATED_FEATURE_ID_RE.fullmatch(feature_id):
+                raise ReleaseFeatureModelError("generated baseline IDs must be canonical positive decimal strings")
+            if int(feature_id) >= self.next_feature_id:
+                raise ReleaseFeatureModelError("next generated feature ID must exceed every previous allocation")
+        if self.release is None:
+            if records or self.next_feature_id != 1 or self.snapshot is not None:
+                raise ReleaseFeatureModelError("genesis requires no records, next-ID 1, and no previous snapshot")
+        elif not isinstance(self.release, str) or not self.release.strip():
+            raise ReleaseFeatureModelError("generated baseline release must be a nonempty string")
+        object.__setattr__(self, "records", records)
+
+    @classmethod
+    def genesis(cls) -> GeneratedIdentityBaseline:
+        return cls(records=(), next_feature_id=1, release=None)
+
+
+@dataclass(frozen=True)
+class GeneratedFeatureAllocation:
+    ids_by_key: Mapping[tuple[str, ...], str]
+    next_feature_id: int
+
+
 def assign_generated_feature_ids(
     identity_keys: Iterable[Sequence[str]],
     *,
-    previous_records: Iterable[SidecarRecord | Mapping[str, Any]] | None = None,
+    baseline: GeneratedIdentityBaseline,
     feature_id_overrides: Mapping[Sequence[str], str] | None = None,
     force_new_identity_keys: Iterable[Sequence[str]] = (),
-) -> dict[tuple[str, ...], str]:
-    """Assign monotonic decimal feature IDs while preserving prior mappings."""
-    previous = previous_feature_id_mapping(previous_records or ())
+) -> GeneratedFeatureAllocation:
+    """Continue verified sequence state; deleted IDs never become available."""
+    previous = previous_feature_id_mapping(baseline.records)
     overrides: dict[tuple[str, ...], str] = {}
     for raw_key, raw_feature_id in (feature_id_overrides or {}).items():
         key = tuple(str(part) for part in raw_key)
         feature_id = str(raw_feature_id).strip()
-        validate_feature_id(feature_id)
         if key in previous and previous[key] != feature_id:
             raise ReleaseFeatureModelError(f"feature_id override conflicts with previous mapping for identity key: {key}")
+        if feature_id not in previous.values():
+            raise ReleaseFeatureModelError("feature_id override must reuse an existing baseline allocation")
         if key in overrides and overrides[key] != feature_id:
             raise ReleaseFeatureModelError(f"duplicate feature_id override for identity key: {key}")
         overrides[key] = feature_id
     force_new = {tuple(str(part) for part in raw_key) for raw_key in force_new_identity_keys}
+    if force_new & overrides.keys():
+        raise ReleaseFeatureModelError("identity cannot both reuse and force a new feature ID")
     assigned: dict[tuple[str, ...], str] = {}
-    used_feature_ids = set(previous.values()) | set(overrides.values())
-    numeric_feature_ids = [int(feature_id) for feature_id in used_feature_ids if feature_id.isdigit()]
-    next_sequence = max(numeric_feature_ids, default=0) + 1
+    next_sequence = baseline.next_feature_id
     for raw_key in identity_keys:
-        key = tuple(str(part) for part in raw_key)
-        if not key:
-            raise ReleaseFeatureModelError("generated feature ID requires a non-empty identity key")
+        key = normalize_identity_key(raw_key, label="generated identity key")
         if key in assigned:
             raise ReleaseFeatureModelError(f"duplicate identity key while assigning feature_id: {key}")
         if key in overrides:
             assigned[key] = overrides[key]
-            continue
-        if key in previous and key not in force_new:
+        elif key in previous and key not in force_new:
             assigned[key] = previous[key]
-            continue
-        while str(next_sequence) in used_feature_ids:
+        else:
+            if next_sequence == GENERATED_SEQUENCE_EXHAUSTED:
+                raise ReleaseFeatureModelError("generated feature ID sequence is exhausted")
+            assigned[key] = str(next_sequence)
             next_sequence += 1
-        feature_id = str(next_sequence)
-        validate_feature_id(feature_id)
-        assigned[key] = feature_id
-        used_feature_ids.add(feature_id)
-        next_sequence += 1
-    return assigned
+    if len(set(assigned.values())) != len(assigned):
+        raise ReleaseFeatureModelError("generated allocation would assign the same feature ID to multiple identities")
+    return GeneratedFeatureAllocation(MappingProxyType(assigned), next_sequence)
+
+
+def generated_baseline_from_manifest(
+    manifest: Mapping[str, Any],
+    records: Iterable[Mapping[str, Any]],
+    *,
+    snapshot: GeneratedIdentitySnapshot | None = None,
+) -> GeneratedIdentityBaseline:
+    identity = manifest.get("identity")
+    validate_identity_metadata(identity)
+    if not identity["strategy"].startswith("generated_sequence"):
+        raise ReleaseFeatureModelError("allocation baseline requires generated sequence identity")
+    if identity.get("sequence_state_version") != GENERATED_SEQUENCE_STATE_VERSION:
+        raise ReleaseFeatureModelError("legacy generated sequence is unverified; reviewed historical sequence migration required")
+    return GeneratedIdentityBaseline(
+        records=tuple(project_identity_records(
+            records, exclude_properties=identity.get("properties_hash_excluded_properties", ()),
+        )),
+        next_feature_id=identity["next_generated_feature_id_after_release"],
+        release=manifest.get("release"),
+        snapshot=snapshot,
+    )
 
 
 def find_identity_ambiguities(
@@ -1159,6 +1269,7 @@ def build_identity_metadata(
     properties_hash_excluded_properties: Sequence[str] = (),
     previous_release: str | None = None,
     next_generated_feature_id_after_release: int | None = None,
+    next_generated_feature_id_before_release: int | None = None,
     decisions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     clean_source_fields = [str(field) for field in source_fields]
@@ -1177,6 +1288,10 @@ def build_identity_metadata(
         "canonicalization": FEATURE_ID_ALGORITHM,
     }
     if strategy.startswith("generated_sequence"):
+        validate_generated_sequence(next_generated_feature_id_before_release, label="sequence before release")
+        validate_generated_sequence(next_generated_feature_id_after_release, label="sequence after release")
+        identity["sequence_state_version"] = GENERATED_SEQUENCE_STATE_VERSION
+        identity["next_generated_feature_id_before_release"] = next_generated_feature_id_before_release
         identity["generated_id_type"] = "monotonic_integer_string"
         identity["assignment_key"] = clean_assignment_key
         if clean_excluded_properties:
@@ -1209,6 +1324,22 @@ def validate_identity_metadata(identity: Any) -> None:
         raise ReleaseFeatureModelError("generated_sequence_source_fields identity requires one or two source fields")
     if strategy == "generated_sequence_content_hash" and clean_source_fields:
         raise ReleaseFeatureModelError("generated_sequence_content_hash identity must not include source fields")
+    if strategy.startswith("generated_sequence"):
+        state_version = identity.get("sequence_state_version")
+        before = identity.get("next_generated_feature_id_before_release")
+        after = identity.get("next_generated_feature_id_after_release")
+        if state_version is not None:
+            if type(state_version) is not int or state_version != GENERATED_SEQUENCE_STATE_VERSION:
+                raise ReleaseFeatureModelError("unsupported generated sequence state version")
+            validate_generated_sequence(before, label="sequence before release")
+            validate_generated_sequence(after, label="sequence after release")
+            if after < before:
+                raise ReleaseFeatureModelError("generated sequence after release must not regress below before release")
+        else:
+            # Historical manifests remain readable; they are never allocation authority.
+            for value in (before, after):
+                if value is not None:
+                    validate_generated_sequence(value)
     assignment_key = identity.get("assignment_key", [])
     if strategy.startswith("generated_sequence"):
         if not isinstance(assignment_key, Sequence) or isinstance(assignment_key, (str, bytes, bytearray)):

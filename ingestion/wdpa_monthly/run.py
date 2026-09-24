@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from ingestion.common import feature_metadata, vector_pipeline
@@ -101,6 +100,9 @@ class AssetOutputs:
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    previous_generated_feature_id: int
+    previous_release: str | None
+    identity_baseline_snapshot: release_feature_model.GeneratedIdentitySnapshot | None
     identity_decisions: dict[str, Any]
     localization_report: dict[str, Any]
 
@@ -706,74 +708,6 @@ def materialize_localized_metadata(
     return report.to_dict()
 
 
-def legacy_wdpa_previous_records(records: Sequence[Mapping[str, Any]], *, asset: AssetSpec) -> list[dict[str, Any]]:
-    """Adapt old WDPA metadata sidecars into generated-ID previous records."""
-    converted: list[dict[str, Any]] = []
-    errors: list[str] = []
-    for index, record in enumerate(records, start=1):
-        if record.get("schema_version") != 1:
-            errors.append(f"record {index} is not legacy schema_version 1")
-            continue
-        if record.get("asset_slug") not in (None, asset.slug):
-            errors.append(f"record {index} asset_slug does not match {asset.slug}")
-            continue
-        properties = record.get("properties")
-        if not isinstance(properties, Mapping):
-            errors.append(f"record {index} properties must be an object")
-            continue
-        site_pid = str(properties.get("SITE_PID") or "").strip()
-        ext_id = str(properties.get("ext_id") or "").strip()
-        if not site_pid:
-            errors.append(f"record {index} is missing properties.SITE_PID")
-            continue
-        try:
-            release_feature_model.validate_feature_id(ext_id)
-        except release_feature_model.ReleaseFeatureModelError as exc:
-            errors.append(f"record {index} properties.ext_id is not a reusable feature_id: {exc}")
-            continue
-        converted.append(
-            {
-                "feature_id": ext_id,
-                "identity_key": [site_pid],
-            }
-        )
-    if errors:
-        raise RuntimeError("legacy WDPA metadata sidecar cannot preserve generated IDs: " + "; ".join(errors[:10]))
-    if not converted:
-        raise RuntimeError("legacy WDPA metadata sidecar did not contain any reusable ID mappings")
-    return converted
-
-
-def load_previous_records_for_asset(
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-) -> list[dict[str, Any]] | None:
-    try:
-        return publisher.load_latest_metadata_records(asset)
-    except RuntimeError as original_error:
-        object_name = asset.latest_object(".metadata.ndjson.gz")
-        blob = publisher.bucket.blob(object_name)
-        try:
-            blob.reload()
-        except NotFound:
-            return None
-        try:
-            raw_records = list(
-                release_feature_model.read_metadata_sidecar_bytes(
-                    blob.download_as_bytes(),
-                    label=f"gs://{publisher.bucket.name}/{object_name}",
-                )
-            )
-            converted = legacy_wdpa_previous_records(raw_records, asset=asset)
-        except Exception as legacy_error:
-            raise original_error from legacy_error
-        LOGGER.warning(
-            "%s latest metadata sidecar uses legacy feature_id contract; preserving generated IDs from properties.ext_id and SITE_PID",
-            asset.slug,
-        )
-        return converted
-
-
 def assert_identity_decisions_allowed(
     assets,
     *,
@@ -835,7 +769,7 @@ def build_asset_outputs(
     workdir: Path,
     run_date: dt.date,
     cleanup_after_gpkg: tuple[Path, ...] = (),
-    previous_records: Sequence[Mapping[str, Any]] | None = None,
+    baseline: release_feature_model.GeneratedIdentityBaseline,
     identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
 ) -> AssetOutputs:
     expected_rows = expected_feature_count(source, source_layers, where)
@@ -879,7 +813,7 @@ def build_asset_outputs(
             provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
             enriched_features_path=enriched_geojsonseq,
             sidecar_path=metadata,
-            previous_records=previous_records,
+            baseline=baseline,
             identity_resolution_decisions=identity_resolution_decisions,
             sidecar_sink=translations.write_record,
         )
@@ -946,6 +880,9 @@ def build_asset_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=release_outputs.next_generated_feature_id,
+        previous_generated_feature_id=baseline.next_feature_id,
+        previous_release=baseline.release,
+        identity_baseline_snapshot=baseline.snapshot,
         identity_decisions=release_outputs.identity_decisions,
         localization_report=localization_report,
     )
@@ -986,6 +923,8 @@ def publish_asset(
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            next_generated_feature_id_before_release=outputs.previous_generated_feature_id,
+            previous_release=outputs.previous_release,
             decisions=outputs.identity_decisions,
         ),
         extra_suffix_paths=(
@@ -1104,8 +1043,8 @@ def run() -> list[dict[str, Any]]:
     # on the decisions and the previous release, so a wrong one is a rule
     # violation catchable in minutes rather than a conflict discovered after an
     # hour of conversion work.
-    previous_records_by_slug = {
-        asset.slug: load_previous_records_for_asset(publisher, asset) for asset in publish_specs
+    baselines_by_slug = {
+        asset.slug: publisher.load_generated_identity_baseline(asset) for asset in publish_specs
     }
     decisions_by_slug = {
         asset.slug: release_feature_model.load_identity_resolution_decisions(
@@ -1116,7 +1055,7 @@ def run() -> list[dict[str, Any]]:
     }
     assert_identity_decisions_allowed(
         publish_specs,
-        previous_records_by_slug=previous_records_by_slug,
+        previous_records_by_slug={slug: baseline.records for slug, baseline in baselines_by_slug.items()},
         decisions_by_slug=decisions_by_slug,
         run_date=run_date,
     )
@@ -1183,7 +1122,7 @@ def run() -> list[dict[str, Any]]:
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
-                previous_records=previous_records_by_slug[asset.slug],
+                baseline=baselines_by_slug[asset.slug],
                 identity_resolution_decisions=decisions_by_slug[asset.slug],
             )
             records.append(

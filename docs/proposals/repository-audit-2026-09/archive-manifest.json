@@ -1,0 +1,529 @@
+{
+  "source_pr": 154,
+  "source_head": "362c2604944ab188fb27506b58b881f8059717f6",
+  "transformations": [
+    "Added historical-record banner",
+    "Converted archived/source document links to repository-relative links",
+    "Replaced machine-specific workspace paths with named placeholders",
+    "Rendered excluded raw-artifact references as non-clickable historical references",
+    "Clarified current plan preservation location",
+    "Normalized trailing whitespace and final newlines for repository checks",
+    "Clarified that archived Terraform command syntax belongs to protected workflows and is not local execution guidance"
+  ],
+  "documents": [
+    {
+      "path": "BRANCH-DECISIONS.md",
+      "source_group": "remediation",
+      "source_path": "BRANCH-DECISIONS.md",
+      "original_sha256": "f2254f7ba8fe273af098d462575c4e63de95075d79255eb630d8097e11cea308",
+      "archived_sha256": "3c5576cc2f18f2250012ca1025da3ed367bc69e4965c435fe8147167486533f3"
+    },
+    {
+      "path": "CHARTER.md",
+      "source_group": "remediation",
+      "source_path": "CHARTER.md",
+      "original_sha256": "0c66dc74032e4aac977e5cc24f8c22b90533b7269f3512a06db8c6913d3db3ef",
+      "archived_sha256": "736a430ed37aa506066567e81280d2f3ab9fc5d7f9abfa8e61029734c372a0fa"
+    },
+    {
+      "path": "EXECUTION-BOARD.md",
+      "source_group": "remediation",
+      "source_path": "EXECUTION-BOARD.md",
+      "original_sha256": "8ff5f6d446558998bef5d21ba867ea6b02407bab9ffc12680b3308ad15a87e81",
+      "archived_sha256": "955851daec2097a7c46499ae8ca10e252c199eb560b0900a49d7e27cef98a677"
+    },
+    {
+      "path": "REVIEW-DOSSIER.md",
+      "source_group": "remediation",
+      "source_path": "REVIEW-DOSSIER.md",
+      "original_sha256": "d94a0e9c13a70320b38bc4aaa2a0bb72223f7e37a418c70e73bcd4c94b42eb6a",
+      "archived_sha256": "e47ff9e0c27a7956ede1cf69b14454d34be46902c8dd76fe31b0124121a9c5e9"
+    },
+    {
+      "path": "commits/README.md",
+      "source_group": "remediation",
+      "source_path": "commits/README.md",
+      "original_sha256": "433543139036e2172ee7280a25f9b0363f61fff6f09a55b30c374e3441386de2",
+      "archived_sha256": "e171fd44dad32b0d24cf81520a7befb73f714b34d7a66a70341c61eb5fcd6d2d"
+    },
+    {
+      "path": "commits/alert-decisions.md",
+      "source_group": "remediation",
+      "source_path": "commits/alert-decisions.md",
+      "original_sha256": "acc5b66b5c0a464ee278f6e8b47995c877d886282af7a91853ecec58366582c2",
+      "archived_sha256": "765e5b75876f9cf2d739afe12c1fcb04536babdd823cf15ee82fd1a4acc6afea"
+    },
+    {
+      "path": "evidence/pr153-ci-fix/README.md",
+      "source_group": "remediation",
+      "source_path": "evidence/pr153-ci-fix/README.md",
+      "original_sha256": "ccfe0feccea4038b7f0a72eb45170ec94f616eb13c430e138fb8b603fc3d86f4",
+      "archived_sha256": "3efc8aa7f9f7c1e0f100317b88b3b431ccea0b5ae1c58dafcb95ef4517224c45"
+    },
+    {
+      "path": "evidence/pr154-ci-fix/README.md",
+      "source_group": "remediation",
+      "source_path": "evidence/pr154-ci-fix/README.md",
+      "original_sha256": "f490cadf45e1f536878d1518541fd8522ffae70d01a0cbfadb5a43a7b28ea6c8",
+      "archived_sha256": "3055e9186b1b5950630a8c762121462d30978062d4adc4e1451064d8ee8aaa91"
+    },
+    {
+      "path": "plans/feature-id-highwater.md",
+      "source_group": "remediation",
+      "source_path": "plans/feature-id-highwater.md",
+      "original_sha256": "69fa3a20e8687330f15f6f1f9b308c2d7cd4e6f204d5f3e064e458f06c4495d7",
+      "archived_sha256": "5e9f7615e9648ae697e558624280978213af027289857d101b5894de8defec8f"
+    },
+    {
+      "path": "plans/historical-consumers.md",
+      "source_group": "remediation",
+      "source_path": "plans/historical-consumers.md",
+      "original_sha256": "8fe91b4126c5454c12434fa2817fcc66f29322245bf1c35ccaf06cf70ddf0ce9",
+      "archived_sha256": "c96f2b0f41f6e1056b9694ff15f771444991464fdda67b072d423b54de6468b3"
+    },
+    {
+      "path": "plans/pr154-merge-and-rollout.md",
+      "source_group": "remediation",
+      "source_path": "plans/pr154-merge-and-rollout.md",
+      "original_sha256": "594b15d3faf0ca1937cf6b9ec384f1b2e7758778a90dd890cfeb129fcb74d09e",
+      "archived_sha256": "799b7fffe195db93408a27b4d51f4faad72b91595ad0d5077bfe72b900ca8ffd"
+    },
+    {
+      "path": "plans/publication-recovery-f3-contracts.md",
+      "source_group": "remediation",
+      "source_path": "plans/publication-recovery-f3-contracts.md",
+      "original_sha256": "3f5fd650def6344b1f93ff725d7e8e2b122ddfe3b726bf8921ab61a1d95f11d6",
+      "archived_sha256": "17c20105270226bb4511f92b346ade304a46f1bdbf1555be8eeb988c6175bb9c"
+    },
+    {
+      "path": "plans/publication-recovery-f3.md",
+      "source_group": "remediation",
+      "source_path": "plans/publication-recovery-f3.md",
+      "original_sha256": "94bb29f731e058ac16c6e1f4bc71a9031b2afdff8985453f4ec16decd0b370c2",
+      "archived_sha256": "4df6c0d2cd8be232472735d37504e2a6662f4b2f1b8031239f4f0c3e2766fafc"
+    },
+    {
+      "path": "plans/publication-recovery.md",
+      "source_group": "remediation",
+      "source_path": "plans/publication-recovery.md",
+      "original_sha256": "d84c5040da527b8143e2960c62aaf0d47ad31bb4cc3eb89cd4defd0710701407",
+      "archived_sha256": "b8b09501c0453750de398ce66c9174c5ffc8bcaba87d5c92cb4536f29f0789a4"
+    },
+    {
+      "path": "plans/publication-rollout-gate.md",
+      "source_group": "remediation",
+      "source_path": "plans/publication-rollout-gate.md",
+      "original_sha256": "b50835cfb246f6a9e8e304d50e9922d905bd9c0ef80539466a62a8d3e7bdc69c",
+      "archived_sha256": "3933986b9079f8927c92f4f02d015a2b3c4de6709803cc6649172acbde41723f"
+    },
+    {
+      "path": "plans/publish-approval-ci-guardrails.md",
+      "source_group": "remediation",
+      "source_path": "plans/publish-approval-ci-guardrails.md",
+      "original_sha256": "d3a6fe0149c92dd0d3499ddb7bafe3dd33a9877d742658824622782831b93080",
+      "archived_sha256": "7bb7c2b1572dd412e392a8b2bd6ced6e9064231be5c880e65e4fe614e53c5e95"
+    },
+    {
+      "path": "plans/publish-approval.md",
+      "source_group": "remediation",
+      "source_path": "plans/publish-approval.md",
+      "original_sha256": "615656b5aac4d8dde8f21c2de12490adbe0cfb9e1853ca6ffaf7b742bcec7558",
+      "archived_sha256": "d4134bc39753dfd80f3cfc1db592657974f0a544dc68c215508270716bd68652"
+    },
+    {
+      "path": "plans/python-release-cache.md",
+      "source_group": "remediation",
+      "source_path": "plans/python-release-cache.md",
+      "original_sha256": "5d8ea4269c6150f29071b28ed89b388be746bcb6cfc9acb696fbb6c6bc9fd0f3",
+      "archived_sha256": "5bc02936161df461b84157df171ad676c6706971de316120c7e25fad250acfd7"
+    },
+    {
+      "path": "plans/scratch-cleanup.md",
+      "source_group": "remediation",
+      "source_path": "plans/scratch-cleanup.md",
+      "original_sha256": "762b3a35cca25aa0bbaf3ac21a791235889b7344d89ad93ed25d09f31571be7c",
+      "archived_sha256": "0d25e8b9dc90dcbb46c60a8e0bfc441385560c5eb657dfb455543f1ce67d7c11"
+    },
+    {
+      "path": "plans/translation-integrity-packaging-addendum.md",
+      "source_group": "remediation",
+      "source_path": "plans/translation-integrity-packaging-addendum.md",
+      "original_sha256": "ef03527cf39f26b47f208c38b6888f4f9e925fc59115dab7d08de48472a174d3",
+      "archived_sha256": "de2ebda304059622a0c99ae86db73dcd90933417d7c24a97fd8e470dc13cc074"
+    },
+    {
+      "path": "plans/translation-integrity.md",
+      "source_group": "remediation",
+      "source_path": "plans/translation-integrity.md",
+      "original_sha256": "66a8515007d2153c35caed95f44d65ffe438e08fc77a14e279db1bee709b4625",
+      "archived_sha256": "188d5b84e5f018a26ea102c82faa70dafc2fb1638e7606ebe8a5887cd9758fd5"
+    },
+    {
+      "path": "prompts/translation-integrity.md",
+      "source_group": "remediation",
+      "source_path": "prompts/translation-integrity.md",
+      "original_sha256": "45a1be83542c72f26ec7af074a0f413fd526f32a8fd29f318aa8698c66cb5efc",
+      "archived_sha256": "5560c491d457d4e74a7ec4482e41b89c40433eb97de66b4e4af3484d94fbefbf"
+    },
+    {
+      "path": "prs/feature-id-ci-fix-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/feature-id-ci-fix-body.md",
+      "original_sha256": "3980cf9ad9a7212c1859342eaf0fc975808557924615155618d50abb6966fa06",
+      "archived_sha256": "fe28f936b056ec6d2a0f86e5c2f293bad55ffb547f3f607ef0b8c0fc18c29c26"
+    },
+    {
+      "path": "prs/feature-id-highwater-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/feature-id-highwater-body.md",
+      "original_sha256": "7f26ef45759c99a9e98de869e0d71ea947ce47d87a4996385feb915e84d2f2b1",
+      "archived_sha256": "54778f1849e76d555557dc81ecefee533f62551461226cd547a7db96c58f1266"
+    },
+    {
+      "path": "prs/historical-consumers-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/historical-consumers-body.md",
+      "original_sha256": "e1eaa39b4a2c431d92869fb0523f6783059536e15487b589f9c45867672d9678",
+      "archived_sha256": "b34cba93a35306503911eaa3ac15441c3b324500e434a7b092e98822df706996"
+    },
+    {
+      "path": "prs/publish-approval-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/publish-approval-body.md",
+      "original_sha256": "39f93f9359d89d128f6ed8e0ee24089d128cff81729f27db1961a8bebaa33061",
+      "archived_sha256": "e8d3804d159bcdab855d23dec096a4aed3d657f8df96f9a638bfe6580eb62817"
+    },
+    {
+      "path": "prs/publish-approval-ci-fix-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/publish-approval-ci-fix-body.md",
+      "original_sha256": "5d90f3b960f18dc069a93a7d05b6647a51efbd3aa7b6135b895e78f346f2f2ea",
+      "archived_sha256": "379eed5101c013c8324479d5d416f89c692d964586fc3c5f0a481bde90c029ae"
+    },
+    {
+      "path": "prs/publish-preflight-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/publish-preflight-body.md",
+      "original_sha256": "c8bf428819636510f640f7d6654cb9dc8f57c767a00b0f3c55511f20d00c1fee",
+      "archived_sha256": "440a592257f0e7fe68075424bd85fc98463a737ab09dd379bdef453be3b0e260"
+    },
+    {
+      "path": "prs/python-release-cache-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/python-release-cache-body.md",
+      "original_sha256": "0577f379d8b0c4da45a50506e52a1a19ec6a2aa96d147d00f1bac41d23facdf5",
+      "archived_sha256": "3e26a149a1649d29ce214707102ff4aebaf533db0e4a8e134df153241a93bc0f"
+    },
+    {
+      "path": "prs/scratch-cleanup-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/scratch-cleanup-body.md",
+      "original_sha256": "fb97a675e69db2370ffaac31ddc775f346ca89f593dadbd0244a004bfbe32bc3",
+      "archived_sha256": "cc058ac305da01a40602a9dd2083506d5afef0e6263252123ae183dc237cbd75"
+    },
+    {
+      "path": "prs/translation-integrity-body.md",
+      "source_group": "remediation",
+      "source_path": "prs/translation-integrity-body.md",
+      "original_sha256": "d0358817172eb1787bb70c1bffb230265ae363db0fc22fb410909028d31d12ca",
+      "archived_sha256": "75e18e8ea9d55a497b22a6d0d2c9b9ee2df4faa3ff9bce7d61dd02c10dfac627"
+    },
+    {
+      "path": "reviews/feature-id-highwater-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/feature-id-highwater-handoff.md",
+      "original_sha256": "95c87c735b79438b6d4f2a1193f928dd24fc48f981096cf6b033eb4df9ae25e1",
+      "archived_sha256": "47b86951c17b1c432f6581245a2822d8bbf31620a31f6c717bbf140f37bffccc"
+    },
+    {
+      "path": "reviews/feature-id-highwater-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/feature-id-highwater-supervisor.md",
+      "original_sha256": "e5b7cea146667bce4b50fb5a1bcdb648501e53296b08b0fbba04267ee8a120dc",
+      "archived_sha256": "547fb22b91feb4850aad92ec6d1a606d41f0dd55ed518c6f2e3105ef5b34cdaa"
+    },
+    {
+      "path": "reviews/historical-consumers-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/historical-consumers-handoff.md",
+      "original_sha256": "ceafbd2897d298ecf6694e1a5278be00056357736a4cf11a267bc2858cd3971a",
+      "archived_sha256": "2d32965b3dafbca578025cc6b181ce9e94cde5f42e6856a6f9960b86e8e2be7b"
+    },
+    {
+      "path": "reviews/historical-consumers-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/historical-consumers-supervisor.md",
+      "original_sha256": "10fe1d1264dfc4c29eee0c741a53ce42475412369b6f3cf4be6cefdba09d3300",
+      "archived_sha256": "bf049a8737543e035fa27a672059c8bd6efd6c151cd4625f42f8a8eb0422affc"
+    },
+    {
+      "path": "reviews/publication-f1-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-f1-supervisor.md",
+      "original_sha256": "6d80f698b6ea5cf3e3d698743d50ccbb181202442cab1580591ba985a11c21e4",
+      "archived_sha256": "2546ee5e67ab6e7faa19354c6b693fde80dc061931d416bf03f083e1f69011b4"
+    },
+    {
+      "path": "reviews/publication-recovery-f1-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-recovery-f1-handoff.md",
+      "original_sha256": "25a902b70391113ce734fe6bcbad0790f279eca62bdbe277d9d8d47c9c47ae99",
+      "archived_sha256": "d41b0a421e4f47c721cf2f176670140862526ba5a9a91370baf15f1247aaba51"
+    },
+    {
+      "path": "reviews/publication-recovery-f2-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-recovery-f2-handoff.md",
+      "original_sha256": "76f93134035ce4b71fb824b191d587d1a9135e103ad96a510887c0752652525f",
+      "archived_sha256": "a0d94f6bcde19b32aebea90abef207e0b1839bc9a7d793d09607cf29a53f5403"
+    },
+    {
+      "path": "reviews/publication-recovery-f2-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-recovery-f2-supervisor.md",
+      "original_sha256": "df1207d2d69622fc3c4bea6247c2246af30249e2aa0ba9e6af2109712455def0",
+      "archived_sha256": "83c9ce8610875d1daa719088d9a99ef8125e3e8bfe86b0f34c736ec2f794cce7"
+    },
+    {
+      "path": "reviews/publication-rollout-gate-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-rollout-gate-handoff.md",
+      "original_sha256": "338168c42368a33c65de44f4da283eb7712216daa41c4fbaac5710f8ac493415",
+      "archived_sha256": "a4365598fb340c4c20d3d3253011ab3bd407f06e07612afb5046d95b784f23e2"
+    },
+    {
+      "path": "reviews/publication-rollout-gate-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publication-rollout-gate-supervisor.md",
+      "original_sha256": "6f7ca9a815c5a73e1952d58c71f2e47d6c3ee794f5591936ddad57fd444da317",
+      "archived_sha256": "2591a509824671737eb6cd4eef7ec062f2a6f706a4b5fc6e87d0a06c1c1bf69f"
+    },
+    {
+      "path": "reviews/publish-approval-ci-guardrails-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publish-approval-ci-guardrails-handoff.md",
+      "original_sha256": "1aa4f30b191a3013866672b05798cc744b9c39a77fd96175ac07bb98fa207d1c",
+      "archived_sha256": "118101eb06dae8ad5114fcada75006c9e5b54f11e675daff0edf88a6bf559b57"
+    },
+    {
+      "path": "reviews/publish-approval-crossreview.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publish-approval-crossreview.md",
+      "original_sha256": "ece81d79f5a53b8ebd3b2a042d71e1bcf366fd4bb21fe67773945f7a9d8b8cc2",
+      "archived_sha256": "00d21fbbcd1c091017de631763a7053f4b7b12431de079dccf34bae1994a978e"
+    },
+    {
+      "path": "reviews/publish-approval-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publish-approval-handoff.md",
+      "original_sha256": "18772401438cd4ffe89aacdb761944aa19c8cb60cd4a26632cee7483f7856dc1",
+      "archived_sha256": "060901c76f5e324acc886d4b55806f7f2350c43862853bc4eb7aa73d420f39a5"
+    },
+    {
+      "path": "reviews/publish-approval-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/publish-approval-supervisor.md",
+      "original_sha256": "21038e77d588f13e0fc3204dffdad1c30460c1efd31c69b05ccbe35a7fdc4e46",
+      "archived_sha256": "609f7250a6a9d9fc52e4f3d66e8f5a71a8e355e396a9bb6c4ec9fd8c5c42c8ad"
+    },
+    {
+      "path": "reviews/python-release-cache-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/python-release-cache-handoff.md",
+      "original_sha256": "2a87b99be934ba1e4fda0e404b82551764cea4da75cc065c60336c6577595422",
+      "archived_sha256": "c84556d18660e0ffeb13a103e53249625f230f171ec7422e7a25f910ca367221"
+    },
+    {
+      "path": "reviews/python-release-cache-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/python-release-cache-supervisor.md",
+      "original_sha256": "a631ba04de649747515416636c374b2d5757a3aab096fcbe4108ea9fc5336840",
+      "archived_sha256": "c120ef22ad6e43a3d432551195e3099a5a1d9311e608131f75ab6269330539ac"
+    },
+    {
+      "path": "reviews/scratch-cleanup-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/scratch-cleanup-handoff.md",
+      "original_sha256": "275a0a8b3514d7832897fd43266397d16f69493422c82b07c53f43b208e5dbd8",
+      "archived_sha256": "5666d5e21be59a9e2ceb8bd5ef52d8eb11e25d2180fa95ffacee446020f9b749"
+    },
+    {
+      "path": "reviews/scratch-cleanup-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/scratch-cleanup-supervisor.md",
+      "original_sha256": "bdc40eef14f27141a9ecea7b3e929766f9c59ad8a865db3cc46dd198f2374cb6",
+      "archived_sha256": "a0dd580c8baa93531a0055ff94c464906d7b09a4469fce077f292c0a5a1a7e83"
+    },
+    {
+      "path": "reviews/translation-integrity-crossreview.md",
+      "source_group": "remediation",
+      "source_path": "reviews/translation-integrity-crossreview.md",
+      "original_sha256": "025deeacd829216e13a8dfed69d5f118808e3a4f55e19ef616b8e5521ee68d5c",
+      "archived_sha256": "65d14f7f6d6597d8350409ecf3b366b906c02a07a03b8ece95e8129bec6c3704"
+    },
+    {
+      "path": "reviews/translation-integrity-handoff.md",
+      "source_group": "remediation",
+      "source_path": "reviews/translation-integrity-handoff.md",
+      "original_sha256": "eb8b6eb9e8176662008cdb48aa2207c295ab879a12aeac69ddfb5a6a13ccfbd4",
+      "archived_sha256": "fde4d6733f7b1218fca998a748a2a01a76b5de93b2731ca346f96ee4ef377c0e"
+    },
+    {
+      "path": "reviews/translation-integrity-supervisor.md",
+      "source_group": "remediation",
+      "source_path": "reviews/translation-integrity-supervisor.md",
+      "original_sha256": "f715033f94df7556564397a9d205e2667aec08fa68d1bf1fa12a46039a0f6bbf",
+      "archived_sha256": "8ea3924350181757a268c6883f04b46f28730fbfd75f2dcc5870a45e39e3dc0d"
+    },
+    {
+      "path": "initial-audit/consumer-review.md",
+      "source_group": "initial-audit",
+      "source_path": "consumer-review.md",
+      "original_sha256": "1ee085f372e78003e9d7a8f309bdf8bd3b2ccd19e378131829f88e0c1ae67cd8",
+      "archived_sha256": "beb468f6518bac65761b2c182af1c52670506f2c0f8bd9b9e87cf356d2d619f1"
+    },
+    {
+      "path": "initial-audit/contracts-review.md",
+      "source_group": "initial-audit",
+      "source_path": "contracts-review.md",
+      "original_sha256": "4aef589b371957a3e69af146cfeade7fdc05f8e1f3f769ef5ea37f9509fe0e91",
+      "archived_sha256": "5d0f1c47b65ba2e93f7f2e78899b7e0d0bad06f6361a3079605399f64d94fdee"
+    },
+    {
+      "path": "initial-audit/operations-review.md",
+      "source_group": "initial-audit",
+      "source_path": "operations-review.md",
+      "original_sha256": "69c0735a38ac2b19853cf3b67141d7452ac696f97f86d9e1a3d74f7cf32acec2",
+      "archived_sha256": "3a774f389f1dfd600a79a149a6272eae38b87211eaf7641dfdb801a027ea7c0a"
+    },
+    {
+      "path": "initial-audit/repository-review.md",
+      "source_group": "initial-audit",
+      "source_path": "repository-review.md",
+      "original_sha256": "b2aaf8373dc0c13b8ce2e9c97cbf7e724b39b963b3213803d6594750748adeb0",
+      "archived_sha256": "3396536535d4e43d70bd38331df7bdff9e2dfec09cb4eb7b3c4f3f882658074b"
+    }
+  ],
+  "external_artifact_references": [
+    {
+      "document": "plans/publish-approval.md",
+      "artifact": "../evidence/publish-approval-baseline-results.json"
+    },
+    {
+      "document": "plans/publish-approval.md",
+      "artifact": "../evidence/approval-baseline-results.json"
+    },
+    {
+      "document": "plans/publish-approval.md",
+      "artifact": "../evidence/baseline-stale-reviews.json"
+    },
+    {
+      "document": "plans/translation-integrity.md",
+      "artifact": "../evidence/translation-integrity-baseline/reproduce.py"
+    },
+    {
+      "document": "plans/translation-integrity.md",
+      "artifact": "../evidence/translation-integrity-baseline/results.json"
+    },
+    {
+      "document": "reviews/publish-approval-ci-guardrails-handoff.md",
+      "artifact": "../evidence/publish-approval-ci-guardrails-baseline.txt"
+    },
+    {
+      "document": "reviews/publish-approval-ci-guardrails-handoff.md",
+      "artifact": "../evidence/publish-approval-ci-guardrails-tests.txt"
+    },
+    {
+      "document": "reviews/publish-approval-crossreview.md",
+      "artifact": "../evidence/publish-approval-crossreview/adversarial_cases.py"
+    },
+    {
+      "document": "reviews/publish-approval-crossreview.md",
+      "artifact": "../evidence/publish-approval-crossreview/results.json"
+    },
+    {
+      "document": "reviews/publish-approval-handoff.md",
+      "artifact": "../evidence/publish-approval-baseline-regressions.txt"
+    },
+    {
+      "document": "reviews/publish-approval-handoff.md",
+      "artifact": "../evidence/publish-approval-baseline-results.json"
+    },
+    {
+      "document": "reviews/publish-approval-handoff.md",
+      "artifact": "../evidence/publish-approval-cli/results.json"
+    },
+    {
+      "document": "reviews/publish-approval-handoff.md",
+      "artifact": "../evidence/publish-approval-cli/rendered-pr-plan.md"
+    },
+    {
+      "document": "reviews/publish-approval-handoff.md",
+      "artifact": "../evidence/publish-approval-live-run.json"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/translation-integrity.patch"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/source-snapshot.json"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/test_original_regressions.py"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-baseline/regression-failures.txt"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/original-regressions-passed.txt"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-baseline/results.json"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-baseline/packaging-failures.txt"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/focused-tests.txt"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/full-tests.txt"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/cli_smoke.py"
+    },
+    {
+      "document": "reviews/translation-integrity-handoff.md",
+      "artifact": "../evidence/translation-integrity-final/cli-results.json"
+    },
+    {
+      "document": "initial-audit/repository-review.md",
+      "artifact": "${INITIAL_AUDIT_WORKDIR}/consumer-review.md"
+    },
+    {
+      "document": "initial-audit/repository-review.md",
+      "artifact": "${INITIAL_AUDIT_WORKDIR}/operations-review.md"
+    },
+    {
+      "document": "initial-audit/repository-review.md",
+      "artifact": "${INITIAL_AUDIT_WORKDIR}/contracts-review.md"
+    },
+    {
+      "document": "initial-audit/repository-review.md",
+      "artifact": "${INITIAL_AUDIT_WORKDIR}/root-repros.py"
+    },
+    {
+      "document": "initial-audit/repository-review.md",
+      "artifact": "${INITIAL_AUDIT_WORKDIR}/root-repro-results.txt"
+    }
+  ]
+}

@@ -110,6 +110,9 @@ class AssetOutputs:
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    previous_generated_feature_id: int
+    previous_release: str | None
+    identity_baseline_snapshot: feature_metadata.release_feature_model.GeneratedIdentitySnapshot | None
     identity_decisions: dict[str, Any]
 
 
@@ -479,7 +482,7 @@ def build_outputs(
     source_tif: Path,
     source_date: dt.date,
     workdir: Path,
-    previous_records: Sequence[Mapping[str, Any]] | None = None,
+    baseline: feature_metadata.release_feature_model.GeneratedIdentityBaseline,
     identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
 ) -> AssetOutputs:
     mask_tif = workdir / "ice-mask.tif"
@@ -522,7 +525,7 @@ def build_outputs(
         provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
         enriched_features_path=enriched_geojsonseq,
         sidecar_path=metadata,
-        previous_records=previous_records,
+        baseline=baseline,
         identity_resolution_decisions=identity_resolution_decisions,
         identity_excluded_properties=("ice_date",),
         identity_ambiguity_match_properties=False,
@@ -570,6 +573,9 @@ def build_outputs(
         },
         schema_payload=schema_payload,
         next_generated_feature_id=release_outputs.next_generated_feature_id,
+        previous_generated_feature_id=baseline.next_feature_id,
+        previous_release=baseline.release,
+        identity_baseline_snapshot=baseline.snapshot,
         identity_decisions=release_outputs.identity_decisions,
     )
 
@@ -615,6 +621,8 @@ def publish_outputs(
             assignment_key=["geometry_hash", "properties_hash"],
             properties_hash_excluded_properties=["ice_date"],
             next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            next_generated_feature_id_before_release=outputs.previous_generated_feature_id,
+            previous_release=outputs.previous_release,
             decisions=outputs.identity_decisions,
         ),
     )
@@ -791,7 +799,7 @@ def run() -> dict[str, Any]:
             source_tif=source_tif,
             source_date=downloaded.filename_date,
             workdir=workdir,
-            previous_records=publisher.load_latest_metadata_records(ASSET),
+            baseline=publisher.load_generated_identity_baseline(ASSET),
             identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
                 asset_slug=ASSET.slug,
                 release=downloaded.filename_date.isoformat(),
