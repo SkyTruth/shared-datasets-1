@@ -28,7 +28,7 @@ Maintainer-only publishing and infrastructure procedures live in
 | Consumer need | Use | Why |
 |---|---|---|
 | Backend Python code needs a local data file | Python SDK `fetch_dataset(...)` | Downloads canonical bytes with ADC and returns `DatasetRef.cache_path` plus lineage. |
-| Backend Python code needs a URI or browser URL but not bytes | Python SDK `resolve_dataset(...)` or `Catalog.resolve(...)` | Preserves durable `gs://` identity, access tier, citation, and `resolved_id`. |
+| Backend Python code needs a URI or browser URL but not bytes | Python SDK `resolve_dataset(...)` or `Catalog.resolve(...)` | Maps catalog metadata to URLs and access tiers; latest resolve is an unpinned alias, not byte lineage. |
 | Backend service needs to list/search assets | Python SDK `Catalog.load_gcs()` or catalog CSV | Good for batch jobs, service config generation, and CI checks. |
 | Browser displays public PMTiles | TypeScript SDK or direct tiered CDN URL | No cookie or GCS credential is required. |
 | Browser may display private or internal PMTiles | TypeScript SDK plus app-owned backend session route | Restricted PMTiles require app authentication, authorization, signed cookies, and credentialed range requests. |
@@ -140,8 +140,9 @@ Runtime requirements:
 - Grant the runtime identity `roles/storage.objectViewer` on
   `gs://skytruth-shared-datasets-1`.
 - Do not create service account JSON keys.
-- Record `DatasetRef.resolved_id` when a run requests `version="latest"` and
-  needs durable lineage.
+- Record the fetched `DatasetRef.gs_uri` and generation-bearing `resolved_id`
+  together when a run requests `version="latest"` and needs artifact lineage.
+  Latest `resolve_dataset`/`Catalog.resolve` results remain unpinned aliases.
 
 Typical backend fetch:
 
@@ -153,6 +154,12 @@ path = ref.cache_path
 resolved_id = ref.resolved_id
 canonical_uri = ref.gs_uri
 ```
+
+Python fetches use one release-index snapshot and cache verified bytes by exact
+object generation, including same-date corrections. Latest-only assets with no
+index keep an unknown release date and expose the observed generation. See the
+[Python SDK cache contract](../api/python/README.md#cache-behavior) for legacy,
+integrity and offline/error behavior.
 
 The Python SDK does not sign Cloud CDN cookies. Use the TypeScript server
 helpers for restricted PMTiles cookie issuance.
@@ -200,6 +207,24 @@ import {
 ```
 
 Do not import the server entrypoint from browser bundles.
+
+For coherent tiles and feature attributes, `resolveSharedDatasetLayer` captures a
+concrete release and object generations for both artifacts. `version` selects
+both tiles and metadata; a missing date fails. Optional sidecar absence preserves
+the selected date. Cache by path and generation, because a date can be replaced.
+Public indexed URLs include `generation`; indexed restricted layers return a
+nullable `ref.url` plus the exact `pmtiles` descriptor. Transition those callers
+to an app-owned authorized URL route that reselects the catalog artifact, checks
+the expected generation, and signs it with the existing server helper's
+`generation` option. Verify the returned identity before mounting. The catalog
+viewer implements this flow for its own IAP policy.
+
+Catalog-only `resolveSharedDatasetPmtilesRef(s)` and the tiered session flow below
+remain latest-alias helpers. A coherent resolver can return a map-only alias
+when an index is definitively absent, but it returns no dated lineage or metadata
+join. Invalid/unavailable indexes and explicit missing releases fail rather than
+silently changing to latest. See the [TypeScript layer contract](../api/typescript/README.md#layer-and-metadata-resolution)
+for nullable URL migration and exact signing examples.
 
 ## PMTiles Browser Access
 
@@ -332,7 +357,7 @@ Backend data:
 - The Python dependency installs in the actual production build path.
 - Runtime identity has bucket `roles/storage.objectViewer`.
 - Code uses ADC or managed identity, not JSON keys.
-- Jobs that request `latest` persist `ref.resolved_id`.
+- Jobs that fetch `latest` persist `ref.gs_uri` and the generation-bearing `ref.resolved_id`.
 - Cache paths are writable in the runtime environment.
 
 Restricted cookie signing:
@@ -366,6 +391,6 @@ Do:
 - Use catalog metadata as the source of truth.
 - Use runtime service accounts and ADC.
 - Pin SDK dependencies for production.
-- Record `DatasetRef.resolved_id` for reproducible backend runs.
+- Record fetched `DatasetRef.gs_uri` and generation-bearing `resolved_id` for reproducible backend runs.
 - Keep PMTiles browser access on `tiles.skytruth.org`.
 - Scope restricted cookies to their tier path and the current SDK default TTL.

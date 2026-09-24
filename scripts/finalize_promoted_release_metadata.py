@@ -45,6 +45,12 @@ class BlobInfo:
         return payload
 
 
+@dataclass(frozen=True)
+class LoadedJson:
+    payload: dict[str, Any]
+    info: BlobInfo
+
+
 def sha256_hex(data: bytes | str) -> str:
     payload = data.encode("utf-8") if isinstance(data, str) else data
     return hashlib.sha256(payload).hexdigest()
@@ -169,25 +175,22 @@ def finalized_manifest_payload(
     return payload
 
 
-def replace_json_object(client: Any, uri: str, payload: Mapping[str, Any]) -> BlobInfo:
+def replace_json_object(
+    client: Any, original: BlobInfo, payload: Mapping[str, Any],
+) -> BlobInfo:
+    uri = original.path
     gcs_asset.require_mutation_allowed(uri, operation="upload")
     bucket_name, object_name = gcs_asset.parse_gs_uri(uri)
     blob = client.bucket(bucket_name).blob(object_name)
-    try:
-        blob.reload()
-    except NotFound as exc:
-        raise FinalizeReleaseMetadataError(f"object is missing before replacement: {uri}") from exc
-    generation = int(blob.generation)
     text = json.dumps(dict(payload), indent=2, sort_keys=True) + "\n"
     try:
         blob.upload_from_string(
             text,
             content_type="application/json",
-            if_generation_match=generation,
+            if_generation_match=original.generation,
         )
     except PreconditionFailed as exc:
         raise FinalizeReleaseMetadataError(f"object generation changed before replacement: {uri}") from exc
-    blob.reload()
     return BlobInfo(
         path=uri,
         generation=int(blob.generation),
@@ -197,17 +200,27 @@ def replace_json_object(client: Any, uri: str, payload: Mapping[str, Any]) -> Bl
     )
 
 
-def load_json_object(client: Any, uri: str) -> dict[str, Any]:
+def load_json_object(client: Any, uri: str) -> LoadedJson:
     bucket_name, object_name = gcs_asset.parse_gs_uri(uri)
     blob = client.bucket(bucket_name).blob(object_name)
     try:
         blob.reload()
     except NotFound as exc:
         raise FinalizeReleaseMetadataError(f"object is missing: {uri}") from exc
-    payload = json.loads(blob.download_as_text())
+    info = BlobInfo(
+        path=uri,
+        generation=int(blob.generation),
+        size=int(blob.size or 0),
+        content_type=str(blob.content_type or ""),
+    )
+    try:
+        text = blob.download_as_text(if_generation_match=info.generation)
+    except (NotFound, PreconditionFailed) as exc:
+        raise FinalizeReleaseMetadataError(f"object generation changed before read: {uri}") from exc
+    payload = json.loads(text)
     if not isinstance(payload, dict):
         raise FinalizeReleaseMetadataError(f"object must be a JSON object: {uri}")
-    return payload
+    return LoadedJson(payload, info)
 
 
 def update_path_entries(
@@ -273,11 +286,11 @@ def finalize_promoted_release_metadata(plan: Mapping[str, Any], *, client: Any) 
     for uri in manifest_destination_uris(plan):
         manifest = load_json_object(client, uri)
         payload = finalized_manifest_payload(
-            manifest,
+            manifest.payload,
             stat=lambda path: stat_blob(client, path),
             maybe_stat=lambda path: maybe_stat_blob(client, path),
         )
-        info = replace_json_object(client, uri, payload)
+        info = replace_json_object(client, manifest.info, payload)
         manifest_infos[uri] = info
         finalized_manifests.append(info.to_record())
 
@@ -286,11 +299,11 @@ def finalize_promoted_release_metadata(plan: Mapping[str, Any], *, client: Any) 
         for uri in run_record_destination_uris(plan):
             record = load_json_object(client, uri)
             payload = finalized_run_record_payload(
-                record,
+                record.payload,
                 stat=lambda path: stat_blob(client, path),
                 manifest_infos=manifest_infos,
             )
-            finalized_run_records.append(replace_json_object(client, uri, payload).to_record())
+            finalized_run_records.append(replace_json_object(client, record.info, payload).to_record())
 
     return {
         "finalized_manifests": finalized_manifests,

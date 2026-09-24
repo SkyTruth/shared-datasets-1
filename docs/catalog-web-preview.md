@@ -108,11 +108,12 @@ returns one signed `/private/{bucket-object-path}` URL when CDN signing is
 configured. The browser never fetches a separate translation overlay and does
 not merge translation rows over canonical metadata. Metadata sidecars must be
 `.ndjson.gz`; the browser expects gzip-compressed NDJSON.
-When no release index is present yet, the generator emits the latest metadata
-sidecar, schema, and manifest declared by `feature_metadata` as top-level
-`files[]` entries so local previews and first-upload PR catalogs can hydrate
-clicked PMTiles features by `feature_id`. Once a release index is available, the
-release-index file list takes precedence.
+When no release index is present, top-level metadata declarations remain discovery
+information. Only a legacy map-only latest alias can preview; metadata/schema
+joins wait for an indexed release with exact generations. Explicit missing dates
+fail visibly. An indexed PMTiles file without a generation cannot render as an
+exact snapshot. An optional sidecar/schema without a generation leaves exact
+tiles renderable with compact properties and a metadata capability note.
 The PMTiles colorizer discovers metadata-backed fields from the release
 `{asset-slug}.schema.json` artifact, not by scanning the full metadata sidecar
 or loaded vector-tile features. Public schema files resolve through the same
@@ -134,7 +135,11 @@ size, clicked feature inspection falls back to the bounded
 is available. Public static previews without that API stream the public sidecar
 only until the clicked `feature_id` values are found, without building a full
 browser-side metadata index. If neither lookup path is available, the inspector
-shows the compact PMTiles feature properties.
+shows the compact PMTiles feature properties and the reason metadata is unavailable.
+Bounded API responses must identify the sidecar generation actually enforced by
+the serving backend. Unverified or mismatched responses cannot enrich the layer.
+The bounded API returns canonical values; when a display language is selected,
+the inspector explicitly labels these values as source-language metadata.
 Metadata-backed color fields remain discoverable from the schema, but the
 catalog viewer does not hydrate sidecars outside its budget to compute full-map
 color values; it keeps dataset coloring until a bounded value source is
@@ -147,37 +152,26 @@ consumers can ignore them.
 
 ## FGB downloads
 
-The detail view includes a one-click `Download FGB` control for assets whose
-canonical format is FlatGeobuf. The control follows the version selector: with
-`Latest` selected it downloads the catalog `canonical_path`, and with a dated
-release selected it downloads that release's canonical FGB.
+The detail view includes `Download FGB` for FlatGeobuf assets. Both latest and
+dated selections use the captured indexed FGB path and generation. Public links
+use the artifact CDN route with `generation=...`. Legacy no-index latest retains
+its map/download alias behavior without claiming dated lineage.
 
-Public assets use the generated `public_url` directly, which resolves to
-`https://storage.googleapis.com/...`. The browser downloads from GCS; the static
-catalog app does not proxy or read dataset bytes.
-
-When the same UI is served from the authenticated Cloud Run viewer, private FGB
-downloads are resolved through:
+Authenticated downloads use:
 
 ```text
-GET /api/download-url?slug={asset-slug}&format=fgb&version={latest-or-YYYY-MM-DD}
+GET /api/download-url?slug={asset-slug}&format=fgb&version={YYYY-MM-DD}&generation={generation}
 ```
 
-The endpoint resolves dated releases from the bucket release index, requires an
-IAP-authenticated SkyTruth identity for private assets, and returns a
-short-lived signed GCS URL:
-
-```json
-{
-  "download_url": "https://storage.googleapis.com/...",
-  "expires_at": "2026-05-09T12:15:00Z",
-  "gs_uri": "gs://skytruth-shared-datasets-1/...",
-  "filename": "example-asset.fgb"
-}
-```
-
-Public assets may also use this endpoint and return `expires_at: null`, but the
-browser UI uses direct links for public FGBs.
+The same endpoint selects `metadata` (with optional `locale`) and `schema`.
+Private/internal requests require the existing IAP SkyTruth identity. The server
+selects only the catalog-owned release artifact, checks an expected generation,
+and returns `download_url`, `expires_at`, `gs_uri`, `resolved_release`, and
+`generation` (plus format-specific filename/locale fields). The browser verifies
+that identity before following the URL. A missing date/file returns 404 and a
+changed generation returns 409; neither falls back to latest. Unknown URI/path
+parameters cannot authorize another object. Public responses have null expiry;
+restricted URLs keep the existing short lifetime and no-store response policy.
 
 ## Validate
 
@@ -218,34 +212,32 @@ Satellite: Esri World Imagery raster tiles
 The street-style map is the default on every page load. Satellite is available
 as an explicit user-selected option.
 
-PMTiles previews use the catalog `pmtiles_url` value, which should be the tiered
-`https://tiles.skytruth.org/pmtiles/{public|private|internal}/{slug}.pmtiles` URL for
-latest releases. Even when release indexes hydrate `versions[]` with dated GCS
-PMTiles URLs, the `Latest` map preview keeps using the catalog CDN URL; the
-dated version selector can still point at the release-specific GCS object. The
-public `tiles.skytruth.org/_catalog/web/` entry point is a static/public viewer:
-public PMTiles fetch anonymously, and restricted PMTiles may rely on an
-already-authorized `tiles.skytruth.org` setup when one exists.
+With a usable release index, both `Latest` and dated selections capture one
+release entry and exact artifact generations. Public tiles use
+`https://tiles.skytruth.org/artifacts/{bucket-object-path}?generation=...`.
+The catalog's tiered `pmtiles_url` remains a legacy latest alias for assets with
+no index; it cannot establish a coherent cross-artifact metadata join.
 
-When the app is served from the authenticated Cloud Run viewer, restricted
-PMTiles are resolved through the same-origin signer endpoint:
+Restricted indexed tiles require the same-origin signer:
 
 ```text
-GET /api/pmtiles/signed-url?slug={asset-slug}
+GET /api/pmtiles/signed-url?slug={asset-slug}&version={YYYY-MM-DD}&generation={generation}
 ```
 
-The endpoint reads generated `catalog.json`, requires the asset to publish
-PMTiles, signs the exact catalog `pmtiles_path`, and returns:
+The endpoint authorizes the existing catalog-owned asset and selects its indexed
+primary PMTiles file. It returns `pmtiles_url`, `expires_at`, `gs_uri`,
+`resolved_release`, and `generation`. Generation is covered by the signature.
+The browser checks the identity and loads signed GCS URLs without credentialed
+fetches. Missing signer/authentication or a changed generation fails visibly;
+it never switches an exact layer to the mutable cookie alias.
 
-```json
-{
-  "pmtiles_url": "https://storage.googleapis.com/...",
-  "expires_at": "2026-05-09T12:00:00Z"
-}
-```
-
-Signed GCS PMTiles URLs are loaded without credentialed browser fetches. Public
-PMTiles do not call the signer and continue to use their catalog URL.
+Map clicks carry their captured release reference. Metadata/schema caches use
+path and generation, and render/inspection serials discard superseded responses.
+Same-date replacements therefore require a new complete selection. An old
+retained generation may still read exactly, but a refreshed signer refuses it
+when the index no longer authorizes it. If bytes are no longer retained, the
+exact read fails without retrying a current generation. Search and docs remain
+usable after a map failure.
 
 If a nonstandard internal host needs an explicit signer endpoint, configure it
 before `app.js` loads with either:

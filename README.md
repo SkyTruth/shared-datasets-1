@@ -384,10 +384,14 @@ approved workflow can copy reviewed staged bytes into canonical prefixes. After
 successful promotion, the same workflow deletes the promoted scratch source
 objects with generation preconditions. A separate `Scratch cleanup audit`
 workflow runs weekly in the protected production environment: it writes a warning
-marker when a pending-publish prefix has had no object changes for 60 days, deletes
-warned prefixes after 90 days if no object in the prefix changed, and deletes
-pending-publish prefixes that already contain a data file matching a canonical
-release object by filename, size, and CRC32C.
+marker when the newest object in a pending-publish prefix is 60 days old and
+selects the prefix for deletion at 90 days if that object's name, generation,
+and update time still match the warning. This is an age-based abandonment
+policy; it does not inspect PR status or infer completed publication from
+historical content matches. A first warning after day 90 can become eligible on
+the next audit. Each deletion uses the listed object's exact generation, but
+cleanup is not atomic across a prefix. Dry-run reports identify candidates and
+perform no writes.
 The Terraform `scratch_writer_members` variable preserves the current
 scratch-only writer and should be overridden with the approved scratch-only
 group or service account when that identity is ready, before removing any

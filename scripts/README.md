@@ -25,8 +25,23 @@ uv run python scripts/gcs_asset.py publish-release \
   --dry-run
 ```
 
+Before execution writes anything, it copies every planned artifact and metadata
+upload into a private temporary directory and verifies each planned size and
+SHA-256. Schema and native validation, manifest-template reads, and uploads use
+those copies. Changes to the originals after capture do not change the uploaded
+bytes. Allow temporary disk space for the entire input set under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
+execution removes its own copies on exit. These copies are not durable recovery
+checkpoints. A partial remote publication still needs explicit repair.
+
 If intentionally publishing only a subset of catalog-listed formats, name each
 unchanged companion explicitly with `--allow-stale-format`.
+
+`finalize_promoted_release_metadata.py` pins each manifest/run-record read to
+its observed generation and replaces only that generation. A concurrent change
+refuses finalization; it is not adopted as a new replacement precondition. This
+protects each JSON replacement, but does not make multiple object writes atomic
+or bind the current artifact-stat-based finalizer to a publication receipt.
 
 Catalog and asset README generation lives in:
 
@@ -281,7 +296,14 @@ publisher workflow promotes the reviewed canonical objects so no-clobber and
 generation preconditions stay enforced, then deletes the promoted scratch source
 objects with their source-generation preconditions. Remaining pending-publish
 prefixes are handled by `scripts/scratch_cleanup.py` through the scheduled
-`Scratch cleanup audit` workflow.
+`Scratch cleanup audit` workflow's age-based abandonment policy: warn when the
+newest object is 60 days old, and select for deletion at 90 days only when its
+name, generation, and update time still match the warning. A first warning after
+day 90 can become eligible on the next audit. The auditor does not infer
+publication from historical content matches or inspect PR status. Exact-object
+generation preconditions protect replacements; deletion is not atomic across
+the prefix. Dry-run summaries list candidates and the actual zero deleted
+objects.
 
 Publishing concierge planning and first-upload workflow guidance live in:
 

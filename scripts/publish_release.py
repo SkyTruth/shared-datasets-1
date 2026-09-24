@@ -6,9 +6,13 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+import os
+import shutil
+import tempfile
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
@@ -235,13 +239,7 @@ def build_publish_plan(
             continue
         validate_artifact_path(asset_slug, format_name, local_path)
         if format_name == "cog":
-            try:
-                cog_result = validate_cog_fn(local_path)
-            except Exception as exc:  # noqa: BLE001 - normalize validator failures for CLI callers
-                raise PublishReleaseError(f"COG validation failed for {local_path}: {exc}") from exc
-            if not getattr(cog_result, "valid", False):
-                errors = ", ".join(getattr(cog_result, "errors", ()) or ("unknown COG validation error",))
-                raise PublishReleaseError(f"COG validation failed for {local_path}: {errors}")
+            require_valid_cog(local_path, validator=validate_cog_fn)
             checks.append(f"validated COG artifact: {local_path}")
         if format_name == canonical_format and format_name in SCHEMA_FORMATS:
             try:
@@ -342,9 +340,65 @@ def build_publish_plan(
     )
 
 
+@contextmanager
+def frozen_publish_inputs(plan: PublishPlan) -> Iterator[PublishPlan]:
+    """Capture and verify every input before validation or canonical writes."""
+    work_root = Path(os.environ.get("SHARED_DATASETS_WORKDIR") or Path(tempfile.gettempdir()) / "shared-datasets-1")
+    scratch = work_root / "_scratch"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="publish-release-", dir=scratch) as temporary:
+        frozen = []
+        for index, item in enumerate((*plan.artifacts, *plan.metadata_uploads)):
+            source = Path(item.local_path)
+            destination = Path(temporary) / str(index) / source.name
+            destination.parent.mkdir()
+            shutil.copyfile(source, destination)
+            if destination.stat().st_size != item.size or sha256_file(destination) != item.sha256:
+                raise PublishReleaseError(f"local input changed since publish plan was built: {source}")
+            destination.chmod(0o400)
+            frozen.append(replace(item, local_path=str(destination)))
+        yield replace(
+            plan,
+            artifacts=tuple(frozen[:len(plan.artifacts)]),
+            metadata_uploads=tuple(frozen[len(plan.artifacts):]),
+        )
+
+
 def execute_publish_plan(
     plan: PublishPlan,
     *,
+    client: Any,
+    source_version: str = "",
+    row_count: int | None = None,
+    notes: str = "",
+    notify: bool = True,
+    update_schema_snapshot: bool = True,
+    schema_updater: Callable[[str, Path], None] | None = None,
+    schema_reader: Callable[[Path], list[dict[str, str]]] | None = None,
+    schema_compatibility_checker: Callable[..., Any] | None = None,
+    notifier: Callable[[PublishPlan, int | None], None] | None = None,
+) -> PublishResult:
+    with frozen_publish_inputs(plan) as frozen_plan:
+        return _execute_frozen_publish_plan(
+            frozen_plan,
+            original_plan=plan,
+            client=client,
+            source_version=source_version,
+            row_count=row_count,
+            notes=notes,
+            notify=notify,
+            update_schema_snapshot=update_schema_snapshot,
+            schema_updater=schema_updater,
+            schema_reader=schema_reader,
+            schema_compatibility_checker=schema_compatibility_checker,
+            notifier=notifier,
+        )
+
+
+def _execute_frozen_publish_plan(
+    plan: PublishPlan,
+    *,
+    original_plan: PublishPlan,
     client: Any,
     source_version: str = "",
     row_count: int | None = None,
@@ -371,6 +425,15 @@ def execute_publish_plan(
         metadata["source_version"] = source_version
 
     canonical_artifact = next((artifact for artifact in plan.artifacts if artifact.format == plan.canonical_format), None)
+    if plan.canonical_format in VECTOR_CANONICAL_FORMATS:
+        validate_vector_release_bundle(
+            asset_slug=plan.asset_slug,
+            release=plan.release_date,
+            artifacts=plan.artifacts,
+        )
+    for artifact in plan.artifacts:
+        if artifact.format == "cog":
+            require_valid_cog(Path(artifact.local_path), validator=validate_cog)
     if plan.schema_compatibility and canonical_artifact and canonical_artifact.format in SCHEMA_FORMATS:
         schema_probe = schema_reader or default_schema_reader
         try:
@@ -470,7 +533,7 @@ def execute_publish_plan(
         metadata_objects.append(blob_info(metadata_upload.uri, blob))
 
     run_record_payload = build_run_record_payload(
-        plan=plan,
+        plan=original_plan,
         release_objects=release_objects,
         latest_objects=latest_objects,
         source_version=source_version,
@@ -634,6 +697,16 @@ def validate_artifact_path(asset_slug: str, format_name: str, path: Path) -> Non
         raise PublishReleaseError(f"artifact extension does not match format {format_name!r}: {path}")
     if path.stat().st_size <= 0:
         raise PublishReleaseError(f"artifact is empty: {path}")
+
+
+def require_valid_cog(path: Path, *, validator: Callable[[Path], Any]) -> None:
+    try:
+        result = validator(path)
+    except Exception as exc:  # noqa: BLE001 - normalize validator failures for CLI callers
+        raise PublishReleaseError(f"COG validation failed for {path}: {exc}") from exc
+    if not getattr(result, "valid", False):
+        errors = ", ".join(getattr(result, "errors", ()) or ("unknown COG validation error",))
+        raise PublishReleaseError(f"COG validation failed for {path}: {errors}")
 
 
 def load_json_artifact(path: Path, *, label: str) -> dict[str, Any]:

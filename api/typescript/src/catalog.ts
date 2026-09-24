@@ -47,6 +47,7 @@ type SharedDatasetCatalogMetadata = {
   sourceUrl: string | null;
   docsUrl: string | null;
   releaseIndexUrl: string | null;
+  pmtilesPath: string | null;
   latestRelease: Record<string, unknown> | null;
   lastUpdated: string | null;
   localizedNames: SharedDatasetLocalizedNames | null;
@@ -77,6 +78,7 @@ export type SharedDatasetsCatalogAsset = {
   localized_names?: SharedDatasetLocalizedNames | null;
   license?: string | null;
   pmtiles_url?: string | null;
+  pmtiles_path?: string | null;
   release_index_url?: string | null;
   slug: string;
   source?: string | null;
@@ -219,6 +221,7 @@ const getCatalogSharedDatasetRef = (
       sourceUrl: cleanCatalogString(asset.source_url),
       docsUrl: cleanCatalogString(asset.docs_url),
       releaseIndexUrl: cleanCatalogString(asset.release_index_url),
+      pmtilesPath: cleanCatalogString(asset.pmtiles_path),
       latestRelease: cleanCatalogObject(asset.latest_release),
       lastUpdated: cleanCatalogString(asset.last_updated),
       localizedNames: cleanCatalogLocalizedNames(asset.localized_names)
