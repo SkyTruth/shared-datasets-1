@@ -14,8 +14,7 @@ from scripts import catalog_csv, publish_workflow
 BUCKET = "skytruth-shared-datasets-1"
 CANONICAL_PATH = f"gs://{BUCKET}/industry/mining/demo-asset/latest/demo-asset.fgb"
 CATALOG_CSV = (
-    "asset_slug,title,canonical_path\n"
-    f"demo-asset,Demo asset,{CANONICAL_PATH}\n"
+    f"asset_slug,title,canonical_path\ndemo-asset,Demo asset,{CANONICAL_PATH}\n"
 )
 
 
@@ -92,24 +91,6 @@ class ReleasePathTests(unittest.TestCase):
 
     def test_returns_empty_without_release_destinations(self):
         self.assertEqual(publish_workflow.release_path_for([CANONICAL_PATH]), "")
-
-
-class CheckApprovedReviewTests(unittest.TestCase):
-    def run_command(self, reviews: list[dict]) -> int:
-        with workspace({"reviews.json": json.dumps(reviews)}):
-            return publish_workflow.main(["check-approved-review", "--reviews-json", "reviews.json"])
-
-    def test_accepts_approved_review_from_required_reviewer(self):
-        reviews = [{"state": "APPROVED", "user": {"login": "jonaraphael"}}]
-        self.assertEqual(self.run_command(reviews), 0)
-
-    def test_rejects_missing_or_wrong_reviewer(self):
-        with self.subTest("no reviews"):
-            self.assertEqual(self.run_command([]), 1)
-        with self.subTest("approved by someone else"):
-            self.assertEqual(self.run_command([{"state": "APPROVED", "user": {"login": "mallory"}}]), 1)
-        with self.subTest("required reviewer only commented"):
-            self.assertEqual(self.run_command([{"state": "COMMENTED", "user": {"login": "jonaraphael"}}]), 1)
 
 
 class FakeBlob:

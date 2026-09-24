@@ -2489,29 +2489,59 @@ class PublishingConciergeTests(unittest.TestCase):
                 ),
                 0,
             )
-            self.assertEqual(self._confirm(root, state_file, "preview-catalog-refresh", self._preview_catalog_refresh_payload()), 0)
             self.assertEqual(
-                self._confirm(root, state_file, "preview-viewer-verify", self._preview_catalog_asset_payload(uploaded_objects)),
+                self._confirm(
+                    root,
+                    state_file,
+                    "preview-catalog-refresh",
+                    self._preview_catalog_refresh_payload(),
+                ),
+                0,
+            )
+            self.assertEqual(
+                self._confirm(
+                    root,
+                    state_file,
+                    "preview-viewer-verify",
+                    self._preview_catalog_asset_payload(uploaded_objects),
+                ),
                 0,
             )
 
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                code = publishing_concierge.main(["validate", "--state-file", str(state_file)])
+                code = publishing_concierge.main(
+                    ["validate", "--state-file", str(state_file)]
+                )
             self.assertEqual(code, 0)
             result = json.loads(stdout.getvalue())
             self.assertTrue(result["ready_for_preview"])
             self.assertFalse(result["ready_for_pr"])
 
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                render_pr_code = publishing_concierge.main(["render-pr", "--state-file", str(state_file)])
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                render_pr_code = publishing_concierge.main(
+                    [
+                        "render-pr",
+                        "--state-file",
+                        str(state_file),
+                        "--repo-root",
+                        str(root),
+                    ]
+                )
             self.assertEqual(render_pr_code, 2)
 
             report_stdout = io.StringIO()
             with contextlib.redirect_stdout(report_stdout):
-                report_code = publishing_concierge.main(["render-report", "--state-file", str(state_file)])
+                report_code = publishing_concierge.main(
+                    ["render-report", "--state-file", str(state_file)]
+                )
             self.assertEqual(report_code, 0)
-            self.assertIn("Request classification: `preview-only`", report_stdout.getvalue())
+            self.assertIn(
+                "Request classification: `preview-only`", report_stdout.getvalue()
+            )
             self.assertIn("generation 111, role canonical", report_stdout.getvalue())
 
     def test_render_pr_uses_reviewed_publish_plan_validator(self):
@@ -2526,7 +2556,15 @@ class PublishingConciergeTests(unittest.TestCase):
             )
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                code = publishing_concierge.main(["render-pr", "--state-file", str(state_file)])
+                code = publishing_concierge.main(
+                    [
+                        "render-pr",
+                        "--state-file",
+                        str(state_file),
+                        "--repo-root",
+                        str(root),
+                    ]
+                )
 
             self.assertEqual(code, 0)
             body = stdout.getvalue()
@@ -2534,13 +2572,60 @@ class PublishingConciergeTests(unittest.TestCase):
             self.assertIn("```shared-datasets-publish-plan", body)
             self.assertIn("_catalog/web/catalog.json", body)
 
+    def test_rendered_plan_is_exact_and_readiness_refuses_tampering_or_changed_evidence(self):
+        from scripts import reviewed_dataset_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_file = self._start_workflow(root)
+            self._complete_first_csv_workflow_through_pr_ready(root, state_file)
+            self.assertEqual(self._confirm(root, state_file, "pr-ready", {"reviewed_pr_body": True}), 0)
+            argv = ["render-pr", "--state-file", str(state_file), "--repo-root", str(root)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(publishing_concierge.main(argv), 0)
+            state = json.loads(state_file.read_text())
+            document = reviewed_dataset_plan.normalize_document({
+                "plan_version": 1,
+                "finalization_version": reviewed_dataset_plan.FINALIZATION_VERSION,
+                "publish": publishing_concierge.build_publish_plan_from_state(state),
+            })
+            expected = reviewed_dataset_plan.canonical_bytes(document)
+            path = root / reviewed_dataset_plan.document_path(document)
+            self.assertEqual(path.read_bytes(), expected)
+            self.assertEqual(state["plan_document"], {
+                "path": str(path.resolve()), "sha256": reviewed_dataset_plan.sha256(expected),
+            })
+            self.assertTrue(publishing_concierge.validate_state_for_pr(state)["ready_for_pr"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(publishing_concierge.main(argv), 0)
+            self.assertEqual(path.read_bytes(), expected)
+
+            path.write_bytes(expected + b"tampered")
+            result = publishing_concierge.validate_state_for_pr(state)
+            self.assertFalse(result["ready_for_pr"])
+            self.assertIn("start a fresh concierge proposal", " ".join(result["errors"]))
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertNotEqual(publishing_concierge.main(argv), 0)
+
+            path.write_bytes(expected)
+            state["steps"]["stage-scratch"]["evidence"]["staged_objects"][0]["source_generation"] = "999"
+            state_file.write_text(json.dumps(state))
+            result = publishing_concierge.validate_state_for_pr(state)
+            self.assertFalse(result["ready_for_pr"])
+            self.assertIn("start a fresh concierge proposal", " ".join(result["errors"]))
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertNotEqual(publishing_concierge.main(argv), 0)
+            self.assertEqual(path.read_bytes(), expected)
+
     def test_render_pr_labels_existing_asset_promotions_as_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             state_file = self._start_workflow(root)
             self._complete_first_csv_workflow_through_pr_ready(root, state_file)
             state = json.loads(state_file.read_text())
-            destinations = state["steps"]["stat-destinations"]["evidence"]["destinations"]
+            destinations = state["steps"]["stat-destinations"]["evidence"][
+                "destinations"
+            ]
             destinations[0]["destination_generation"] = "333"
             destinations[0]["status"] = "exists"
             state_file.write_text(json.dumps(state))
@@ -2551,10 +2636,20 @@ class PublishingConciergeTests(unittest.TestCase):
             )
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout):
-                code = publishing_concierge.main(["render-pr", "--state-file", str(state_file)])
+                code = publishing_concierge.main(
+                    [
+                        "render-pr",
+                        "--state-file",
+                        str(state_file),
+                        "--repo-root",
+                        str(root),
+                    ]
+                )
 
             self.assertEqual(code, 0)
-            self.assertIn("Publish shared dataset revision `example`", stdout.getvalue())
+            self.assertIn(
+                "Publish shared dataset revision `example`", stdout.getvalue()
+            )
 
     def test_publish_plan_preserves_schema_compatibility_waiver(self):
         with tempfile.TemporaryDirectory() as tmp:

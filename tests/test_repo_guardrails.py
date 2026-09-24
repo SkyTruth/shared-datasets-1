@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import subprocess
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -350,6 +351,94 @@ class RepoGuardrailsTests(unittest.TestCase):
             errors = repo_guardrails.check_workflow_boundaries(root)
 
         self.assertEqual(errors, [])
+
+    def immutable_bootstrap_workflow(self):
+        return {
+            "on": {"workflow_dispatch": {}},
+            "jobs": {"publish": {"steps": [
+                {"run": '\n'.join([
+                    'set -euo pipefail',
+                    'if [[ "${GITHUB_REF}" != "refs/heads/main" ||',
+                    '      "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/apply.yml@refs/heads/main" ]]; then',
+                    '  echo "Execution must use this workflow from main." >&2',
+                    '  exit 1',
+                    'fi',
+                ])},
+                {"uses": "actions/checkout@v4", "with": {"ref": "${{ github.workflow_sha }}"}},
+                {"uses": "google-github-actions/auth@v2"},
+            ]}},
+        }
+
+    def test_workflow_boundaries_accept_guarded_immutable_main_bootstrap(self):
+        self.assertEqual(self.check_workflow_fixture(self.immutable_bootstrap_workflow()), [])
+
+    def test_immutable_bootstrap_rejects_inherited_shell_overrides(self):
+        for scope in ("workflow", "job"):
+            workflow = self.immutable_bootstrap_workflow()
+            owner = workflow if scope == "workflow" else workflow["jobs"]["publish"]
+            owner["defaults"] = {"run": {"shell": 'bash -c "true"'}}
+            with self.subTest(scope=scope):
+                self.assertTrue(any(
+                    "pinned main-workflow revision" in error for error in self.check_workflow_fixture(workflow)
+                ))
+
+    def test_immutable_bootstrap_does_not_trust_markers_or_arbitrary_checkouts(self):
+        mutations = {
+            "missing guard": lambda job: job["steps"].pop(0),
+            "late guard": lambda job: job["steps"].insert(0, {"run": "echo before guard"}),
+            "conditional guard": lambda job: job["steps"][0].update({"if": "${{ false }}"}),
+            "conditional checkout": lambda job: job["steps"][1].update({"if": "${{ false }}"}),
+            "comment only": lambda job: job["steps"][0].update(run="\n".join(
+                "# " + line for line in job["steps"][0]["run"].splitlines()
+            )),
+            "wrong workflow path": lambda job: job["steps"][0].update(
+                run=job["steps"][0]["run"].replace("apply.yml", "other.yml")
+            ),
+            "wrong shell": lambda job: job["steps"][0].update(shell="python"),
+        }
+        for ref in ("${{ github.sha }}", "${{ github.event.pull_request.head.sha }}", "${{ inputs.ref }}", "${{ needs.other.outputs.sha }}"):
+            mutations[ref] = lambda job, ref=ref: job["steps"][1]["with"].update(ref=ref)
+        for key in ("repository", "path"):
+            mutations[key] = lambda job, key=key: job["steps"][1]["with"].update({key: "other"})
+        for owner in ("job", "guard", "checkout"):
+            for ignored in (True, "${{ inputs.ignore_failure }}"):
+                def suppress(job, owner=owner, ignored=ignored):
+                    target = job if owner == "job" else job["steps"][0 if owner == "guard" else 1]
+                    target["continue-on-error"] = ignored
+                mutations[f"ignored {owner} {ignored}"] = suppress
+        for label, mutate in mutations.items():
+            workflow = self.immutable_bootstrap_workflow()
+            mutate(workflow["jobs"]["publish"])
+            with self.subTest(label=label):
+                errors = self.check_workflow_fixture(workflow)
+                self.assertTrue(any("pinned main-workflow revision" in error for error in errors), errors)
+
+    def test_real_immutable_bootstrap_guards_execute_before_checkout(self):
+        for filename, job_name in (
+            ("publish-dataset.yml", "reviewed_pr_plans"),
+            ("metadata-localization.yml", "materialize"),
+        ):
+            path = repo_guardrails.REPO_ROOT / ".github/workflows" / filename
+            workflow = yaml.safe_load(path.read_text())
+            relative_path = path.relative_to(repo_guardrails.REPO_ROOT).as_posix()
+            self.assertTrue(repo_guardrails.has_guarded_main_workflow_checkout(workflow, relative_path))
+            script = workflow["jobs"][job_name]["steps"][0]["run"]
+            workflow_ref = f"SkyTruth/shared-datasets-1/{relative_path}@refs/heads/main"
+            for ref, source, expected in (
+                ("refs/heads/main", workflow_ref, 0),
+                ("refs/heads/feature", workflow_ref, 1),
+                ("refs/tags/main", workflow_ref, 1),
+                ("refs/heads/main", workflow_ref.replace(filename, "other.yml"), 1),
+                ("refs/heads/main", workflow_ref.replace("SkyTruth/", "other/"), 1),
+                ("refs/heads/main", workflow_ref.replace("@refs/heads/main", "@refs/heads/feature"), 1),
+            ):
+                with self.subTest(workflow=filename, ref=ref, source=source):
+                    result = subprocess.run(
+                        ["/bin/bash", "-c", script],
+                        env={"GITHUB_REF": ref, "GITHUB_WORKFLOW_REF": source, "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1"},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_workflow_boundaries_accept_feature_preview_dropdown_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:

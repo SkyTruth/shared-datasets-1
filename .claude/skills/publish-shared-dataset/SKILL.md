@@ -116,7 +116,8 @@ The concierge intentionally waits at each step until the agent submits
 structured evidence. It does not advance merely because a step was printed, and
 `--yes` is rejected for steps that require evidence. Use `status`, `validate`,
 and `render-pr` to inspect the workflow, check PR readiness, and generate the PR
-body with the fenced `shared-datasets-publish-plan`, and render a final
+body with the fenced `shared-datasets-publish-plan`, write its immutable document
+under `.github/dataset-plans/`, and render a final
 completion-report scaffold.
 
 The concierge is guide-and-verify tooling: it never stages Git changes, commits,
@@ -127,10 +128,14 @@ the appropriate `gcs_asset.py` commands separately and feed the resulting URIs
 and generations back as evidence. Artifact validation evidence must include the
 commands run and resolved tool paths/versions or explicit not-applicable notes.
 The final publish-plan is validated through `scripts/reviewed_dataset_plan.py`,
-so it matches the protected workflow's schema.
+so it matches the protected workflow's schema. Add the generated document to the
+PR with its matching fence. For manual/delete/combined plans, use
+`reviewed_dataset_plan.py prepare`; `.github/dataset-plans/README.md` is the
+format, approval, migration and retry contract. A fence alone cannot authorize
+execution. Approval must target the head containing the checked-in document.
 
 If an approved mutation workflow fails after some promotions have already run,
-use the concierge retry helper instead of rerunning the stale PR body:
+use the concierge retry helper to prepare an unapproved replacement payload:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py refresh-retry-plan \
@@ -141,7 +146,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/publishing_concierge.py refresh-ret
   --summary-output retry-summary.json
 ```
 
-The command refreshes destination generations only after the staged source
+The output requires a new checked-in document and reviewed PR; never edit a
+merged PR body to authorize it. The command refreshes destination generations only after the staged source
 generation is still present and, for existing destinations, the current
 destination CRC32C matches the staged source CRC32C. It leaves still-absent
 destinations as no-clobber creates. Use `--remove-waivers` only after confirming
@@ -506,7 +512,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     do not spend a known-failing reviewer request; record the restricted
     self-acceptance note in the PR body directly. If GitHub refuses because
     `jonaraphael` authored the PR, record that note in the PR body. Include a fenced
-    `shared-datasets-publish-plan` JSON block so merge or restricted
+    `shared-datasets-publish-plan` JSON block matching the checked-in document so merge or restricted
     self-acceptance dispatch can trigger promotion:
 
 ````markdown
@@ -644,7 +650,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
     authenticated author is already `jonaraphael`, do not spend a known-failing
     reviewer request; record the restricted self-acceptance note in the PR body
     directly. If GitHub refuses because `jonaraphael` authored the PR, record
-    that note in the PR body. Include a fenced `shared-datasets-publish-plan` JSON block whose
+    that note in the PR body. Add the generated immutable plan document and its
+    matching fenced `shared-datasets-publish-plan` JSON block whose
     `promotions` are ordered exactly as they should be copied.
 15. Do not promote canonical objects from the local terminal. After a same-repo
     PR containing the publish-plan block is merged to `main`, the GitHub
@@ -665,37 +672,21 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/catalog_site.py \
 
 ### Approved Mutation Retry Recovery
 
-Use this only after a reviewed publish PR has merged and the GitHub `Approved
-dataset mutation` workflow failed before completing all publish-plan
-promotions. It is a recovery path for the same reviewed object set, not a way to
-approve new data after merge.
+Inspect the failed step and exact current source/destination generations. Keep the
+original checked-in plan and authorization artifact unchanged. Do not edit a
+merged PR body, replace artifact bytes, or relax preconditions during redispatch.
+A body-only merged plan requires a new reviewed PR. Open legacy proposals can use
+`reviewed_dataset_plan.py prepare --body pr-body.md`, then add the document and
+obtain review on the new head.
 
-1. Inspect the failed workflow enough to identify the failed step and last
-   attempted promotion. Avoid dumping full logs unless the short failure
-   snippet is insufficient.
-2. Extract the current PR publish plan to a file. `reviewed_dataset_plan.py
-   extract --output ...` prints only a compact summary by default; use
-   `--print-plan` only when the full JSON is truly needed on stdout.
-3. Stat every planned staged source and every planned destination. Confirm all
-   staged sources still exist at their approved source generations.
-4. For each destination that now exists, compare CRC32C with the staged source.
-   If any destination differs, stop for human review. Do not refresh generation
-   preconditions over a content mismatch.
-5. Refresh the publish plan so existing destinations use their current
-   generations and still-missing destinations keep an empty
-   `destination_generation`.
-6. Reassess schema waivers. If the first run already updated the schema
-   snapshot, `check-schema-compatibility` may now report no blocked changes and
-   reject a supplied waiver. Remove waivers in the retry plan only in that
-   condition; otherwise keep the waiver on schema-breaking replacements.
-7. Edit the merged PR body only to update generation preconditions, remove
-   stale waivers, and add a retry note describing the partial run. Do not add
-   new source URIs, destination URIs, delete operations, catalog semantics, or
-   data bytes after merge.
-8. Dispatch `Approved dataset mutation` from `main` with the reviewed PR number.
-   Continue monitoring until promotion, finalization, release-index rebuild,
-   upload summary, scratch cleanup, and downstream catalog/localization workflows
-   either succeed or report a new specific failure.
+`publishing_concierge.py refresh-retry-plan` may prepare an **unapproved**
+replacement payload from verified observations. Changed generation expectations,
+waivers or operations require a new checked-in digest document and reviewed PR.
+An unchanged-plan retry preserves every original expectation. Per-object CAS can
+refuse a partial replay until durable transaction recovery is available. A future
+receipt consumer must refuse a changed executor contract for the existing
+proposal; it must not create a new transaction to evade old expectations.
+See `.github/dataset-plans/README.md` for the shared identity and rollout limits.
 
 ### Fresh-Agent Reviewed Deletion Runbook
 
@@ -728,7 +719,8 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat \
    open a PR requesting review from `jonaraphael`, unless `jonaraphael` is also
    the PR author and GitHub blocks the reviewer request. The PR body must include
    exact target URIs, current generations, deletion rationale, consumer impact,
-   replacement/deprecation state, validation commands, and a fenced
+   replacement/deprecation state, validation commands, the generated immutable
+   plan document, and a matching fenced
    `shared-datasets-delete-plan` JSON block:
 
 ````markdown

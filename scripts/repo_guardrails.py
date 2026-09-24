@@ -114,6 +114,12 @@ WORKFLOW_TRUSTED_CHECKOUT_MARKERS = (
     "ref: main",
     "ref: ${{ github.event.repository.default_branch }}",
 )
+WORKFLOW_MAIN_BOOTSTRAP_GUARD = '''set -euo pipefail
+if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+      "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/WORKFLOW_PATH@refs/heads/main" ]]; then
+  echo "Execution must use this workflow from main." >&2
+  exit 1
+fi'''
 WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS = (
     "Single-object fallback",
     "Promote staged object manually",
@@ -464,6 +470,41 @@ def job_uses_prod_terraform(workflow: dict, job: dict) -> bool:
     return False
 
 
+def has_guarded_main_workflow_checkout(workflow: dict, relative_path: str) -> bool:
+    """Recognize an immutable main bootstrap, not downstream executor provenance."""
+    expected_guard = WORKFLOW_MAIN_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", relative_path)
+    for job in workflow["jobs"].values():
+        if not isinstance(job, dict) or job.get("continue-on-error", False) is not False:
+            continue
+        if any("shell" in owner.get("defaults", {}).get("run", {}) for owner in (workflow, job)):
+            continue
+        steps = job.get("steps", [])
+        if not isinstance(steps, list) or len(steps) < 2:
+            continue
+        guard, checkout = steps[:2]
+        if any(
+            not isinstance(step, dict)
+            or "if" in step
+            or step.get("continue-on-error", False) is not False
+            for step in (guard, checkout)
+        ):
+            continue
+        run = guard.get("run")
+        if not isinstance(run, str) or run.strip() != expected_guard or guard.get("shell", "bash") != "bash":
+            continue
+        uses = checkout.get("uses", "")
+        options = checkout.get("with", {})
+        if (
+            isinstance(uses, str)
+            and uses.startswith("actions/checkout@")
+            and isinstance(options, dict)
+            and options.get("ref") == "${{ github.workflow_sha }}"
+            and not {"repository", "path"}.intersection(options)
+        ):
+            return True
+    return False
+
+
 def check_workflow_boundaries(repo_root: Path) -> list[str]:
     workflows_dir = repo_root / ".github" / "workflows"
     if not workflows_dir.exists():
@@ -491,13 +532,17 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
 
         uses_gcp_auth = any(marker in text for marker in WORKFLOW_GCP_AUTH_MARKERS)
         if uses_gcp_auth and "workflow_dispatch:" in text:
+            has_immutable_main_bootstrap = has_guarded_main_workflow_checkout(workflow, rel.as_posix())
             allows_dropdown_preview_ref = rel.as_posix() == ".github/workflows/feature-preview-deploy.yml" and all(
                 marker in text for marker in FEATURE_PREVIEW_DROPDOWN_DEPLOY_MARKERS
             )
-            if WORKFLOW_MAIN_REF_GUARD not in text and not allows_dropdown_preview_ref:
+            if WORKFLOW_MAIN_REF_GUARD not in text and not allows_dropdown_preview_ref and not has_immutable_main_bootstrap:
                 errors.append(f"{rel}: GCP-auth workflow_dispatch paths must validate refs/heads/main")
-            if not any(marker in text for marker in WORKFLOW_TRUSTED_CHECKOUT_MARKERS):
-                errors.append(f"{rel}: GCP-auth workflow_dispatch paths must check out trusted main code")
+            if not any(marker in text for marker in WORKFLOW_TRUSTED_CHECKOUT_MARKERS) and not has_immutable_main_bootstrap:
+                errors.append(
+                    f"{rel}: GCP-auth workflow_dispatch paths must check out trusted main code "
+                    "or a pinned main-workflow revision after its unconditional ref/workflow-ref guard"
+                )
 
         is_preview_workflow = "skytruth-shared-datasets-1-preview" in text or "feature branch preview" in text.lower()
         if is_preview_workflow and "gs://skytruth-shared-datasets-1/" in text:

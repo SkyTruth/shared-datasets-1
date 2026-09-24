@@ -1,0 +1,158 @@
+{
+  "incompatible_executor": {
+    "acceptance": {
+      "kind": "review",
+      "review_id": 10,
+      "reviewed_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "authorization_version": 1,
+    "document": {
+      "finalization_version": "finalize-promoted-release-v1",
+      "plan_version": 1,
+      "publish": {
+        "asset_slug": "demo",
+        "breaking_changes": [],
+        "promotions": [
+          {
+            "cache_control": "",
+            "compatibility_waiver": null,
+            "content_type": "",
+            "destination_generation": "20",
+            "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/demo/latest/demo.csv",
+            "source_generation": "10",
+            "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/demo/pr-7/demo.csv"
+          }
+        ],
+        "proposal_id": "pr-7",
+        "release_index_asset_slugs": []
+      }
+    },
+    "execution_contract_sha256": "5512f6a1a299d25298023e6cbb44adac5dda7c58e24fa745854672ea1ff9ebf0",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "merge_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "normalized_plan_sha256": "c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682",
+    "outcome": "mutation",
+    "plan_blob_sha": "7175b4ac455ebca56a6c26e3d7d4b4dd80e62ec7",
+    "plan_path": ".github/dataset-plans/demo/pr-7/c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682.json",
+    "pr_number": 7,
+    "proposal_key": "0b49eae079e3dbf8ca625d6612909872e665f68c4f46557eb6668fb9d84b9ae1",
+    "repository": {
+      "default_branch": "main",
+      "full_name": "SkyTruth/shared-datasets-1",
+      "id": 100
+    },
+    "source_run": {
+      "event": "pull_request",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": 800,
+      "path": ".github/workflows/publish-dataset.yml",
+      "run_attempt": 2,
+      "workflow_id": 99
+    },
+    "trusted_executor_sha": "dddddddddddddddddddddddddddddddddddddddd"
+  },
+  "later_attempt": {
+    "acceptance": {
+      "kind": "review",
+      "review_id": 10,
+      "reviewed_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "authorization_version": 1,
+    "document": {
+      "finalization_version": "finalize-promoted-release-v1",
+      "plan_version": 1,
+      "publish": {
+        "asset_slug": "demo",
+        "breaking_changes": [],
+        "promotions": [
+          {
+            "cache_control": "",
+            "compatibility_waiver": null,
+            "content_type": "",
+            "destination_generation": "20",
+            "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/demo/latest/demo.csv",
+            "source_generation": "10",
+            "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/demo/pr-7/demo.csv"
+          }
+        ],
+        "proposal_id": "pr-7",
+        "release_index_asset_slugs": []
+      }
+    },
+    "execution_contract_sha256": "0afc1437d00fd14d214af8d7420631d4cb02b3fe72a72690cbda8c3c6a86a950",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "merge_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "normalized_plan_sha256": "c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682",
+    "outcome": "mutation",
+    "plan_blob_sha": "7175b4ac455ebca56a6c26e3d7d4b4dd80e62ec7",
+    "plan_path": ".github/dataset-plans/demo/pr-7/c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682.json",
+    "pr_number": 7,
+    "proposal_key": "0b49eae079e3dbf8ca625d6612909872e665f68c4f46557eb6668fb9d84b9ae1",
+    "repository": {
+      "default_branch": "main",
+      "full_name": "SkyTruth/shared-datasets-1",
+      "id": 100
+    },
+    "source_run": {
+      "event": "pull_request",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": 800,
+      "path": ".github/workflows/publish-dataset.yml",
+      "run_attempt": 2,
+      "workflow_id": 99
+    },
+    "trusted_executor_sha": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "original": {
+    "acceptance": {
+      "kind": "review",
+      "review_id": 10,
+      "reviewed_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "authorization_version": 1,
+    "document": {
+      "finalization_version": "finalize-promoted-release-v1",
+      "plan_version": 1,
+      "publish": {
+        "asset_slug": "demo",
+        "breaking_changes": [],
+        "promotions": [
+          {
+            "cache_control": "",
+            "compatibility_waiver": null,
+            "content_type": "",
+            "destination_generation": "20",
+            "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/demo/latest/demo.csv",
+            "source_generation": "10",
+            "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/demo/pr-7/demo.csv"
+          }
+        ],
+        "proposal_id": "pr-7",
+        "release_index_asset_slugs": []
+      }
+    },
+    "execution_contract_sha256": "0afc1437d00fd14d214af8d7420631d4cb02b3fe72a72690cbda8c3c6a86a950",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "merge_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "normalized_plan_sha256": "c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682",
+    "outcome": "mutation",
+    "plan_blob_sha": "7175b4ac455ebca56a6c26e3d7d4b4dd80e62ec7",
+    "plan_path": ".github/dataset-plans/demo/pr-7/c8fee4a861c1ddb85b0bf7e0c0ae8b4ef0be0c5255b08e7a52e17d5265d44682.json",
+    "pr_number": 7,
+    "proposal_key": "0b49eae079e3dbf8ca625d6612909872e665f68c4f46557eb6668fb9d84b9ae1",
+    "repository": {
+      "default_branch": "main",
+      "full_name": "SkyTruth/shared-datasets-1",
+      "id": 100
+    },
+    "source_run": {
+      "event": "pull_request",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "id": 700,
+      "path": ".github/workflows/publish-dataset.yml",
+      "run_attempt": 1,
+      "workflow_id": 99
+    },
+    "trusted_executor_sha": "cccccccccccccccccccccccccccccccccccccccc"
+  }
+}

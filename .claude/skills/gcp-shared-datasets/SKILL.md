@@ -26,8 +26,10 @@ documented break-glass operations.
 Do not use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical
 dataset uploads/edits. Do not perform canonical writes from a local human or
 agent terminal; stage manual publish bytes under `_scratch/pending-publishes/`
-and promote approved objects only through an explicit PR with a fenced publish
-or delete plan. After that PR merges, the GitHub `Approved dataset mutation`
+and promote approved objects only through an explicit PR with a checked-in
+immutable plan document and matching readable publish/delete fences. Use
+`publishing_concierge.py render-pr` or `reviewed_dataset_plan.py prepare`; see
+`.github/dataset-plans/README.md`. PR-body edits never change execution authority. After that PR merges, the GitHub `Approved dataset mutation`
 workflow runs under the `shared-datasets-production` environment. Do not use
 standalone workflow dispatch or single-object fallback inputs to bypass a PR.
 
@@ -286,27 +288,18 @@ If an upload fails due to `412 Precondition Failed`:
 
 If the GitHub `Approved dataset mutation` workflow fails mid-promotion:
 
-- Treat the bucket as changed state. Do not rerun the same PR body or publish
-  plan unchanged.
-- Stat every planned staged source at its recorded source generation and every
-  planned destination at its current generation.
-- Confirm every staged source still exists at the recorded generation.
-- For destinations that now exist, compare CRC32C with the staged source before
-  refreshing the destination-generation precondition. If CRC32C differs, stop
-  for human review; do not paper over the mismatch with a new generation.
-- For destinations that are still absent, leave `destination_generation` empty.
-- Update only the generation preconditions needed to continue the same reviewed
-  object set. Do not add new sources, destinations, deletes, or semantic
-  changes to a merged PR body as part of retry recovery.
-- Reassess schema compatibility waivers: if the partial run already advanced
-  the schema snapshot and `check-schema-compatibility` now reports no blocked
-  schema changes, remove stale waivers from the retry plan.
-
-Use `scripts/publishing_concierge.py refresh-retry-plan` to produce a compact
-retry plan and summary from a publish plan plus current GCS stats.
-`scripts/reviewed_dataset_plan.py extract --output ...` writes the full
-normalized plan to disk but prints only a compact summary by default; use
-`--print-plan` only when the full JSON is truly needed on stdout.
+- Preserve the checked-in plan and captured authorization artifact.
+- Stat every source at its recorded generation and every destination at its
+  current generation; treat the bucket as changed state.
+- Do not edit a merged PR body or refresh generation expectations during replay.
+- `publishing_concierge.py refresh-retry-plan` may prepare an **unapproved**
+  replacement payload. Changed expectations/waivers require a new immutable
+  document and reviewed PR. CRC mismatch remains a reason for human review.
+- Body-only merged plans cannot be retroactively authorized. Open legacy PRs
+  need a checked-in document and approval on the resulting new head.
+- An unchanged-plan retry keeps original expectations. Durable receipt-based
+  recovery and executor compatibility must follow the publisher contract; never
+  create another transaction to evade an existing proposal's expectations.
 
 GCS and GitHub network diagnostics often need network access outside the local
 sandbox. If a prior command in the same task has already failed or hung on
