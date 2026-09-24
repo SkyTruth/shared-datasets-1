@@ -101,6 +101,44 @@ class VectorAssetTests(unittest.TestCase):
         self.assertEqual(validate_outputs.call_args.kwargs["exact_pmtiles_properties"], vector_asset.PMTILES_METADATA_COLUMNS)
         self.assertFalse(validate_outputs.call_args.kwargs["validate_geometry"])
 
+    def test_validation_fails_when_required_native_checks_are_unavailable(self):
+        for unavailable in ("ogrinfo", "pmtiles", "decode"):
+            with self.subTest(unavailable=unavailable), tempfile.TemporaryDirectory() as tmp:
+                fgb = Path(tmp) / "example.fgb"
+                pmtiles = Path(tmp) / "example.pmtiles"
+                fgb.write_bytes(b"fixture")
+                pmtiles.write_bytes(b"PMTiles" + b"\x03" + b"fixture")
+                with (
+                    mock.patch("scripts.vector_asset.shutil.which", side_effect=lambda tool: None if tool == unavailable else tool),
+                    mock.patch("scripts.vector_asset.ogrinfo_fgb_summary", return_value=({"layer_name": "example", "property_keys": ("name",)}, [])),
+                    mock.patch("scripts.vector_asset.subprocess.run", return_value=mock.Mock(returncode=0, stdout="ok", stderr="")),
+                    mock.patch("scripts.vector_asset.decoded_pmtiles_property_summary", return_value=None if unavailable == "decode" else (1, ("name",), (0, 0, 0))),
+                ):
+                    result = vector_asset.validate_outputs(fgb, pmtiles, validate_geometry=False)
+                self.assertFalse(result.valid)
+                self.assertTrue(result.errors)
+
+    def test_validation_accepts_completed_checks_and_refuses_native_failures(self):
+        for failed in (None, "verify", "show", "geometry"):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as tmp:
+                fgb = Path(tmp) / "example.fgb"
+                pmtiles = Path(tmp) / "example.pmtiles"
+                fgb.write_bytes(b"fixture")
+                pmtiles.write_bytes(b"PMTiles" + b"\x03" + b"fixture")
+                with (
+                    mock.patch("scripts.vector_asset.shutil.which", side_effect=lambda tool: tool),
+                    mock.patch("scripts.vector_asset.ogrinfo_fgb_summary", return_value=({"layer_name": "example", "property_keys": ("name",)}, [])),
+                    mock.patch("scripts.vector_asset.subprocess.run", side_effect=lambda command, **_kwargs: mock.Mock(returncode=int(command[1] == failed), stdout="ok", stderr="failed check")),
+                    mock.patch("scripts.vector_asset.validate_fgb_geometry_validity", return_value=mock.Mock(returncode=int(failed == "geometry"), stdout="valid", stderr="failed check")),
+                    mock.patch("scripts.vector_asset.parse_invalid_geometry_count", return_value=0),
+                    mock.patch("scripts.vector_asset.decoded_pmtiles_property_summary", return_value=(1, ("name",), (0, 0, 0))),
+                ):
+                    result = vector_asset.validate_outputs(fgb, pmtiles)
+                self.assertEqual(result.valid, failed is None)
+                self.assertEqual(result.pmtiles_verify, "failed" if failed == "verify" else "passed")
+                self.assertEqual(result.pmtiles_show, "failed" if failed == "show" else "passed")
+                self.assertEqual(result.decoded_feature_count, 1)
+
     def test_ogrinfo_fgb_summary_falls_back_to_text_output_without_json_support(self):
         calls = []
 
