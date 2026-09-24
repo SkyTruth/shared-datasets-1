@@ -114,8 +114,13 @@ The standard vector build is:
    zoom 8 requires source/profile evidence or a documented override.
 6. Validate the FGB with `ogrinfo`, confirm PMTiles v3 magic bytes, run
    `pmtiles verify`, inspect `pmtiles show`, and decode a representative tile
-   to confirm feature properties.
-   are present for the catalog inspector.
+   to confirm feature properties are present for the catalog inspector.
+
+Vector validation requires `ogrinfo`, `pmtiles verify/show`, and a successful
+representative tile decode with `tippecanoe-decode`. Missing tools or an
+unavailable decode produce `valid: false`; file existence and PMTiles magic
+alone do not establish publish readiness. The metadata lookup validator retains
+its documented geometry-validity exception while requiring these other checks.
 
 Release-oriented vector assets add a feature metadata layer before publication.
 Normalize the source into a release feature model with `feature_id`,
