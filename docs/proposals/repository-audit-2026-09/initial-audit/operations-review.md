@@ -45,7 +45,7 @@ The implementation already has useful boundaries: generation-preconditioned writ
 
 - Current status: addressed in uncommitted work by another actor. `scripts/repo_guardrails.py` now parses workflow jobs, recognizes wrapper commands, and checks job-level queue/guard policy. Treat the finding as a verified initial regression with a pending fix; root is validating the evolving worktree. No live deployment of that fix was claimed.
 
-- Evidence: `scripts/repo_guardrails.py:133` only matches literal `terraform -chdir=... apply`, while all production apply workflows now invoke `bash .../terraform_retry.sh -chdir=... apply`. Therefore `:467-475` does not enforce its main-ref, concurrency, or allowlist checks.
+- Evidence (historical syntax inside protected workflows; do not run these commands locally): `scripts/repo_guardrails.py:133` only matches literal `terraform -chdir=... apply`, while all production apply workflows now invoke `bash .../terraform_retry.sh -chdir=... apply`. Therefore `:467-475` does not enforce its main-ref, concurrency, or allowlist checks.
 - Reproduction: `TERRAFORM_APPLY_RE.search` returned false for all seven current production workflows: reusable target apply, three ingestion deploys, catalog viewer, metadata service, and PMTiles CDN sync.
 - Fix: validate structured workflow jobs against the approved reusable apply entry point, with explicit knowledge of wrappers. Add regression cases for actual checked-in workflows and for removal of each required guard. Avoid a new brittle string alias list as the only safety boundary.
 

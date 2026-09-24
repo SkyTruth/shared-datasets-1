@@ -7,7 +7,8 @@
     "Replaced machine-specific workspace paths with named placeholders",
     "Rendered excluded raw-artifact references as non-clickable historical references",
     "Clarified current plan preservation location",
-    "Normalized trailing whitespace and final newlines for repository checks"
+    "Normalized trailing whitespace and final newlines for repository checks",
+    "Clarified that archived Terraform command syntax belongs to protected workflows and is not local execution guidance"
   ],
   "documents": [
     {
@@ -393,7 +394,7 @@
       "source_group": "initial-audit",
       "source_path": "operations-review.md",
       "original_sha256": "69c0735a38ac2b19853cf3b67141d7452ac696f97f86d9e1a3d74f7cf32acec2",
-      "archived_sha256": "535bd89e7f209fac9a056e10ba9ca4cc48206277dbfc18772e21cb2edf80917a"
+      "archived_sha256": "3a774f389f1dfd600a79a149a6272eae38b87211eaf7641dfdb801a027ea7c0a"
     },
     {
       "path": "initial-audit/repository-review.md",
