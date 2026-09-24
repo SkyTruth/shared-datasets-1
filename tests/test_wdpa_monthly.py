@@ -636,9 +636,17 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
                 where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
                 workdir=tmp_path,
                 run_date=dt.date(2026, 5, 1),
+                baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(),
             )
 
             self.assertEqual(outputs.row_count, 4)
+            self.assertEqual(outputs.previous_generated_feature_id, 1)
+            self.assertEqual(outputs.next_generated_feature_id, 5)
+            self.assertIsNone(outputs.previous_release)
+            self.assertIsNone(outputs.identity_baseline_snapshot)
+            with gzip.open(outputs.metadata, "rt", encoding="utf-8") as stream:
+                records = [json.loads(line) for line in stream]
+            self.assertEqual({record["feature_id"] for record in records}, {"1", "2", "3", "4"})
             self.assertTrue(outputs.fgb.exists())
             self.assertTrue(outputs.pmtiles.exists())
             self.assertTrue(outputs.metadata.exists())
