@@ -1,0 +1,15 @@
+> Preserved planning/review record. See the [archive index](../README.md). Statuses, approvals, commands and test results describe their recorded checkpoint; this document is not a new execution authorization.
+
+# F3a approved narrow addendum — deployment HOLD fence
+
+Supervisor approved F3a only. Worktree `worktrees/publication-rollout-gate`, branch `codex/audit-publication-rollout-gate`, base `1bf095d861d921e2378203495bd9a0da0bdf650c`. CHARTER gates apply. No dependency overlays. F1/F2 are not edited.
+
+Invariant: every execution path through the three ingestion deploy workflows reaches a non-optional failing HOLD gate before cloud auth, image build/push, Terraform, canary or scheduler resume. Malformed/missing policy, job or catalog registration is invalid; it must not look like permission. V1 has no allowed deploy state, override, cloud probe or runtime adoption behavior.
+
+Exact files: new `catalog/publication-rollout.json`, stdlib `scripts/publication_rollout_gate.py`, `tests/test_publication_rollout_gate.py`; three existing `*-deploy.yml` ingestion workflows; focused deploy paragraphs in the three ingestion READMEs and `.claude/skills/deploy-scheduled-ingestion/SKILL.md`.
+
+Policy has exact schema_version=1, stage=hold and all three named jobs. Each job lists its fixed required asset slug → catalog-root mapping. Code owns required coverage (WDPA marine/terrestrial, IMS sea ice, EAMLIS) and cross-checks policy roots against their unique catalog rows and exact canonical paths. Unknown fields, duplicate JSON keys, wrong/bool version, unsupported stage, missing/extra jobs/assets, wrong bucket/root and duplicate catalog entries refuse. CLI only accepts a required known --job; policy/catalog paths are script-relative and there is no policy path or allow override. Valid HOLD exits 1; invalid policy/configuration exits 2; neither permits deployment.
+
+Workflow gate immediately follows checkout, with explicit bash shell, no if or continue-on-error, and a literal job argument. Add gate/policy to push path filters. Tests parse actual workflows, constrain pre-gate steps, execute actual main-ref/gate shell steps, and model Actions default success conditions after the real failure. Exercise push/manual input combinations and reject workflow fixtures that move auth ahead, make gate conditional/continue-on-error, or allow a downstream status-condition bypass. Baseline workflow test must fail before source changes.
+
+Keep this bounded: no runtime managed-path guards, new receipt/adoption evidence format, seed writer, install_guard/active states, remote inspection, Terraform/resource or IAM change. HOLD blocks deployment workflow runs only; already deployed schedules and old workflow binaries remain external rollout prerequisites. All scripts/tests run locally with existing uv environment. Required tests: new gate plus three deploy workflow and repo guardrail suites, Ruff, docs check and diff --check. Capture baseline/final evidence and immutable patch in the remediation root, then hand off before F3b/c planning resumes.
