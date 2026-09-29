@@ -1,6 +1,6 @@
 {
   "name": "@skytruth/shared-datasets",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Framework-neutral TypeScript helpers for SkyTruth shared datasets.",
   "type": "module",
   "repository": {
@@ -33,7 +33,8 @@
     "prepare": "npm run build",
     "build": "tsc -p tsconfig.json",
     "prepublishOnly": "npm test",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:pack": "node scripts/package-smoke.mjs"
   },
   "dependencies": {},
   "devDependencies": {

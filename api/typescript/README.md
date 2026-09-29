@@ -570,17 +570,25 @@ payload until the cache expires).
 | Private PMTiles return `401` or `403` | User is unauthenticated, unauthorized, or the signed cookie is missing/expired. | Re-call the session endpoint and verify the backend authorization path. |
 | Public PMTiles fail with a cookie/session error | Public layers are unnecessarily using the private session path. | Skip `ensurePmtilesCdnSession` for known public layers or pass the catalog `accessTier` accurately. |
 
-## Development
+## Maintainer Validation And Releases
 
-Install package dependencies and run tests:
+Run the SDK tests and packed-consumer smoke check from this directory:
 
 ```bash
 npm ci
 npm test
+npm run test:pack
 ```
 
-Check the publish artifact before a release:
+The smoke check builds a real npm tarball, installs it into a separate consumer,
+and checks root/server runtime imports and TypeScript declarations. Its retained
+artifacts live in a named directory under `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`;
+the command prints the exact path. Node 24 CI runs these checks alongside the
+ordinary Node 22 compatibility tests.
 
-```bash
-npm pack --dry-run
-```
+Package-content changes require an explicit stable version increase in a PR.
+Run `npm version --no-git-tag-version patch`, `minor`, or `major` as appropriate,
+and include both `package.json` and `package-lock.json` in review. Merging the
+reviewed version to `main` publishes the validated tarball. The workflow does
+not make version commits or bypass branch protection. See the repository README
+for registry comparison, retry, and trusted-publisher configuration.

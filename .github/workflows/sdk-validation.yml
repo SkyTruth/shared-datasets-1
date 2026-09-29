@@ -1,0 +1,49 @@
+name: TypeScript SDK validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: api/typescript/package-lock.json
+
+      - name: Require reviewed version increase
+        if: github.event_name == 'pull_request'
+        working-directory: api/typescript
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node scripts/release-policy.mjs changes "$BASE_SHA" "$HEAD_SHA"
+
+      - name: Install dependencies
+        working-directory: api/typescript
+        run: npm ci
+
+      - name: Test package on release runtime
+        working-directory: api/typescript
+        run: npm test
+
+      - name: Validate packed consumer
+        working-directory: api/typescript
+        run: npm run test:pack
