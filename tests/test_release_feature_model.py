@@ -41,7 +41,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
         self.assertEqual(assigned[("c",)], "11")
 
     def test_sequence_does_not_reuse_id_deleted_two_releases_ago(self):
-        baseline = model.GeneratedIdentityBaseline.genesis()
+        baseline = model.GeneratedIdentityBaseline.genesis(contract_id="test-v1")
         observed = []
         for names in (("A", "B"), ("A",), ("A", "C"), ("A", "B", "C")):
             allocation = model.assign_generated_feature_ids(((name,) for name in names), baseline=baseline)
@@ -55,12 +55,14 @@ class ReleaseFeatureModelTests(unittest.TestCase):
 
     def test_generated_sequence_source_fields_accepts_one_or_two_fields(self):
         one_field = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_before_release=1,
             next_generated_feature_id_after_release=1,
         )
         two_fields = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["source_layer", "PRIMKEY"],
             next_generated_feature_id_before_release=1,
@@ -75,6 +77,7 @@ class ReleaseFeatureModelTests(unittest.TestCase):
     def test_generated_sequence_source_fields_rejects_three_fields(self):
         with self.assertRaisesRegex(model.ReleaseFeatureModelError, "one or two source fields"):
             model.build_identity_metadata(
+                contract_id="test-v1",
                 strategy="generated_sequence_source_fields",
                 source_fields=["week", "region", "country"],
                 next_generated_feature_id_before_release=1,
@@ -425,6 +428,27 @@ if __name__ == "__main__":
 
 
 class GeneratedSequenceBoundaryTests(unittest.TestCase):
+    def test_versioned_old_contract_is_readable_but_cannot_seed_new_ids(self):
+        identity = model.build_identity_metadata(
+            contract_id="retired-v1", strategy="generated_sequence_content_hash",
+            next_generated_feature_id_before_release=1, next_generated_feature_id_after_release=2,
+        )
+        manifest = {"identity": identity, "release": "2026-09-01"}
+        model.validate_identity_metadata(identity)
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "different identity contract"):
+            model.generated_baseline_from_manifest(manifest, (), expected_contract_id="new-v1")
+        identity.pop("contract_id")
+        model.validate_identity_metadata(identity)
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "retired"):
+            model.generated_baseline_from_manifest(manifest, (), expected_contract_id="new-v1")
+
+    def test_generated_contract_cannot_be_omitted_or_guessed(self):
+        for contract in (None, True, "", "bad contract", "UPPER", "x" * 65):
+            with self.subTest(contract=contract), self.assertRaises(model.ReleaseFeatureModelError):
+                model.GeneratedIdentityBaseline.genesis(contract_id=contract)
+        with self.assertRaisesRegex(model.ReleaseFeatureModelError, "identity contract"):
+            model.build_identity_metadata(strategy="generated_sequence_content_hash", next_generated_feature_id_before_release=1, next_generated_feature_id_after_release=2)
+
     def test_empty_releases_and_retry_carry_sequence(self):
         baseline = synthetic_baseline(next_feature_id=100)
         for _ in range(3):
@@ -451,7 +475,7 @@ class GeneratedSequenceBoundaryTests(unittest.TestCase):
     def test_corrupt_baselines_fail_at_construction(self):
         for value in (None, True, False, 0, -1, '100', 1.5, 10**64 + 1):
             with self.subTest(value=value), self.assertRaises(model.ReleaseFeatureModelError):
-                synthetic_baseline(next_feature_id=value) if value is not None else model.GeneratedIdentityBaseline((), None, 'r1')
+                synthetic_baseline(next_feature_id=value) if value is not None else model.GeneratedIdentityBaseline((), None, 'r1', contract_id='test-v1')
         for value in (1, 7):
             with self.subTest(value=value), self.assertRaisesRegex(model.ReleaseFeatureModelError, 'exceed'):
                 synthetic_baseline([{'feature_id': '7', 'identity_key': ['old']}], next_feature_id=value)
@@ -467,14 +491,15 @@ class GeneratedSequenceBoundaryTests(unittest.TestCase):
             model.assign_generated_feature_ids([['new']], baseline=baseline)
 
     def test_archive_legacy_is_readable_but_never_allocation_authority(self):
-        identity = model.build_identity_metadata(strategy='generated_sequence_source_fields', source_fields=['key'], next_generated_feature_id_before_release=1, next_generated_feature_id_after_release=2)
+        identity = model.build_identity_metadata(contract_id="test-v1",strategy='generated_sequence_source_fields', source_fields=['key'], next_generated_feature_id_before_release=1, next_generated_feature_id_after_release=2)
         identity.pop('sequence_state_version')
+        identity.pop('contract_id')
         identity.pop('next_generated_feature_id_before_release')
         for value in (None, 2):
             identity['next_generated_feature_id_after_release'] = value
             model.validate_identity_metadata(identity)
             with self.assertRaisesRegex(model.ReleaseFeatureModelError, 'migration required'):
-                model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, ())
+                model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, (), expected_contract_id='test-v1')
         for value in (True, 0, -1, '2', 1.5):
             identity['next_generated_feature_id_after_release'] = value
             with self.assertRaises(model.ReleaseFeatureModelError):
@@ -483,4 +508,4 @@ class GeneratedSequenceBoundaryTests(unittest.TestCase):
     def test_new_writer_requires_before_after_and_refuses_regression(self):
         for before, after in ((None, 2), (1, None), (4, 3), (True, 3), (1, False)):
             with self.subTest(before=before, after=after), self.assertRaises(model.ReleaseFeatureModelError):
-                model.build_identity_metadata(strategy='generated_sequence_content_hash', next_generated_feature_id_before_release=before, next_generated_feature_id_after_release=after)
+                model.build_identity_metadata(contract_id="test-v1",strategy='generated_sequence_content_hash', next_generated_feature_id_before_release=before, next_generated_feature_id_after_release=after)

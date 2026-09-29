@@ -32,7 +32,7 @@ def write_generated_release(
         kwargs["baseline"] = synthetic_baseline(
             model.project_identity_records(kwargs.pop("previous_records") or (), exclude_properties=kwargs.get("identity_excluded_properties", ()))
         )
-    kwargs.setdefault("baseline", model.GeneratedIdentityBaseline.genesis())
+    kwargs.setdefault("baseline", model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
     with tempfile.TemporaryDirectory(prefix="release-streaming-") as tmp:
         tmp_path = Path(tmp)
         enriched_path = tmp_path / "enriched.geojsonseq"
@@ -63,4 +63,4 @@ def synthetic_baseline(records=(), *, next_feature_id=None):
     records = tuple(records or ())
     if next_feature_id is None:
         next_feature_id = max((int(record["feature_id"]) for record in records), default=0) + 1
-    return model.GeneratedIdentityBaseline(records, next_feature_id, "2026-07-01")
+    return model.GeneratedIdentityBaseline(records, next_feature_id, "2026-07-01", contract_id="test-v1")

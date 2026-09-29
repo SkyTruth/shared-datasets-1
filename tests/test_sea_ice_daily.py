@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import os
 import shutil
@@ -111,6 +110,14 @@ class FakeClient:
         return self._bucket
 
 
+def source_lookup_publisher(client, bucket_name, **kwargs):
+    """Source-selection fixture; durable publication is tested independently."""
+    publisher = GcsPublisher(client, bucket_name, **kwargs)
+    publisher.resume = mock.Mock(return_value=None)
+    publisher.load_generated_identity_baseline = mock.Mock(return_value=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
+    return publisher
+
+
 def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ice.AssetOutputs:
     fgb = tmp_path / "out.fgb"
     pmtiles = tmp_path / "out.pmtiles"
@@ -148,6 +155,7 @@ def fake_asset_outputs(tmp_path: Path, *, release: str = "2026-04-28") -> sea_ic
         previous_generated_feature_id=1,
         previous_release=None,
         identity_baseline_snapshot=None,
+        identity_contract="test-v1",
         identity_decisions={
             "schema_version": 1,
             "policy": "identity_key_corroboration_v1",
@@ -387,6 +395,7 @@ ice_date: String (0.0)
                 },
             ),
             mock.patch.object(sea_ice, "require_binary", return_value=None),
+            mock.patch.object(sea_ice.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
             mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
             mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value=None),
@@ -429,6 +438,7 @@ ice_date: String (0.0)
                 },
             ),
             mock.patch.object(sea_ice, "require_binary", return_value=None),
+            mock.patch.object(sea_ice.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(sea_ice.storage, "Client", return_value=FakeClient(bucket)),
             mock.patch.object(sea_ice, "probe_source", side_effect=fake_probe),
             mock.patch.object(
@@ -447,109 +457,8 @@ ice_date: String (0.0)
                 bucket.blob(asset.release_object(source_date, ".pmtiles")).uploads
             )
 
-    def test_publish_uses_release_no_clobber_and_latest_generation(self):
-        bucket = FakeBucket()
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        asset = sea_ice.ASSET
-        run_date = dt.date(2026, 4, 28)
-        bucket.blob(asset.latest_object(".fgb")).exists = True
-        bucket.blob(asset.latest_object(".fgb")).generation = 7
-        bucket.blob(asset.latest_object(".pmtiles")).exists = True
-        bucket.blob(asset.latest_object(".pmtiles")).generation = 11
 
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            record = sea_ice.publish_outputs(
-                publisher=publisher,
-                asset=asset,
-                outputs=fake_asset_outputs(tmp_path),
-                source=sea_ice.AvailableSource(
-                    filename_date=run_date,
-                    source_url="https://example.test/ims.tif.gz",
-                    source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
-                ),
-            )
 
-        release_fgb = bucket.blob(asset.release_object(run_date, ".fgb"))
-        latest_fgb = bucket.blob(asset.latest_object(".fgb"))
-        latest_pmtiles = bucket.blob(asset.latest_object(".pmtiles"))
-        run_record = bucket.blob(asset.run_record_object(run_date))
-
-        self.assertEqual(record["status"], "success")
-        self.assertEqual(release_fgb.uploads[0][1], 0)
-        self.assertEqual(latest_fgb.uploads[0][1], 7)
-        self.assertEqual(latest_pmtiles.uploads[0][1], 11)
-        self.assertEqual(json.loads(run_record.text)["row_count"], 2)
-        self.assertEqual(len(json.loads(run_record.text)["release_paths"]), 5)
-        manifest_blob = bucket.blob(asset.release_object(run_date, ".manifest.json"))
-        manifest = json.loads(manifest_blob.text)
-        self.assertEqual(manifest["identity"]["strategy"], "generated_sequence_content_hash")
-        self.assertEqual(manifest["identity"]["assignment_key"], ["geometry_hash", "properties_hash"])
-        self.assertEqual(manifest["identity"]["properties_hash_excluded_properties"], ["ice_date"])
-        artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
-        release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
-        latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))
-        for role in ("fgb", "pmtiles", "metadata", "schema"):
-            self.assertEqual(artifacts[role]["path"], release_by_role[role]["path"])
-            self.assertEqual(artifacts[role]["generation"], release_by_role[role]["generation"])
-            self.assertEqual(artifacts[role]["latest_path"], latest_by_role[role]["path"])
-            self.assertEqual(artifacts[role]["latest_generation"], latest_by_role[role]["generation"])
-        self.assertNotIn("generation", artifacts["manifest"])
-        self.assertNotIn("latest_generation", artifacts["manifest"])
-        manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
-        self.assertEqual(record["sha256"]["manifest"], manifest_sha)
-        self.assertEqual(json.loads(run_record.text)["sha256"]["manifest"], manifest_sha)
-
-    def test_publish_skips_existing_success_record(self):
-        bucket = FakeBucket()
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        asset = sea_ice.ASSET
-        run_date = dt.date(2026, 4, 28)
-        run_record = bucket.blob(asset.run_record_object(run_date))
-        run_record.exists = True
-        run_record.text = json.dumps({"status": "success"})
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            with mock.patch.object(publisher, "release_metadata_contract_issue", return_value=None):
-                record = sea_ice.publish_outputs(
-                    publisher=publisher,
-                    asset=asset,
-                    outputs=fake_asset_outputs(tmp_path),
-                    source=sea_ice.AvailableSource(
-                        filename_date=run_date,
-                        source_url="https://example.test/ims.tif.gz",
-                        source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
-                    ),
-                )
-
-        self.assertEqual(record["status"], "skipped")
-        self.assertFalse(bucket.blob(asset.release_object(run_date, ".fgb")).uploads)
-
-    def test_publish_rejects_existing_success_record_without_metadata_contract(self):
-        bucket = FakeBucket()
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        asset = sea_ice.ASSET
-        run_date = dt.date(2026, 4, 28)
-        run_record = bucket.blob(asset.run_record_object(run_date))
-        run_record.exists = True
-        run_record.text = json.dumps({"status": "success", "run_date": run_date.isoformat()})
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            with self.assertRaisesRegex(RuntimeError, "metadata contract is invalid"):
-                sea_ice.publish_outputs(
-                    publisher=publisher,
-                    asset=asset,
-                    outputs=fake_asset_outputs(tmp_path),
-                    source=sea_ice.AvailableSource(
-                        filename_date=run_date,
-                        source_url="https://example.test/ims.tif.gz",
-                        source_filename="ims2026118_4km_GIS_v1.3.tif.gz",
-                    ),
-                )
-
-        self.assertFalse(bucket.blob(asset.release_object(run_date, ".fgb")).uploads)
 
 
 @unittest.skipUnless(
@@ -600,7 +509,7 @@ class SeaIceDailyIntegrationTests(unittest.TestCase):
             )
 
             outputs = sea_ice.build_outputs(
-                baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(),
+                baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
                 source_tif=source_tif,
                 source_date=dt.date(2026, 4, 28),
                 workdir=tmp_path,

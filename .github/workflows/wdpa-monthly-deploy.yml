@@ -7,9 +7,12 @@ on:
     paths:
       - ".github/workflows/wdpa-monthly-deploy.yml"
       - "catalog/feature-identity-resolutions/**"
+      - "catalog/publication-rollout.json"
+      - "scripts/publication_rollout_gate.py"
       - "ingestion/common/**"
       - "ingestion/wdpa_monthly/**"
       - "scripts/feature_metadata_localization.py"
+      - "scripts/feature_metadata_translation_reuse.py"
       - "scripts/translation_local_io.py"
       - "scripts/pmtiles_zoom.py"
       - "scripts/release_feature_model.py"
@@ -78,6 +81,10 @@ jobs:
         with:
           ref: main
 
+      - name: Enforce publication rollout HOLD
+        shell: bash
+        run: python scripts/publication_rollout_gate.py --job wdpa-monthly
+
       - name: Validate Terraform auth configuration
         run: |
           set -euo pipefail
@@ -110,6 +117,7 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
           docker build \
             --platform linux/amd64 \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
             -f ingestion/wdpa_monthly/Dockerfile \
             -t "${image_tag}" \
             .

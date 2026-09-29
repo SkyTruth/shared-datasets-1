@@ -17,7 +17,8 @@ from typing import Any, Mapping, Sequence
 from google.cloud import storage
 
 from ingestion.common import feature_metadata, vector_pipeline
-from ingestion.common.gcs import GcsPublisher
+from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
+from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.common.http import (
     STATUS_NOT_READY,
     STATUS_SUCCESS,
@@ -113,6 +114,7 @@ class AssetOutputs:
     previous_generated_feature_id: int
     previous_release: str | None
     identity_baseline_snapshot: feature_metadata.release_feature_model.GeneratedIdentitySnapshot | None
+    identity_contract: str
     identity_decisions: dict[str, Any]
 
 
@@ -576,6 +578,7 @@ def build_outputs(
         previous_generated_feature_id=baseline.next_feature_id,
         previous_release=baseline.release,
         identity_baseline_snapshot=baseline.snapshot,
+        identity_contract=baseline.contract_id,
         identity_decisions=release_outputs.identity_decisions,
     )
 
@@ -590,43 +593,6 @@ def publish_outputs(
 ) -> dict[str, Any]:
     run_date = source.filename_date
     metadata = metadata_for_source(asset=asset, source=source)
-    existing_record = load_existing_successful_release(
-        publisher=publisher,
-        asset=asset,
-        run_date=run_date,
-    )
-    if existing_record is not None:
-        LOGGER.info("%s already has a successful run record for %s", asset.slug, run_date)
-        release_index_info = publisher.record_existing_successful_release(asset, run_date)
-        return add_source_request_warnings(
-            {
-                "asset_slug": asset.slug,
-                "run_date": run_date.isoformat(),
-                "status": "skipped",
-                "release_index": release_index_info,
-            },
-            source_request_warnings,
-        )
-
-    publisher.assert_no_partial_release(asset, run_date)
-    bundle = vector_pipeline.publish_vector_bundle(
-        publisher=publisher,
-        asset=asset,
-        run_date=run_date,
-        outputs=outputs,
-        object_metadata=metadata,
-        source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename}],
-        identity=feature_metadata.release_feature_model.build_identity_metadata(
-            strategy="generated_sequence_content_hash",
-            assignment_key=["geometry_hash", "properties_hash"],
-            properties_hash_excluded_properties=["ice_date"],
-            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
-            next_generated_feature_id_before_release=outputs.previous_generated_feature_id,
-            previous_release=outputs.previous_release,
-            decisions=outputs.identity_decisions,
-        ),
-    )
-
     record = add_source_request_warnings(
         {
             "schema_version": 1,
@@ -642,10 +608,7 @@ def publish_outputs(
             "documented_valid_date": source.documented_valid_date.isoformat(),
             "source_version": source.source_filename,
             "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-            "release_paths": bundle.release_paths,
-            "latest_paths": bundle.latest_paths,
             "row_count": outputs.row_count,
-            "sha256": bundle.sha256,
             "notes": (
                 "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
                 "Release date and ice_date use the GeoTIFF filename date by repository "
@@ -654,14 +617,25 @@ def publish_outputs(
         },
         source_request_warnings,
     )
-    run_record = publisher.write_run_record(
+    return publisher.publish_generated(
         asset=asset,
         run_date=run_date,
-        payload=record,
+        outputs=outputs,
+        record=record,
+        object_metadata=metadata,
+        source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename}],
+        identity=feature_metadata.release_feature_model.build_identity_metadata(
+            contract_id=outputs.identity_contract,
+            strategy="generated_sequence_content_hash",
+            assignment_key=["geometry_hash", "properties_hash"],
+            properties_hash_excluded_properties=["ice_date"],
+            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            next_generated_feature_id_before_release=outputs.previous_generated_feature_id,
+            previous_release=outputs.previous_release,
+            decisions=outputs.identity_decisions,
+        ),
     )
-    record["run_record"] = run_record
-    LOGGER.info("published %s for %s", asset.slug, run_date)
-    return record
+
 
 
 def load_existing_successful_release(
@@ -725,7 +699,10 @@ def run() -> dict[str, Any]:
         "SEA_ICE_MAX_LOOKBACK_DAYS",
     )
 
-    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
+    publisher = GcsPublisher.from_runtime(storage.Client(project=project_id), bucket_name, logger=LOGGER)
+    resumed = publisher.resume(ASSET)
+    if resumed is not None:
+        return resumed
     lookup = find_latest_available_source(
         source_template=source_template,
         anchor_day=anchor_day,
@@ -799,7 +776,7 @@ def run() -> dict[str, Any]:
             source_tif=source_tif,
             source_date=downloaded.filename_date,
             workdir=workdir,
-            baseline=publisher.load_generated_identity_baseline(ASSET),
+            baseline=publisher.load_generated_identity_baseline(ASSET, contract_id=CONTRACT_ID),
             identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
                 asset_slug=ASSET.slug,
                 release=downloaded.filename_date.isoformat(),

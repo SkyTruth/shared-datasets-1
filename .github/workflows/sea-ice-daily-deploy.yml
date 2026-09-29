@@ -7,6 +7,8 @@ on:
     paths:
       - ".github/workflows/sea-ice-daily-deploy.yml"
       - "catalog/feature-identity-resolutions/**"
+      - "catalog/publication-rollout.json"
+      - "scripts/publication_rollout_gate.py"
       - "ingestion/common/**"
       - "ingestion/sea_ice_daily/**"
       - "scripts/pmtiles_zoom.py"
@@ -78,6 +80,10 @@ jobs:
         with:
           ref: main
 
+      - name: Enforce publication rollout HOLD
+        shell: bash
+        run: python scripts/publication_rollout_gate.py --job sea-ice-daily
+
       - name: Validate Terraform auth configuration
         run: |
           set -euo pipefail
@@ -110,6 +116,7 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
           docker build \
             --platform linux/amd64 \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
             -f ingestion/sea_ice_daily/Dockerfile \
             -t "${image_tag}" \
             .

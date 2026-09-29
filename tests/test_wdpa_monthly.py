@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import gzip
-import hashlib
 import io
 import json
 import os
@@ -18,6 +17,7 @@ from unittest import mock
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from ingestion.wdpa_monthly import run as wdpa
+from ingestion.common.gcs import GcsPublisher
 
 VALID_FGB_SHA = "a" * 64
 VALID_PMTILES_SHA = "b" * 64
@@ -116,6 +116,14 @@ class FakeClient:
         return self._bucket
 
 
+def source_lookup_publisher(client, bucket_name, **kwargs):
+    """Source-selection fixture; durable publication is tested independently."""
+    publisher = GcsPublisher(client, bucket_name, **kwargs)
+    publisher.resume = mock.Mock(return_value=None)
+    publisher.load_generated_identity_baseline = mock.Mock(return_value=wdpa.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
+    return publisher
+
+
 class FakeHttpResponse:
     def __init__(self, status: int, body: bytes) -> None:
         self.status = status
@@ -140,7 +148,7 @@ def fake_asset_outputs(
     fgb = tmp_path / f"{asset.slug}.fgb"
     pmtiles = tmp_path / f"{asset.slug}.pmtiles"
     metadata = tmp_path / f"{asset.slug}.metadata.ndjson.gz"
-    metadata_es = tmp_path / f"{asset.slug}.metadata.es.ndjson.gz"
+    localized = {locale: tmp_path / f"{asset.slug}.metadata.{locale}.ndjson.gz" for locale in wdpa.translations.LOCALES}
     metadata_translations = tmp_path / f"{asset.slug}.metadata-translations.csv"
     schema = tmp_path / f"{asset.slug}.schema.json"
     manifest = tmp_path / f"{asset.slug}.manifest.json"
@@ -148,7 +156,7 @@ def fake_asset_outputs(
         (fgb, b"fgb"),
         (pmtiles, b"pmtiles"),
         (metadata, b"metadata"),
-        (metadata_es, b"metadata-es"),
+        *((path, b"localized-metadata") for path in localized.values()),
         (metadata_translations, b"feature_id,field,locale,source_value_hash,value,review_state,notes\n"),
         (schema, b'{"schema_version":2}\n'),
     ):
@@ -163,7 +171,7 @@ def fake_asset_outputs(
         fgb=fgb,
         pmtiles=pmtiles,
         metadata=metadata,
-        metadata_es=metadata_es,
+        localized_metadata=localized,
         metadata_translations=metadata_translations,
         schema=schema,
         manifest=manifest,
@@ -172,7 +180,7 @@ def fake_asset_outputs(
             "fgb": VALID_FGB_SHA,
             "pmtiles": VALID_PMTILES_SHA,
             "metadata": VALID_METADATA_SHA,
-            "metadata_es": VALID_METADATA_SHA,
+            **{f"metadata_{locale}": VALID_METADATA_SHA for locale in localized},
             "csv": VALID_METADATA_SHA,
             "metadata_translations": VALID_METADATA_SHA,
             "schema": VALID_SCHEMA_SHA,
@@ -182,6 +190,7 @@ def fake_asset_outputs(
         previous_generated_feature_id=1,
         previous_release=None,
         identity_baseline_snapshot=None,
+        identity_contract="test-v1",
         identity_decisions={
             "schema_version": 1,
             "policy": "identity_key_corroboration_v1",
@@ -261,6 +270,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         with (
             mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
             mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
             mock.patch.object(
                 wdpa,
@@ -296,6 +306,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         with (
             mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
             mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
             mock.patch.object(wdpa, "download_file") as download_file,
         ):
@@ -428,7 +439,7 @@ class WdpaMonthlyTests(unittest.TestCase):
 
     def test_release_upload_uses_no_clobber(self):
         bucket = FakeBucket()
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(b"data")
             tmp.flush()
@@ -446,7 +457,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         blob = bucket.blob("asset/latest/asset.fgb")
         blob.exists = True
         blob.generation = 7
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(b"data")
             tmp.flush()
@@ -463,7 +474,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         record = bucket.blob(asset.run_record_object(dt.date(2026, 4, 29)))
         record.exists = True
         record.text = json.dumps({"status": "success"})
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         self.assertTrue(publisher.successful_run_record(asset, dt.date(2026, 4, 29)))
 
     def test_partial_release_blocks_publish(self):
@@ -471,71 +482,10 @@ class WdpaMonthlyTests(unittest.TestCase):
         asset = wdpa.ASSETS[0]
         partial = bucket.blob(asset.release_object(dt.date(2026, 4, 29), ".fgb"))
         partial.exists = True
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with self.assertRaisesRegex(RuntimeError, "without a successful run record"):
             publisher.assert_no_partial_release(asset, dt.date(2026, 4, 29))
 
-    def test_publish_outputs_final_manifest_records_artifact_generations(self):
-        bucket = FakeBucket()
-        asset = wdpa.ASSETS[0]
-        run_date = dt.date(2026, 5, 1)
-        bucket.blob(asset.latest_object(".fgb")).exists = True
-        bucket.blob(asset.latest_object(".fgb")).generation = 7
-        bucket.blob(asset.latest_object(".pmtiles")).exists = True
-        bucket.blob(asset.latest_object(".pmtiles")).generation = 11
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            record = wdpa.publish_asset(
-                publisher=publisher,
-                asset=asset,
-                outputs=fake_asset_outputs(tmp_path, asset=asset, release=run_date.isoformat()),
-                run_date=run_date,
-                source_url="https://example.test/source.zip",
-                source_version="May2026",
-                source_fields=(wdpa.FieldSpec("SITE_PID", "String"),),
-            )
-
-        run_record = bucket.blob(asset.run_record_object(run_date))
-        manifest_blob = bucket.blob(asset.release_object(run_date, ".manifest.json"))
-        manifest = json.loads(manifest_blob.text)
-        artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}
-        release_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["release_paths"][:4], strict=True))
-        latest_by_role = dict(zip(("fgb", "pmtiles", "metadata", "schema"), record["latest_paths"][:4], strict=True))
-        for role in ("fgb", "pmtiles", "metadata", "schema"):
-            self.assertEqual(artifacts[role]["path"], release_by_role[role]["path"])
-            self.assertEqual(artifacts[role]["generation"], release_by_role[role]["generation"])
-            self.assertEqual(artifacts[role]["latest_path"], latest_by_role[role]["path"])
-            self.assertEqual(artifacts[role]["latest_generation"], latest_by_role[role]["generation"])
-        self.assertEqual(manifest["identity"]["strategy"], "generated_sequence_source_fields")
-        self.assertEqual(manifest["identity"]["source_fields"], ["SITE_PID"])
-        self.assertEqual(manifest["identity"]["assignment_key"], ["SITE_PID"])
-        self.assertNotIn("generation", artifacts["manifest"])
-        self.assertNotIn("latest_generation", artifacts["manifest"])
-        release_paths = [item["path"] for item in record["release_paths"]]
-        latest_paths = [item["path"] for item in record["latest_paths"]]
-        self.assertIn(
-            f"gs://{bucket.name}/{asset.release_object(run_date, '.metadata.es.ndjson.gz')}",
-            release_paths,
-        )
-        self.assertIn(
-            f"gs://{bucket.name}/{asset.release_object(run_date, '.metadata-translations.csv')}",
-            release_paths,
-        )
-        self.assertIn(
-            f"gs://{bucket.name}/{asset.latest_object('.metadata.es.ndjson.gz')}",
-            latest_paths,
-        )
-        self.assertIn(
-            f"gs://{bucket.name}/{asset.latest_object('.metadata-translations.csv')}",
-            latest_paths,
-        )
-        self.assertEqual(record["localization"]["translation_locale"], "es")
-        self.assertEqual(record["localization"]["translation_field"], "NAME_ENG")
-        manifest_sha = hashlib.sha256(manifest_blob.data).hexdigest()
-        self.assertEqual(record["sha256"]["manifest"], manifest_sha)
-        self.assertEqual(json.loads(run_record.text)["sha256"]["manifest"], manifest_sha)
 
     def test_legacy_wdpa_metadata_requires_reviewed_sequence_migration(self):
         bucket = FakeBucket()
@@ -562,10 +512,10 @@ class WdpaMonthlyTests(unittest.TestCase):
                 + "\n"
             ).encode("utf-8")
         )
-        publisher = wdpa.GcsPublisher(FakeClient(bucket), bucket.name)
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
 
         with self.assertRaisesRegex(RuntimeError, "reviewed historical sequence migration"):
-            publisher.load_generated_identity_baseline(asset)
+            publisher.load_generated_identity_baseline(asset, contract_id="test-v1")
 
 
 @unittest.skipUnless(
@@ -628,6 +578,14 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
 
             source = wdpa.source_dataset_path(zip_path)
             layers, split_field, source_fields = wdpa.discover_source_layers(source)
+            from scripts.feature_metadata_translation_reuse import build_memory, TranslationMemory
+            from test_feature_metadata_translation_reuse import source_bundle, record
+            old = record("1", "old-site", "Old", slug=wdpa.ASSETS[0].slug)
+            old["properties"]["NAME_ENG"] = "Old"
+            bundle = source_bundle(tmp_path / "translation-source", [old], [])
+            build_memory(database=tmp_path / "memory.sqlite", sources=[bundle], fields=["NAME_ENG"], locales=wdpa.translations.LOCALES, source_key_fields=["SITE_PID"])
+            memory = TranslationMemory(tmp_path / "memory.sqlite")
+            self.addCleanup(memory.close)
             outputs = wdpa.build_asset_outputs(
                 source=source,
                 source_layers=layers,
@@ -636,7 +594,8 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
                 where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
                 workdir=tmp_path,
                 run_date=dt.date(2026, 5, 1),
-                baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(),
+                baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
+                translation_memory=memory,
             )
 
             self.assertEqual(outputs.row_count, 4)
@@ -650,7 +609,7 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
             self.assertTrue(outputs.fgb.exists())
             self.assertTrue(outputs.pmtiles.exists())
             self.assertTrue(outputs.metadata.exists())
-            self.assertTrue(outputs.metadata_es.exists())
+            self.assertTrue(all(path.exists() for path in outputs.localized_metadata.values()))
             self.assertTrue(outputs.metadata_translations.exists())
             self.assertTrue(outputs.schema.exists())
 

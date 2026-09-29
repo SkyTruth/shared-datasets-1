@@ -293,6 +293,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_decisions_travel_inside_the_published_manifest_identity(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=304611,
@@ -310,6 +311,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_manifests_published_before_decision_provenance_stay_valid(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=1,
@@ -321,6 +323,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_unaccounted_escalations_are_rejected(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=1,

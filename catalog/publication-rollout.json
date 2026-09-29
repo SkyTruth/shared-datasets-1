@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "stage": "hold",
+  "jobs": {
+    "wdpa-monthly": {
+      "wdpa-marine": "100-geographic-reference/130-protected-areas/wdpa-marine",
+      "wdpa-terrestrial": "100-geographic-reference/130-protected-areas/wdpa-terrestrial"
+    },
+    "sea-ice-daily": {
+      "ims-sea-ice-extent": "200-imagery-derived/250-weather-climate/ims-sea-ice-extent"
+    },
+    "eamlis-monthly": {
+      "eamlis-abandoned-mine-land-inventory": "300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory"
+    }
+  }
+}

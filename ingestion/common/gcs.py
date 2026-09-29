@@ -68,7 +68,7 @@ class GcsPublisher:
         return json.loads(blob.download_as_text())
 
     def load_generated_identity_baseline(
-        self, asset: ReleaseAsset,
+        self, asset: ReleaseAsset, *, contract_id: str,
     ) -> release_feature_model.GeneratedIdentityBaseline:
         """Read one generation-bound allocation baseline, never guess legacy state.
 
@@ -83,7 +83,7 @@ class GcsPublisher:
             root = manifest_name.rsplit("/latest/", 1)[0] + "/"
             if any(self.bucket.list_blobs(prefix=root + "latest/")) or any(self.bucket.list_blobs(prefix=root + "releases/")):
                 raise RuntimeError(f"{asset.slug} has existing objects but no verified manifest; reviewed historical sequence migration required")
-            return release_feature_model.GeneratedIdentityBaseline.genesis()
+            return release_feature_model.GeneratedIdentityBaseline.genesis(contract_id=contract_id)
         generation = manifest_blob.generation
         if type(generation) is not int or generation <= 0:
             raise RuntimeError("observed manifest generation must be a positive integer")
@@ -99,7 +99,7 @@ class GcsPublisher:
             )
             # Reject legacy before fetching a large sidecar. Old numeric marks
             # may already have regressed and are not evidence of continuity.
-            release_feature_model.generated_baseline_from_manifest(manifest, ())
+            release_feature_model.generated_baseline_from_manifest(manifest, (), expected_contract_id=contract_id)
             metadata = artifacts["metadata"]
             expected_name = asset.release_object(release_date, ".metadata.ndjson.gz")
             if metadata["path"] != f"gs://{self.bucket.name}/{expected_name}":
@@ -120,6 +120,7 @@ class GcsPublisher:
                 raise release_feature_model.ReleaseFeatureModelError("baseline metadata count disagrees with manifest")
             return release_feature_model.generated_baseline_from_manifest(
                 manifest, release_feature_model.read_metadata_sidecar_bytes(metadata_bytes, label=metadata["path"]),
+                expected_contract_id=contract_id,
                 snapshot=release_feature_model.GeneratedIdentitySnapshot(
                     f"gs://{self.bucket.name}/{manifest_name}", generation,
                     release_feature_model.sha256_hex(manifest_bytes),

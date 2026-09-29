@@ -1212,6 +1212,7 @@ class GeneratedBaselineLoaderTests(unittest.TestCase):
         metadata = bucket.blob(asset.release_object(dt.date(2026, 5, 1), '.metadata.ndjson.gz'))
         manifest = json.loads(bucket.blob(asset.release_object(dt.date(2026, 5, 1), '.manifest.json')).text)
         manifest['identity'] = release_feature_model.build_identity_metadata(
+            contract_id="test-v1",
             strategy='generated_sequence_source_fields', source_fields=['OBJECTID'],
             next_generated_feature_id_before_release=100, next_generated_feature_id_after_release=100,
             previous_release='2026-04-01',
@@ -1231,7 +1232,7 @@ class GeneratedBaselineLoaderTests(unittest.TestCase):
         unrelated.exists, unrelated.content = True, b'not the baseline'
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
         with mock.patch.object(latest, 'download_as_bytes', wraps=latest.download_as_bytes) as manifest_read, mock.patch.object(metadata, 'download_as_bytes', wraps=metadata.download_as_bytes) as metadata_read:
-            baseline = publisher.load_generated_identity_baseline(asset)
+            baseline = publisher.load_generated_identity_baseline(asset, contract_id="test-v1")
         self.assertEqual((baseline.next_feature_id, baseline.release), (100, '2026-05-01'))
         self.assertEqual(baseline.snapshot.generation, 10)
         self.assertEqual(baseline.snapshot.sha256, release_feature_model.sha256_hex(latest.content))
@@ -1242,10 +1243,10 @@ class GeneratedBaselineLoaderTests(unittest.TestCase):
     def test_genesis_requires_absence_of_allocation_objects(self):
         bucket, asset = FakeBucket(), FakeAsset()
         publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        self.assertEqual(publisher.load_generated_identity_baseline(asset), release_feature_model.GeneratedIdentityBaseline.genesis())
+        self.assertEqual(publisher.load_generated_identity_baseline(asset, contract_id="test-v1"), release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
         bucket.blob(asset.release_object(dt.date(2025, 1, 1), '.fgb')).exists = True
         with self.assertRaisesRegex(RuntimeError, 'migration required'):
-            publisher.load_generated_identity_baseline(asset)
+            publisher.load_generated_identity_baseline(asset, contract_id="test-v1")
 
     def test_corrupt_mismatched_legacy_and_changed_generation_fail_closed(self):
         mutations = {
@@ -1266,14 +1267,14 @@ class GeneratedBaselineLoaderTests(unittest.TestCase):
                 mutate(manifest)
                 latest.content = json.dumps(manifest).encode()
                 with self.assertRaises(RuntimeError):
-                    GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset)
+                    GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset, contract_id="test-v1")
                 self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
 
     def test_manifest_race_is_not_retried_as_genesis(self):
         bucket, asset, _, latest, _ = self.setup_baseline()
         with mock.patch.object(latest, 'download_as_bytes', side_effect=PreconditionFailed('changed')):
             with self.assertRaisesRegex(RuntimeError, 'changed'):
-                GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset)
+                GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset, contract_id="test-v1")
 
     def test_retained_historical_metadata_generation_is_selected(self):
         bucket, asset, _, _, metadata = self.setup_baseline()
@@ -1281,15 +1282,15 @@ class GeneratedBaselineLoaderTests(unittest.TestCase):
         replacement = FakeBlob(metadata.name, exists=True, generation=metadata.generation + 1)
         replacement.content = b'newer bytes must not be read'
         bucket.blobs[metadata.name] = replacement
-        baseline = GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset)
+        baseline = GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset, contract_id="test-v1")
         self.assertEqual(baseline.next_feature_id, 100)
         del bucket.versions[(metadata.name, metadata.generation)]
         with self.assertRaises(RuntimeError):
-            GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset)
+            GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset, contract_id="test-v1")
 
     def test_invalid_observed_generation_is_not_coerced(self):
         for generation in (True, False, 0, -1, '10', None, 10.5):
             bucket, asset, _, latest, _ = self.setup_baseline()
             latest.generation = generation
             with self.subTest(generation=generation), self.assertRaisesRegex(RuntimeError, 'positive integer'):
-                GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset)
+                GcsPublisher(FakeClient(bucket), bucket.name).load_generated_identity_baseline(asset, contract_id="test-v1")

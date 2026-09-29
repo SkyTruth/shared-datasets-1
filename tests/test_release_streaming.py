@@ -10,6 +10,7 @@ production, on the largest asset, after a 30-minute build.
 from __future__ import annotations
 
 import datetime as dt
+from contextlib import closing
 import gc
 import gzip
 import json
@@ -57,7 +58,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                 source_fields=["SITE_PID"],
                 enriched_features_path=tmp_path / "enriched.geojsonseq",
                 sidecar_path=tmp_path / "metadata.ndjson.gz",
-                baseline=model.GeneratedIdentityBaseline.genesis(),
+                baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
             )
 
         self.assertEqual(result.feature_count, 25)
@@ -91,7 +92,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                 source_fields=["SITE_PID"],
                 enriched_features_path=tmp_path / "enriched.geojsonseq",
                 sidecar_path=tmp_path / "metadata.ndjson.gz",
-                baseline=model.GeneratedIdentityBaseline.genesis(),
+                baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
             )
 
         self.assertEqual(calls, 2)
@@ -296,7 +297,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                     source_fields=["SITE_PID"],
                     enriched_features_path=enriched_path,
                     sidecar_path=tmp_path / "metadata.ndjson.gz",
-                    baseline=model.GeneratedIdentityBaseline.genesis(),
+                    baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
                 )
             self.assertFalse(enriched_path.exists())
 
@@ -351,7 +352,7 @@ class ReleaseStreamingTests(unittest.TestCase):
                     source_fields=["SITE_PID"],
                     enriched_features_path=tmp_path / "enriched.geojsonseq",
                     sidecar_path=tmp_path / "metadata.ndjson.gz",
-                    baseline=model.GeneratedIdentityBaseline.genesis(),
+                    baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
                 )
 
 
@@ -460,13 +461,15 @@ class WdpaBuildPipelineTests(unittest.TestCase):
 
     def _run_build(self, tmp_path: Path, indices=(1, 2), **build_kwargs) -> tuple[Any, list[str]]:
         from ingestion.wdpa_monthly import run as wdpa
+        from scripts.feature_metadata_translation_reuse import build_memory, TranslationMemory
+        from test_feature_metadata_translation_reuse import record, row, source_bundle
 
-        build_kwargs.setdefault("baseline", model.GeneratedIdentityBaseline.genesis())
+        build_kwargs.setdefault("baseline", model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"))
         events: list[str] = []
         asset = wdpa.ASSETS[0]
         source_fields = (
             wdpa.FieldSpec(name="SITE_PID", type="String"),
-            wdpa.FieldSpec(name=wdpa.TRANSLATION_FIELD, type="String"),
+            wdpa.FieldSpec(name="NAME_ENG", type="String"),
         )
         source_layers = [
             wdpa.SourceLayer(name="polygons", fields=source_fields, geometry_type="Polygon", source="source.shp")
@@ -482,7 +485,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 json.dumps(
                     {
                         "type": "Feature",
-                        "properties": {"SITE_PID": str(index), wdpa.TRANSLATION_FIELD: f"Site {index}"},
+                        "properties": {"SITE_PID": str(index), "NAME_ENG": f"Site {index}"},
                         "geometry": {"type": "Point", "coordinates": [index, 0]},
                     }
                 )
@@ -502,7 +505,15 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             events.append("geojsonseq->fgb")
             output.write_text("fgb", encoding="utf-8")
 
+        # Exercise the real translation join with old IDs that differ from the
+        # release writer's IDs, rather than mocking the retired Spanish scaffold.
+        old = record("99", "1", "Site 1", slug=asset.slug)
+        old["properties"]["NAME_ENG"] = old["properties"].pop("name")
+        rows = [{**row("99", "Site 1", "Translated site 1", "human_reviewed"), "field": "NAME_ENG", "locale": locale} for locale in wdpa.translations.LOCALES]
+        bundle = source_bundle(tmp_path / "translations", [old], rows)
+        build_memory(database=tmp_path / "memory.sqlite", sources=[bundle], fields=["NAME_ENG"], locales=wdpa.translations.LOCALES, source_key_fields=["SITE_PID"])
         with (
+            closing(TranslationMemory(tmp_path / "memory.sqlite")) as memory,
             mock.patch.object(wdpa, "expected_feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "build_filtered_gpkg", fake_build_filtered_gpkg),
             mock.patch.object(wdpa, "convert_gpkg_to_geojsonseq", fake_convert_gpkg_to_geojsonseq),
@@ -517,11 +528,6 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             )),
             mock.patch.object(wdpa, "validate_pmtiles", return_value=None),
             mock.patch.object(wdpa, "sha256_file", return_value="deadbeef"),
-            mock.patch.object(
-                wdpa,
-                "materialize_localized_metadata",
-                return_value={"applied_translation_count": len(indices)},
-            ),
             mock.patch.object(wdpa.feature_metadata, "validate_release_vector_contract", return_value=None),
         ):
             outputs = wdpa.build_asset_outputs(
@@ -532,6 +538,7 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 where="REALM = 'Marine'",
                 workdir=tmp_path,
                 run_date=dt.date(2026, 8, 1),
+                translation_memory=memory,
                 **build_kwargs,
             )
         return outputs, events
@@ -556,11 +563,17 @@ class WdpaBuildPipelineTests(unittest.TestCase):
                 sidecar = [json.loads(line) for line in handle if line.strip()]
             self.assertEqual([record["feature_id"] for record in sidecar], ["1", "2"])
             translation_rows = outputs.metadata_translations.read_text(encoding="utf-8").strip().splitlines()
-            self.assertEqual(len(translation_rows), 3)  # header + one row per feature
+            self.assertEqual(len(translation_rows), 13)  # header + two features in six locales
             self.assertIn("feature_id", translation_rows[0])
+            self.assertEqual(len(outputs.localized_metadata), 6)
+            for path in outputs.localized_metadata.values():
+                localized = list(model.read_metadata_sidecar(path))
+                self.assertEqual(localized[0]["feature_id"], "1")
+                self.assertEqual(localized[0]["properties"]["NAME_ENG"], "Translated site 1")
+                self.assertEqual(localized[1]["properties"]["NAME_ENG"], "Site 2")
 
     def test_real_builder_preserves_highwater_after_deletion(self):
-        baseline = model.GeneratedIdentityBaseline.genesis()
+        baseline = model.GeneratedIdentityBaseline.genesis(contract_id="test-v1")
         observed = []
         with tempfile.TemporaryDirectory() as tmp:
             for number, indices in enumerate(((1, 2), (1,), (1, 3), (1, 2, 3))):
@@ -606,7 +619,7 @@ class CompactGeneratedBaselineTests(unittest.TestCase):
                 raise AssertionError('full properties must not be copied')
         payload = Properties({'large': 'payload'})
         reference = weakref.ref(payload)
-        baseline = model.GeneratedIdentityBaseline(({'feature_id': '1', 'identity_key': ['key'], 'properties': payload},), 100, 'r1')
+        baseline = model.GeneratedIdentityBaseline(({'feature_id': '1', 'identity_key': ['key'], 'properties': payload},), 100, 'r1', contract_id='test-v1')
         del payload
         gc.collect()
         self.assertIsNone(reference())
@@ -614,12 +627,13 @@ class CompactGeneratedBaselineTests(unittest.TestCase):
 
     def test_manifest_projection_applies_exclusion_before_discarding_payload(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy='generated_sequence_content_hash', properties_hash_excluded_properties=['ice_date'],
             next_generated_feature_id_before_release=100, next_generated_feature_id_after_release=100,
         )
         geometry_hash = 'sha256:' + 'a'*64
         records = [{'feature_id': '1', 'geometry_hash': geometry_hash, 'properties_hash': 'sha256:'+'b'*64, 'properties': {'DN': 3, 'ice_date': 'old'}}]
-        baseline = model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, iter(records))
+        baseline = model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, iter(records), expected_contract_id='test-v1')
         expected_hash = model.properties_hash({'DN': 3})
         self.assertEqual(baseline.records[0]['properties_hash'], expected_hash)
         self.assertEqual(baseline.records[0]['identity_key'], (geometry_hash, expected_hash))

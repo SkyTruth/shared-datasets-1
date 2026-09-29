@@ -5,6 +5,21 @@ description: "Use before deploying or updating shared-datasets Cloud Run and Clo
 
 # Deploy Scheduled Ingestion
 
+## Feature-ID rollout hold
+
+The three ingestion deployment workflows currently run
+`scripts/publication_rollout_gate.py` before authentication, image builds, or
+Terraform. `catalog/publication-rollout.json` is a hold-only registry: it has no
+permitting state, environment override, or dispatch bypass. Routine maintenance
+deployments are held too, including EAMLIS because it shares ingestion helpers.
+
+Existing jobs, schedules, issued credentials, and historical workflow revisions
+are not stopped by this check. Do not treat it as proof that old writers are
+excluded. Keep PR #154 draft until the reviewed reset installer, effective writer
+controls, and first-release/serving validation are ready. Remove or replace the
+hold only in the reviewed cutover changes described in
+`docs/proposals/feature-id-fresh-start.md`.
+
 Use this workflow for production ingestion jobs in `shared-datasets-1`.
 
 ## Rules

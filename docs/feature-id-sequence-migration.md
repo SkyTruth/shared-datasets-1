@@ -1,8 +1,19 @@
 # Review a generated feature-ID sequence migration
 
+This guide covers migrations that preserve an existing identity contract. On
+2026-09-29, the user approved retiring the pre-launch identity contract for
+`wdpa-marine`, `wdpa-terrestrial`, and `ims-sea-ice-extent`. Their current direction
+is the [explicit fresh-start plan](proposals/feature-id-fresh-start.md), which
+replaces historical allocation reconstruction with a reviewed reset boundary.
+That transition is not implemented by the audit commands below. The local
+publishers now consume explicit reset state and durable publication ownership;
+protected reset installation, writer exclusion, and production cutover remain
+unfinished. See the [current readiness report](proposals/feature-id-readiness-2026-09-29.md).
+
 Old generated manifests can contain a regressed next-ID after deletion. Their
 live records and numeric sequence fields cannot independently establish the
-historic allocation ceiling. Existing IDs and hash algorithms must be preserved;
+historic allocation ceiling. In a continuity-preserving migration, existing IDs
+and hash algorithms must be preserved;
 never choose a large arbitrary seed or reset the sequence from latest records.
 
 `scripts/feature_id_sequence_audit.py` prepares an offline review candidate. It

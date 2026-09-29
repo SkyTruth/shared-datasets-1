@@ -1,5 +1,12 @@
 # Daily IMS Sea-Ice Job
 
+> **Deployment hold in PR #154:** this branch blocks all three ingestion deployment
+> workflows before cloud authentication, image builds, Terraform, or canaries.
+> The hold also blocks routine maintenance. Existing deployed jobs and schedules
+> continue running; this is not an old-writer fence. The
+> [fresh-start rollout plan](../../docs/proposals/feature-id-fresh-start.md) lists
+> the evidence and reviewed controls required before lifting the hold.
+
 This job publishes the `ims-sea-ice-extent` asset from the NOAA/NSIDC IMS Daily
 Northern Hemisphere Snow and Ice Analysis 4 km GeoTIFFs.
 
@@ -119,17 +126,24 @@ remove the dataset asset.
 
 ## Generated-ID deployment prerequisite
 
-Generated refreshes load the exact manifest generation and its referenced release
-sidecar generation, carrying the sequence even when the highest live ID vanished.
-Old generated manifests, including numeric next-ID fields, are not trusted as
-allocation authority. A refresh stops until the
-[reviewed sequence migration](../../docs/feature-id-sequence-migration.md) has
-established an evidence-bound baseline. Live records alone do not prove the
-historic allocation ceiling.
+The job uses `OwnedGeneratedPublisher` and the new identity contract
+`generated-2026-v1`. The approved [pre-launch fresh start](../../docs/proposals/feature-id-fresh-start.md)
+retires the previous identity history. Historical releases remain readable, but
+cannot seed this contract. An explicitly reviewed reset inventory and installed
+publication state are required. Missing state stops the job; it cannot silently
+restart numbering.
 
-Do not deploy this sequence change until existing assets have a reviewed migration
-and publication enforces exclusive ownership of the captured baseline. A read
-preflight alone does not prevent concurrent publishers from allocating the same
-number. The builder exposes `identity_baseline_snapshot` (manifest path,
-generation, SHA-256), `previous_generated_feature_id`, and `previous_release` for
-that publication boundary. This change performs no migration or deployment.
+The publisher reserves IDs and claims the asset before checkpointing or exposing
+the release bundle. Later builds read the exact current manifest and referenced
+metadata generations, and retain the counter when features disappear. Runtime
+identity comes from `CLOUD_RUN_EXECUTION` and the image's embedded
+`SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the same captured intent. A crash
+before all local inputs have durable checkpoints stops with the claim held;
+starting another execution does not abandon the reservation. Historical success
+records cannot skip the first new-contract release.
+
+The [readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md)
+records the current five-file bundle. Deployment remains blocked on the
+protected reset installation path, exclusion of older writers, and native
+artifact and serving checks. The local adapter and an offline review envelope
+are not production cutover authority.

@@ -13,7 +13,7 @@ import hashlib
 import io
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field as dataclass_field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Iterator, Mapping, Sequence
@@ -25,6 +25,7 @@ METADATA_SIDECAR_SCHEMA_VERSION = 2
 RELEASE_SCHEMA_SCHEMA_VERSION = 2
 FEATURE_IDENTITY_SCHEMA_VERSION = 1
 GENERATED_SEQUENCE_STATE_VERSION = 1
+IDENTITY_CONTRACT_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 GENERATED_SEQUENCE_EXHAUSTED = 10**64
 GENERATED_FEATURE_ID_RE = re.compile(r"^[1-9][0-9]{0,63}$")
 IDENTITY_DECISIONS_SCHEMA_VERSION = 1
@@ -338,6 +339,13 @@ def validate_generated_sequence(value: Any, *, label: str = "next generated feat
     return value
 
 
+def validate_identity_contract(value: Any) -> str:
+    """An identity namespace is distinct from a manifest serialization version."""
+    if not isinstance(value, str) or len(value) > 64 or not IDENTITY_CONTRACT_RE.fullmatch(value):
+        raise ReleaseFeatureModelError("identity contract must be a lowercase slug of at most 64 characters")
+    return value
+
+
 @dataclass(frozen=True)
 class GeneratedIdentitySnapshot:
     """Exact latest manifest observed before a generated release was built."""
@@ -367,8 +375,10 @@ class GeneratedIdentityBaseline:
     next_feature_id: int
     release: str | None
     snapshot: GeneratedIdentitySnapshot | None = None
+    contract_id: str = dataclass_field(kw_only=True)
 
     def __post_init__(self) -> None:
+        validate_identity_contract(self.contract_id)
         validate_generated_sequence(self.next_feature_id)
         if self.snapshot is not None and not isinstance(self.snapshot, GeneratedIdentitySnapshot):
             raise ReleaseFeatureModelError("generated baseline snapshot must be a validated snapshot reference")
@@ -392,8 +402,8 @@ class GeneratedIdentityBaseline:
         object.__setattr__(self, "records", records)
 
     @classmethod
-    def genesis(cls) -> GeneratedIdentityBaseline:
-        return cls(records=(), next_feature_id=1, release=None)
+    def genesis(cls, *, contract_id: str) -> GeneratedIdentityBaseline:
+        return cls(records=(), next_feature_id=1, release=None, contract_id=contract_id)
 
 
 @dataclass(frozen=True)
@@ -449,6 +459,7 @@ def generated_baseline_from_manifest(
     manifest: Mapping[str, Any],
     records: Iterable[Mapping[str, Any]],
     *,
+    expected_contract_id: str,
     snapshot: GeneratedIdentitySnapshot | None = None,
 ) -> GeneratedIdentityBaseline:
     identity = manifest.get("identity")
@@ -457,6 +468,9 @@ def generated_baseline_from_manifest(
         raise ReleaseFeatureModelError("allocation baseline requires generated sequence identity")
     if identity.get("sequence_state_version") != GENERATED_SEQUENCE_STATE_VERSION:
         raise ReleaseFeatureModelError("legacy generated sequence is unverified; reviewed historical sequence migration required")
+    validate_identity_contract(expected_contract_id)
+    if identity.get("contract_id") != expected_contract_id:
+        raise ReleaseFeatureModelError("retired or different identity contract cannot seed new allocations")
     return GeneratedIdentityBaseline(
         records=tuple(project_identity_records(
             records, exclude_properties=identity.get("properties_hash_excluded_properties", ()),
@@ -464,6 +478,7 @@ def generated_baseline_from_manifest(
         next_feature_id=identity["next_generated_feature_id_after_release"],
         release=manifest.get("release"),
         snapshot=snapshot,
+        contract_id=expected_contract_id,
     )
 
 
@@ -1271,6 +1286,7 @@ def build_identity_metadata(
     next_generated_feature_id_after_release: int | None = None,
     next_generated_feature_id_before_release: int | None = None,
     decisions: Mapping[str, Any] | None = None,
+    contract_id: str | None = None,
 ) -> dict[str, Any]:
     clean_source_fields = [str(field) for field in source_fields]
     clean_assignment_key = [str(part) for part in assignment_key]
@@ -1288,6 +1304,7 @@ def build_identity_metadata(
         "canonicalization": FEATURE_ID_ALGORITHM,
     }
     if strategy.startswith("generated_sequence"):
+        identity["contract_id"] = validate_identity_contract(contract_id)
         validate_generated_sequence(next_generated_feature_id_before_release, label="sequence before release")
         validate_generated_sequence(next_generated_feature_id_after_release, label="sequence after release")
         identity["sequence_state_version"] = GENERATED_SEQUENCE_STATE_VERSION
@@ -1298,6 +1315,8 @@ def build_identity_metadata(
             identity["properties_hash_excluded_properties"] = clean_excluded_properties
         identity["previous_release"] = previous_release
         identity["next_generated_feature_id_after_release"] = next_generated_feature_id_after_release
+    elif contract_id is not None:
+        raise ReleaseFeatureModelError("source-field identity does not use a generated identity contract")
     if decisions is not None:
         identity["decisions"] = dict(decisions)
     validate_identity_metadata(identity)
@@ -1325,6 +1344,10 @@ def validate_identity_metadata(identity: Any) -> None:
     if strategy == "generated_sequence_content_hash" and clean_source_fields:
         raise ReleaseFeatureModelError("generated_sequence_content_hash identity must not include source fields")
     if strategy.startswith("generated_sequence"):
+        if "contract_id" in identity:
+            validate_identity_contract(identity["contract_id"])
+            if identity.get("sequence_state_version") is None:
+                raise ReleaseFeatureModelError("an identity contract requires versioned sequence state")
         state_version = identity.get("sequence_state_version")
         before = identity.get("next_generated_feature_id_before_release")
         after = identity.get("next_generated_feature_id_after_release")
@@ -1340,6 +1363,8 @@ def validate_identity_metadata(identity: Any) -> None:
             for value in (before, after):
                 if value is not None:
                     validate_generated_sequence(value)
+    elif "contract_id" in identity:
+        raise ReleaseFeatureModelError("source-field identity does not use a generated identity contract")
     assignment_key = identity.get("assignment_key", [])
     if strategy.startswith("generated_sequence"):
         if not isinstance(assignment_key, Sequence) or isinstance(assignment_key, (str, bytes, bytearray)):

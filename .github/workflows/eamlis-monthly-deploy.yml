@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - ".github/workflows/eamlis-monthly-deploy.yml"
+      - "catalog/publication-rollout.json"
+      - "scripts/publication_rollout_gate.py"
       - "ingestion/common/**"
       - "ingestion/eamlis_monthly/**"
       - "scripts/pmtiles_zoom.py"
@@ -78,6 +80,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+
+      - name: Enforce publication rollout HOLD
+        shell: bash
+        run: python scripts/publication_rollout_gate.py --job eamlis-monthly
 
       - name: Validate Terraform auth configuration
         run: |

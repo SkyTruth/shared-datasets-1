@@ -18,6 +18,7 @@ def fixture(tmp_path: Path):
     )
     root = f"gs://{bucket.name}/asset"
     manifest["identity"].pop("sequence_state_version")
+    manifest["identity"].pop("contract_id")
     manifest["identity"].pop("next_generated_feature_id_before_release")
     manifest["identity"]["next_generated_feature_id_after_release"] = (
         2  # old writer regressed
