@@ -192,6 +192,13 @@ http://127.0.0.1:4173/
 Check search, filters, detail selection, copy buttons, mobile layout, and at
 least one PMTiles preview.
 
+The [catalog browser smoke suite](../tests/browser/README.md) builds this same
+static bundle and tests real Chromium/MapLibre rendering against tiny pinned
+PMTiles fixtures. It runs on every PR and main push through
+`catalog-browser-smoke.yml`, including release selection, inspector identity and
+denial clearing. It uses deterministic HTTP fixtures and does not verify live
+cloud access policy.
+
 ## Browser dependencies
 
 The map preview lazy-loads exact CDN versions from `web/catalog/map-preview.js`:

@@ -1,0 +1,13 @@
+{
+  "name": "shared-datasets-catalog-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "maplibre-gl": "5.9.0",
+    "pmtiles": "4.3.0"
+  }
+}
