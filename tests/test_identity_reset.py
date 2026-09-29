@@ -11,10 +11,10 @@ from scripts import release_feature_model as model
 from test_publication import LostResponse, MemoryStore, derive, operation
 
 
-def fixture(slug="wdpa-marine"):
+def fixture(slug="wdpa-marine", *, bucket="bucket"):
     store = MemoryStore()
     root = reset.ASSET_ROOTS[slug]
-    uri = f"gs://bucket/{root}"
+    uri = f"gs://{bucket}/{root}"
     objects = []
     for suffix in reset.BASE_SUFFIXES:
         version = store.write_bytes(f"{uri}/latest/{slug}{suffix}", b"old " + suffix.encode(), 0, {}, "application/octet-stream", "")
@@ -22,11 +22,11 @@ def fixture(slug="wdpa-marine"):
     old_release = store.write_bytes(f"{uri}/releases/2026-09-01/{slug}.manifest.json", b"old .manifest.json", 0, {}, "application/json", "")
     manifest = next(item for item in objects if item["path"].endswith(".manifest.json"))
     candidate = reset.IdentityResetCandidate.build({
-        "schema_version": 1, "asset_slug": slug, "bucket": "bucket", "contract_id": reset.CONTRACT_ID,
+        "schema_version": 1, "asset_slug": slug, "bucket": bucket, "contract_id": reset.CONTRACT_ID,
         "first_release": "2026-10-01", "latest_objects": sorted(objects, key=lambda item: item["path"]),
         "baseline": {"release": "2026-09-01", "release_manifest": old_release.identity(), "latest_manifest": manifest},
     })
-    ctx = p.Context("a" * 64, "b" * 64, "c" * 40, p.FINALIZATION_VERSION, "bucket", root, slug, reset.CONTRACT_ID)
+    ctx = p.Context("a" * 64, "b" * 64, "c" * 40, p.FINALIZATION_VERSION, bucket, root, slug, reset.CONTRACT_ID)
     return store, candidate, ctx
 
 
@@ -34,6 +34,12 @@ def install_fixture(store, candidate):
     candidate.validate_current(store)
     for item in candidate.review_envelope()["objects"]:
         store.write_json(item["path"], item["value"], item["expected_generation"])
+    store.write_json(f"{candidate.root_uri}/publications/reset.json", {
+        "schema_version": 1, "inventory_sha256": p.digest(candidate.encoded),
+        "fence_sha256": "f" * 64, "proposal_key": "a" * 64,
+        "execution_contract_sha256": "b" * 64, "phase": "complete",
+        "state_generation": store.head(f"{candidate.root_uri}/publications/state.json").generation,
+    }, 0)
 
 
 def intent_for(store, candidate, ctx):

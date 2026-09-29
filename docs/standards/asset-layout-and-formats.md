@@ -117,6 +117,7 @@ chunked array products where COG would be a poor access pattern.
     YYYY-MM-DD/
       {load-id}.json
   publications/                     # owned generated publishers only
+    reset.json                      # reviewed one-time reset installation journal
     state.json                      # current owner and reserved ID counter
     receipts/{sha256}.json           # immutable intent and durable progress
     inputs/{sha256}/{ordinal}.{ext}  # generation-pinned checkpoint inputs
@@ -154,6 +155,12 @@ owned publisher or a separately reviewed adoption workflow may write it; generic
 promotion/deletion tools refuse these paths. Checkpoint suffixes are explicitly
 validated by `ingestion/common/publication.py`; the layout does not authorize
 arbitrary extensions or objects.
+
+For the three approved pre-launch identity retirements, the protected
+[reset installer](../feature-id-reset-installation.md) creates `reset.json` and
+advances it with generation preconditions. Publishers require its completed
+phase before using reset state. It cannot be deleted or recreated as a way to
+restart the counter; a missing allocation state requires reviewed recovery.
 
 Single-object assets, including COGs, may use standard `latest/` and
 `releases/YYYY-MM-DD/` file copies.

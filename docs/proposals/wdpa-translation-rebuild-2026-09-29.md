@@ -3,7 +3,8 @@
 Status: twelve local locale sidecars rebuilt and structurally validated against
 the September 1 metadata snapshot. Translation content is **99.9736% complete
 by requested row**; new-text gaps remain. Nothing has been published, deleted,
-merged, committed, or deployed. These are current-ID rehearsal candidates, not
+merged, or deployed. The implementation and this report are on draft PR #154;
+generated data remains outside the repository. These are current-ID rehearsal candidates, not
 the new-contract reset release.
 
 The user chose rebuilding rather than retiring the ten old French, Indonesian,
@@ -88,8 +89,10 @@ publication. The old Spanish-only placeholder writer has been removed.
 The scheduled job reuses existing translations and records gaps; it does not call
 Google at runtime. Future new text therefore remains visible as unresolved work
 until a reviewed translation update is incorporated. Local completed supplements
-must be bound into the reviewed first-release build inputs; the unfinished reset
-installer does not yet provide that promotion path. Later runs reuse the full CSV
+must be bound into the reviewed first-release build inputs; the
+[reset installer](../feature-id-reset-installation.md) only installs allocation
+state and does not promote a translation supplement. That first-build input
+binding remains unfinished. Later runs reuse the full CSV
 from their committed publication.
 
 The integration still needs a native image run and peak-memory verification with

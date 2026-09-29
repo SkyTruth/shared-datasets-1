@@ -131,11 +131,15 @@ cutover-time evidence. No writer-exclusion control was applied in this audit.
 
 ## Remaining engineering and rollout evidence
 
-1. Implement a constrained protected reset installer. It must consume exact
-   reviewed immutable authority, recheck the frozen current generations and
-   hashes under the writer fence, and install evidence/adoption/state without
-   overwriting existing state. `feature_id_reset.py` produces review material
-   only. Generic promotion tools deliberately refuse these managed paths.
+1. Review and activate the implemented
+   [protected reset installer](../feature-id-reset-installation.md). It consumes
+   exact immutable PR authority, validates the current generations/hashes under
+   reviewed writer restrictions, and creates evidence/adoption/state with a
+   durable installation journal. Competing installs, revoked approval, drift,
+   and crash/retry boundaries have local tests. Activation remains blocked:
+   the approved-fence registry is empty and this change does not provision the
+   dedicated reset identity. The offline preparation CLI grants no authority;
+   generic promotion tools deliberately refuse these managed paths.
 2. Complete and review the IAM/deployment fence, including old job identities,
    generic publisher/localization paths, administrative/impersonation paths,
    running jobs, queued workflows, and credential propagation. Follow the
@@ -162,8 +166,9 @@ re-enabling the old writer is not a recovery method.
 
 ## Local verification
 
-- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,061 passed, 4 skipped,
-  1,208 subtests passed**, including the translation rebuild integration and
+- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,079 passed, 4 skipped,
+  1,241 subtests passed**, including protected reset installation, immutable
+  authorization, paginated control-plane reads, translation rebuild integration and
   complete CSV/sidecar join validation. The default run leaves the four opt-in native checks disabled. Crash coverage uses a generation-aware in-memory store, not GCS
   failure injection in production.
 - A separate opt-in native run of the six geospatial suites passed **90 tests**

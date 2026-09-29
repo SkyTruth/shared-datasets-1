@@ -121,16 +121,25 @@ class IdentityResetCandidate:
     def validate_current(self, store: p.Store) -> None:
         """Read-only preflight; must be repeated under the approved writer fence."""
         p.require(store.head(f"{self.root_uri}/publications/state.json") is None, "identity state already exists; reset cannot be repeated")
+        self.validate_anchors(store)
+        value = self.value
+        for snapshot in (*value["latest_objects"], value["baseline"]["release_manifest"]):
+            version = store.inspect(snapshot["path"], snapshot["generation"])
+            p.require(version is not None and version.identity() == snapshot, "captured object generation/hash is unavailable or changed")
+
+    def validate_anchors(self, store: p.Store) -> None:
+        """Cheap freshness checks between installer writes after full hashing."""
         value = self.value
         current = list(store.list_heads(f"{self.root_uri}/latest/"))
         expected = {item["path"]: item for item in value["latest_objects"]}
         p.require({head.path for head in current} == set(expected), "current latest object inventory changed")
         for head in current:
             p.require(head.generation == expected[head.path]["generation"], "current latest generation changed")
-        for snapshot in (*value["latest_objects"], value["baseline"]["release_manifest"]):
-            version = store.inspect(snapshot["path"], snapshot["generation"])
-            p.require(version is not None and version.identity() == snapshot, "captured object generation/hash is unavailable or changed")
+        anchor = value["baseline"]["release_manifest"]
+        head = store.head(anchor["path"])
+        p.require(head is not None and head.generation == anchor["generation"], "retired release manifest changed")
         p.require(not list(store.list_heads(f"{self.root_uri}/releases/{value['first_release']}/")), "reset destination release is not empty")
+        p.require(store.head(f"{self.root_uri}/runs/{value['first_release']}.json") is None, "reset destination run record already exists")
 
     def review_envelope(self) -> dict[str, Any]:
         """Prepared objects still require a separately authorized installation."""
@@ -144,6 +153,18 @@ class IdentityResetCandidate:
         }
 
 
+def validate_installation_marker(value: dict[str, Any], inventory_sha256: str) -> None:
+    """One persisted marker schema shared by installation and runtime admission."""
+    p.keys(value, {"schema_version", "inventory_sha256", "fence_sha256", "proposal_key", "execution_contract_sha256", "phase", "state_generation"}, "reset installation marker")
+    p.require(type(value["schema_version"]) is int and value["schema_version"] == 1
+              and value["phase"] in {"prepared", "activating", "complete"}
+              and value["inventory_sha256"] == inventory_sha256
+              and all(p.hash_value(value[k]) for k in ("fence_sha256", "proposal_key", "execution_contract_sha256")),
+              "invalid reset installation marker")
+    p.require((p.integer(value["state_generation"], 1) if value["phase"] == "complete" else value["state_generation"] is None),
+              "invalid reset installation state generation")
+
+
 def load_reset_candidate(store: p.Store, context: p.Context, adoption: dict[str, Any]) -> IdentityResetCandidate:
     """Verify the durable reset evidence used by the publication owner."""
     uri = f"gs://{context.bucket}/{context.asset_root}/publications/inputs/{adoption['evidence_sha256']}/0.catalog.json"
@@ -152,4 +173,8 @@ def load_reset_candidate(store: p.Store, context: p.Context, adoption: dict[str,
     candidate = IdentityResetCandidate.build(evidence.value)
     p.require(p.digest(candidate.encoded) == adoption["evidence_sha256"] and candidate.adoption == adoption, "reset evidence differs from adoption")
     p.require((candidate.value["bucket"], candidate.value["asset_slug"], candidate.value["contract_id"]) == (context.bucket, context.asset_slug, context.identity_contract), "reset belongs to another asset or contract")
+    marker = store.read_json(f"{candidate.root_uri}/publications/reset.json")
+    p.require(marker is not None, "reset installation marker is missing")
+    validate_installation_marker(marker.value, p.digest(candidate.encoded))
+    p.require(marker.value["phase"] == "complete", "reset installation is incomplete")
     return candidate

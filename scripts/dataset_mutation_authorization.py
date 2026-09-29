@@ -569,14 +569,19 @@ def write_outputs(values: dict[str, Any], path: str | None) -> None:
                 output.write(f"{key}={str(value).lower() if isinstance(value, bool) else value}\n")
 
 
+def plan_outputs(document: dict[str, Any]) -> dict[str, bool]:
+    reset = "identity_reset" in document.get("publish", {})
+    return {"has_publish_plan": "publish" in document and not reset,
+            "has_delete_plan": "delete" in document, "has_identity_reset_plan": reset}
+
+
 def save_envelope(envelope: dict[str, Any], directory: Path, output: str | None) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     raw = plans.canonical_bytes(envelope)
     (directory / ENVELOPE_FILE).write_bytes(raw)
     write_outputs(
         {
-            "has_publish_plan": "publish" in envelope.get("document", {}),
-            "has_delete_plan": "delete" in envelope.get("document", {}),
+            **plan_outputs(envelope.get("document", {})),
             "envelope_sha256": plans.sha256(raw),
             "executor_sha": envelope["trusted_executor_sha"],
             "artifact_name": artifact_name(envelope["source_run"]["id"], envelope["source_run"]["run_attempt"]),
@@ -603,6 +608,38 @@ def extract_payloads(envelope: dict[str, Any], output: Path) -> None:
             }
         )
     )
+
+
+def verified_envelope(api: GitHub, directory: Path, expected_sha256: str, env: dict[str, str]) -> dict[str, Any]:
+    """Validate the immutable handoff, executor, run identity, and live acceptance."""
+    require(
+        sorted(p.name for p in directory.iterdir()) == [ENVELOPE_FILE],
+        "authorization directory has missing/extra files",
+    )
+    raw = (directory / ENVELOPE_FILE).read_bytes()
+    require(
+        bool(expected_sha256) and plans.sha256(raw) == expected_sha256,
+        "authorization handoff hash mismatch",
+    )
+    envelope = plans.strict_json_loads(raw)
+    require(raw == plans.canonical_bytes(envelope), "noncanonical envelope")
+    require(
+        subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        == envelope["trusted_executor_sha"],
+        "checked-out executor differs from authorization",
+    )
+    require(
+        envelope["repository"]["full_name"] == env["GITHUB_REPOSITORY"],
+        "envelope repository mismatch",
+    )
+    if env.get("GITHUB_EVENT_NAME") != "workflow_run":
+        require(
+            envelope["source_run"]["id"] == int(env["GITHUB_RUN_ID"])
+            and envelope["source_run"]["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]),
+            "handoff belongs to another run/attempt",
+        )
+    revalidate(api, envelope)
+    return envelope
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -633,8 +670,7 @@ def main(argv: list[str] | None = None) -> int:
                         (args.output_dir / f"{kind}-plan.json").write_bytes(plans.canonical_bytes(document[kind]))
                 write_outputs(
                     {
-                        "has_publish_plan": "publish" in document,
-                        "has_delete_plan": "delete" in document,
+                        **plan_outputs(document),
                     },
                     args.github_output,
                 )
@@ -646,33 +682,7 @@ def main(argv: list[str] | None = None) -> int:
                 envelope = from_run(api, event)
             save_envelope(envelope, args.directory, args.github_output)
         else:
-            require(
-                sorted(p.name for p in args.directory.iterdir()) == [ENVELOPE_FILE],
-                "authorization directory has missing/extra files",
-            )
-            raw = (args.directory / ENVELOPE_FILE).read_bytes()
-            require(
-                bool(args.expected_sha256) and plans.sha256(raw) == args.expected_sha256,
-                "authorization handoff hash mismatch",
-            )
-            envelope = plans.strict_json_loads(raw)
-            require(raw == plans.canonical_bytes(envelope), "noncanonical envelope")
-            require(
-                subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-                == envelope["trusted_executor_sha"],
-                "checked-out executor differs from authorization",
-            )
-            require(
-                envelope["repository"]["full_name"] == os.environ["GITHUB_REPOSITORY"],
-                "envelope repository mismatch",
-            )
-            if os.environ.get("GITHUB_EVENT_NAME") != "workflow_run":
-                require(
-                    envelope["source_run"]["id"] == int(os.environ["GITHUB_RUN_ID"])
-                    and envelope["source_run"]["run_attempt"] == int(os.environ["GITHUB_RUN_ATTEMPT"]),
-                    "handoff belongs to another run/attempt",
-                )
-            revalidate(api, envelope)
+            envelope = verified_envelope(api, args.directory, args.expected_sha256, dict(os.environ))
             extract_payloads(envelope, args.output_dir)
         return 0
     except (

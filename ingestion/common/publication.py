@@ -100,6 +100,8 @@ def protocol_path_kind(name: str) -> str | None:
     tail = parts[4:]
     if tail == ["state.json"]:
         return "state"
+    if tail == ["reset.json"]:
+        return "reset"
     if len(tail) == 2 and tail[0] == "receipts" and re.fullmatch(r"[0-9a-f]{64}\.json", tail[1]):
         return "receipt"
     if len(tail) == 3 and tail[0] == "inputs" and hash_value(tail[1]) and INPUT_NAME.fullmatch(tail[2]):
@@ -444,6 +446,75 @@ def validate_state(value: Any, context: Context) -> None:
         own_receipt(active["receipt_uri"])
 
 
+def validate_state_references(store: Store, state: dict[str, Any], context: Context) -> None:
+    adoption = store.read_json(state["adoption_receipt"])
+    require(adoption is not None, "explicit adoption record is missing")
+    record = adoption.value
+    keys(record, {"schema_version", "kind", "asset_slug", "asset_root", "bucket", "baseline", "reserved_next_feature_id", "evidence_sha256", "identity_contract", "reset_release"}, "adoption")
+    require(type(record["schema_version"]) is int and record["schema_version"] == VERSION and record["kind"] == "adoption", "invalid adoption version/kind")
+    require((record["asset_slug"], record["asset_root"], record["bucket"]) == (context.asset_slug, context.asset_root, context.bucket) and hash_value(record["evidence_sha256"]), "foreign/invalid adoption evidence")
+    seed_highwater = record["reserved_next_feature_id"]
+    require(record["identity_contract"] == context.identity_contract, "publication identity contract differs from adoption")
+    require((seed_highwater is None) == (context.identity_contract is None), "adoption identity contract does not match allocation strategy")
+    require((seed_highwater is None) == (state["reserved_next_feature_id"] is None), "identity strategy differs from adoption")
+    if seed_highwater is not None:
+        require(integer(seed_highwater, 1) and seed_highwater <= state["reserved_next_feature_id"], "reserved high-water regressed below adoption")
+    baseline = record["baseline"]
+    if baseline is not None:
+        keys(baseline, {"release", "release_manifest", "latest_manifest"}, "adoption baseline")
+        require(valid_date(baseline["release"]), "invalid adoption release")
+        for field in ("release_manifest", "latest_manifest"):
+            identity_snapshot(baseline[field])
+        require(baseline["latest_manifest"]["path"] == f"gs://{context.bucket}/{context.asset_root}/latest/{context.asset_slug}.manifest.json" and baseline["release_manifest"]["path"] == f"gs://{context.bucket}/{context.asset_root}/releases/{baseline['release']}/{context.asset_slug}.manifest.json", "foreign adoption manifest")
+    else:
+        require(seed_highwater in (None, 1), "genesis adoption cannot guess an allocation high-water")
+    reset_release = record["reset_release"]
+    if reset_release is not None:
+        require(baseline is not None and seed_highwater == 1 and valid_date(reset_release) and reset_release > baseline["release"], "reset requires an old baseline, a new release, and next-ID 1")
+        from ingestion.common.identity_reset import load_reset_candidate
+        reset = load_reset_candidate(store, context, record)
+        require(state["adoption_receipt"] == reset.adoption_uri, "reset receipt path does not match its content")
+    current = state["current"]
+    if current is not None:
+        if current["receipt_uri"] == state["adoption_receipt"]:
+            expected = {**(baseline or {}), "transaction_id": digest(canonical(record)), "receipt_uri": state["adoption_receipt"]}
+            require(current == expected, "current does not match explicit adoption baseline")
+        else:
+            committed = store.read_json(current["receipt_uri"])
+            require(committed is not None, "current receipt is missing")
+            committed_context = receipt_context(committed.value)
+            require((committed_context.bucket, committed_context.asset_root, committed_context.asset_slug) == (context.bucket, context.asset_root, context.asset_slug) and committed_context.receipt_uri == current["receipt_uri"], "foreign current receipt")
+            require(committed_context.identity_contract == context.identity_contract, "current receipt belongs to another identity contract")
+            intent, results = parse_receipt(committed.value, committed_context)
+            require(committed.value["phase"] in {"committed", "derived_complete"} and intent.value["mode"] == "complete_release" and intent.transaction_id == current["transaction_id"] and intent.value["release"] == current["release"], "state current lacks a committed activation receipt")
+            allocation = intent.value["reservation"]
+            require((allocation is None) == (state["reserved_next_feature_id"] is None), "current allocation strategy differs from state")
+            if allocation is not None:
+                require(state["reserved_next_feature_id"] >= allocation["next"], "reserved high-water regressed below committed allocation")
+            versions = [ObjectVersion.parse(results[op["id"]]).identity() for op in intent.value["operations"] if op["phase"] == "commit"]
+            require(current["release_manifest"] in versions and current["latest_manifest"] in versions, "state manifest snapshots differ from committed receipt")
+    else:
+        require(baseline is None, "state forgot an adopted current release")
+    if state["active"] is not None:
+        active = store.read_json(state["active"]["receipt_uri"])
+        require(active is not None, "active receipt is missing")
+        active_context = receipt_context(active.value)
+        require((active_context.bucket, active_context.asset_root, active_context.asset_slug) == (context.bucket, context.asset_root, context.asset_slug) and active_context.receipt_uri == state["active"]["receipt_uri"], "foreign active receipt")
+        require(active_context.identity_contract == context.identity_contract, "active receipt belongs to another identity contract")
+        intent, _ = parse_receipt(active.value, active_context)
+        require(intent.transaction_id == state["active"]["transaction_id"], "active receipt intent changed")
+        reservation = intent.value["reservation"]
+        if reservation is not None:
+            require(state["reserved_next_feature_id"] == reservation["next"], "active reservation differs from persisted high-water")
+            if current and current["transaction_id"] != intent.transaction_id:
+                require(intent.value["predecessor"] == current["latest_manifest"], "active claim has a stale baseline")
+                minimum = seed_highwater
+                if current["receipt_uri"] != state["adoption_receipt"]:
+                    previous = store.read_json(current["receipt_uri"])
+                    minimum = previous.value["intent"]["reservation"]["next"]
+                require(reservation["start"] >= minimum, "active range reuses previously committed allocations")
+
+
 class Executor:
     def __init__(self, store: Store, *, validate_semantics: Callable[[Intent], None], preflight_sources: Callable[[Intent], None], derive: Callable[[dict[str, Any], Mapping[str, ObjectVersion]], bytes]):
         self.store = store
@@ -455,76 +526,8 @@ class Executor:
         loaded = self.store.read_json(context.state_uri)
         require(loaded is not None, "PUBLICATION_NOT_ADOPTED: explicit managed genesis/adoption required")
         validate_state(loaded.value, context)
-        self._verify_state_references(loaded.value, context)
+        validate_state_references(self.store, loaded.value, context)
         return loaded
-
-    def _verify_state_references(self, state: dict[str, Any], context: Context) -> None:
-        adoption = self.store.read_json(state["adoption_receipt"])
-        require(adoption is not None, "explicit adoption record is missing")
-        record = adoption.value
-        keys(record, {"schema_version", "kind", "asset_slug", "asset_root", "bucket", "baseline", "reserved_next_feature_id", "evidence_sha256", "identity_contract", "reset_release"}, "adoption")
-        require(type(record["schema_version"]) is int and record["schema_version"] == VERSION and record["kind"] == "adoption", "invalid adoption version/kind")
-        require((record["asset_slug"], record["asset_root"], record["bucket"]) == (context.asset_slug, context.asset_root, context.bucket) and hash_value(record["evidence_sha256"]), "foreign/invalid adoption evidence")
-        seed_highwater = record["reserved_next_feature_id"]
-        require(record["identity_contract"] == context.identity_contract, "publication identity contract differs from adoption")
-        require((seed_highwater is None) == (context.identity_contract is None), "adoption identity contract does not match allocation strategy")
-        require((seed_highwater is None) == (state["reserved_next_feature_id"] is None), "identity strategy differs from adoption")
-        if seed_highwater is not None:
-            require(integer(seed_highwater, 1) and seed_highwater <= state["reserved_next_feature_id"], "reserved high-water regressed below adoption")
-        baseline = record["baseline"]
-        if baseline is not None:
-            keys(baseline, {"release", "release_manifest", "latest_manifest"}, "adoption baseline")
-            require(valid_date(baseline["release"]), "invalid adoption release")
-            for field in ("release_manifest", "latest_manifest"):
-                identity_snapshot(baseline[field])
-            require(baseline["latest_manifest"]["path"] == f"gs://{context.bucket}/{context.asset_root}/latest/{context.asset_slug}.manifest.json" and baseline["release_manifest"]["path"] == f"gs://{context.bucket}/{context.asset_root}/releases/{baseline['release']}/{context.asset_slug}.manifest.json", "foreign adoption manifest")
-        else:
-            require(seed_highwater in (None, 1), "genesis adoption cannot guess an allocation high-water")
-        reset_release = record["reset_release"]
-        if reset_release is not None:
-            require(baseline is not None and seed_highwater == 1 and valid_date(reset_release) and reset_release > baseline["release"], "reset requires an old baseline, a new release, and next-ID 1")
-            from ingestion.common.identity_reset import load_reset_candidate
-            reset = load_reset_candidate(self.store, context, record)
-            require(state["adoption_receipt"] == reset.adoption_uri, "reset receipt path does not match its content")
-        current = state["current"]
-        if current is not None:
-            if current["receipt_uri"] == state["adoption_receipt"]:
-                expected = {**(baseline or {}), "transaction_id": digest(canonical(record)), "receipt_uri": state["adoption_receipt"]}
-                require(current == expected, "current does not match explicit adoption baseline")
-            else:
-                committed = self.store.read_json(current["receipt_uri"])
-                require(committed is not None, "current receipt is missing")
-                committed_context = receipt_context(committed.value)
-                require((committed_context.bucket, committed_context.asset_root, committed_context.asset_slug) == (context.bucket, context.asset_root, context.asset_slug) and committed_context.receipt_uri == current["receipt_uri"], "foreign current receipt")
-                require(committed_context.identity_contract == context.identity_contract, "current receipt belongs to another identity contract")
-                intent, results = parse_receipt(committed.value, committed_context)
-                require(committed.value["phase"] in {"committed", "derived_complete"} and intent.value["mode"] == "complete_release" and intent.transaction_id == current["transaction_id"] and intent.value["release"] == current["release"], "state current lacks a committed activation receipt")
-                allocation = intent.value["reservation"]
-                require((allocation is None) == (state["reserved_next_feature_id"] is None), "current allocation strategy differs from state")
-                if allocation is not None:
-                    require(state["reserved_next_feature_id"] >= allocation["next"], "reserved high-water regressed below committed allocation")
-                versions = [ObjectVersion.parse(results[op["id"]]).identity() for op in intent.value["operations"] if op["phase"] == "commit"]
-                require(current["release_manifest"] in versions and current["latest_manifest"] in versions, "state manifest snapshots differ from committed receipt")
-        else:
-            require(baseline is None, "state forgot an adopted current release")
-        if state["active"] is not None:
-            active = self.store.read_json(state["active"]["receipt_uri"])
-            require(active is not None, "active receipt is missing")
-            active_context = receipt_context(active.value)
-            require((active_context.bucket, active_context.asset_root, active_context.asset_slug) == (context.bucket, context.asset_root, context.asset_slug) and active_context.receipt_uri == state["active"]["receipt_uri"], "foreign active receipt")
-            require(active_context.identity_contract == context.identity_contract, "active receipt belongs to another identity contract")
-            intent, _ = parse_receipt(active.value, active_context)
-            require(intent.transaction_id == state["active"]["transaction_id"], "active receipt intent changed")
-            reservation = intent.value["reservation"]
-            if reservation is not None:
-                require(state["reserved_next_feature_id"] == reservation["next"], "active reservation differs from persisted high-water")
-                if current and current["transaction_id"] != intent.transaction_id:
-                    require(intent.value["predecessor"] == current["latest_manifest"], "active claim has a stale baseline")
-                    minimum = seed_highwater
-                    if current["receipt_uri"] != state["adoption_receipt"]:
-                        previous = self.store.read_json(current["receipt_uri"])
-                        minimum = previous.value["intent"]["reservation"]["next"]
-                    require(reservation["start"] >= minimum, "active range reuses previously committed allocations")
 
     def _claim(self, intent: Intent, context: Context) -> None:
         state = self._state(context)

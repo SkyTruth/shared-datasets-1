@@ -7,8 +7,9 @@ is the [explicit fresh-start plan](proposals/feature-id-fresh-start.md), which
 replaces historical allocation reconstruction with a reviewed reset boundary.
 That transition is not implemented by the audit commands below. The local
 publishers now consume explicit reset state and durable publication ownership;
-protected reset installation, writer exclusion, and production cutover remain
-unfinished. See the [current readiness report](proposals/feature-id-readiness-2026-09-29.md).
+the [protected reset installer](feature-id-reset-installation.md) is implemented
+but held pending reviewed writer controls and activation. Production cutover
+remains unfinished. See the [current readiness report](proposals/feature-id-readiness-2026-09-29.md).
 
 Old generated manifests can contain a regressed next-ID after deletion. Their
 live records and numeric sequence fields cannot independently establish the

@@ -94,9 +94,11 @@ coverage for EAMLIS.
    current object generations, the approved new contract, and a new dated
    release destination. The new allocation baseline is empty and starts at 1;
    expected replacement generations still describe the existing objects.
-   A protected installer still needs an explicit reviewed authority tied to the
-   exact candidate and writer fence. The review envelope has no execution
-   authority. There is no runtime reset flag or missing-manifest fallback.
+   The [protected installer](../feature-id-reset-installation.md) requires an
+   immutable reviewed publish plan tied to the exact candidate and a registered
+   writer-fence snapshot. The registry is empty, so activation remains blocked.
+   The review envelope alone has no execution authority. There is no runtime
+   reset flag or missing-manifest fallback.
 3. **Connect the real publishers.** Both generated producers now use the
    existing ownership/reservation core, with one authoritative allocation
    counter. The first new publication and later refreshes acquire ownership and
@@ -128,8 +130,8 @@ Keep PR #154 draft while this integration is prepared. The deployment stop is
 included in this draft with the publisher integration; it is not being merged
 separately. Its presence does not make a production reset safe or complete.
 
-1. Review the local publisher integration and finish the protected reset
-   installer and its authority checks. Update #154's live checklist to replace historical
+1. Review the publisher integration and protected reset installer, including
+   their authority and crash-recovery tests. Update #154's live checklist to replace historical
    reconstruction with the accepted reset conditions when preparing its PR
    revision. Existing archived plans and PR-body snapshots remain historical.
 2. Complete the smaller read-only readiness check: current release/manifest
@@ -195,7 +197,7 @@ The read-only cloud snapshot captured current object metadata/manifests, bucket
 and project IAM, job identities/images, service-account access/key metadata, and
 available deny-policy evidence. No remote objects, IAM, or job configuration were changed. The implementation
 and reports are being committed to the draft PR for CI and review. Historical releases were preserved. The
-remaining work is a protected reset installer, complete writer exclusion,
+remaining work is reviewed installer activation, complete writer exclusion,
 completion of the [translation rebuild](wdpa-translation-rebuild-2026-09-29.md),
 serving-path integration, and reviewed cutover. The user chose rebuilding over
 retiring the ten old WDPA locale aliases. The local monthly producer now reuses
@@ -204,13 +206,15 @@ the September rehearsal is structurally valid but has explicit translation gaps.
 
 ## Next review checkpoint
 
-The reset CLI intentionally remains a read-only candidate preparer. Do not add a
-local install switch or accept a reviewer-supplied `writers_stopped: true` flag
-as a fence. The protected installer must reuse the immutable PR authorization
-boundary in `scripts/dataset_mutation_authorization.py`: exact reviewed head,
-identical head/merge plan bytes, captured executor, and acceptance rechecks.
-Generic publish/delete plans currently refuse these managed roots, so neither a
-PR-body edit nor the existing mutation workflow can install this candidate.
+The reset preparation CLI remains offline. The separate protected installer now
+reuses `scripts/dataset_mutation_authorization.py`: exact reviewed head, identical
+head/merge plan bytes, captured executor, and acceptance rechecks. Its dedicated
+workflow job requires a reviewed snapshot in an otherwise empty registry before
+authentication, then rechecks live controls before every write. Generic mutation
+paths still refuse these roots. No local install switch or reviewer-supplied
+`writers_stopped: true` flag is accepted. See the
+[installation contract](../feature-id-reset-installation.md) for its journal,
+source-pinned plan, and intentionally bounded crash recovery.
 
 The next cutover change needs these concrete inputs:
 
@@ -224,15 +228,17 @@ The next cutover change needs these concrete inputs:
 3. Frozen per-asset object inventory, an explicit first-release date, and
    generation/hash-pinned build inputs. Review the complete new-ID bundle,
    including source-keyed translation evidence and any gap supplement.
-4. Installer tests for authority revocation, changed inventory/fence, no-clobber
-   installation, competing installers, and crashes after each durable write.
-   Write immutable evidence and adoption before the state pointer, resume only
-   matching bytes, and never replace an existing allocation state.
+4. Review the implemented installer tests for authority revocation, changed
+   inventory/fence, no-clobber installation, competing installers, and crashes
+   after each durable write. Provision the dedicated reset identity through the
+   reviewed infrastructure path and approve a time-limited fence registry entry.
+   Evidence and adoption precede state; runtime publication requires the journal
+   to be complete. An ambiguous missing state stops for reviewed recovery.
 5. A protected canary/serving activation plan that keeps schedules held until
    native artifact joins, ID counters, locale joins, and index/cache context
    pass. Both WDPA assets must pass before their shared job resumes.
 
 The inherited-permission export is an external evidence requirement, not a
 request to grant broad new auditor permissions. Until those inputs are available,
-the installer remains unexposed and every dataset remains NOT READY. The hold
+the installer remains held and every dataset remains NOT READY. The hold
 must not be advertised as migration completion.

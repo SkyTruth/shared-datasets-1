@@ -50,6 +50,18 @@ are errors, never a no-op or a reason to read current PR prose.
 
 ## Existing proposals and retries
 
+The three pre-launch generated-ID assets also support a constrained
+`publish.identity_reset` subtype containing the complete reset `inventory` and
+reviewed `fence_sha256`. It accepts exactly the evidence/adoption/state promotions
+with create-only destination expectations and explicit JSON/no-cache metadata.
+It cannot be combined with deletion, index rebuilds, or compatibility waivers.
+The same immutable document and publish fence apply, but execution routes to the
+dedicated protected reset job rather than generic promotion/localization.
+The installer-owned `publications/reset.json` journal is deterministically bound
+to that authority. See the [installation contract](../../docs/feature-id-reset-installation.md)
+for prerequisites, staging, review, ordering, and recovery. An empty approved
+fence registry blocks installation before authentication.
+
 For an open body-only PR, save its body locally and run:
 
 ```bash
