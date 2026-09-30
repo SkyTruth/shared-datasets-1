@@ -118,6 +118,8 @@ is not evidence that it is deployed. Both organization IAM and organization
 deny-policy reads returned **403 PERMISSION_DENIED**. An authorized organization
 administrator's policy export is required to close this evidence gap; this
 report does not propose granting the auditing agent broader permissions.
+Both organization endpoints were rechecked during the finishing pass and still
+returned 403. The code changes do not resolve that external evidence gap.
 
 The live job inventory confirms the runtime accounts above. Image digests were:
 
@@ -147,16 +149,21 @@ cutover-time evidence. No writer-exclusion control was applied in this audit.
 3. Choose the first dated release for each asset, verify its destination and run
    record are absent, resolve the WDPA aliases, and capture a complete reset
    inventory. Current snapshots must be refreshed after publishing is held.
-4. Finish serving integration. `feature_metadata_index.py` already scopes
-   records by asset/release/load, but index activation and cache joins were not
-   tested here. Independent `index-loads/YYYY-MM-DD/{load-id}.json` status
+4. Validate the actual catalog sidecar path during the protected canary. The
+   browser already pins tiles and metadata to a dated release and exact object
+   generations. A regression test exercises the actual cache/lookup functions
+   with numeric ID `1` representing different old/new features, including locale
+   separation, generation replacement, and an old download finishing last.
+   Firestore metadata lookup is deliberately inactive in the current service;
+   activating it is not a prerequisite for this cutover. Independent
+   `index-loads/YYYY-MM-DD/{load-id}.json` status
    records may be created through the existing loader with a no-clobber
    precondition; replacement/deletion and all identity-bearing paths remain
    blocked in generic tools. The loader's status record is written after the
    Firestore load and is not publication ownership or reset authority.
 5. Run the real native geospatial artifact checks with the pinned toolchain,
    then validate first publication, matching tile/metadata/locale IDs, serving
-   activation, durable counters, retries, and exclusion of older writers. Local
+   behavior, durable counters, retries, and exclusion of older writers. Local
    adapter tests mock the native-tool boundary. Both WDPA assets must pass
    before their shared job resumes.
 
@@ -166,8 +173,8 @@ re-enabling the old writer is not a recovery method.
 
 ## Local verification
 
-- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,079 passed, 4 skipped,
-  1,241 subtests passed**, including protected reset installation, immutable
+- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,084 passed, 4 skipped,
+  1,248 subtests passed**, including protected reset installation, immutable
   authorization, paginated control-plane reads, translation rebuild integration and
   complete CSV/sidecar join validation. The default run leaves the four opt-in native checks disabled. Crash coverage uses a generation-aware in-memory store, not GCS
   failure injection in production.
@@ -185,8 +192,12 @@ re-enabling the old writer is not a recovery method.
 - `git diff --check`: passed. The initial six-document link check and the
   subsequent four-document translation/rebuild link check passed.
 
-No image build, new remote CI result, deployed execution, or production native
-artifact validation is claimed by these results.
+The earlier installer head `e429ffa68dfd19a2061a296de884e89174616caf`
+passed the full suite and pinned native image in
+[CI run 36597694973](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36597694973).
+That result predates the supplement binding and cache regression additions above;
+their fresh head checks belong in PR #154. No deployed execution or production
+native artifact validation is claimed by these fixture results.
 
 ## Retained evidence
 

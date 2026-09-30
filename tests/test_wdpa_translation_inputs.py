@@ -2,6 +2,7 @@ import gzip
 from contextlib import nullcontext
 import hashlib
 import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -11,6 +12,7 @@ from unittest import mock
 from ingestion.common import publication as publication
 from ingestion.wdpa_monthly import translations
 from scripts.feature_metadata_translation_reuse import build_memory
+from scripts.feature_metadata_localization import source_value_hash
 from test_feature_metadata_translation_reuse import record, row, source_bundle
 from test_publication import publication_temp_directory
 
@@ -103,3 +105,42 @@ class TranslationInputTests(unittest.TestCase):
         with publication_temp_directory() as temp, self.assertRaisesRegex(publication.PublicationError, "pinned to the production"):
             with translations.prepare_memory(publisher, [SimpleNamespace(slug="wdpa-marine")], Path(temp)):
                 self.fail("must reject")
+
+    def test_first_build_downloads_the_approved_supplement_and_preserves_prior_work(self):
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            slug = "wdpa-marine"
+            old = record("1", "site-a", "Alpha", slug=slug)
+            old["properties"]["NAME_ENG"] = old["properties"].pop("name")
+            rows = [{**row("1", "Alpha", "existing " + locale), "field": "NAME_ENG", "locale": locale} for locale in translations.LOCALES]
+            bundle = source_bundle(root / "source", [old], rows)
+            completed = [{"field": "NAME_ENG", "locale": locale, "source_value": source, "source_value_hash": source_value_hash(source),
+                          "value": "fresh " + locale, "review_state": "document_translated", "notes": "Google document fixture"}
+                         for source in ("Alpha", "Beta") for locale in translations.LOCALES]
+            data = b"".join(json.dumps(row).encode() + b"\n" for row in completed)
+            supplement = publication.ObjectVersion("gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa/reset/supplement.ndjson", 77,
+                                                   hashlib.sha256(data).hexdigest(), len(data))
+            publisher = SimpleNamespace(bucket=SimpleNamespace(name="skytruth-shared-datasets-1"), committed_artifacts=lambda asset, suffixes: None,
+                                        reset_translation_supplement=lambda asset: supplement)
+            def download(bucket, version, destination, *, compress):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if version == supplement:
+                    self.assertFalse(compress)
+                    destination.write_bytes(data)
+                else:
+                    source = Path(bundle["translation_source" if compress else "canonical_sidecar"]).read_bytes()
+                    destination.write_bytes(gzip.compress(source) if compress else source)
+            with patch.object(translations, "download_source", side_effect=download) as downloaded:
+                with translations.prepare_memory(publisher, [SimpleNamespace(slug=slug, root="root")], root / "work") as memory:
+                    self.assertEqual(memory.supplement_snapshot.sha256, supplement.sha256)
+                    self.assertEqual(len(memory.supplement), 12)
+                    self.assertEqual({value[1] for value in memory.direct(slug, '["site-a"]').values()}, {"existing " + locale for locale in translations.LOCALES})
+                    self.assertEqual(downloaded.call_args.args[1], supplement)
+
+    def test_pending_assets_cannot_choose_different_supplements(self):
+        assets = [SimpleNamespace(slug=slug, root="root") for slug in translations.LEGACY]
+        publisher = SimpleNamespace(bucket=SimpleNamespace(name="skytruth-shared-datasets-1"), committed_artifacts=lambda asset, suffixes: None,
+                                    reset_translation_supplement=lambda asset: publication.ObjectVersion(f"gs://bucket/{asset.slug}.ndjson", 1, "a" * 64, 1))
+        with publication_temp_directory() as temp, patch.object(translations, "download_source"), self.assertRaisesRegex(publication.PublicationError, "same shared"):
+            with translations.prepare_memory(publisher, assets, Path(temp)):
+                self.fail("must refuse differing first-build evidence")

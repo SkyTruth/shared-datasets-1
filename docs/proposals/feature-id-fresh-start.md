@@ -69,9 +69,13 @@ coverage for EAMLIS.
   status records retain their no-clobber upload path. Generic mutation tools
   cannot install reset state. These local checks do not restrict older binaries or
   direct cloud clients using still-authorized credentials.
-- `scripts/feature_metadata_index.py` scopes feature records by asset, release,
-  and load. This helps isolate rebuilt indexes, but does not by itself establish
-  the new cross-release identity contract.
+- The catalog joins tiles and metadata through dated release references and
+  exact object generations. Its metadata cache includes the sidecar path and
+  generation, including the locale file. Regression coverage checks identical
+  numeric IDs in unrelated old/new releases, locale separation, replacements,
+  and an old download completing last. Firestore metadata lookup is intentionally
+  inactive in `services/metadata_service/run.py`; activating it is outside this
+  cutover's scope.
 - The hold from `codex/audit-publication-rollout-gate` is integrated into this
   branch alongside the real publisher adapters. All three ingestion deploy
   workflows invoke the strict hold-only registry before cloud authentication,
@@ -108,11 +112,15 @@ coverage for EAMLIS.
    safe stop is sufficient; automatic takeover and generalized repair are not
    launch requirements.
 4. **Rebuild the complete new release.** Regenerate FGB, PMTiles, metadata,
-   schema/manifest, applicable locale outputs, and the serving index from the
+   schema/manifest, applicable locale outputs, and the release index from the
    new IDs. Old ID-based decisions and translation joins must not carry across
    the boundary by numeric coincidence. Reuse of source-keyed content requires
    its ordinary validation. Keep old releases intact and distinguish their
    identity history in release selection/documentation.
+   Each WDPA reset inventory must bind the same generation/hash-pinned staged
+   translation supplement. The first build consumes that input and must report
+   complete translations before the publisher reserves IDs. Later new-text gaps
+   remain explicit work in the translation CSV and run report.
 5. **Exclude bypass writers.** Every path that changes the three assets or
    their authoritative per-asset state must participate in ownership or refuse.
    For launch, refuse unsupported manual mutation/repair paths rather than
@@ -149,7 +157,7 @@ separately. Its presence does not make a production reset safe or complete.
    then run each explicitly reviewed reset and first publication through the
    approved publisher. Canonical promotions require immutable checked-in plans
    and exact source/destination generation preconditions under `AGENTS.md`.
-5. Validate first releases, index activation, matching tile/metadata context,
+5. Validate first releases, release-index updates, matching tile/metadata context,
    counters, reservations, and old-writer exclusion. Resume routine publishing
    only for assets whose checks pass. WDPA shares one job, so both WDPA assets
    must pass before that job resumes. No global three-asset atomicity is assumed.
@@ -199,7 +207,7 @@ available deny-policy evidence. No remote objects, IAM, or job configuration wer
 and reports are being committed to the draft PR for CI and review. Historical releases were preserved. The
 remaining work is reviewed installer activation, complete writer exclusion,
 completion of the [translation rebuild](wdpa-translation-rebuild-2026-09-29.md),
-serving-path integration, and reviewed cutover. The user chose rebuilding over
+production serving checks, and reviewed cutover. The user chose rebuilding over
 retiring the ten old WDPA locale aliases. The local monthly producer now reuses
 verified source-keyed translations and rebuilds all six locales for both assets;
 the September rehearsal is structurally valid but has explicit translation gaps.
@@ -234,9 +242,11 @@ The next cutover change needs these concrete inputs:
    reviewed infrastructure path and approve a time-limited fence registry entry.
    Evidence and adoption precede state; runtime publication requires the journal
    to be complete. An ambiguous missing state stops for reviewed recovery.
-5. A protected canary/serving activation plan that keeps schedules held until
-   native artifact joins, ID counters, locale joins, and index/cache context
-   pass. Both WDPA assets must pass before their shared job resumes.
+5. A protected canary plan that keeps schedules held until native artifact joins,
+   ID counters, locale joins, and release/sidecar cache context pass. Exercise the
+   actual catalog with historical and new releases containing the same numeric
+   ID; each must display its own metadata in every locale. Keep Firestore lookup
+   inactive. Both WDPA assets must pass before their shared job resumes.
 
 The inherited-permission export is an external evidence requirement, not a
 request to grant broad new auditor permissions. Until those inputs are available,

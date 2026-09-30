@@ -79,6 +79,46 @@ responsePayload={...responsePayload,generation:999};
 await assert.rejects(vm.runInContext("requestSignedPmtilesUrl(old,{url:'/api/pmtiles/signed-url',configured:true})",context),/changed/);
 assert.match(vm.runInContext("downloadUrlRequestUrl(old.slug, old.date, old.canonical_file)",context),/generation=100/);
 
+// Retired/new contracts can reuse decimal 1: cache identity must include the
+// release, locale artifact, and generation, even when an old download finishes last.
+const localized = structuredClone(asset);
+for (const release of localized.versions) {
+  const canonical = api.metadataFile(release.files);
+  release.files.push({...canonical, locale:'es', generation:canonical.generation+10,
+    path:canonical.path.replace('.metadata.ndjson.gz','.metadata.es.ndjson.gz')});
+}
+const changedMetadata = structuredClone(localized);
+api.metadataFile(changedMetadata.versions[0].files).generation = 999;
+Object.assign(context, {
+  old:api.selectReleaseReference(localized,'2026-01-01',opts),
+  latest:api.selectReleaseReference(localized,'latest',opts),
+  updated:api.selectReleaseReference(changedMetadata,'latest',opts),
+});
+let finishOldMetadata;
+let metadataDownloads=0;
+const metadataRow=name=>new Map([['1',{feature_id:'1',found:true,properties:{name}}]]);
+context.downloadFeatureMetadataIndex=async (reference,locale)=>{
+  metadataDownloads++;
+  if(reference.date==='2026-01-01') return new Promise(resolve=>{finishOldMetadata=resolve;});
+  return metadataRow(`${reference.date}/${locale}/${api.metadataFile(reference.files,locale).generation}`);
+};
+vm.runInContext(['featureMetadataIndex','lookupFeatureMetadataFromIndex'].map(n=>extract(app,n)).join('\n'),context);
+const oldMetadata=vm.runInContext("featureMetadataIndex(old,'')",context);
+const oldMetadataRetry=vm.runInContext("featureMetadataIndex(old,'')",context);
+await vm.runInContext("featureMetadataIndex(latest,'')",context);
+await vm.runInContext("featureMetadataIndex(latest,'es')",context);
+await vm.runInContext("featureMetadataIndex(updated,'')",context);
+finishOldMetadata(metadataRow('Retired identity'));
+assert.equal((await oldMetadata).get('1').properties.name,'Retired identity');
+assert.equal(await oldMetadataRetry,await oldMetadata);
+assert.equal(await vm.runInContext("featureMetadataIndex(latest,'').then(index=>lookupFeatureMetadataFromIndex(['1'],index).get('1').properties.name)",context),'2026-09-22//202');
+assert.equal((await vm.runInContext("featureMetadataIndex(latest,'es')",context)).get('1').properties.name,'2026-09-22/es/212');
+assert.equal((await vm.runInContext("featureMetadataIndex(updated,'')",context)).get('1').properties.name,'2026-09-22//999');
+assert.equal(metadataDownloads,4);
+assert.equal(context.state.featureMetadataCache.size,4);
+assert.equal(context.state.featureMetadataRequests.size,0);
+context.old=old;
+
 // Actual hydration rejects malformed history and never filters it into absence.
 Object.assign(context,{RELEASE_DATE_RE:/^\d{4}-\d{2}-\d{2}$/, asset});
 vm.runInContext(['versionsFromReleaseIndex','releaseFileForFormat','releaseFilePath','releaseFileSha256','releaseFiles','releaseFormats','gsToHttps','basename'].map(n=>extract(app,n)).join('\n'),context);

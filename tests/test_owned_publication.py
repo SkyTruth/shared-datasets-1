@@ -70,6 +70,22 @@ class OwnedPublicationTests(unittest.TestCase):
         self.native = native.start()
         self.addCleanup(native.stop)
 
+    def test_first_release_requires_complete_translations_before_reserving_ids(self):
+        asset = wdpa.ASSETS[0]
+        with publication_temp_directory() as temporary:
+            publisher, store = publisher_fixture(asset)
+            approved = publisher.reset_translation_supplement(asset)
+            self.assertIn("/_scratch/pending-publishes/", approved.path)
+            outputs = outputs_fixture(Path(temporary), asset)
+            incomplete = replace(outputs, localization_report={**outputs.localization_report, "requested_rows_complete": False})
+            before = list(store.events)
+            with self.assertRaisesRegex(p.PublicationError, "complete approved translations"):
+                publish(publisher, asset, incomplete)
+            self.assertEqual(before, store.events)
+            publish(publisher, asset, outputs)
+            with self.assertRaisesRegex(p.PublicationError, "only available before"):
+                publisher.reset_translation_supplement(asset)
+
     def test_real_job_publishers_commit_complete_bundle_run_and_index_under_one_owner(self):
         for asset in (*wdpa.ASSETS, sea_ice.ASSET):
             with self.subTest(asset=asset.slug), publication_temp_directory() as temporary:

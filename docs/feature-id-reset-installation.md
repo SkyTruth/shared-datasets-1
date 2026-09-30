@@ -70,7 +70,21 @@ After restrictions are in force, choose a new release date and capture all
 current `latest/` object generations/hashes plus the matching old release
 manifest. The new release directory and run record must be absent. Retain the
 inventory and generated files in a named directory under the standard local
-temp root. The offline preparer can export the exact three canonical JSON files:
+temp root.
+
+The inventory's required `translation_supplement` field is `null` for sea ice.
+For each WDPA asset it is an object with exactly `path`, `generation`, and
+`sha256`, identifying the completed NDJSON supplement under the same bucket's
+`_scratch/pending-publishes/` prefix. Both WDPA inventories must name the same
+supplement. Stage the validated gap results first and include their provenance
+in review; the inventory binds their exact bytes into the adoption receipt.
+Installation fails if that generation or hash is unavailable. The runtime
+downloads and verifies the approved supplement for the first build, preserves
+established translations, and refuses an incomplete first release before
+reserving IDs. Later releases reuse their committed translation CSV and do not
+reload the reset supplement. No runtime path override is accepted.
+
+The offline preparer exports the exact three canonical JSON files:
 
 ```bash
 uv run python scripts/feature_id_reset.py \

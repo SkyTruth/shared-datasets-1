@@ -88,12 +88,16 @@ publication. The old Spanish-only placeholder writer has been removed.
 
 The scheduled job reuses existing translations and records gaps; it does not call
 Google at runtime. Future new text therefore remains visible as unresolved work
-until a reviewed translation update is incorporated. Local completed supplements
-must be bound into the reviewed first-release build inputs; the
+until a reviewed translation update is incorporated. The required
+`translation_supplement` in each WDPA reset inventory binds the staged object's
+exact path, generation, and SHA-256. Both assets must approve the same supplement.
+The pending-reset build verifies and consumes those bytes; incomplete translations
+block the first publication before any ID reservation. The
 [reset installer](../feature-id-reset-installation.md) only installs allocation
-state and does not promote a translation supplement. That first-build input
-binding remains unfinished. Later runs reuse the full CSV
-from their committed publication.
+state and does not promote a translation supplement. Later runs reuse the full
+CSV from their committed publication and do not reload the reset input. Missing
+or conflicting established translations may be filled; existing successful
+translations retain precedence.
 
 The integration still needs a native image run and peak-memory verification with
 the full geospatial build. The configured Cloud Run memory is 32 GiB; adding the
@@ -110,10 +114,13 @@ validated. The other four target results have not been requested. No new gap
 result has been imported or misclassified as completed.
 
 On continuation, a single direct-helper probe still returned `TooManyRequests`,
-and a fresh visible download attempt still returned no file. The completed
-Spanish translation page is retained. Switching the document workflow to Chrome
-is awaiting the user's browser choice; no new translation-provider result has
-been accepted.
+and a fresh visible download attempt still returned no file. That completed
+Spanish page is no longer available. A new workbook upload was blocked by
+automatic approval review because the exact transfer of potentially non-public
+metadata to Google Translate had not been explicitly authorized. Approval for
+that workbook and destination has been requested. Switching the document workflow
+to Chrome also awaits the user's browser choice. No new translation-provider
+result has been accepted.
 
 The local task directory is
 `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/wdpa-translation-rebuild/`.
@@ -176,8 +183,8 @@ feature/field/locale order, checks its original source hash and review state,
 and compares every localized record with the full canonical/CSV join. This also
 detects incorrect text in otherwise structurally valid locale files. Corrupted
 IDs, hashes, extra rows, translated values, and failed-row values are covered.
-Full-suite results after integrating the deployment hold: **1,061 passed,
-4 opt-in native skips, 1,208 subtests passed**. A separate opt-in native run passed
+Full-suite results after binding the approved reset supplement: **1,084 passed,
+4 opt-in native skips, 1,248 subtests passed**. A separate opt-in native run passed
 all **90 geospatial tests** after isolating a local PROJ database conflict; see
 the [readiness report](feature-id-readiness-2026-09-29.md) for tool versions and
 limits. The full production reset bundle still needs native verification.

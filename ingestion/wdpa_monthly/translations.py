@@ -48,12 +48,16 @@ def download_source(bucket, version: p.ObjectVersion, destination: Path, *, comp
 @contextmanager
 def prepare_memory(publisher, assets, workdir: Path):
     sources = []
+    supplement = None
     for asset in assets:
         versions = publisher.committed_artifacts(asset, suffixes=SUFFIXES)
         if versions is None:
             # This branch is reachable only through the explicit pending-reset
             # adoption state, never through a missing manifest or failed read.
             p.require(publisher.bucket.name == "skytruth-shared-datasets-1", "legacy reset evidence is pinned to the production dataset bucket")
+            approved = publisher.reset_translation_supplement(asset)
+            p.require(supplement is None or supplement == approved, "pending WDPA resets must approve the same shared translation supplement")
+            supplement = approved
             release = "2026-06-09"
             versions = {suffix: p.ObjectVersion(f"gs://{publisher.bucket.name}/{asset.root}/releases/{release}/{asset.slug}{suffix}", *pin)
                         for suffix, pin in zip(SUFFIXES, LEGACY[asset.slug], strict=True)}
@@ -68,7 +72,11 @@ def prepare_memory(publisher, assets, workdir: Path):
                         "provenance": {suffix: version.identity() for suffix, version in versions.items()}})
     database = workdir / "translation-memory.sqlite"
     build_memory(database=database, sources=sources, fields=FIELDS, locales=LOCALES, source_key_fields=("SITE_PID",))
-    memory = TranslationMemory(database)
+    supplement_path = None
+    if supplement is not None:
+        supplement_path = workdir / "translation-inputs" / "approved-supplement.ndjson"
+        download_source(publisher.bucket, supplement, supplement_path, compress=False)
+    memory = TranslationMemory(database, supplement=supplement_path)
     try:
         yield memory
     finally:

@@ -21,9 +21,12 @@ def fixture(slug="wdpa-marine", *, bucket="bucket"):
         objects.append(version.identity())
     old_release = store.write_bytes(f"{uri}/releases/2026-09-01/{slug}.manifest.json", b"old .manifest.json", 0, {}, "application/json", "")
     manifest = next(item for item in objects if item["path"].endswith(".manifest.json"))
+    supplement = (store.write_bytes(f"gs://{bucket}/_scratch/pending-publishes/wdpa/reset/supplement.ndjson", b"", 0, {}, "application/x-ndjson", "").identity()
+                  if slug.startswith("wdpa-") else None)
     candidate = reset.IdentityResetCandidate.build({
         "schema_version": 1, "asset_slug": slug, "bucket": bucket, "contract_id": reset.CONTRACT_ID,
         "first_release": "2026-10-01", "latest_objects": sorted(objects, key=lambda item: item["path"]),
+        "translation_supplement": supplement,
         "baseline": {"release": "2026-09-01", "release_manifest": old_release.identity(), "latest_manifest": manifest},
     })
     ctx = p.Context("a" * 64, "b" * 64, "c" * 40, p.FINALIZATION_VERSION, bucket, root, slug, reset.CONTRACT_ID)
@@ -188,9 +191,22 @@ class IdentityResetTests(unittest.TestCase):
             lambda value: value["latest_objects"].pop(),
             lambda value: value["latest_objects"][0].update(generation=True),
             lambda value: value["baseline"]["release_manifest"].update(sha256="f" * 64),
+            lambda value: value.pop("translation_supplement"),
+            lambda value: value.update(translation_supplement=None),
+            lambda value: value["translation_supplement"].update(generation=True),
+            lambda value: value["translation_supplement"].update(sha256="unverified"),
+            lambda value: value["translation_supplement"].update(path="gs://other/_scratch/pending-publishes/supplement.ndjson"),
+            lambda value: value["translation_supplement"].update(path="gs://bucket/unreviewed.ndjson"),
+            lambda value: value["translation_supplement"].update(path="gs://bucket/_scratch/pending-publishes/supplement.csv"),
         ]
         for mutate in mutations:
             value = copy.deepcopy(candidate.value)
             mutate(value)
             with self.subTest(value=value), self.assertRaises((p.PublicationError, model.ReleaseFeatureModelError)):
                 reset.IdentityResetCandidate.build(value)
+
+    def test_sea_ice_does_not_accept_a_translation_input(self):
+        _, wdpa, _ = fixture()
+        _, sea_ice, _ = fixture("ims-sea-ice-extent")
+        with self.assertRaisesRegex(p.PublicationError, "does not accept translation"):
+            reset.IdentityResetCandidate.build({**sea_ice.value, "translation_supplement": wdpa.value["translation_supplement"]})

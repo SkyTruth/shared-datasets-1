@@ -199,7 +199,7 @@ def fake_asset_outputs(
             "escalated_for_review": 0,
             "reviewed_decisions_applied": 0,
         },
-        localization_report={"valid": True, "applied_translation_count": 2},
+        localization_report={"valid": True, "requested_rows_complete": True, "applied_translation_count": 2},
     )
 
 

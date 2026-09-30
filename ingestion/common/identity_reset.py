@@ -45,13 +45,21 @@ class IdentityResetCandidate:
 
     def __post_init__(self) -> None:
         value = p.strict_json(self.encoded)
-        p.keys(value, {"schema_version", "asset_slug", "bucket", "contract_id", "first_release", "baseline", "latest_objects"}, "identity reset inventory")
+        p.keys(value, {"schema_version", "asset_slug", "bucket", "contract_id", "first_release", "baseline", "latest_objects", "translation_supplement"}, "identity reset inventory")
         p.require(type(value["schema_version"]) is int and value["schema_version"] == 1, "unsupported reset inventory version")
         slug = value["asset_slug"]
         p.require(isinstance(slug, str) and slug in ASSET_ROOTS, "asset is not approved for a pre-launch identity reset")
         p.require(value["contract_id"] == CONTRACT_ID, "reset must name the approved identity contract")
         # Context validates the bucket and canonical three-component root.
         p.Context("a" * 64, "b" * 64, "c" * 40, p.FINALIZATION_VERSION, value["bucket"], ASSET_ROOTS[slug], slug, value["contract_id"])
+        supplement = value["translation_supplement"]
+        if slug.startswith("wdpa-"):
+            p.identity_snapshot(supplement)
+            bucket, path = p.split_uri(supplement["path"])
+            p.require(bucket == value["bucket"] and path.startswith("_scratch/pending-publishes/") and path.endswith(".ndjson"),
+                      "WDPA reset requires a generation/hash-pinned staged translation supplement")
+        else:
+            p.require(supplement is None, "sea-ice reset does not accept translation inputs")
         baseline = value["baseline"]
         p.keys(baseline, {"release", "release_manifest", "latest_manifest"}, "retired baseline")
         p.require(p.valid_date(baseline["release"]) and p.valid_date(value["first_release"]) and value["first_release"] > baseline["release"], "reset requires a new dated release after the retired baseline")
@@ -123,7 +131,10 @@ class IdentityResetCandidate:
         p.require(store.head(f"{self.root_uri}/publications/state.json") is None, "identity state already exists; reset cannot be repeated")
         self.validate_anchors(store)
         value = self.value
-        for snapshot in (*value["latest_objects"], value["baseline"]["release_manifest"]):
+        snapshots = [*value["latest_objects"], value["baseline"]["release_manifest"]]
+        if value["translation_supplement"] is not None:
+            snapshots.append(value["translation_supplement"])
+        for snapshot in snapshots:
             version = store.inspect(snapshot["path"], snapshot["generation"])
             p.require(version is not None and version.identity() == snapshot, "captured object generation/hash is unavailable or changed")
 

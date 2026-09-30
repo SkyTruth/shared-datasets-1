@@ -154,6 +154,15 @@ class ResetInstallationTests(unittest.TestCase):
                     run_install(store, plan)
                 self.assertEqual(store.events, [])
 
+    def test_missing_or_changed_translation_supplement_refuses_before_installation(self):
+        store, candidate, _ctx, plan = installation_fixture()
+        supplement = candidate.value["translation_supplement"]
+        del store.history[(supplement["path"], supplement["generation"])]
+        before = list(store.events)
+        with self.assertRaisesRegex(p.PublicationError, "generation/hash"):
+            run_install(store, plan)
+        self.assertEqual(store.events, before)
+
     def test_drift_after_full_hash_validation_blocks_activation(self):
         store, candidate, ctx, plan = installation_fixture()
         calls = 0

@@ -137,6 +137,19 @@ class OwnedGeneratedPublisher(GcsPublisher):
         p.require(all(prefix + suffix in results for suffix in suffixes), "committed translation source bundle is incomplete")
         return {suffix: results[prefix + suffix] for suffix in suffixes}
 
+    def reset_translation_supplement(self, asset):
+        """Return the immutable first-build input approved by reset adoption."""
+        state = self.state(asset).value
+        p.require(state["current"]["receipt_uri"] == state["adoption_receipt"] and state["active"] is None,
+                  "translation supplement is only available before the first owned publication")
+        adoption = self.store.read_json(state["adoption_receipt"]).value
+        candidate = load_reset_candidate(self.store, self.context(asset), adoption)
+        snapshot = candidate.value["translation_supplement"]
+        p.require(snapshot is not None, "asset has no approved translation supplement")
+        version = self.store.inspect(snapshot["path"], snapshot["generation"])
+        p.require(version is not None and version.identity() == snapshot, "approved translation supplement is missing or changed")
+        return version
+
     def record_existing_successful_release(self, asset, run_date):
         # The owned commit already updated this index. Do not re-activate history.
         loaded = self.load_successful_run_record(asset, run_date)
@@ -204,6 +217,9 @@ class OwnedGeneratedPublisher(GcsPublisher):
             reset = load_reset_candidate(self.store, context, adoption)
             p.require(run_date.isoformat() == reset.value["first_release"] and outputs.previous_release is None and outputs.identity_baseline_snapshot is None,
                       "reset build must use the approved empty baseline and release")
+            if asset.slug.startswith("wdpa-"):
+                p.require(outputs.localization_report["requested_rows_complete"] is True,
+                          "first WDPA release requires complete approved translations")
         else:
             p.require(outputs.identity_baseline_snapshot is not None and asdict(outputs.identity_baseline_snapshot) == current["latest_manifest"], "builder used a stale identity baseline")
         p.require(outputs.identity_contract == CONTRACT_ID, "builder belongs to another identity contract")
