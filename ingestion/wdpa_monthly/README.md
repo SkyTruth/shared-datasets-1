@@ -232,8 +232,10 @@ chose to rebuild the ten old locale aliases identified in the
 [readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md).
 The publisher requires all six locale outputs. Local September-snapshot
 candidates now have complete requested-row coverage and validated CSV/locale
-joins. Machine wording still needs review; the complete new-ID release and its
-native validation remain prerequisites for cutover. Historical releases stay intact.
+joins. The new descriptions were corrected by the agent, and the user chose to
+preserve official names. The corrected supplement is staged for immutable reset
+review. The complete new-ID release and native validation remain prerequisites
+for cutover. Historical releases stay intact.
 
 Deployment remains blocked on the protected reset installation path, exclusion
 of older writers, and native artifact and serving checks. Both WDPA assets must

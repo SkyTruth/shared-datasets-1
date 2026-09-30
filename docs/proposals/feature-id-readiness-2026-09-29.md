@@ -9,7 +9,9 @@ production transition. Dataset lifecycle status is unchanged.
 This report accompanies the [fresh-start design](feature-id-fresh-start.md).
 Observations began at `2026-09-29T04:33:35Z`. They are snapshots, not a writer
 freeze, approval to publish, or certification of the complete effective IAM
-policy. No cloud writes, deployments, deletes, or merges were performed.
+policy. The original audit made no cloud writes. The later translation work
+staged three review objects under `_scratch/pending-publishes/`; no canonical
+writes, deployments, deletes, or merges were performed.
 
 ## Dataset decisions
 
@@ -75,14 +77,17 @@ Verified historical reuse supplied 99.9736% of requested rows; the imported
 machine-translation supplement filled the remaining 8,685 rows across 8,365
 unique field/locale/text tasks. All 32,891,400 requested rows are present, both
 pending-task files are empty, and every canonical/CSV/locale join passed.
-This certifies row coverage and file consistency, not linguistic quality: spot
-checks found wording requiring review. These remain current-ID rehearsal files,
+The agent then corrected all 67 new category/description strings and rebuilt both
+assets again. The user approved preserving official spelling for the 1,213 new
+names; source URLs are also preserved. The final supplement and review evidence
+are generation/hash-pinned in scratch staging. This is agent review, not human
+language certification. These remain current-ID rehearsal files,
 not the new-contract reset release. See the
 [translation rebuild report](wdpa-translation-rebuild-2026-09-29.md) for exact
 sources, output digests, key restoration evidence, and language-review limits.
 No alias deletion is needed for the selected approach, and none is authorized.
-Review the supplement and freeze/recheck the complete latest inventory under the
-writer fence before the eventual reviewed replacement.
+Include the corrected supplement in the immutable review and freeze/recheck the
+complete latest inventory under the writer fence before the eventual replacement.
 
 ## Observed writers and administrators
 
@@ -124,7 +129,12 @@ deny-policy reads returned **403 PERMISSION_DENIED**. An authorized organization
 administrator's policy export is required to close this evidence gap; this
 report does not propose granting the auditing agent broader permissions.
 Both organization endpoints were rechecked during the finishing pass and still
-returned 403. The code changes do not resolve that external evidence gap.
+returned 403. The September 30 organization evidence exporter also failed on
+the organization allow-policy read with 403 and produced no success evidence.
+An authorized administrator can run the exact read-only command in the
+[reset installation guide](../feature-id-reset-installation.md#authority-and-writer-restrictions).
+It exports the full organization allow/deny policies and custom roles without
+changing permissions or stopping jobs. Code cannot resolve this access gap.
 
 The live job inventory confirms the runtime accounts above. Image digests were:
 
@@ -178,8 +188,8 @@ re-enabling the old writer is not a recovery method.
 
 ## Local verification
 
-- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,084 passed, 4 skipped,
-  1,248 subtests passed**, including protected reset installation, immutable
+- `UV_CACHE_DIR=.uv-cache uv run --no-sync pytest -q`: **1,086 passed, 4 skipped,
+  1,251 subtests passed**, including protected reset installation, immutable
   authorization, paginated control-plane reads, translation rebuild integration and
   complete CSV/sidecar join validation. The default run leaves the four opt-in native checks disabled. Crash coverage uses a generation-aware in-memory store, not GCS
   failure injection in production.

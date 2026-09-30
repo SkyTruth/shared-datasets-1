@@ -203,17 +203,19 @@ production reset bundle still requires separate native validation.
 
 The read-only cloud snapshot captured current object metadata/manifests, bucket
 and project IAM, job identities/images, service-account access/key metadata, and
-available deny-policy evidence. No remote objects, IAM, or job configuration were changed. The implementation
+available deny-policy evidence. Later translation work staged three noncanonical
+review inputs; canonical data, IAM, and job configuration remain unchanged. The implementation
 and reports are on draft PR #154 for review, with the implementation checks green.
 Historical releases were preserved. The
 remaining work is reviewed installer activation, complete writer exclusion,
-language review and new-contract use of the
+new-contract use of the agent-reviewed, staged supplement from the
 [completed translation rehearsal](wdpa-translation-rebuild-2026-09-29.md),
 production serving checks, and reviewed cutover. The user chose rebuilding over
 retiring the ten old WDPA locale aliases. The local monthly producer now reuses
 verified source-keyed translations and rebuilds all six locales for both assets;
 the September rehearsal now has complete requested-row coverage and validated
-CSV/locale joins. Machine language quality is not approved by those checks.
+CSV/locale joins. All new descriptive strings have been agent-reviewed; the user
+approved preserving official names. No human language certification is claimed.
 
 ## Next review checkpoint
 

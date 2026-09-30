@@ -31,6 +31,33 @@ Its key is SHA-256 of the snapshot serialized with
 
 An administrator must first supply the missing inherited IAM evidence and review
 all effective writer, impersonation, deployment, group, and administrative paths.
+The repository includes a read-only export command for the missing organization
+evidence. An operator with existing access to organization `471193686670` can run
+this from the repository using their own Application Default Credentials:
+
+```bash
+WORK_ROOT="${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}"
+uv run --no-sync python scripts/export_feature_id_org_evidence.py \
+  --output "$WORK_ROOT/_scratch/feature-id-org-evidence/organization.json"
+```
+
+Return that JSON file and the SHA-256 printed on success through the normal
+private review channel. Do not send credentials or access tokens. The command
+verifies the project parent and exports the organization allow policy, every
+complete deny policy across all result pages, and full custom role definitions.
+It uses the existing control-plane reader, makes no cloud writes, does not
+require stopping running jobs, and neither approves a fence nor authorizes a
+reset. A denied/incomplete read produces no success evidence; existing output
+files are never replaced. Use a new named directory for a later snapshot.
+
+The underlying APIs are Google's
+[organization IAM policy read](https://docs.cloud.google.com/resource-manager/reference/rest/v3/organizations/getIamPolicy),
+[deny policy listing](https://docs.cloud.google.com/iam/docs/reference/rest/v2/policies/listPolicies),
+and [organization role listing](https://docs.cloud.google.com/iam/docs/reference/rest/v1/organizations.roles/list).
+The organization export closes that portion of the missing evidence only;
+group membership, other effective access paths, and cutover-time controls still
+need review. Do not grant the agent broader access merely to collect it.
+
 Infrastructure changes require a reviewed Terraform PR and a constrained
 protected apply workflow. This installer does not modify IAM or job configuration.
 The reviewed infrastructure change must provision

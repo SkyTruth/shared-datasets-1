@@ -2,9 +2,10 @@
 
 Status: twelve local locale sidecars rebuilt and fully join-validated against
 the September 1 metadata snapshot. Requested-row coverage is **100%**, with zero
-pending tasks. New machine wording still needs language review; coverage is not
-linguistic approval. Nothing has been published, deleted,
-merged, or deployed. The implementation and this report are on draft PR #154;
+pending tasks. All new category/description text has been reviewed and corrected
+by the agent; the user approved preserving official names. This is not human
+language certification. Three review-input objects are staged under `_scratch/`;
+no canonical objects were changed, and no merge or deployment was performed. The implementation and this report are on draft PR #154;
 generated data remains outside the repository. These are current-ID rehearsal candidates, not
 the new-contract reset release.
 
@@ -78,10 +79,10 @@ file consistency, not linguistic quality or native FGB/PMTiles correctness.
 
 Final report SHA-256 values bind the input and output digests recorded locally:
 
-| Asset | `completed/{asset}/reuse-report.json` SHA-256 |
+| Asset | `review-20260930/completed/{asset}/reuse-report.json` SHA-256 |
 | --- | --- |
-| marine | `eb8b0219086ca21968a12dea516829c09c3fa01c3409da93dd4d11e3c56b4ea5` |
-| terrestrial | `6ede2747745c51e6df7248bd3b639722db7e80a2d3b84b74c01848bf8ab8eeae` |
+| marine | `5c6b1240980a60fd344c7877bad111415d935d7f8b7f6c03a4987525edc12145` |
+| terrestrial | `e8437157e7e6f4427684c6d79ad92900217284af3db56f5b1839eacdb128f404` |
 
 ## Implemented monthly behavior
 
@@ -154,21 +155,60 @@ or hostnames; it does not repair pre-existing malformed source links. These URL
 rows are `source_provided`; other new rows remain `document_translated`, with
 machine provenance and no claim of human language review.
 
-The final `gap-supplement.ndjson` SHA-256 is
+The intermediate URL/whitespace-normalized `gap-supplement.ndjson` SHA-256 is
 `33c5aa2766179b1e75dce1f20b346c4d0d449ccfec0086a639a6baf4f6638acd`.
 The raw document-import supplement SHA-256 is
 `cc5adb3696c6d0b25789c76ae5cdcfaf26d7c91cd153732ad8123e2b68c98a0c`;
 the normalization report records every changed value and both digests.
 
-Coverage and source matching do not certify language quality. Spot checks found
-machine wording that needs review, including Portuguese rendering of
-`Área de Gestión de Hábitat de Especies` as housing for people with special
-needs. Preserve this distinction when reviewing the supplement: the files are
-complete machine-translation candidates, not approved human translations.
+### Completed agent review and staged input
+
+The Google document output included incorrect labels and untranslated Korean
+categories. The agent reviewed all 67 distinct non-name, non-URL gap strings and
+replaced their 402 field/locale tasks using a retained glossary. Examples include
+restoring the meaning of species habitat management, natural formations of state
+interest, ecological restoration, and buffer zones. Source spelling mistakes in
+`Aboretum`, `Narutal`, and `Retauración` were interpreted only in localized values;
+the canonical source values and their hashes remain unchanged.
+
+The user explicitly selected **preserve official names; translate descriptions**.
+All 7,273 new name tasks preserve the exact spelling of 1,213 official names and
+use `source_provided`. The 690 URL tasks also retain source bytes. These are
+intentional proper-name/address renderings, not failed provider fallbacks.
+The 402 corrected descriptive tasks use `machine_translated` with Codex
+provenance and an explicit “not human reviewed” note. Existing successful
+historical translations retain precedence and were not linguistically re-reviewed.
+Portuguese reuse remains explicit. No row is falsely labeled `human_reviewed`.
+
+Both full datasets were rebuilt again from this corrected supplement. Every
+canonical/CSV/locale join passed, all twelve locale files have the exact expected
+feature count, both pending-task files are empty, and all 32,891,400 requested
+rows are present. The mechanical checks do not certify native-speaker quality.
+
+Three new, noncanonical review objects were uploaded with `if_generation_match=0`.
+Each exact generation was downloaded again and its SHA-256 and size matched the
+local input. Their common prefix is:
+
+```text
+gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-feature-id-reset/pr-154-20260930/
+```
+
+| Object | Generation | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| `gap-supplement.ndjson` | `1790741746636085` | 3,180,459 | `83d0b86e761a2b2963f0e7b54d406242602e737835b8edeb279112067a5902b9` |
+| `glossary.json` | `1790741771511871` | 16,015 | `7c6a0d6da264425ee295dddf1b3b160ee66d3cf956a82df10cfaf2bb7056f964` |
+| `review-report.json` | `1790741773367347` | 2,752,288 | `17f2afeb840aa6f17cd068590777fe2fe2321ada28660ea51c5969d4dd7f779d` |
+
+The review report records the initially selected conservative name policy;
+the user subsequently confirmed that same policy without changing its bytes.
+This staging is review material, not a shared dataset contract or canonical
+promotion. Both future WDPA reset inventories can bind the supplement path,
+generation, and digest above after the writer fence and new release are reviewed.
+No immutable reset publication plan can be completed from the unfrozen inventory.
 
 The local task directory is
 `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/wdpa-translation-rebuild/`.
-It retains approximately 14 GB of task data:
+It retains approximately 19 GB of task data:
 
 - `source/`, `source-inventory.json`, and `download-manifest.json`: pinned inputs.
 - `reuse-config.json`, `reuse.sqlite`, and `index-report.json`: reusable source index.
@@ -180,18 +220,21 @@ It retains approximately 14 GB of task data:
   Projection IDs identify local requests, never WDPA features.
 - `gap-supplement.document-output.ndjson` and `gap-supplement.ndjson`: raw
   imported machine output and the source-URL/whitespace-normalized build input.
-- `completed/{asset}/`: full translation CSV, six locale sidecars, pending-task
-  list, and `reuse-report.json` with exact input/output digests and coverage.
+- `completed/{asset}/`: earlier Google-only rehearsal files, retained for audit.
+- `review-20260930/`: corrected glossary, supplement, exact before/after review,
+  staged object pins, full-suite results, and the denied organization export log.
+- `review-20260930/completed/{asset}/`: final full translation CSV, six locale
+  sidecars, empty pending-task file, and `reuse-report.json` with exact digests.
 
 The rebuild command is, with `TASK` set to that retained directory:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run --no-sync python scripts/feature_metadata_translation_reuse.py rebuild \
-  --database "$TASK/reuse.sqlite" --supplement "$TASK/gap-supplement.ndjson" \
+  --database "$TASK/reuse.sqlite" --supplement "$TASK/review-20260930/gap-supplement.ndjson" \
   --canonical-sidecar "$TASK/source/wdpa-marine/current/wdpa-marine.metadata.ndjson.gz" \
   --schema "$TASK/source/wdpa-marine/current/wdpa-marine.schema.json" \
   --asset-slug wdpa-marine --release 2026-09-01 \
-  --output-dir "$TASK/completed/wdpa-marine"
+  --output-dir "$TASK/review-20260930/completed/wdpa-marine"
 ```
 
 The terrestrial command changes the asset slug and corresponding paths. Output
@@ -199,8 +242,9 @@ directories must be new. Existing successful translations take precedence over
 the supplement. Both rebuilds stream and validate the entire canonical/CSV/locale
 join, including identity, original source hash, review state, and translated value.
 
-For the actual cutover, review the language output, stage the accepted supplement,
-and pin its exact generation/hash in both WDPA reset inventories. Rebuild again
+For the actual cutover, include the staged supplement and review evidence above
+in the immutable approval, pinning the exact generation/hash in both WDPA reset
+inventories. Rebuild again
 against the approved new-contract canonical metadata and release date, validate
 the complete native release and serving context, then use the protected reviewed
 publisher. These local commands do not authorize GCS publication or resolve the
@@ -217,8 +261,8 @@ feature/field/locale order, checks its original source hash and review state,
 and compares every localized record with the full canonical/CSV join. This also
 detects incorrect text in otherwise structurally valid locale files. Corrupted
 IDs, hashes, extra rows, translated values, and failed-row values are covered.
-Full-suite results after binding the approved reset supplement: **1,084 passed,
-4 opt-in native skips, 1,248 subtests passed**. A separate opt-in native run passed
+Full-suite results after the organization evidence exporter: **1,086 passed,
+4 opt-in native skips, 1,251 subtests passed**. A separate opt-in native run passed
 all **90 geospatial tests** after isolating a local PROJ database conflict; see
 the [readiness report](feature-id-readiness-2026-09-29.md) for tool versions and
 limits. The full production reset bundle still needs native verification.
@@ -226,4 +270,4 @@ limits. The full production reset bundle still needs native verification.
 Python tooling used the existing `uv` environment. A temporary `uv --with
 deep-translator` dependency cache was created for the provider check; project
 dependency files and the lockfile were unchanged. No Slack notification was sent:
-there was no dataset publication.
+there was no canonical dataset publication; the three uploads are review staging.
