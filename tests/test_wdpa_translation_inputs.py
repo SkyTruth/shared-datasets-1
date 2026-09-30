@@ -106,6 +106,55 @@ class TranslationInputTests(unittest.TestCase):
             with translations.prepare_memory(publisher, [SimpleNamespace(slug="wdpa-marine")], Path(temp)):
                 self.fail("must reject")
 
+    def test_partial_reset_retry_keeps_both_historical_translation_sources(self):
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            assets = [SimpleNamespace(slug=slug, root=slug) for slug in translations.LEGACY]
+            bundles = {}
+            for slug, release, name in (
+                ("wdpa-marine", "2026-06-09", "Moved area"),
+                ("wdpa-marine", "2026-09-30", "Remaining marine area"),
+                ("wdpa-terrestrial", "2026-06-09", "Existing terrestrial area"),
+            ):
+                source = record("1", name, name, release, slug)
+                source["properties"]["NAME_ENG"] = source["properties"].pop("name")
+                rows = [{**row("1", name, name + " " + locale), "field": "NAME_ENG", "locale": locale}
+                        for locale in translations.LOCALES]
+                bundles[slug, release] = source_bundle(root / slug / release, [source], rows)
+            current = {suffix: publication.ObjectVersion(
+                f"gs://skytruth-shared-datasets-1/wdpa-marine/releases/2026-09-30/wdpa-marine{suffix}", 42, "a" * 64, 1)
+                for suffix in translations.SUFFIXES}
+            supplement = publication.ObjectVersion("gs://skytruth-shared-datasets-1/_scratch/supplement.ndjson", 77,
+                                                   hashlib.sha256(b"").hexdigest(), 0)
+            approved = mock.Mock(return_value=supplement)
+            publisher = SimpleNamespace(
+                bucket=SimpleNamespace(name="skytruth-shared-datasets-1"),
+                committed_artifacts=lambda asset, suffixes: current if asset.slug == "wdpa-marine" else None,
+                reset_translation_supplement=approved,
+            )
+
+            def download(bucket, version, destination, *, compress):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if version == supplement:
+                    destination.write_bytes(b"")
+                    return
+                slug = version.path.split("/releases/")[0].rsplit("/", 1)[-1]
+                release = version.path.split("/releases/")[1].split("/", 1)[0]
+                bundle = bundles[slug, release]
+                data = Path(bundle["translation_source" if compress else "canonical_sidecar"]).read_bytes()
+                destination.write_bytes(gzip.compress(data) if compress else data)
+
+            with patch.object(translations, "download_source", side_effect=download):
+                with translations.prepare_memory(publisher, assets, root / "work") as memory:
+                    self.assertEqual(memory.direct("wdpa-terrestrial", '["Moved area"]'), {})
+                    for locale in translations.LOCALES:
+                        with self.subTest(locale=locale):
+                            shared = memory.shared(memory.slots.index(("NAME_ENG", locale)), source_value_hash("Moved area"))
+                            self.assertIsNotNone(shared, "retry lost the moved area's historical translation")
+                            self.assertEqual(shared[1], "Moved area " + locale)
+                    self.assertEqual({source["release"] for source in memory.source_report["sources"]}, {"2026-06-09"})
+            approved.assert_called_once_with(assets[1])
+
     def test_first_build_downloads_the_approved_supplement_and_preserves_prior_work(self):
         with publication_temp_directory() as temp:
             root = Path(temp)

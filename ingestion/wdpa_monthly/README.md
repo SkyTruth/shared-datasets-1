@@ -46,13 +46,16 @@ site-specific. Existing review states and notes are retained for direct matches;
 phrase reuse is marked `reused_translation`.
 
 The job downloads the exact canonical metadata and translation CSV generations
-recorded in its last committed publication receipt. Only the explicit first-reset
-state uses the verified June 9 legacy source bundles pinned in `translations.py`.
+recorded in its last committed publication receipt. While either asset is in the
+explicit first-reset state, both assets use the verified June 9 legacy source
+bundles pinned in `translations.py`. Keeping that pair fixed across retries
+preserves translations for protected areas that move between marine and terrestrial.
 That state also binds a reviewed gap supplement by staged object path, generation,
 and SHA-256. Both assets must approve the same supplement; the first build verifies
 and consumes it without replacing established translations. The first new release
 must have complete requested translations before the publisher reserves IDs.
-Later builds use their committed CSV and do not reload the reset supplement.
+Once both first publications finish, later builds use their committed CSV and
+do not reload the reset supplement.
 Missing state or an incomplete committed bundle fails; it does not select arbitrary
 `latest/` files. One disposable SQLite index serves both WDPA assets. Large CSVs
 are streamed and the downloaded copies are locally compressed.
