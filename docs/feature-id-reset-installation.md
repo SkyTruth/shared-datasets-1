@@ -42,6 +42,15 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    verifies the immutable authority before authentication and rechecks review
    acceptance, the paused schedule, and every page of execution status before
    each write. A running/pending/reconciling execution or failed read stops it.
+   If GitHub rejects the PR-event job because `refs/pull/.../merge` is outside
+   the production environment's allowed branches, run the existing workflow
+   from `main` with `pr_number` set to that merged PR. This restricted retry
+   verifies the same immutable plan and review authority; no environment-policy
+   change is needed. For example:
+
+   ```bash
+   gh workflow run publish-dataset.yml --ref main -f pr_number=<merged-reset-pr>
+   ```
 4. Run the existing ingestion deployment workflow from reviewed `main`, setting
    `canary_run_date` to the first release date in the reset plan. Sea ice searches
    upstream from this date; confirm its available source date matches the plan.
