@@ -1,0 +1,128 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "wdpa-marine",
+    "breaking_changes": [],
+    "identity_reset": {
+      "inventory": {
+        "asset_slug": "wdpa-marine",
+        "baseline": {
+          "latest_manifest": {
+            "generation": 1788256151368457,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+            "sha256": "ec4e4a8ab89aa8db6cce52cfac850dbf616d99c33dc260e8b2c70e9077e6cf65"
+          },
+          "release": "2026-09-01",
+          "release_manifest": {
+            "generation": 1788256151130555,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-09-01/wdpa-marine.manifest.json",
+            "sha256": "ec4e4a8ab89aa8db6cce52cfac850dbf616d99c33dc260e8b2c70e9077e6cf65"
+          }
+        },
+        "bucket": "skytruth-shared-datasets-1",
+        "contract_id": "generated-2026-v1",
+        "first_release": "2026-09-30",
+        "latest_objects": [
+          {
+            "generation": 1788256146711304,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.fgb",
+            "sha256": "2104e71d5dc9f8fa2492156c061730a67d2ac7671e67ebaf5d383c892af36ba7"
+          },
+          {
+            "generation": 1788256151368457,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+            "sha256": "ec4e4a8ab89aa8db6cce52cfac850dbf616d99c33dc260e8b2c70e9077e6cf65"
+          },
+          {
+            "generation": 1788256150548816,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata-translations.csv",
+            "sha256": "2164a75e398f9c0fdd45ec5e9d74b60e462c01e032d7199f308e21f932d0b53d"
+          },
+          {
+            "generation": 1788256150163960,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.es.ndjson.gz",
+            "sha256": "7ee122e1527db8735504aef4502858278e76a175dbdc3e4153df3222a3ce8711"
+          },
+          {
+            "generation": 1781544092845673,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.fr.ndjson.gz",
+            "sha256": "70d0b42fd962f82d66f93c43dd5fd43217023ac4e334df22bdcdebb12ada0088"
+          },
+          {
+            "generation": 1781544093948055,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.id.ndjson.gz",
+            "sha256": "61e9c6677060c084e284a972fe1c79decd1fbf76a9800a69be8f955085e2ba84"
+          },
+          {
+            "generation": 1788256149578158,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.ndjson.gz",
+            "sha256": "7ee122e1527db8735504aef4502858278e76a175dbdc3e4153df3222a3ce8711"
+          },
+          {
+            "generation": 1781544094938014,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt.ndjson.gz",
+            "sha256": "79f989ef8c79ecd5e138b6fd7f5874367b15941ec54aeebb821c73c09a8e32c4"
+          },
+          {
+            "generation": 1781544095960264,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt_br.ndjson.gz",
+            "sha256": "79f989ef8c79ecd5e138b6fd7f5874367b15941ec54aeebb821c73c09a8e32c4"
+          },
+          {
+            "generation": 1781544096873065,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.sw.ndjson.gz",
+            "sha256": "249ae7007fe8cc931882f31cca075d91981c67624e2bcaa1423379b2b300ef59"
+          },
+          {
+            "generation": 1788256149177911,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.pmtiles",
+            "sha256": "a14b7cbf96d0ecf09618db4e54f742f63214aeb1def9e37e3b1b94228a459a5b"
+          },
+          {
+            "generation": 1788256150861949,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.schema.json",
+            "sha256": "dd9881edca025abf843de68699512064c2e5f99db7b1ef00736238b712069857"
+          }
+        ],
+        "schema_version": 1,
+        "translation_supplement": {
+          "generation": 1790741746636085,
+          "path": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-feature-id-reset/pr-154-20260930/gap-supplement.ndjson",
+          "sha256": "83d0b86e761a2b2963f0e7b54d406242602e737835b8edeb279112067a5902b9"
+        }
+      }
+    },
+    "promotions": [
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/publications/inputs/d4b8a687bf00e3d0097092ae5fa382de0183dbc51e93067562439c19de4540b1/0.catalog.json",
+        "source_generation": "1790744989262765",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/prelaunch-feature-id-reset-20260930/0.json"
+      },
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/publications/receipts/55534244caeb6bd5af63610083e0b64812d9b9eb5dadcc241802a08cfa1963cd.json",
+        "source_generation": "1790744990992416",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/prelaunch-feature-id-reset-20260930/1.json"
+      },
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/publications/state.json",
+        "source_generation": "1790744992600670",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/prelaunch-feature-id-reset-20260930/2.json"
+      }
+    ],
+    "proposal_id": "prelaunch-feature-id-reset-20260930",
+    "release_index_asset_slugs": []
+  }
+}
