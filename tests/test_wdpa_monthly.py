@@ -586,17 +586,25 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
             build_memory(database=tmp_path / "memory.sqlite", sources=[bundle], fields=["NAME_ENG"], locales=wdpa.translations.LOCALES, source_key_fields=["SITE_PID"])
             memory = TranslationMemory(tmp_path / "memory.sqlite")
             self.addCleanup(memory.close)
-            outputs = wdpa.build_asset_outputs(
-                source=source,
-                source_layers=layers,
-                source_fields=source_fields,
-                asset=wdpa.ASSETS[0],
-                where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
-                workdir=tmp_path,
-                run_date=dt.date(2026, 5, 1),
-                baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
-                translation_memory=memory,
-            )
+            build_pmtiles = wdpa.build_pmtiles
+
+            def build_without_raw_geometry(geojsonseq, asset, output):
+                self.assertFalse((tmp_path / f"{asset.slug}.geojsonseq").exists())
+                self.assertTrue(geojsonseq.exists())
+                return build_pmtiles(geojsonseq, asset, output)
+
+            with mock.patch.object(wdpa, "build_pmtiles", side_effect=build_without_raw_geometry):
+                outputs = wdpa.build_asset_outputs(
+                    source=source,
+                    source_layers=layers,
+                    source_fields=source_fields,
+                    asset=wdpa.ASSETS[0],
+                    where=wdpa.asset_where_clause(wdpa.ASSETS[0], split_field),
+                    workdir=tmp_path,
+                    run_date=dt.date(2026, 5, 1),
+                    baseline=wdpa.release_feature_model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
+                    translation_memory=memory,
+                )
 
             self.assertEqual(outputs.row_count, 4)
             self.assertEqual(outputs.previous_generated_feature_id, 1)

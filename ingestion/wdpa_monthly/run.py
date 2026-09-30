@@ -743,6 +743,9 @@ def build_asset_outputs(
         baseline=baseline,
         identity_resolution_decisions=identity_resolution_decisions,
     )
+    # Both source passes are complete. Release the raw geometry copy before
+    # translations and tiling compete for Cloud Run's memory-backed storage.
+    remove_if_exists(geojsonseq)
     schema_payload = release_outputs.schema_payload
     feature_metadata.write_schema(schema_payload, schema)
     localized_dir = workdir / f"{asset.slug}-localized"
@@ -753,7 +756,6 @@ def build_asset_outputs(
     if not localization_report["requested_rows_complete"]:
         LOGGER.warning("%s has %s unique unresolved translation tasks; canonical values retained", asset.slug, localization_report["unique_pending_tasks"])
     build_pmtiles(enriched_geojsonseq, asset, pmtiles)
-    remove_if_exists(geojsonseq)
 
     convert_geojsonseq_to_fgb(enriched_geojsonseq, asset, fgb)
     remove_if_exists(enriched_geojsonseq)

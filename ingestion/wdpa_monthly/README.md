@@ -133,8 +133,9 @@ touch this job, `ingestion/common/`, the copied `scripts/` modules, reviewed
 `catalog/feature-identity-resolutions/` decisions, or the job Terraform builds
 a fresh image from `main`, smoke-tests it, pushes an immutable digest, applies
 only `module.wdpa_monthly_job.google_cloud_run_v2_job.this`, and starts an
-async canary execution. The image ships the feature-identity resolutions
-directory, so merging reviewed ambiguity decisions redeploys the job and the
+async canary execution. If the schedule is paused, deployment skips the canary
+unless the dispatch supplies an explicit `canary_run_date`. The image ships the
+feature-identity resolutions directory, so merging reviewed ambiguity decisions redeploys the job and the
 next scheduled attempt picks them up. Use the workflow's `canary_run_date`
 dispatch input for a deliberate backfill or metadata-contract repair run. Do
 not deploy this job with a local `terraform apply` or by pushing hand-built

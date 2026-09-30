@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import os
 import re
 import shutil
 import subprocess
@@ -113,6 +114,36 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("RUN_DATE=${CANARY_RUN_DATE}", canary_run)
         watch_run = steps["Watch wdpa-monthly canary"]["run"]
         self.assertIn("gcloud run jobs executions describe", watch_run)
+        self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
+
+    def test_paused_schedule_requires_explicit_canary_date(self):
+        steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
+        script = steps["Resolve in-flight canary"]["run"]
+        fake_gcloud = '''gcloud() {
+          if [[ "$1" == scheduler ]]; then
+            printf '%s\\n' "$TEST_SCHEDULE_STATE"
+          elif [[ "$1 $2 $3" == "run jobs executions" ]]; then
+            echo queried >> "$TEST_EXECUTION_QUERIES"
+          else
+            return 1
+          fi
+        }
+        '''
+        for state, date, expected in (("PAUSED", "", "false"), ("PAUSED", "2026-09-30", "true"), ("ENABLED", "", "true")):
+            with self.subTest(state=state, date=date), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                queries = Path(tmp) / "queries"
+                result = subprocess.run(
+                    ["bash", "-c", fake_gcloud + script],
+                    env={**os.environ, "TEST_SCHEDULE_STATE": state, "CANARY_RUN_DATE": date,
+                         "CANCEL_RUNNING_CANARY": "false", "GITHUB_OUTPUT": str(output),
+                         "TEST_EXECUTION_QUERIES": str(queries), "JOB_NAME": "wdpa-monthly",
+                         "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1"},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_text().strip(), f"run_canary={expected}")
+                self.assertEqual(queries.exists(), expected == "true")
 
     def test_declared_docker_script_copies_import_without_repo_fallback(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")

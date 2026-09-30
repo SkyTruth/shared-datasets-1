@@ -249,8 +249,17 @@ jobs:
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
           set -euo pipefail
+
+          schedule_state="$(gcloud scheduler jobs describe "${JOB_NAME}" \
+            --location="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(state)')"
+          if [[ "${schedule_state}" == PAUSED && -z "${CANARY_RUN_DATE}" ]]; then
+            echo "run_canary=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Schedule is paused; deploy only. Use canary_run_date for a deliberate rollout execution."
+            exit 0
+          fi
 
           # A merge that only touches workflow files still rebuilds the image and
           # would start a second canary alongside one already publishing. That
@@ -305,6 +314,7 @@ jobs:
           echo "WDPA_CANARY_EXECUTION=${execution_name}" >> "${GITHUB_ENV}"
 
       - name: Watch wdpa-monthly canary
+        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
         run: |
           set -euo pipefail
 
