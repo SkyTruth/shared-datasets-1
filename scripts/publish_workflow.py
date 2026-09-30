@@ -29,6 +29,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_csv
+from ingestion.common.identity_reset import require_unmanaged_target
+from ingestion.common.publication import is_protocol_namespace, require, split_uri
 
 CATALOG_CSV_PATH = str(catalog_csv.DEFAULT_CATALOG_CSV)
 SCHEMA_SUFFIXES = {".fgb", ".geojson", ".ndgeojson", ".csv"}
@@ -50,6 +52,16 @@ def repository() -> str:
 
 def load_plan(plan_json: str) -> dict[str, Any]:
     return json.loads(pathlib.Path(plan_json).read_text())
+
+
+def require_unmanaged_plan(plan: dict[str, Any]) -> None:
+    """Reject the entire plan before any item can mutate managed publication."""
+    uris = [item["destination_uri"] for item in plan.get("promotions", [])]
+    uris.extend(item["uri"] for item in plan.get("deletions", []))
+    for uri in uris:
+        _bucket, name = split_uri(uri)
+        require_unmanaged_target(name)
+        require(not is_protocol_namespace(name), "publication operational objects require their own executor")
 
 
 def plan_asset_slug() -> str:
@@ -179,6 +191,7 @@ def command_collect_proposed_catalog_row(args: argparse.Namespace) -> int:
 
 def command_validate_plan_paths(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
+    require_unmanaged_plan(plan)
     if args.plan_type == "publish":
         uris = [promotion["destination_uri"] for promotion in plan["promotions"]]
     else:
@@ -315,6 +328,7 @@ def command_promote(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
     asset_slug = plan["asset_slug"]
     row = catalog_row(asset_slug)
+    require_unmanaged_plan(plan)
     for index, promotion in enumerate(plan["promotions"], start=1):
         print(f"Promoting object {index} of {len(plan['promotions'])}: {promotion['destination_uri']}")
         subprocess.run(gcs_asset_args("stat", promotion["source_uri"]), check=True)
@@ -653,6 +667,7 @@ def command_delete_scratch_sources(args: argparse.Namespace) -> int:
 
 def command_delete_canonical_objects(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
+    require_unmanaged_plan(plan)
     for index, deletion in enumerate(plan["deletions"], start=1):
         print(f"Deleting object {index} of {len(plan['deletions'])}: {deletion['uri']}")
         subprocess.run(gcs_asset_args("stat", deletion["uri"]), check=True)

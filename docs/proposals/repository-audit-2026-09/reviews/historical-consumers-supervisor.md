@@ -1,0 +1,17 @@
+> Preserved planning/review record. See the [archive index](../README.md). Statuses, approvals, commands and test results describe their recorded checkpoint; this document is not a new execution authorization.
+
+# D supervisor review
+
+Decision: source accepted after revisions. No merge/deploy performed. Branch `codex/audit-historical-consumers`; 21 final file hashes and frozen patch verified independently. Patch SHA-256 `0989bb47f969e92ccb849a1ff87220ee861f246cc98e49f9d7255fca41a19569`.
+
+Read final production changes and behavioral tests/docs; required backend-enforced lookup provenance rather than echoing requested generations, actual hydration boundary rejection, true404-only TypeScript legacy fallback, source-language notice for bounded canonical lookup, metadata capability notes, and cancellation of pending map imports/library requests/feature inspector responses.
+
+Independent Python targeted suite: **106 passed, 174 subtests**. Existing read-only TypeScript compiler passed; **31 Node tests passed** after constructing the full external test package (initial root setup lacked source/README for two portability tests; source required no correction). Evidence: `evidence/historical-consumers/root-targeted.txt` and `root-ts-tests-final.txt`. Full D patch applied without conflicts to the combined review worktree; diff check passed.
+
+Real browser QA used the actual localhost catalog app and native-verified synthetic PMTiles. Internal current selection rendered b2 / New footprint 2 / 2026-09-22. Historical internal and public selections rendered a2 / Old footprint 2 / 2026-01-01, with FGB/PMTiles links pinned to generations100/101. Private403 and generation409 removed the prior map/inspector and showed the refusal. Restored private access rendered b2 / New footprint 2 / 2026-09-22. Temporary browser tabs closed; fixture control flags restored. This proves rendered behavior with simulated transport/authentication, not live cloud authorization or retention. Agent native validation records exact tools/archive checks in its handoff.
+
+The checked-in CDN backend uses the canonical bucket and default cache key behavior. Google's [Cloud CDN caching documentation](https://docs.cloud.google.com/cdn/docs/caching) specifies that recognized Cloud Storage parameters such as generation participate in backend-bucket cache identity. This is documentation/static configuration verification, not a live edge test.
+
+Invariant enforced: tiles, metadata, schemas, lookup responses and downloads belong to one captured release/object-generation snapshot. Boundary changed: strict index selection and catalog-owned signer selection; actual GCS backend provenance. Removed duplicated file resolvers, date-only caches, missing-version fallback, top-level indexed-latest override and unpinned SDK retry. Kept documented legacy map-only aliases and locale fallback; rejected unknown/malformed-index fallback and unverified Firestore joins.
+
+Release conditions: deploy viewer and feature response contracts with browser; transition restricted TypeScript callers to exact authorized descriptors before adopting nullable layer URLs. Existing missing-generation indexes need reviewed repair evidence; no migration here. Live IAP/CDN, old-generation availability and catalog authorization-cache freshness remain unverified/outside scope. No change to access policy, dependencies, Terraform, remote objects, Git index/history or main checkout.

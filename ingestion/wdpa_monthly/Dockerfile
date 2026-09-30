@@ -19,8 +19,10 @@ RUN set -eux; \
 
 FROM python:3.12-slim-bookworm
 
+ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -41,6 +43,7 @@ RUN pip install --no-cache-dir google-cloud-storage
 
 COPY ingestion ./ingestion
 COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
+COPY scripts/feature_metadata_translation_reuse.py ./scripts/feature_metadata_translation_reuse.py
 COPY scripts/translation_local_io.py ./scripts/translation_local_io.py
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py

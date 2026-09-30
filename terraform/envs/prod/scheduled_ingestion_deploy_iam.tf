@@ -6,6 +6,7 @@ resource "google_project_iam_custom_role" "scheduled_ingestion_deployer" {
   permissions = [
     "cloudscheduler.jobs.enable",
     "cloudscheduler.jobs.get",
+    "cloudscheduler.jobs.pause",
     "run.executions.get",
     "run.executions.list",
     "run.jobs.get",

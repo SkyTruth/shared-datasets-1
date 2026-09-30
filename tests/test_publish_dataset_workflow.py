@@ -20,6 +20,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(checkouts, [
             ("reviewed_pr_plans", {"ref": "${{ github.workflow_sha }}"}, None),
+            ("install-approved-identity-reset", {"ref": "${{ needs.reviewed_pr_plans.outputs.executor_sha }}"}, None),
             ("apply-approved-pr-plans", {"ref": "${{ needs.reviewed_pr_plans.outputs.executor_sha }}"}, None),
         ])
 

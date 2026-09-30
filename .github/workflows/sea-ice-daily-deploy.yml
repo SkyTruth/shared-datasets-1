@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/sea-ice-daily-deploy.yml"
       - "catalog/feature-identity-resolutions/**"
+      - "scripts/publication_rollout_gate.py"
       - "ingestion/common/**"
       - "ingestion/sea_ice_daily/**"
       - "scripts/pmtiles_zoom.py"
@@ -21,6 +22,11 @@ on:
       - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      canary_run_date:
+        description: "Optional source search date (YYYY-MM-DD) for the first reviewed feature-ID release or a backfill."
+        required: false
+        type: string
+        default: ""
       cancel_running_canary:
         description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
         required: false
@@ -100,6 +106,23 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync Python dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Verify feature-ID publication state
+        run: uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
@@ -110,6 +133,7 @@ jobs:
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
           docker build \
             --platform linux/amd64 \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
             -f ingestion/sea_ice_daily/Dockerfile \
             -t "${image_tag}" \
             .
@@ -307,27 +331,20 @@ jobs:
 
       - name: Execute sea-ice-daily canary
         if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        env:
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
           set -euo pipefail
 
-          gcloud run jobs execute "${JOB_NAME}" \
-            --region="${REGION}" \
-            --project="${GOOGLE_CLOUD_PROJECT}" \
-            --wait
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Sync Python dependencies
-        run: uv sync --locked --all-groups
+          execute_args=("${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --wait)
+          if [[ -n "${CANARY_RUN_DATE}" ]]; then
+            if [[ ! "${CANARY_RUN_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "canary_run_date must be YYYY-MM-DD, got: ${CANARY_RUN_DATE}" >&2
+              exit 1
+            fi
+            execute_args+=("--update-env-vars=RUN_DATE=${CANARY_RUN_DATE}")
+          fi
+          gcloud run jobs execute "${execute_args[@]}"
 
       - name: Validate latest IMS release contract
         run: |
@@ -437,6 +454,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily --require-published
           gcloud scheduler jobs resume "${JOB_NAME}" \
             --location="${REGION}" \
             --project="${GOOGLE_CLOUD_PROJECT}"

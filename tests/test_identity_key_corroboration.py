@@ -15,7 +15,7 @@ from __future__ import annotations
 import unittest
 
 from ingestion.common import feature_metadata
-from release_streaming_helpers import write_generated_release
+from release_streaming_helpers import write_generated_release, synthetic_baseline
 from scripts import release_feature_model as model
 
 
@@ -293,6 +293,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_decisions_travel_inside_the_published_manifest_identity(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=304611,
@@ -301,6 +302,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
                 key_corroborated=15229,
                 resolutions=(),
             ),
+            next_generated_feature_id_before_release=1,
         )
 
         self.assertEqual(identity["decisions"]["auto_resolved_key_corroborated"], 15229)
@@ -309,9 +311,11 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_manifests_published_before_decision_provenance_stay_valid(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=1,
+            next_generated_feature_id_before_release=1,
         )
 
         self.assertNotIn("decisions", identity)
@@ -319,6 +323,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
 
     def test_unaccounted_escalations_are_rejected(self):
         identity = model.build_identity_metadata(
+            contract_id="test-v1",
             strategy="generated_sequence_source_fields",
             source_fields=["SITE_PID"],
             next_generated_feature_id_after_release=1,
@@ -327,6 +332,7 @@ class IdentityDecisionProvenanceTests(unittest.TestCase):
                 key_corroborated=3,
                 resolutions=(),
             ),
+            next_generated_feature_id_before_release=1,
         )
         identity["decisions"]["escalated_for_review"] = 2
 
@@ -436,10 +442,10 @@ class KeepPreviousKeyMappingTests(unittest.TestCase):
 
         assigned = model.assign_generated_feature_ids(
             [("555682754",)],
-            previous_records=self.baseline(),
+            baseline=synthetic_baseline(self.baseline()),
             feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
             force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
-        )
+        ).ids_by_key
         self.assertEqual(assigned[("555682754",)], "300616")
 
     def test_reusing_the_matched_feature_id_is_still_refused(self):
@@ -452,9 +458,9 @@ class KeepPreviousKeyMappingTests(unittest.TestCase):
         ):
             model.assign_generated_feature_ids(
                 [("555682754",)],
-                previous_records=self.baseline(),
+                baseline=synthetic_baseline(self.baseline()),
                 feature_id_overrides=model.resolved_feature_id_overrides(resolutions),
-            )
+            ).ids_by_key
 
     def test_keeping_the_mapping_rejects_a_reuse_feature_id(self):
         decision, ambiguity = self.decision("keep_previous_key_mapping", reuse_feature_id="300615")
@@ -473,9 +479,9 @@ class KeepPreviousKeyMappingTests(unittest.TestCase):
 
         assigned = model.assign_generated_feature_ids(
             [("555682754",)],
-            previous_records=self.baseline(),
+            baseline=synthetic_baseline(self.baseline()),
             force_new_identity_keys=model.resolved_force_new_identity_keys(resolutions),
-        )
+        ).ids_by_key
         self.assertNotEqual(assigned[("555682754",)], "300616")
 
     def test_the_action_is_reported_in_published_provenance(self):

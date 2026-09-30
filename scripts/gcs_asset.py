@@ -30,6 +30,9 @@ from rich import print
 from rich.console import Console
 from rich.table import Table
 
+from ingestion.common.identity_reset import require_unmanaged_target
+from ingestion.common.publication import is_protocol_namespace, protocol_path_kind
+
 app = typer.Typer(no_args_is_help=True)
 release_index_app = typer.Typer(no_args_is_help=True)
 app.add_typer(release_index_app, name="release-index")
@@ -73,11 +76,14 @@ def get_blob(uri: str) -> storage.Blob:
     return get_client().bucket(bucket_name).blob(name)
 
 
-def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool = False) -> None:
+def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool = False, expected_generation: int | None = None) -> None:
     """Refuse non-scratch mutations unless an approved runtime explicitly opts in."""
     _bucket_name, name = parse_gs_uri(uri)
     if not name:
         raise typer.BadParameter(f"{operation} requires an object URI, not a bucket root")
+    require_unmanaged_target(name, expected_generation=expected_generation if operation == "upload" and not unsafe_overwrite else None)
+    if is_protocol_namespace(name):
+        raise typer.BadParameter("publication state, receipts, and checkpoints require the publication executor")
     is_scratch = name.startswith("_scratch/")
     if unsafe_overwrite and not is_scratch:
         raise typer.BadParameter("--unsafe-overwrite is only allowed for _scratch/ objects")
@@ -158,6 +164,8 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
         return ["root-level bucket objects are noncanonical; use a reserved system prefix or asset root"]
 
     top = parts[0]
+    if top == "_catalog" and len(parts) > 1 and parts[1] == "publications":
+        return [] if protocol_path_kind(name) == "receipt" else ["invalid global publication receipt path"]
     if top in RESERVED_TOP_LEVEL:
         return []
     if top not in categories:
@@ -178,6 +186,10 @@ def validate_asset_object_name(name: str, categories: dict[str, set[str]]) -> li
         errors.append("asset root object is missing README.md/latest/releases/runs path")
         return errors
     if rel == ["README.md"]:
+        return errors
+    if rel[0] == "publications":
+        if protocol_path_kind(name) is None:
+            errors.append("invalid publication state/receipt/checkpoint path")
         return errors
     if rel[0] == "latest":
         if rel == ["latest", "manifest.json"]:
@@ -328,7 +340,8 @@ def upload(
     Use --unsafe-overwrite only when explicitly approved.
     """
     ensure_expanded_local_path(src, label="upload source")
-    require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite)
+    require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite,
+                             expected_generation=0 if replace_generation is None else replace_generation)
     blob = get_blob(uri)
     if cache_control:
         blob.cache_control = cache_control

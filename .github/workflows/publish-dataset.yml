@@ -53,6 +53,7 @@ jobs:
     outputs:
       has_publish_plan: ${{ steps.capture.outputs.has_publish_plan }}
       has_delete_plan: ${{ steps.capture.outputs.has_delete_plan }}
+      has_identity_reset_plan: ${{ steps.capture.outputs.has_identity_reset_plan }}
       envelope_sha256: ${{ steps.capture.outputs.envelope_sha256 }}
       executor_sha: ${{ steps.capture.outputs.executor_sha }}
       artifact_id: ${{ steps.artifact.outputs.artifact-id }}
@@ -86,6 +87,75 @@ jobs:
           path: authorization/authorization.json
           if-no-files-found: error
           retention-days: 90
+
+  install-approved-identity-reset:
+    name: Install reviewed feature-ID reset
+    needs: reviewed_pr_plans
+    if: ${{ needs.reviewed_pr_plans.outputs.has_identity_reset_plan == 'true' }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: read
+      actions: read
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Check out captured immutable executor
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.reviewed_pr_plans.outputs.executor_sha }}
+
+      - name: Download captured authorization
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.reviewed_pr_plans.outputs.artifact_id }}
+          path: authorization
+          merge-multiple: true
+
+      - name: Verify reset authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
+        run: python scripts/install_feature_id_reset.py --directory authorization --expected-sha256 "$EXPECTED_SHA256" --check-only
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Authenticate existing deployer for job checks
+        id: reset_control_auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com
+          export_environment_variables: false
+
+      - name: Authenticate existing approved publisher
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
+
+      - name: Recheck live controls and install reset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
+          RESET_CONTROL_CREDENTIALS: ${{ steps.reset_control_auth.outputs.credentials_file_path }}
+        run: uv run python scripts/install_feature_id_reset.py --directory authorization --expected-sha256 "$EXPECTED_SHA256"
 
   apply-approved-pr-plans:
     name: Apply approved PR mutation plans

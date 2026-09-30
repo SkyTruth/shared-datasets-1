@@ -333,6 +333,7 @@ def normalize_publish_plan(
             "promotions",
             "breaking_changes",
             "release_index_asset_slugs",
+            "identity_reset",
         },
         label="publish plan",
     )
@@ -434,6 +435,14 @@ def normalize_publish_plan(
         [item["destination_uri"] for item in normalized["promotions"]],
         label="promotions",
     )
+    if "identity_reset" in plan:
+        from ingestion.common.reset_installation import validate_reset_plan
+        from ingestion.common.publication import PublicationError
+        normalized["identity_reset"] = plan["identity_reset"]
+        try:
+            validate_reset_plan(normalized)
+        except (PublicationError, KeyError, TypeError, ValueError) as exc:
+            raise PlanValidationError(f"invalid identity reset: {exc}") from exc
     return normalized
 
 
@@ -515,6 +524,8 @@ def normalize_document(document: Any) -> dict[str, Any]:
     ]
     if not payloads:
         raise PlanValidationError("plan document needs publish and/or delete")
+    if "identity_reset" in normalized.get("publish", {}) and "delete" in normalized:
+        raise PlanValidationError("identity reset cannot be combined with deletion")
     if len({(p["asset_slug"], p["proposal_id"]) for p in payloads}) != 1:
         raise PlanValidationError(
             "publish and delete must identify the same asset/proposal"

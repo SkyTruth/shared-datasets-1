@@ -19,8 +19,10 @@ RUN set -eux; \
 
 FROM python:3.12-slim-bookworm
 
+ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import csv
 import json
 import logging
 import os
@@ -22,11 +21,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from google.api_core.exceptions import NotFound
 from google.cloud import storage
 
 from ingestion.common import feature_metadata, vector_pipeline
-from ingestion.common.gcs import GcsPublisher
+from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
+from ingestion.common.identity_reset import CONTRACT_ID
+from ingestion.common.publication_gcs import work_root
+from ingestion.wdpa_monthly import translations
 from ingestion.common.runtime import (
     SourceNotAvailableError as SourceNotAvailableError,
     bind_run_command,
@@ -39,7 +40,8 @@ from ingestion.common.runtime import (
     run_job_main,
     sha256_file,
 )
-from scripts import feature_metadata_localization, release_feature_model
+from scripts import release_feature_model
+from scripts.feature_metadata_translation_reuse import TranslationMemory
 
 
 LOGGER = logging.getLogger("wdpa_monthly")
@@ -58,10 +60,6 @@ RUN_RECORD_VERSION = 1
 PMTILES_MINZOOM = 0
 PMTILES_MAXZOOM = 12
 PMTILES_PROPERTIES = (feature_metadata.FEATURE_ID_COLUMN,)
-TRANSLATION_LOCALE = "es"
-TRANSLATION_FIELD = "NAME_ENG"
-TRANSLATION_REVIEW_STATE = "needs_review"
-TRANSLATION_NOTES = "Initial Spanish sidecar preserves source proper-name value pending human review."
 
 
 @dataclass(frozen=True)
@@ -93,7 +91,7 @@ class AssetOutputs:
     fgb: Path
     pmtiles: Path
     metadata: Path
-    metadata_es: Path
+    localized_metadata: dict[str, Path]
     metadata_translations: Path
     schema: Path
     manifest: Path
@@ -101,6 +99,10 @@ class AssetOutputs:
     sha256: dict[str, str]
     schema_payload: dict[str, Any]
     next_generated_feature_id: int
+    previous_generated_feature_id: int
+    previous_release: str | None
+    identity_baseline_snapshot: release_feature_model.GeneratedIdentitySnapshot | None
+    identity_contract: str
     identity_decisions: dict[str, Any]
     localization_report: dict[str, Any]
 
@@ -635,145 +637,6 @@ def validate_pmtiles(path: Path) -> None:
         run_command(["tippecanoe-decode", "-S", str(path)], capture_json=True)
 
 
-TRANSLATION_SOURCE_FIELDNAMES = (
-    "feature_id",
-    "field",
-    "locale",
-    "source_value_hash",
-    "value",
-    "review_state",
-    "notes",
-)
-
-
-class TranslationSourceWriter:
-    """Write proper-name translation rows as sidecar records stream past."""
-
-    def __init__(self, handle) -> None:
-        self._writer = csv.DictWriter(handle, fieldnames=list(TRANSLATION_SOURCE_FIELDNAMES))
-        self._writer.writeheader()
-        self.count = 0
-
-    def write_record(self, record: Mapping[str, Any]) -> None:
-        properties = record.get("properties")
-        if not isinstance(properties, Mapping):
-            return
-        value = properties.get(TRANSLATION_FIELD)
-        if value is None or str(value) == "":
-            return
-        self._writer.writerow(
-            {
-                "feature_id": str(record.get("feature_id") or ""),
-                "field": TRANSLATION_FIELD,
-                "locale": TRANSLATION_LOCALE,
-                "source_value_hash": feature_metadata_localization.source_value_hash(value),
-                "value": str(value),
-                "review_state": TRANSLATION_REVIEW_STATE,
-                "notes": TRANSLATION_NOTES,
-            }
-        )
-        self.count += 1
-
-
-@contextlib.contextmanager
-def translation_source_writer(path: Path):
-    """Open a streaming translation-source writer, requiring at least one row."""
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = TranslationSourceWriter(handle)
-        yield writer
-    if writer.count == 0:
-        raise RuntimeError(f"{TRANSLATION_FIELD} translation source would be empty")
-
-
-def materialize_localized_metadata(
-    *,
-    metadata: Path,
-    metadata_translations: Path,
-    metadata_es: Path,
-    asset: AssetSpec,
-    run_date: dt.date,
-) -> dict[str, Any]:
-    report = feature_metadata_localization.materialize_locale_sidecar(
-        canonical_sidecar=metadata,
-        translation_source=metadata_translations,
-        output_sidecar=metadata_es,
-        locale=TRANSLATION_LOCALE,
-        translatable_fields={TRANSLATION_FIELD},
-        expected_asset_slug=asset.slug,
-        expected_release=run_date.isoformat(),
-        fail_on_stale=True,
-    )
-    return report.to_dict()
-
-
-def legacy_wdpa_previous_records(records: Sequence[Mapping[str, Any]], *, asset: AssetSpec) -> list[dict[str, Any]]:
-    """Adapt old WDPA metadata sidecars into generated-ID previous records."""
-    converted: list[dict[str, Any]] = []
-    errors: list[str] = []
-    for index, record in enumerate(records, start=1):
-        if record.get("schema_version") != 1:
-            errors.append(f"record {index} is not legacy schema_version 1")
-            continue
-        if record.get("asset_slug") not in (None, asset.slug):
-            errors.append(f"record {index} asset_slug does not match {asset.slug}")
-            continue
-        properties = record.get("properties")
-        if not isinstance(properties, Mapping):
-            errors.append(f"record {index} properties must be an object")
-            continue
-        site_pid = str(properties.get("SITE_PID") or "").strip()
-        ext_id = str(properties.get("ext_id") or "").strip()
-        if not site_pid:
-            errors.append(f"record {index} is missing properties.SITE_PID")
-            continue
-        try:
-            release_feature_model.validate_feature_id(ext_id)
-        except release_feature_model.ReleaseFeatureModelError as exc:
-            errors.append(f"record {index} properties.ext_id is not a reusable feature_id: {exc}")
-            continue
-        converted.append(
-            {
-                "feature_id": ext_id,
-                "identity_key": [site_pid],
-            }
-        )
-    if errors:
-        raise RuntimeError("legacy WDPA metadata sidecar cannot preserve generated IDs: " + "; ".join(errors[:10]))
-    if not converted:
-        raise RuntimeError("legacy WDPA metadata sidecar did not contain any reusable ID mappings")
-    return converted
-
-
-def load_previous_records_for_asset(
-    publisher: GcsPublisher,
-    asset: AssetSpec,
-) -> list[dict[str, Any]] | None:
-    try:
-        return publisher.load_latest_metadata_records(asset)
-    except RuntimeError as original_error:
-        object_name = asset.latest_object(".metadata.ndjson.gz")
-        blob = publisher.bucket.blob(object_name)
-        try:
-            blob.reload()
-        except NotFound:
-            return None
-        try:
-            raw_records = list(
-                release_feature_model.read_metadata_sidecar_bytes(
-                    blob.download_as_bytes(),
-                    label=f"gs://{publisher.bucket.name}/{object_name}",
-                )
-            )
-            converted = legacy_wdpa_previous_records(raw_records, asset=asset)
-        except Exception as legacy_error:
-            raise original_error from legacy_error
-        LOGGER.warning(
-            "%s latest metadata sidecar uses legacy feature_id contract; preserving generated IDs from properties.ext_id and SITE_PID",
-            asset.slug,
-        )
-        return converted
-
-
 def assert_identity_decisions_allowed(
     assets,
     *,
@@ -835,7 +698,8 @@ def build_asset_outputs(
     workdir: Path,
     run_date: dt.date,
     cleanup_after_gpkg: tuple[Path, ...] = (),
-    previous_records: Sequence[Mapping[str, Any]] | None = None,
+    baseline: release_feature_model.GeneratedIdentityBaseline,
+    translation_memory: TranslationMemory,
     identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
 ) -> AssetOutputs:
     expected_rows = expected_feature_count(source, source_layers, where)
@@ -848,8 +712,6 @@ def build_asset_outputs(
     enriched_geojsonseq = workdir / f"{asset.slug}.metadata.geojsonseq"
     pmtiles = workdir / f"{asset.slug}.pmtiles"
     metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
-    metadata_es = workdir / f"{asset.slug}.metadata.{TRANSLATION_LOCALE}.ndjson.gz"
-    metadata_translations = workdir / f"{asset.slug}.metadata-translations.csv"
     schema = workdir / f"{asset.slug}.schema.json"
     manifest = workdir / f"{asset.slug}.manifest.json"
 
@@ -870,34 +732,26 @@ def build_asset_outputs(
     # until after the FGB build costs the release its own size in RAM.
     remove_if_exists(gpkg)
 
-    with translation_source_writer(metadata_translations) as translations:
-        release_outputs = feature_metadata.write_generated_id_release(
-            open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
-            asset_slug=asset.slug,
-            release=run_date.isoformat(),
-            source_fields=["SITE_PID"],
-            provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
-            enriched_features_path=enriched_geojsonseq,
-            sidecar_path=metadata,
-            previous_records=previous_records,
-            identity_resolution_decisions=identity_resolution_decisions,
-            sidecar_sink=translations.write_record,
-        )
-    translation_count = translations.count
+    release_outputs = feature_metadata.write_generated_id_release(
+        open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
+        asset_slug=asset.slug,
+        release=run_date.isoformat(),
+        source_fields=["SITE_PID"],
+        provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
+        enriched_features_path=enriched_geojsonseq,
+        sidecar_path=metadata,
+        baseline=baseline,
+        identity_resolution_decisions=identity_resolution_decisions,
+    )
     schema_payload = release_outputs.schema_payload
     feature_metadata.write_schema(schema_payload, schema)
-    localization_report = materialize_localized_metadata(
-        metadata=metadata,
-        metadata_translations=metadata_translations,
-        metadata_es=metadata_es,
-        asset=asset,
-        run_date=run_date,
-    )
-    if localization_report.get("applied_translation_count") != translation_count:
-        raise RuntimeError(
-            f"{asset.slug} localized metadata applied "
-            f"{localization_report.get('applied_translation_count')} of {translation_count} translation rows"
-        )
+    localized_dir = workdir / f"{asset.slug}-localized"
+    localization_report = translation_memory.rebuild(canonical_sidecar=metadata, schema=schema, asset_slug=asset.slug,
+                                                      release=run_date.isoformat(), output_dir=localized_dir)
+    localized_metadata = {locale: localized_dir / f"{asset.slug}.metadata.{locale}.ndjson.gz" for locale in translation_memory.locales}
+    metadata_translations = localized_dir / f"{asset.slug}.metadata-translations.csv"
+    if not localization_report["requested_rows_complete"]:
+        LOGGER.warning("%s has %s unique unresolved translation tasks; canonical values retained", asset.slug, localization_report["unique_pending_tasks"])
     build_pmtiles(enriched_geojsonseq, asset, pmtiles)
     remove_if_exists(geojsonseq)
 
@@ -930,7 +784,7 @@ def build_asset_outputs(
         fgb=fgb,
         pmtiles=pmtiles,
         metadata=metadata,
-        metadata_es=metadata_es,
+        localized_metadata=localized_metadata,
         metadata_translations=metadata_translations,
         schema=schema,
         manifest=manifest,
@@ -939,13 +793,17 @@ def build_asset_outputs(
             "fgb": sha256_file(fgb),
             "pmtiles": sha256_file(pmtiles),
             "metadata": sha256_file(metadata),
-            f"metadata_{TRANSLATION_LOCALE}": sha256_file(metadata_es),
+            **{f"metadata_{locale}": sha256_file(path) for locale, path in localized_metadata.items()},
             "csv": sha256_file(metadata_translations),
             "metadata_translations": sha256_file(metadata_translations),
             "schema": sha256_file(schema),
         },
         schema_payload=schema_payload,
         next_generated_feature_id=release_outputs.next_generated_feature_id,
+        previous_generated_feature_id=baseline.next_feature_id,
+        previous_release=baseline.release,
+        identity_baseline_snapshot=baseline.snapshot,
+        identity_contract=baseline.contract_id,
         identity_decisions=release_outputs.identity_decisions,
         localization_report=localization_report,
     )
@@ -966,34 +824,8 @@ def publish_asset(
         run_date=run_date,
         source_version=source_version,
     )
-    if publisher.successful_run_record(asset, run_date):
-        LOGGER.info("%s already has a successful run record; skipping", asset.slug)
-        return {
-            "asset_slug": asset.slug,
-            "status": "skipped",
-            "release_index": publisher.record_existing_successful_release(asset, run_date),
-        }
-
-    publisher.assert_no_partial_release(asset, run_date)
-    bundle = vector_pipeline.publish_vector_bundle(
-        publisher=publisher,
-        asset=asset,
-        run_date=run_date,
-        outputs=outputs,
-        object_metadata=metadata,
-        source_inputs=[{"uri": source_url}],
-        identity=feature_metadata.release_feature_model.build_identity_metadata(
-            strategy="generated_sequence_source_fields",
-            source_fields=["SITE_PID"],
-            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
-            decisions=outputs.identity_decisions,
-        ),
-        extra_suffix_paths=(
-            (f".metadata.{TRANSLATION_LOCALE}.ndjson.gz", outputs.metadata_es),
-            (".metadata-translations.csv", outputs.metadata_translations),
-        ),
-    )
-
+    if set(outputs.localized_metadata) != set(translations.LOCALES):
+        raise RuntimeError("WDPA publication requires every supported locale to be rebuilt")
     record = {
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
@@ -1004,28 +836,37 @@ def publish_asset(
         "source": source_url,
         "source_version": source_version,
         "release_path": f"gs://{publisher.bucket.name}/{asset.release_prefix(run_date)}/",
-        "release_paths": bundle.release_paths,
-        "latest_paths": bundle.latest_paths,
         "row_count": outputs.row_count,
-        "sha256": bundle.sha256,
         "field_count": len(source_fields),
         "notes": "Generated by simplified monthly WDPA job; fields preserved from source.",
         "localization": {
-            "translation_locale": TRANSLATION_LOCALE,
-            "translation_field": TRANSLATION_FIELD,
+            "translation_locales": list(translations.LOCALES),
+            "translation_fields": list(translations.FIELDS),
             "report": outputs.localization_report,
         },
     }
-    record["release_paths"].extend(bundle.extra_release_paths)
-    record["latest_paths"].extend(bundle.extra_latest_paths)
-    run_record = publisher.write_run_record(
+    return publisher.publish_generated(
         asset=asset,
         run_date=run_date,
-        payload=record,
+        outputs=outputs,
+        record=record,
+        object_metadata=metadata,
+        source_inputs=[{"uri": source_url}],
+        identity=feature_metadata.release_feature_model.build_identity_metadata(
+            contract_id=outputs.identity_contract,
+            strategy="generated_sequence_source_fields",
+            source_fields=["SITE_PID"],
+            next_generated_feature_id_after_release=outputs.next_generated_feature_id,
+            next_generated_feature_id_before_release=outputs.previous_generated_feature_id,
+            previous_release=outputs.previous_release,
+            decisions=outputs.identity_decisions,
+        ),
+        extra_suffix_paths=(
+            *((f".metadata.{locale}.ndjson.gz", outputs.localized_metadata[locale]) for locale in translations.LOCALES),
+            (".metadata-translations.csv", outputs.metadata_translations),
+        ),
     )
-    record["run_record"] = run_record
-    LOGGER.info("published %s", asset.slug)
-    return record
+
 
 
 def metadata_for_asset(
@@ -1061,17 +902,24 @@ def run() -> list[dict[str, Any]]:
             "Set ALLOW_SAMPLED_PUBLISH=true only if you intentionally want sampled GCS outputs."
         )
 
-    publisher = GcsPublisher(storage.Client(project=project_id), bucket_name, logger=LOGGER)
+    publisher = GcsPublisher.from_runtime(storage.Client(project=project_id), bucket_name, logger=LOGGER)
+
+    resumed = {asset.slug: publisher.resume(asset) for asset in ASSETS}
+    if all(value is not None for value in resumed.values()):
+        return [resumed[asset.slug] for asset in ASSETS]
 
     publish_specs = [
         asset
         for asset in ASSETS
-        if not publisher.successful_run_record(asset, run_date)
+        if resumed[asset.slug] is None and not publisher.successful_run_record(asset, run_date)
     ]
     if not publish_specs:
         LOGGER.info("all WDPA assets already have successful run records for %s", run_date)
         records = []
         for asset in ASSETS:
+            if resumed[asset.slug] is not None:
+                records.append(resumed[asset.slug])
+                continue
             successful_release_index = publisher.record_existing_successful_release(
                 asset,
                 run_date,
@@ -1104,8 +952,8 @@ def run() -> list[dict[str, Any]]:
     # on the decisions and the previous release, so a wrong one is a rule
     # violation catchable in minutes rather than a conflict discovered after an
     # hour of conversion work.
-    previous_records_by_slug = {
-        asset.slug: load_previous_records_for_asset(publisher, asset) for asset in publish_specs
+    baselines_by_slug = {
+        asset.slug: publisher.load_generated_identity_baseline(asset, contract_id=CONTRACT_ID) for asset in publish_specs
     }
     decisions_by_slug = {
         asset.slug: release_feature_model.load_identity_resolution_decisions(
@@ -1116,12 +964,12 @@ def run() -> list[dict[str, Any]]:
     }
     assert_identity_decisions_allowed(
         publish_specs,
-        previous_records_by_slug=previous_records_by_slug,
+        previous_records_by_slug={slug: baseline.records for slug, baseline in baselines_by_slug.items()},
         decisions_by_slug=decisions_by_slug,
         run_date=run_date,
     )
 
-    with tempfile.TemporaryDirectory(prefix="wdpa-monthly-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="wdpa-monthly-", dir=work_root()) as tmp, contextlib.ExitStack() as stack:
         workdir = Path(tmp)
         source_zip = workdir / "wdpa.zip"
         try:
@@ -1151,10 +999,14 @@ def run() -> list[dict[str, Any]]:
         source = source_datasets[0]
         source_layers, split_field, source_fields = discover_source_layers(source_datasets)
         assert_sample_field_available(source_layers, sample_spec)
+        translation_memory = stack.enter_context(translations.prepare_memory(publisher, ASSETS, workdir))
 
         records = []
         final_publish_asset = publish_specs[-1]
         for asset in ASSETS:
+            if resumed[asset.slug] is not None:
+                records.append(resumed[asset.slug])
+                continue
             if asset not in publish_specs:
                 record = {
                     "schema_version": 1,
@@ -1183,7 +1035,8 @@ def run() -> list[dict[str, Any]]:
                 cleanup_after_gpkg=(
                     (workdir / "source-zips",) if asset == final_publish_asset else ()
                 ),
-                previous_records=previous_records_by_slug[asset.slug],
+                baseline=baselines_by_slug[asset.slug],
+                translation_memory=translation_memory,
                 identity_resolution_decisions=decisions_by_slug[asset.slug],
             )
             records.append(
@@ -1200,7 +1053,8 @@ def run() -> list[dict[str, Any]]:
             remove_if_exists(outputs.fgb)
             remove_if_exists(outputs.pmtiles)
             remove_if_exists(outputs.metadata)
-            remove_if_exists(outputs.metadata_es)
+            for path in outputs.localized_metadata.values():
+                remove_if_exists(path)
             remove_if_exists(outputs.metadata_translations)
             remove_if_exists(outputs.schema)
             remove_if_exists(outputs.manifest)

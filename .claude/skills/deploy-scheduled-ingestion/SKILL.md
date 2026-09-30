@@ -5,6 +5,21 @@ description: "Use before deploying or updating shared-datasets Cloud Run and Clo
 
 # Deploy Scheduled Ingestion
 
+## Feature-ID first deployment
+
+WDPA and sea-ice deployment workflows run `scripts/publication_rollout_gate.py`
+after existing project authentication and before image builds or Terraform.
+It verifies installed publication state and receipts using the runtime validator.
+Both WDPA assets must be initialized; sea ice is independent. EAMLIS is unaffected.
+There is no hold-only registry or organization-IAM prerequisite.
+
+For the one-time pre-launch transition, follow `docs/feature-id-reset-installation.md`:
+pause and drain the affected job and older publisher/deployment runs, install the
+immutable reviewed reset through the protected workflow, deploy, validate the
+first publication, then resume. Existing administrators remain trusted; do not
+rerun old workflows or restart old writers during the transition. Missing state
+is a deployment error, not permission to reset it automatically.
+
 Use this workflow for production ingestion jobs in `shared-datasets-1`.
 
 ## Rules

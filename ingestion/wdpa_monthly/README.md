@@ -1,5 +1,9 @@
 # Monthly WDPA Job
 
+> **First deployment:** install the reviewed feature-ID reset while the job is
+> paused and drained. Deployment verifies installed publication state before
+> building the image. See the [installation runbook](../../docs/feature-id-reset-installation.md).
+
 This job publishes two bare-bones WDPA/WDOECM assets:
 
 - `wdpa-marine`
@@ -26,6 +30,39 @@ source field names, so translated display names are written back to `NAME_ENG`.
 In localized sidecars, `NAME_ENG` is a misleading legacy name; consumers should
 treat it as the active-locale display name, effectively `name_localized`, not as
 an English-only value.
+
+## Translation reuse
+
+The job rebuilds `es`, `fr`, `id`, `pt`, `pt_br`, and `sw` metadata sidecars
+together with each release. `ingestion/wdpa_monthly/translations.py` lists the
+17 supported text fields. The translation-source CSV and all six sidecars are
+part of the same owned publication as the geometry and canonical metadata.
+
+Translations are matched first by the exact `SITE_PID` and original source-value
+hash. Numeric `feature_id` values never join translations across releases or
+identity contracts. An unambiguous existing translation of the same source text,
+field, and locale can fill another record. Conflicting text translations remain
+site-specific. Existing review states and notes are retained for direct matches;
+phrase reuse is marked `reused_translation`.
+
+The job downloads the exact canonical metadata and translation CSV generations
+recorded in its last committed publication receipt. Only the explicit first-reset
+state uses the verified June 9 legacy source bundles pinned in `translations.py`.
+That state also binds a reviewed gap supplement by staged object path, generation,
+and SHA-256. Both assets must approve the same supplement; the first build verifies
+and consumes it without replacing established translations. The first new release
+must have complete requested translations before the publisher reserves IDs.
+Later builds use their committed CSV and do not reload the reset supplement.
+Missing state or an incomplete committed bundle fails; it does not select arbitrary
+`latest/` files. One disposable SQLite index serves both WDPA assets. Large CSVs
+are streamed and the downloaded copies are locally compressed.
+
+In subsequent releases, new or changed text without a verified translation retains the canonical value.
+Its CSV row is empty with `review_state=translation_failed`; the run record reports
+the unresolved counts. The job does not contact a translation provider or claim
+that fallback text is translated. Follow the [rebuild report and gap workflow](../../docs/proposals/wdpa-translation-rebuild-2026-09-29.md)
+to fill these tasks without retranslating the full dataset. New machine results
+remain labeled as machine output rather than human review.
 
 ## Runtime
 
@@ -60,12 +97,13 @@ default source template supports `{run_date}`, `{year}`, `{month}`, and
 For each asset, the job writes:
 
 ```text
-100-geographic-reference/130-protected-areas/{asset}/releases/YYYY-MM-DD/{asset}.fgb
-100-geographic-reference/130-protected-areas/{asset}/releases/YYYY-MM-DD/{asset}.pmtiles
-100-geographic-reference/130-protected-areas/{asset}/latest/{asset}.fgb
-100-geographic-reference/130-protected-areas/{asset}/latest/{asset}.pmtiles
+100-geographic-reference/130-protected-areas/{asset}/releases/YYYY-MM-DD/{asset}.{artifact}
+100-geographic-reference/130-protected-areas/{asset}/latest/{asset}.{artifact}
 100-geographic-reference/130-protected-areas/{asset}/runs/YYYY-MM-DD.json
 ```
+
+The twelve artifacts are FGB, PMTiles, canonical metadata, schema, manifest,
+the translation-source CSV, and six locale metadata sidecars.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the current observed generation. If a successful run record exists,
@@ -168,3 +206,35 @@ docker run --platform linux/amd64 --rm -i \
 
 The sample harness never instantiates a GCS client and leaves outputs in the
 local work directory.
+
+## Generated-ID deployment prerequisite
+
+Both WDPA assets use `OwnedGeneratedPublisher` and the new identity contract
+`generated-2026-v1`. The approved [pre-launch fresh start](../../docs/proposals/feature-id-fresh-start.md)
+retires the previous identity history. Historical releases remain readable;
+their IDs and legacy `ext_id` mappings cannot seed this contract. Each asset
+requires an explicitly reviewed reset inventory and installed publication state.
+Missing state stops the job; it cannot silently restart numbering.
+
+The publisher reserves IDs and claims the asset before checkpointing or exposing
+the release bundle. Later builds read the exact current manifest and referenced
+metadata generations, and retain the counter when features disappear. Runtime
+identity comes from `CLOUD_RUN_EXECUTION` and the image's embedded
+`SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the same captured intent. A crash
+before all local inputs have durable checkpoints stops with the claim held;
+starting another execution does not abandon the reservation.
+
+The first new release must replace every captured `latest/` object. The user
+chose to rebuild the ten old locale aliases identified in the
+[readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md).
+The publisher requires all six locale outputs. Local September-snapshot
+candidates now have complete requested-row coverage and validated CSV/locale
+joins. The new descriptions were corrected by the agent, and the user chose to
+preserve official names. The corrected supplement is staged for immutable reset
+review. The complete new-ID release and native validation remain prerequisites
+for cutover. Historical releases stay intact.
+
+Deployment remains blocked on the protected reset installation path, exclusion
+of older writers, and native artifact and serving checks. Both WDPA assets must
+be ready before this shared job resumes. The local adapter and an offline review
+envelope are not production cutover authority.

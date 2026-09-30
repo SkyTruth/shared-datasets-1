@@ -378,6 +378,8 @@ def execute_publish_plan(
     schema_compatibility_checker: Callable[..., Any] | None = None,
     notifier: Callable[[PublishPlan, int | None], None] | None = None,
 ) -> PublishResult:
+    from ingestion.common.identity_reset import require_unmanaged_target
+    require_unmanaged_target(object_name_from_uri(plan.run_record_uri))
     with frozen_publish_inputs(plan) as frozen_plan:
         return _execute_frozen_publish_plan(
             frozen_plan,

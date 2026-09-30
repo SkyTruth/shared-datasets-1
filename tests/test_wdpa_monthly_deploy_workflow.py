@@ -23,6 +23,7 @@ DOCKERFILE = REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile"
 
 REQUIRED_SCRIPT_COPIES = (
     "scripts/feature_metadata_localization.py",
+    "scripts/feature_metadata_translation_reuse.py",
     "scripts/translation_local_io.py",
     "scripts/pmtiles_zoom.py",
     "scripts/release_feature_model.py",
@@ -126,7 +127,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, "-I", "-c",
                  f"import sys; sys.path.insert(0, {str(root)!r}); "
-                 "import scripts.feature_metadata_localization, scripts.translation_local_io; "
+                 "import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.feature_metadata_translation_reuse; "
                  f"assert scripts.feature_metadata_localization.__file__.startswith({str(root)!r}); "
                  "print('declared copies import successfully')"],
                 cwd=root, capture_output=True, text=True, check=False,
@@ -139,7 +140,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         runs = [str(step.get("run", "")) for job in ci["jobs"].values() for step in job.get("steps", [])]
         detection = next(run for run in runs if "geospatial_pattern=" in run)
         pattern = re.search(r"geospatial_pattern='([^']+)'", detection).group(1)
-        for path in ("scripts/translation_local_io.py", "tests/test_translation_local_io.py"):
+        for path in ("scripts/translation_local_io.py", "tests/test_translation_local_io.py", "scripts/feature_metadata_translation_reuse.py", "tests/test_feature_metadata_translation_reuse.py", "tests/test_wdpa_translation_inputs.py"):
             with self.subTest(path=path):
                 self.assertIsNotNone(re.fullmatch(pattern, path))
         self.assertIsNone(re.fullmatch(pattern, "docs/unrelated.md"))

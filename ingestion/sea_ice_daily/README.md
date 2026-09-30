@@ -1,5 +1,9 @@
 # Daily IMS Sea-Ice Job
 
+> **First deployment:** install the reviewed feature-ID reset while the job is
+> paused and drained. Deployment verifies installed publication state before
+> building the image. See the [installation runbook](../../docs/feature-id-reset-installation.md).
+
 This job publishes the `ims-sea-ice-extent` asset from the NOAA/NSIDC IMS Daily
 Northern Hemisphere Snow and Ice Analysis 4 km GeoTIFFs.
 
@@ -116,3 +120,27 @@ blocks before the next untargeted apply; otherwise Terraform will recreate them.
 Do not delete existing GCS releases, latest files, run records, README files, or
 catalog rows as part of cost teardown unless the team explicitly decides to
 remove the dataset asset.
+
+## Generated-ID deployment prerequisite
+
+The job uses `OwnedGeneratedPublisher` and the new identity contract
+`generated-2026-v1`. The approved [pre-launch fresh start](../../docs/proposals/feature-id-fresh-start.md)
+retires the previous identity history. Historical releases remain readable, but
+cannot seed this contract. An explicitly reviewed reset inventory and installed
+publication state are required. Missing state stops the job; it cannot silently
+restart numbering.
+
+The publisher reserves IDs and claims the asset before checkpointing or exposing
+the release bundle. Later builds read the exact current manifest and referenced
+metadata generations, and retain the counter when features disappear. Runtime
+identity comes from `CLOUD_RUN_EXECUTION` and the image's embedded
+`SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the same captured intent. A crash
+before all local inputs have durable checkpoints stops with the claim held;
+starting another execution does not abandon the reservation. Historical success
+records cannot skip the first new-contract release.
+
+The [readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md)
+records the current five-file bundle. Deployment remains blocked on the
+protected reset installation path, exclusion of older writers, and native
+artifact and serving checks. The local adapter and an offline review envelope
+are not production cutover authority.
