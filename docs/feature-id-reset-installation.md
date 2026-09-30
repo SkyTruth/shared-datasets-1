@@ -42,6 +42,15 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    verifies the immutable authority before authentication and rechecks review
    acceptance, the paused schedule, and every page of execution status before
    each write. A running/pending/reconciling execution or failed read stops it.
+   If GitHub rejects the PR-event job because `refs/pull/.../merge` is outside
+   the production environment's allowed branches, run the existing workflow
+   from `main` with `pr_number` set to that merged PR. This restricted retry
+   verifies the same immutable plan and review authority; no environment-policy
+   change is needed. For example:
+
+   ```bash
+   gh workflow run publish-dataset.yml --ref main -f pr_number=<merged-reset-pr>
+   ```
 4. Run the existing ingestion deployment workflow from reviewed `main`, setting
    `canary_run_date` to the first release date in the reset plan. Sea ice searches
    upstream from this date; confirm its available source date matches the plan.
@@ -148,6 +157,14 @@ Publishers require its `complete` phase before allocating or writing. Retries
 accept only matching bytes and installer metadata; competing proposals or
 unrelated publication objects stop the operation. After completion, a retry
 validates the existing owned state and receipts without changing its counter.
+
+A repaired executor on reviewed `main` may finish an `activating` journal for
+the **same immutable PR plan** only when all three objects already exist and
+match the approved bytes and original ownership tags. It preserves the original
+executor identity and state generation, updating only the journal to
+`complete`. It cannot continue a `prepared` installation, recreate a missing
+object, or replace changed state. Completed retries remain read-only. This
+allows storage-client fixes without restarting allocation or changing the plan.
 
 A crash after `activating` but before a confirmed state leaves an intentionally
 bounded stop: **if state is absent, reviewed recovery is required**. Absence
