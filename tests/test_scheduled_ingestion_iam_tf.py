@@ -236,6 +236,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         for permission in (
             "cloudscheduler.jobs.enable",
             "cloudscheduler.jobs.get",
+            "cloudscheduler.jobs.pause",
             "run.executions.get",
             "run.executions.list",
             "run.jobs.get",

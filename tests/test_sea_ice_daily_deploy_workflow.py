@@ -112,6 +112,8 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertLess(step_names.index("Validate latest IMS release contract"), step_names.index("Run IMS bucket hygiene audit"))
         self.assertLess(step_names.index("Run IMS bucket hygiene audit"), step_names.index("Resume sea-ice-daily scheduler"))
         self.assertIn("gcloud scheduler jobs resume", steps["Resume sea-ice-daily scheduler"]["run"])
+        resume_run = steps["Resume sea-ice-daily scheduler"]["run"]
+        self.assertLess(resume_run.index("--require-published"), resume_run.index("gcloud scheduler jobs resume"))
 
 
 if __name__ == "__main__":

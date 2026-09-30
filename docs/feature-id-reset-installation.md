@@ -10,8 +10,11 @@ allocation history.** Installing state does not publish data or resume schedules
 
 ## Deployment sequence
 
-1. Pause the affected Cloud Scheduler job in project `shared-datasets-1`, region
-   `us-central1`, using the project's authorized operations process. Wait for
+1. After PR #154 merges, let `Scheduled ingestion deploy IAM sync` apply the
+   added `cloudscheduler.jobs.pause` permission to the existing deployer role.
+   Run `Ingestion schedule control` from `main`, selecting the affected job and
+   `pause`. It operates only on the two ingestion schedules in project
+   `shared-datasets-1`, region `us-central1`. Wait for
    its running/pending Cloud Run executions and earlier publisher/deployment
    workflow runs to finish. Keep the schedule paused through first publication.
    WDPA's two assets share `wdpa-monthly`; sea ice uses `sea-ice-daily`.
@@ -30,7 +33,8 @@ allocation history.** Installing state does not publish data or resume schedules
    build or Terraform, it verifies the same publication state and receipts as
    the runtime. Both WDPA resets must be complete; sea ice is independent.
 5. Validate the complete first release and its feature-ID/metadata/translation
-   joins before resuming the affected schedule. WDPA's canary is asynchronous:
+   joins before resuming the affected schedule with `Ingestion schedule control`.
+   Its `resume` action also requires a completed first-publication receipt. WDPA's canary is asynchronous:
    a successful dispatch is not successful publication. Preserve the paused
    state on failure and retry the owned publication rather than reset IDs.
 
@@ -38,7 +42,9 @@ The installer shares the `prod-terraform-state` workflow queue with deployments.
 It reads scheduler/execution status as the existing `shared-datasets-terraform`
 identity and writes objects as the existing `shared-datasets-publisher` identity.
 Both authenticate through their existing protected-environment federation.
-No Terraform resources or IAM grants are added by this reset implementation.
+The existing protected IAM-sync workflow adds only `cloudscheduler.jobs.pause`
+to the existing deployment role. No new identity or organization permission is
+needed. Schedule control, reset installation, and deployment share the same queue.
 
 This is an operational cutover under the project's existing administrator trust
 boundary. Administrators must not restart old jobs or rerun old publishing
@@ -63,6 +69,10 @@ current `latest/` object generations/hashes plus the matching old release
 manifest. The new release directory and run record must be absent. Retain the
 inventory and generated files in a named directory under the standard local
 temp root.
+
+Preparations may be built before pausing to shorten downtime. Recheck their
+captured generations after pausing; if anything changed, prepare a new immutable
+plan. The installer always checks the live inventory and paused/drained status.
 
 The inventory's required `translation_supplement` field is `null` for sea ice.
 For each WDPA asset it is an object with exactly `path`, `generation`, and

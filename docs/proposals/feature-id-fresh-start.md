@@ -50,7 +50,10 @@ The existing project and organization administrators remain trusted. This change
 prevents conflicting managed jobs and failed/retried publications from corrupting
 ID history; it does not promise protection from administrators deliberately
 restarting obsolete writers or changing permissions. No organization-level IAM
-access or new infrastructure grants are required by the implementation.
+access is required. The existing deployer role gains only the scheduler pause
+permission, through its existing protected Terraform sync. The protected
+`Ingestion schedule control` workflow pauses either job and permits resume only
+after completed publication.
 
 Follow the [installation runbook](../feature-id-reset-installation.md): pause and
 drain the affected jobs and earlier publishing/deployment runs, capture/stage the

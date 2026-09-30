@@ -454,6 +454,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily --require-published
           gcloud scheduler jobs resume "${JOB_NAME}" \
             --location="${REGION}" \
             --project="${GOOGLE_CLOUD_PROJECT}"
