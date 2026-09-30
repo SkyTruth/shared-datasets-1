@@ -95,6 +95,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 REUSABLE_PATH_ENTRY,
                 "terraform/envs/prod/main.tf",
                 "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
+                "terraform/envs/prod/wdpa_reset_iam.tf",
                 "terraform/envs/prod/variables.tf",
                 "terraform/envs/prod/versions.tf",
             },
@@ -103,6 +104,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_targets={
                 "google_project_iam_custom_role.scheduled_ingestion_deployer",
                 "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+                "google_storage_bucket_iam_member.wdpa_reset_translation_reader",
             },
             expected_tf_vars={
                 "wdpa_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync",

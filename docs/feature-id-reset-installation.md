@@ -26,8 +26,9 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
 
 ## Deployment sequence
 
-1. Let `Scheduled ingestion deploy IAM sync` apply `cloudscheduler.jobs.pause`
-   to the existing deployer role.
+1. Let `Scheduled ingestion deploy IAM sync` apply the deployer's scheduler-pause
+   and dated-canary permissions, plus WDPA's exact-object read grant for the
+   approved translation supplement in `terraform/envs/prod/wdpa_reset_iam.tf`.
    Run `Ingestion schedule control` from `main`, selecting the affected job and
    `pause`. It operates only on the two ingestion schedules in project
    `shared-datasets-1`, region `us-central1`. Wait for
@@ -67,9 +68,11 @@ The installer shares the `prod-terraform-state` workflow queue with deployments.
 It reads scheduler/execution status as the existing `shared-datasets-terraform`
 identity and writes objects as the existing `shared-datasets-publisher` identity.
 Both authenticate through their existing protected-environment federation.
-The existing protected IAM-sync workflow adds only `cloudscheduler.jobs.pause`
-to the existing deployment role. No new identity or organization permission is
-needed. Schedule control, reset installation, and deployment share the same queue.
+The protected IAM-sync workflow grants `cloudscheduler.jobs.pause` and
+`run.jobs.runWithOverrides` to the existing deployment role. WDPA's runtime
+receives read-only access to the single approved supplement object, not the
+surrounding scratch prefix. No new identity or organization permission is needed.
+Schedule control, reset installation, and deployment share the same queue.
 
 This is an operational cutover under the project's existing administrator trust
 boundary. Administrators must not restart old jobs or rerun old publishing
