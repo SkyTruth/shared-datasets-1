@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+import os
+import subprocess
 from pathlib import Path
 
 from workflow_helpers import (
@@ -17,6 +19,22 @@ DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/sea-ice-daily-deploy.yml"
 
 
 class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
+    def test_canary_passes_reviewed_date_as_one_argument_and_rejects_invalid_input(self):
+        steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
+        # Execute the real workflow shell with a harmless command recorder.
+        script = "gcloud() { printf '%s\\n' \"$@\"; }\n" + steps["Execute sea-ice-daily canary"]["run"]
+        for date in ("", "2026-10-01", "invalid; exit 0"):
+            with self.subTest(date=date):
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                        env={**os.environ, "JOB_NAME": "sea-ice-daily", "REGION": "us-central1",
+                                             "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date})
+                if date.startswith("invalid"):
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual("--update-env-vars=RUN_DATE=2026-10-01" in result.stdout.splitlines(), bool(date))
+
     def test_sea_ice_daily_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = load_workflow(DEPLOY_WORKFLOW)
         trigger = workflow_triggers(workflow)

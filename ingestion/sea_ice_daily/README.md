@@ -1,11 +1,8 @@
 # Daily IMS Sea-Ice Job
 
-> **Deployment hold in PR #154:** this branch blocks all three ingestion deployment
-> workflows before cloud authentication, image builds, Terraform, or canaries.
-> The hold also blocks routine maintenance. Existing deployed jobs and schedules
-> continue running; this is not an old-writer fence. The
-> [fresh-start rollout plan](../../docs/proposals/feature-id-fresh-start.md) lists
-> the evidence and reviewed controls required before lifting the hold.
+> **First deployment:** install the reviewed feature-ID reset while the job is
+> paused and drained. Deployment verifies installed publication state before
+> building the image. See the [installation runbook](../../docs/feature-id-reset-installation.md).
 
 This job publishes the `ims-sea-ice-extent` asset from the NOAA/NSIDC IMS Daily
 Northern Hemisphere Snow and Ice Analysis 4 km GeoTIFFs.

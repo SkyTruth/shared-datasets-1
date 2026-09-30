@@ -39,7 +39,7 @@ def install_fixture(store, candidate):
         store.write_json(item["path"], item["value"], item["expected_generation"])
     store.write_json(f"{candidate.root_uri}/publications/reset.json", {
         "schema_version": 1, "inventory_sha256": p.digest(candidate.encoded),
-        "fence_sha256": "f" * 64, "proposal_key": "a" * 64,
+        "proposal_key": "a" * 64,
         "execution_contract_sha256": "b" * 64, "phase": "complete",
         "state_generation": store.head(f"{candidate.root_uri}/publications/state.json").generation,
     }, 0)

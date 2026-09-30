@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 from unittest import mock
 
-from ingestion.common import publication as p, reset_fence as fence
+from ingestion.common import publication as p, reset_controls as controls
 from ingestion.common.reset_installation import install_reset
 from scripts import dataset_mutation_authorization as auth, reviewed_dataset_plan as plans
 from scripts import install_feature_id_reset as cli
@@ -21,21 +21,21 @@ AUTHORITY = {"proposal_key": "a" * 64, "execution_contract_sha256": "b" * 64}
 
 
 def installation_fixture():
-    store, candidate, ctx = fixture(bucket=fence.BUCKET)
+    store, candidate, ctx = fixture(bucket=controls.BUCKET)
     promotions = []
     for index, item in enumerate(candidate.review_envelope()["objects"]):
-        uri = f"gs://{fence.BUCKET}/_scratch/pending-publishes/{ctx.asset_slug}/reset-test/{index}.json"
+        uri = f"gs://{controls.BUCKET}/_scratch/pending-publishes/{ctx.asset_slug}/reset-test/{index}.json"
         version = store.write_json(uri, item["value"], 0)
         promotions.append({"source_uri": uri, "source_generation": str(version.generation),
                            "destination_uri": item["path"], "content_type": "application/json", "cache_control": "no-cache"})
     plan = plans.normalize_publish_plan({"asset_slug": ctx.asset_slug, "proposal_id": "reset-test", "promotions": promotions,
-                                         "identity_reset": {"inventory": candidate.value, "fence_sha256": "f" * 64}})
+                                         "identity_reset": {"inventory": candidate.value}})
     store.events.clear()
     return store, candidate, ctx, plan
 
 
 def run_install(store, plan, guard=lambda: None):
-    return install_reset(store, plan, authorization=AUTHORITY, check_authority_and_fence=guard)
+    return install_reset(store, plan, authorization=AUTHORITY, check_authority_and_jobs=guard)
 
 
 class ResetInstallationTests(unittest.TestCase):
@@ -107,7 +107,7 @@ class ResetInstallationTests(unittest.TestCase):
             run_install(store, plan)
         store.fail_after = None
         with self.assertRaisesRegex(p.PublicationError, "another reset installation"):
-            install_reset(store, plan, authorization={**AUTHORITY, "proposal_key": "c" * 64}, check_authority_and_fence=lambda: None)
+            install_reset(store, plan, authorization={**AUTHORITY, "proposal_key": "c" * 64}, check_authority_and_jobs=lambda: None)
         run_install(store, plan)
 
         store, candidate, ctx, plan = installation_fixture()
@@ -221,7 +221,7 @@ class ResetAuthorizationTests(unittest.TestCase):
     def test_reset_uses_same_immutable_review_authority_and_distinct_routing(self):
         flags = auth.plan_outputs(self.api.doc)
         self.assertEqual(flags, {"has_identity_reset_plan": True, "has_publish_plan": False, "has_delete_plan": False})
-        with publication_temp_directory() as tmp, mock.patch.object(auth.subprocess, "check_output", return_value=EXECUTOR + "\n"), mock.patch.object(cli, "approved_fence"):
+        with publication_temp_directory() as tmp, mock.patch.object(auth.subprocess, "check_output", return_value=EXECUTOR + "\n"):
             directory = Path(tmp)
             auth.save_envelope(self.envelope, directory, None)
             digest = plans.sha256((directory / auth.ENVELOPE_FILE).read_bytes())
@@ -233,14 +233,7 @@ class ResetAuthorizationTests(unittest.TestCase):
             with self.assertRaisesRegex(plans.PlanValidationError, "APPROVED"):
                 cli.authorized_plan(directory, digest, api=self.api, env=self.env)
 
-    def test_no_registered_fence_blocks_before_cloud_authentication(self):
-        with publication_temp_directory() as tmp, mock.patch.object(auth.subprocess, "check_output", return_value=EXECUTOR + "\n"):
-            directory = Path(tmp)
-            auth.save_envelope(self.envelope, directory, None)
-            with self.assertRaisesRegex(p.PublicationError, "RESET_HELD"):
-                cli.authorized_plan(directory, plans.sha256((directory / auth.ENVELOPE_FILE).read_bytes()), api=self.api, env=self.env)
-
-    def test_protected_workflow_pins_authority_and_uses_separate_identity(self):
+    def test_protected_workflow_reuses_existing_identities_and_serializes_with_deployments(self):
         root = Path(__file__).resolve().parents[1]
         workflow = load_workflow(root / ".github/workflows/publish-dataset.yml")
         job = workflow["jobs"]["install-approved-identity-reset"]
@@ -250,6 +243,40 @@ class ResetAuthorizationTests(unittest.TestCase):
         steps = workflow_steps_by_name(workflow, "install-approved-identity-reset")
         self.assertEqual(steps["Check out captured immutable executor"]["with"]["ref"], "${{ needs.reviewed_pr_plans.outputs.executor_sha }}")
         names = list(steps)
-        self.assertLess(names.index("Verify reset authority and registered writer fence"), names.index("Authenticate dedicated reset publisher"))
-        self.assertEqual(steps["Authenticate dedicated reset publisher"]["with"]["service_account"], fence.RESET_ACCOUNT)
+        self.assertLess(names.index("Verify reset authority"), names.index("Authenticate existing approved publisher"))
+        self.assertEqual(steps["Authenticate existing approved publisher"]["with"]["service_account"], "${{ env.PUBLISHER_SERVICE_ACCOUNT }}")
         self.assertNotIn("--check-only", steps["Recheck live controls and install reset"]["run"])
+
+        self.assertEqual(job["concurrency"]["group"], "prod-terraform-state")
+        control = steps["Authenticate existing deployer for job checks"]
+        self.assertEqual(control["with"]["service_account"], controls.DEPLOYER_ACCOUNT)
+        self.assertFalse(control["with"]["export_environment_variables"])
+        self.assertEqual(steps["Recheck live controls and install reset"]["env"]["RESET_CONTROL_CREDENTIALS"],
+                         "${{ steps.reset_control_auth.outputs.credentials_file_path }}")
+
+    def test_cli_uses_deployer_for_live_checks_and_publisher_for_every_object_write(self):
+        store, _candidate, _ctx, plan = installation_fixture()
+        import google.auth
+        from google.auth.transport import requests
+        from google.cloud import storage
+        from ingestion.common import publication_gcs
+
+        publisher = mock.Mock(service_account_email=controls.PUBLISHER_ACCOUNT)
+        deployer = mock.Mock(service_account_email=controls.DEPLOYER_ACCOUNT)
+        reader = mock.Mock()
+        with mock.patch.object(cli, "authorized_plan", return_value=(self.envelope, plan)), \
+             mock.patch.object(cli.auth, "revalidate") as review_check, \
+             mock.patch.object(cli.auth, "identity_digests", return_value=AUTHORITY), \
+             mock.patch.object(google.auth, "default", return_value=(publisher, controls.PROJECT)), \
+             mock.patch.object(google.auth, "load_credentials_from_file", return_value=(deployer, controls.PROJECT)) as load_control, \
+             mock.patch.object(requests, "AuthorizedSession") as session, \
+             mock.patch.object(cli, "GoogleControlReader", return_value=reader), \
+             mock.patch.object(storage, "Client") as client, \
+             mock.patch.object(publication_gcs, "GcsStore", return_value=store), \
+             mock.patch.dict("os.environ", {"RESET_CONTROL_CREDENTIALS": "/workflow/control.json"}):
+            self.assertEqual(cli.main(["--directory", "authorization", "--expected-sha256", "a" * 64]), 0)
+            load_control.assert_called_once_with("/workflow/control.json", scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            session.assert_called_once_with(deployer)
+            client.assert_called_once_with(project=controls.PROJECT, credentials=publisher)
+            self.assertEqual(review_check.call_count, 7)
+            self.assertEqual(reader.check_quiescent.call_args_list, [mock.call(plan["asset_slug"])] * 7)

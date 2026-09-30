@@ -1,6 +1,6 @@
 """One-time installation of an already authorized generated-ID reset.
 
-The workflow adapter owns approval and live writer-fence verification. This
+The workflow adapter owns approval and live paused/drained job checks. This
 transaction owns ordering, generation preconditions, and crash recovery. A
 durable marker prevents a missing allocation state from becoming a new genesis.
 """
@@ -16,8 +16,7 @@ from ingestion.common.identity_reset import IdentityResetCandidate, validate_ins
 
 def validate_reset_plan(plan: dict[str, Any]) -> IdentityResetCandidate:
     reset = plan["identity_reset"]
-    p.keys(reset, {"inventory", "fence_sha256"}, "identity reset")
-    p.require(p.hash_value(reset["fence_sha256"]), "reviewed writer-fence digest is required")
+    p.keys(reset, {"inventory"}, "identity reset")
     candidate = IdentityResetCandidate.build(reset["inventory"])
     p.require(candidate.value["bucket"] == "skytruth-shared-datasets-1", "reset is restricted to the production bucket")
     p.require(candidate.value["asset_slug"] == plan["asset_slug"], "reset asset differs from publish plan")
@@ -35,9 +34,9 @@ def validate_reset_plan(plan: dict[str, Any]) -> IdentityResetCandidate:
 
 def install_reset(
     store: p.Store, plan: dict[str, Any], *, authorization: dict[str, str],
-    check_authority_and_fence: Callable[[], None],
+    check_authority_and_jobs: Callable[[], None],
 ) -> dict[str, Any]:
-    """Install once; recheck approval/fence before every remote mutation.
+    """Install once; recheck approval/job status before every remote mutation.
 
     No local or runtime fallback is provided. The caller must have verified the
     immutable PR envelope and use its execution identity as ``authorization``.
@@ -48,11 +47,10 @@ def install_reset(
     candidate = validate_reset_plan(plan)
     p.keys(authorization, {"proposal_key", "execution_contract_sha256"}, "reset authorization identity")
     p.require(all(p.hash_value(v) for v in authorization.values()), "invalid reset authorization identity")
-    check_authority_and_fence()
+    check_authority_and_jobs()
     marker_uri = f"{candidate.root_uri}/publications/reset.json"
     state_uri = f"{candidate.root_uri}/publications/state.json"
-    identity = {"schema_version": 1, "inventory_sha256": p.digest(candidate.encoded),
-                "fence_sha256": plan["identity_reset"]["fence_sha256"], **authorization}
+    identity = {"schema_version": 1, "inventory_sha256": p.digest(candidate.encoded), **authorization}
     tags = {"identity-reset-execution": authorization["execution_contract_sha256"]}
     items = candidate.review_envelope()["objects"]
 
@@ -99,7 +97,7 @@ def install_reset(
     if marker is None:
         candidate.validate_current(store)
         p.require(not list(store.list_heads(f"{candidate.root_uri}/publications/")), "unowned publication objects already exist")
-        check_authority_and_fence()
+        check_authority_and_jobs()
         store.write_json(marker_uri, {**identity, "phase": "prepared", "state_generation": None}, 0)
         marker = read_marker()
 
@@ -109,14 +107,14 @@ def install_reset(
         p.require(store.head(state_uri) is None, "allocation state already exists before activation")
         for item, source in zip(items[:2], sources[:2], strict=True):
             if matching_object(item) is None:
-                check_authority_and_fence()
+                check_authority_and_jobs()
                 candidate.validate_anchors(store)
                 store.copy(source, item["path"], 0, tags, "application/json", "no-cache")
-        check_authority_and_fence()
+        check_authority_and_jobs()
         candidate.validate_anchors(store)
         store.write_json(marker_uri, {**identity, "phase": "activating", "state_generation": None}, marker.version.generation)
         marker = read_marker()
-        check_authority_and_fence()
+        check_authority_and_jobs()
         candidate.validate_anchors(store)
         store.copy(sources[2], state_uri, 0, tags, "application/json", "no-cache")
     else:
@@ -125,7 +123,7 @@ def install_reset(
     for item in items:
         p.require(matching_object(item) is not None, "reset installation is incomplete")
     state = matching_object(items[2])
-    check_authority_and_fence()
+    check_authority_and_jobs()
     candidate.validate_anchors(store)
     completed = store.write_json(marker_uri, {**identity, "phase": "complete", "state_generation": state.generation}, marker.version.generation)
     return {"status": "installed", "marker": completed.identity(), "state": state.identity()}

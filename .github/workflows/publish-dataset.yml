@@ -100,7 +100,7 @@ jobs:
       pull-requests: read
       actions: read
     concurrency:
-      group: feature-id-reset
+      group: prod-terraform-state
       queue: max
       cancel-in-progress: false
     steps:
@@ -116,7 +116,7 @@ jobs:
           path: authorization
           merge-multiple: true
 
-      - name: Verify reset authority and registered writer fence
+      - name: Verify reset authority
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
@@ -136,16 +136,25 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen
 
-      - name: Authenticate dedicated reset publisher
+      - name: Authenticate existing deployer for job checks
+        id: reset_control_auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_FEATURE_ID_RESET_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: feature-id-reset@shared-datasets-1.iam.gserviceaccount.com
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com
+          export_environment_variables: false
+
+      - name: Authenticate existing approved publisher
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER_SERVICE_ACCOUNT }}
 
       - name: Recheck live controls and install reset
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
+          RESET_CONTROL_CREDENTIALS: ${{ steps.reset_control_auth.outputs.credentials_file_path }}
         run: uv run python scripts/install_feature_id_reset.py --directory authorization --expected-sha256 "$EXPECTED_SHA256"
 
   apply-approved-pr-plans:

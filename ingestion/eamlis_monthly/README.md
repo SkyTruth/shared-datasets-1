@@ -1,12 +1,5 @@
 # Monthly e-AMLIS Job
 
-> **Deployment hold in PR #154:** this branch blocks all three ingestion deployment
-> workflows before cloud authentication, image builds, Terraform, or canaries.
-> The hold also blocks routine maintenance. Existing deployed jobs and schedules
-> continue running; this is not an old-writer fence. The
-> [fresh-start rollout plan](../../docs/proposals/feature-id-fresh-start.md) lists
-> the evidence and reviewed controls required before lifting the hold.
-
 This job publishes the existing `eamlis-abandoned-mine-land-inventory` asset from
 the public OSMRE e-AMLIS ArcGIS hosted feature layer:
 

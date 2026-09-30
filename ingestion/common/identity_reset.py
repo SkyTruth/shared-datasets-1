@@ -127,7 +127,7 @@ class IdentityResetCandidate:
         return model.GeneratedIdentityBaseline.genesis(contract_id=self.value["contract_id"])
 
     def validate_current(self, store: p.Store) -> None:
-        """Read-only preflight; must be repeated under the approved writer fence."""
+        """Read-only preflight; installation also requires paused/drained jobs."""
         p.require(store.head(f"{self.root_uri}/publications/state.json") is None, "identity state already exists; reset cannot be repeated")
         self.validate_anchors(store)
         value = self.value
@@ -166,11 +166,11 @@ class IdentityResetCandidate:
 
 def validate_installation_marker(value: dict[str, Any], inventory_sha256: str) -> None:
     """One persisted marker schema shared by installation and runtime admission."""
-    p.keys(value, {"schema_version", "inventory_sha256", "fence_sha256", "proposal_key", "execution_contract_sha256", "phase", "state_generation"}, "reset installation marker")
+    p.keys(value, {"schema_version", "inventory_sha256", "proposal_key", "execution_contract_sha256", "phase", "state_generation"}, "reset installation marker")
     p.require(type(value["schema_version"]) is int and value["schema_version"] == 1
               and value["phase"] in {"prepared", "activating", "complete"}
               and value["inventory_sha256"] == inventory_sha256
-              and all(p.hash_value(value[k]) for k in ("fence_sha256", "proposal_key", "execution_contract_sha256")),
+              and all(p.hash_value(value[k]) for k in ("proposal_key", "execution_contract_sha256")),
               "invalid reset installation marker")
     p.require((p.integer(value["state_generation"], 1) if value["phase"] == "complete" else value["state_generation"] is None),
               "invalid reset installation state generation")

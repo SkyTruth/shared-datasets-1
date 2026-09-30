@@ -1,10 +1,9 @@
 # Feature-ID fresh-start readiness: 2026-09-29
 
-All three datasets are **NOT READY for production cutover**. The approved
-retirement of their pre-launch identity contract removes the need to reconstruct
-historical allocations. A fresh start is supported by the local implementation,
-but current writer permissions and incomplete cutover machinery prevent a safe
-production transition. Dataset lifecycle status is unchanged.
+This report preserves the September 29 production observations. The September 30
+simplification replaces the exhaustive organization audit and blanket hold with
+the [project-scoped installation runbook](../feature-id-reset-installation.md).
+Production cutover is not yet performed; that is distinct from code PR readiness.
 
 This report accompanies the [fresh-start design](feature-id-fresh-start.md).
 Observations began at `2026-09-29T04:33:35Z`. They are snapshots, not a writer
@@ -19,8 +18,8 @@ All paths below use `gs://skytruth-shared-datasets-1/`.
 
 | Dataset | Observed current release | Observed latest bundle | Decision | Missing evidence/work |
 | --- | --- | --- | --- | --- |
-| `wdpa-marine` | `2026-09-01` | 12 objects; matching release/latest manifest bytes; core generations match the manifest | **NOT READY** | Complete locale rebuild for the new-ID release; complete writer exclusion, protected reset installation, native artifact checks, and serving cutover |
-| `wdpa-terrestrial` | `2026-09-01` | 12 objects; matching release/latest manifest bytes; core generations match the manifest | **NOT READY** | Complete locale rebuild for the new-ID release; complete writer exclusion, protected reset installation, native artifact checks, and serving cutover |
+| `wdpa-marine` | `2026-09-01` | 12 objects; matching release/latest manifest bytes; core generations match the manifest | **NOT READY** | Complete locale rebuild for the new-ID release; paused/drained jobs, protected reset installation, native artifact checks, and serving cutover |
+| `wdpa-terrestrial` | `2026-09-01` | 12 objects; matching release/latest manifest bytes; core generations match the manifest | **NOT READY** | Complete locale rebuild for the new-ID release; paused/drained jobs, protected reset installation, native artifact checks, and serving cutover |
 | `ims-sea-ice-extent` | `2026-09-27` | Expected five objects; matching release/latest manifest bytes; core generations match the manifest | **NOT READY** | Complete writer exclusion, protected reset installation, native artifact checks, and serving cutover |
 
 WDPA roots are `100-geographic-reference/130-protected-areas/{asset-slug}`.
@@ -87,7 +86,7 @@ not the new-contract reset release. See the
 sources, output digests, key restoration evidence, and language-review limits.
 No alias deletion is needed for the selected approach, and none is authorized.
 Include the corrected supplement in the immutable review and freeze/recheck the
-complete latest inventory under the writer fence before the eventual replacement.
+complete latest inventory with the affected job paused and drained before replacement.
 
 ## Observed writers and administrators
 
@@ -98,7 +97,7 @@ allow/deny policy could not be read.
 
 | Principal/process | Observed access relevant to cutover | Consequence |
 | --- | --- | --- |
-| `wdpa-monthly-job` / Cloud Run `wdpa-monthly` | Conditional bucket `storage.objectUser` on both WDPA roots and their release indexes | Existing and newly launched executions using this identity can bypass application ownership until fenced |
+| `wdpa-monthly-job` / Cloud Run `wdpa-monthly` | Conditional bucket `storage.objectUser` on both WDPA roots and their release indexes | Existing and newly launched executions using this identity can bypass application ownership until paused/drained and replaced |
 | `sea-ice-daily-job` / Cloud Run `sea-ice-daily` | Conditional bucket `storage.objectUser` on the sea-ice root and its release index | Same risk for sea ice |
 | `shared-datasets-publisher` / approved mutation and localization workflows | Conditional `storage.objectUser` covers all three canonical roots and `_catalog/` | New CLI guards do not revoke older workflows or direct credential use |
 | `shared-datasets-terraform` / protected infrastructure workflows | Bucket IAM management; project custom roles include job update/run, service-account policy/actAs, bucket policy management, and object deletion | This identity can alter the writer boundary indirectly; the preview-named role is not evidence of preview-only scope |
@@ -121,20 +120,12 @@ impersonation, existing tokens, broader deployment control, or future grants.
 Live federation-provider conditions and GitHub environment protections were
 not audited.
 
-The project has parent organization `471193686670`. Listing deny policies at
-project number `12695949518` returned an empty result. The repository declares
-an optional canonical destructive-action deny policy, but its source declaration
-is not evidence that it is deployed. Both organization IAM and organization
-deny-policy reads returned **403 PERMISSION_DENIED**. An authorized organization
-administrator's policy export is required to close this evidence gap; this
-report does not propose granting the auditing agent broader permissions.
-Both organization endpoints were rechecked during the finishing pass and still
-returned 403. The September 30 organization evidence exporter also failed on
-the organization allow-policy read with 403 and produced no success evidence.
-An authorized administrator can run the exact read-only command in the
-[reset installation guide](../feature-id-reset-installation.md#authority-and-writer-restrictions).
-It exports the full organization allow/deny policies and custom roles without
-changing permissions or stopping jobs. Code cannot resolve this access gap.
+The project has parent organization `471193686670`. Organization IAM reads
+returned 403. That observation remains recorded; obtaining those policies is no
+longer a rollout prerequisite. Existing administrators are trusted. The active
+runbook checks paused schedules and drained executions, exact object generations,
+and immutable review authority rather than attempting an organization-wide
+proof of writer exclusion. No organization evidence exporter is required.
 
 The live job inventory confirms the runtime accounts above. Image digests were:
 
@@ -146,45 +137,16 @@ or proof of what every historical workflow can deploy. Schedulers, pending
 executions, queued GitHub runs, issued credentials, and token expiry still need
 cutover-time evidence. No writer-exclusion control was applied in this audit.
 
-## Remaining engineering and rollout evidence
+## Remaining production operations
 
-1. Review and activate the implemented
-   [protected reset installer](../feature-id-reset-installation.md). It consumes
-   exact immutable PR authority, validates the current generations/hashes under
-   reviewed writer restrictions, and creates evidence/adoption/state with a
-   durable installation journal. Competing installs, revoked approval, drift,
-   and crash/retry boundaries have local tests. Activation remains blocked:
-   the approved-fence registry is empty and this change does not provision the
-   dedicated reset identity. The offline preparation CLI grants no authority;
-   generic promotion tools deliberately refuse these managed paths.
-2. Complete and review the IAM/deployment fence, including old job identities,
-   generic publisher/localization paths, administrative/impersonation paths,
-   running jobs, queued workflows, and credential propagation. Follow the
-   protected Terraform workflow; do not apply locally.
-3. Choose the first dated release for each asset, verify its destination and run
-   record are absent, resolve the WDPA aliases, and capture a complete reset
-   inventory. Current snapshots must be refreshed after publishing is held.
-4. Validate the actual catalog sidecar path during the protected canary. The
-   browser already pins tiles and metadata to a dated release and exact object
-   generations. A regression test exercises the actual cache/lookup functions
-   with numeric ID `1` representing different old/new features, including locale
-   separation, generation replacement, and an old download finishing last.
-   Firestore metadata lookup is deliberately inactive in the current service;
-   activating it is not a prerequisite for this cutover. Independent
-   `index-loads/YYYY-MM-DD/{load-id}.json` status
-   records may be created through the existing loader with a no-clobber
-   precondition; replacement/deletion and all identity-bearing paths remain
-   blocked in generic tools. The loader's status record is written after the
-   Firestore load and is not publication ownership or reset authority.
-5. Run the real native geospatial artifact checks with the pinned toolchain,
-   then validate first publication, matching tile/metadata/locale IDs, serving
-   behavior, durable counters, retries, and exclusion of older writers. Local
-   adapter tests mock the native-tool boundary. Both WDPA assets must pass
-   before their shared job resumes.
-
-Keep PR #154 draft. No standalone merge or deployment gate replaces these
-conditions. A failed transition must keep the new reservation and writer fence;
-re-enabling the old writer is not a recovery method.
+Follow the [installation runbook](../feature-id-reset-installation.md) after the
+code PR is reviewed: pause/drain affected jobs and older workflow runs, capture
+fresh inventories, stage immutable reset plans, install through the existing
+protected publisher, deploy and validate complete first releases, then resume.
+The deployment checks actual installed state; EAMLIS has no reset requirement.
+No new reset identity, organization-policy export, or approval registry is needed.
+The translation candidates are complete; final new-ID joins are checked during
+the first new-contract publication. Keep Firestore lookup inactive.
 
 ## Local verification
 
@@ -230,11 +192,12 @@ Later IAM reads record endpoint, observation time, HTTP status, and response.
 No private key material or access tokens are included. The evidence directory
 is local review material and has not been published to the bucket or repository.
 
-## Draft PR deployment hold
+## Current deployment behavior
 
-The draft now includes the strict hold-only rollout registry and checks in all
-three ingestion deploy workflows. Tests execute their actual gate steps for push
-and dispatch and reject bypasses before cloud authentication. This protects
-against deploying these unadopted publishers if the branch is later merged; it
-does not revoke any writer permission or stop existing jobs. No live hold has
-been installed by this draft PR. The dataset decisions above remain NOT READY.
+The blanket three-job hold was removed on September 30. WDPA and sea ice now
+check real publication state/receipts before build/apply. Missing or incomplete
+reset state stops only that affected deployment; valid state permits deployment.
+The reset installer uses the existing deployment queue and existing identities,
+checks paused/drained jobs before each write, and never requests organization IAM.
+No canonical objects, schedules, jobs, or permissions were changed by this code
+revision. The production observations above remain a snapshot, not a live canary.
