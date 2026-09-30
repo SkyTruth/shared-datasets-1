@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -241,6 +242,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             "run.executions.list",
             "run.jobs.get",
             "run.jobs.run",
+            "run.jobs.runWithOverrides",
             "run.jobs.update",
             "run.operations.get",
             "run.operations.list",
@@ -261,6 +263,32 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             'member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"',
             binding_block,
         )
+
+    def test_wdpa_reset_reader_matches_only_the_approved_supplement(self):
+        block = terraform_resource_block(
+            (PROD_TF_DIR / "wdpa_reset_iam.tf").read_text(),
+            "google_storage_bucket_iam_member",
+            "wdpa_reset_translation_reader",
+        )
+        self.assertIn('role   = "roles/storage.objectViewer"', block)
+        self.assertIn('member = module.wdpa_job_service_account.member', block)
+        self.assertNotIn("startsWith", block)
+        self.assertNotIn(" || ", block)
+        supplements = set()
+        for slug in ("wdpa-marine", "wdpa-terrestrial"):
+            plan_dir = (
+                REPO_ROOT / ".github/dataset-plans" / slug
+                / "prelaunch-feature-id-reset-20260930"
+            )
+            documents = list(plan_dir.glob("*.json"))
+            self.assertEqual(len(documents), 1)
+            inventory = json.loads(documents[0].read_text())["publish"]["identity_reset"]["inventory"]
+            supplements.add(inventory["translation_supplement"]["path"])
+        self.assertEqual(len(supplements), 1)
+        source_path = supplements.pop().split("/", 3)[3]
+        expression = next(line.strip() for line in block.splitlines() if line.strip().startswith("expression"))
+        self.assertEqual(expression.split("=", 1)[1].strip(),
+                         '"resource.name == \'${local.shared_bucket_object_resource_prefix}' + source_path + '\'"')
 
     def test_scheduled_ingestion_deploy_iam_sync_workflow_uses_constrained_apply(self):
         # Caller wiring is asserted in detail in
