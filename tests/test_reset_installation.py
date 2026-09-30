@@ -100,6 +100,55 @@ class ResetInstallationTests(unittest.TestCase):
             run_install(store, plan)
         self.assertEqual(store.events, before)
 
+    def test_updated_executor_can_only_finalize_fully_written_original_reset(self):
+        updated = {**AUTHORITY, "execution_contract_sha256": "c" * 64}
+        for failure in range(1, 7):
+            with self.subTest(failure=failure):
+                store, candidate, ctx, plan = installation_fixture()
+                store.fail_after = failure
+                with self.assertRaises(LostResponse):
+                    run_install(store, plan)
+                store.fail_after = None
+                before = list(store.events)
+                state = store.read_json(ctx.state_uri)
+                if failure < 5:
+                    with self.assertRaises(p.PublicationError):
+                        install_reset(store, plan, authorization=updated, check_authority_and_jobs=lambda: None)
+                    self.assertEqual(store.events, before)
+                else:
+                    install_reset(store, plan, authorization=updated, check_authority_and_jobs=lambda: None)
+                    self.assertEqual(store.read_json(ctx.state_uri), state)
+                    marker_uri = f"{candidate.root_uri}/publications/reset.json"
+                    self.assertEqual(store.events[len(before):], [marker_uri] if failure == 5 else [])
+                    marker = store.read_json(marker_uri).value
+                    self.assertEqual(marker["phase"], "complete")
+                    self.assertEqual(marker["execution_contract_sha256"], AUTHORITY["execution_contract_sha256"])
+                    self.assertEqual(marker["state_generation"], state.version.generation)
+
+    def test_updated_executor_refuses_changed_or_foreign_reset_objects(self):
+        for index in range(3):
+            for change in ("missing", "bytes", "metadata"):
+                with self.subTest(index=index, change=change):
+                    store, candidate, _ctx, plan = installation_fixture()
+                    store.fail_after = 5
+                    with self.assertRaises(LostResponse):
+                        run_install(store, plan)
+                    store.fail_after = None
+                    item = candidate.review_envelope()["objects"][index]
+                    current = store.read_json(item["path"])
+                    if change == "missing":
+                        del store.objects[item["path"]]
+                    else:
+                        store.write_bytes(item["path"], b"changed" if change == "bytes" else p.canonical(item["value"]),
+                                          current.version.generation,
+                                          {} if change == "metadata" else dict(current.version.metadata),
+                                          "application/json", "no-cache")
+                    before = list(store.events)
+                    with self.assertRaises(p.PublicationError):
+                        install_reset(store, plan, authorization={**AUTHORITY, "execution_contract_sha256": "c" * 64},
+                                      check_authority_and_jobs=lambda: None)
+                    self.assertEqual(store.events, before)
+
     def test_competing_proposals_and_simultaneous_claims_cannot_overwrite(self):
         store, candidate, _ctx, plan = installation_fixture()
         store.fail_after = 1

@@ -158,6 +158,14 @@ accept only matching bytes and installer metadata; competing proposals or
 unrelated publication objects stop the operation. After completion, a retry
 validates the existing owned state and receipts without changing its counter.
 
+A repaired executor on reviewed `main` may finish an `activating` journal for
+the **same immutable PR plan** only when all three objects already exist and
+match the approved bytes and original ownership tags. It preserves the original
+executor identity and state generation, updating only the journal to
+`complete`. It cannot continue a `prepared` installation, recreate a missing
+object, or replace changed state. Completed retries remain read-only. This
+allows storage-client fixes without restarting allocation or changing the plan.
+
 A crash after `activating` but before a confirmed state leaves an intentionally
 bounded stop: **if state is absent, reviewed recovery is required**. Absence
 cannot distinguish a write that never happened from a state that was created

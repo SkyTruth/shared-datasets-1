@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from google.auth.credentials import AnonymousCredentials
@@ -13,6 +14,34 @@ from test_publication import publication_temp_directory
 
 
 class GcsPublicationTests(unittest.TestCase):
+    def test_download_headers_do_not_replace_stored_object_metadata(self):
+        client = Client(project="test", credentials=AnonymousCredentials())
+        data = b'{"active":null}'
+        uri = "gs://bucket/state.json"
+        stored = {"generation": "17", "size": str(len(data)), "contentType": "application/json",
+                  "cacheControl": "no-cache", "metadata": {"owner": "reviewed"}}
+        response = SimpleNamespace(headers={"Content-Type": "application/octet-stream",
+                                            "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+                                            "X-goog-generation": "17"})
+        def download(blob, *args, if_generation_match):
+            self.assertEqual(if_generation_match, 17)
+            blob._extract_headers_from_download(response)
+            if args:
+                args[0].write(data)
+            else:
+                return data
+        with (
+            publication_temp_directory() as temporary,
+            mock.patch.dict("os.environ", {"SHARED_DATASETS_WORKDIR": temporary}),
+            mock.patch.object(client._connection, "api_request", side_effect=lambda **_kwargs: dict(stored)),
+            mock.patch("google.cloud.storage.blob.Blob.download_as_bytes", download),
+            mock.patch("google.cloud.storage.blob.Blob.download_to_file", download),
+        ):
+            store = GcsStore(client)
+            expected = p.ObjectVersion(uri, 17, p.digest(data), len(data), "application/json", "no-cache", (("owner", "reviewed"),))
+            self.assertEqual(store.read_json(uri), p.JsonObject({"active": None}, expected))
+            self.assertEqual(store.inspect(uri, 17), expected)
+
     def test_real_sdk_rewrite_atomically_sets_tags_and_both_preconditions(self):
         client = Client(project="test", credentials=AnonymousCredentials())
         store = GcsStore(client)
