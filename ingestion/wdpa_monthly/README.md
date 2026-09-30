@@ -231,8 +231,9 @@ The first new release must replace every captured `latest/` object. The user
 chose to rebuild the ten old locale aliases identified in the
 [readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md).
 The publisher requires all six locale outputs. Local September-snapshot
-candidates exist, but their remaining translation gaps and the complete new-ID
-release still need completion before cutover. Historical releases stay intact.
+candidates now have complete requested-row coverage and validated CSV/locale
+joins. Machine wording still needs review; the complete new-ID release and its
+native validation remain prerequisites for cutover. Historical releases stay intact.
 
 Deployment remains blocked on the protected reset installation path, exclusion
 of older writers, and native artifact and serving checks. Both WDPA assets must

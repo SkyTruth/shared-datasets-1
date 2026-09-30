@@ -70,14 +70,19 @@ producer now requires and rebuilds all six locales, including Spanish, for both
 WDPA assets. Regression tests cover complete owned replacement and refuse a
 missing locale before any publication write.
 
-Twelve local candidates have been rebuilt against the current September metadata,
-reusing 99.9736% of requested translation rows. They are structurally valid but
-have 8,685 unresolved rows across 8,365 distinct field/locale/text tasks. These
-are a rehearsal against current IDs, not the new-contract reset release. See the
+Twelve local candidates have been rebuilt against the current September metadata.
+Verified historical reuse supplied 99.9736% of requested rows; the imported
+machine-translation supplement filled the remaining 8,685 rows across 8,365
+unique field/locale/text tasks. All 32,891,400 requested rows are present, both
+pending-task files are empty, and every canonical/CSV/locale join passed.
+This certifies row coverage and file consistency, not linguistic quality: spot
+checks found wording requiring review. These remain current-ID rehearsal files,
+not the new-contract reset release. See the
 [translation rebuild report](wdpa-translation-rebuild-2026-09-29.md) for exact
-sources, outputs, and the provider/download blocker. No alias deletion is needed
-for the selected approach, and none is authorized. Freeze and recheck the complete
-latest inventory under the writer fence before the eventual reviewed replacement.
+sources, output digests, key restoration evidence, and language-review limits.
+No alias deletion is needed for the selected approach, and none is authorized.
+Review the supplement and freeze/recheck the complete latest inventory under the
+writer fence before the eventual reviewed replacement.
 
 ## Observed writers and administrators
 
@@ -192,12 +197,12 @@ re-enabling the old writer is not a recovery method.
 - `git diff --check`: passed. The initial six-document link check and the
   subsequent four-document translation/rebuild link check passed.
 
-The earlier installer head `e429ffa68dfd19a2061a296de884e89174616caf`
-passed the full suite and pinned native image in
-[CI run 36597694973](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36597694973).
-That result predates the supplement binding and cache regression additions above;
-their fresh head checks belong in PR #154. No deployed execution or production
-native artifact validation is claimed by these fixture results.
+The implementation head `0947f293a050d4a5adc9416cdff98d9ea0c2ab2d`
+passed all applicable checks, including the full suite and pinned native image in
+[CI run 36663795825](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36663795825),
+as well as Chromium, SDK, catalog, hygiene, and protected-readiness checks.
+This includes the supplement binding and cache regression additions. No deployed
+execution or production native artifact validation is claimed by these fixtures.
 
 ## Retained evidence
 
