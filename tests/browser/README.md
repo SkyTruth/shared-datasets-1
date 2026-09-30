@@ -52,7 +52,7 @@ an explicitly classified `GPU stall due to ReadPixels` performance warning
 during screenshots; warnings are retained in evidence, not silently discarded.
 
 The production-matching MapLibre5.9.0 dependency has a known sanitizer advisory;
-see the [dependency review](../../docs/proposals/repository-audit-2026-09/reviews/catalog-browser-dependency-review.md). This test package does not claim a clean
+see the [dependency review](DEPENDENCIES.md). This test package does not claim a clean
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
