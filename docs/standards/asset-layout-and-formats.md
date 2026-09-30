@@ -566,11 +566,11 @@ metadata, translations, and caches.
 
 Legacy manifests remain readable, but an old numeric next-ID is not verified
 allocation state. Generated refreshes require an explicit matching contract.
-Preserving the previous contract requires a reviewed, generation-bound
-[sequence migration](../feature-id-sequence-migration.md). The three pre-launch
-generated assets instead have an approved [fresh-start direction](../proposals/feature-id-fresh-start.md),
-which requires a separately reviewed reset boundary and retains historical
-releases. Missing state is never permission to reset an established asset.
+Preserving an existing contract requires verified historical allocation evidence;
+a current object listing or arbitrary seed is insufficient. The three pre-launch
+generated assets use the [reviewed identity reset](../feature-id-reset-installation.md)
+to start `generated-2026-v1` while retaining historical releases. Missing state
+never authorizes a reset of an established asset.
 Source-field IDs and the hash canonicalization algorithms are unchanged.
 Publication also needs exclusive ownership of the captured baseline; a successful
 GCS read or a generation preflight alone does not serialize concurrent writers.

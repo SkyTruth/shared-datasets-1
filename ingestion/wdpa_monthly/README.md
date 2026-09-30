@@ -60,7 +60,7 @@ are streamed and the downloaded copies are locally compressed.
 In subsequent releases, new or changed text without a verified translation retains the canonical value.
 Its CSV row is empty with `review_state=translation_failed`; the run record reports
 the unresolved counts. The job does not contact a translation provider or claim
-that fallback text is translated. Follow the [rebuild report and gap workflow](../../docs/proposals/wdpa-translation-rebuild-2026-09-29.md)
+that fallback text is translated. Follow the [translation evidence and tooling](../../docs/wdpa-translation-reset-evidence.md)
 to fill these tasks without retranslating the full dataset. New machine results
 remain labeled as machine output rather than human review.
 
@@ -207,34 +207,22 @@ docker run --platform linux/amd64 --rm -i \
 The sample harness never instantiates a GCS client and leaves outputs in the
 local work directory.
 
-## Generated-ID deployment prerequisite
+## Generated-ID publication
 
-Both WDPA assets use `OwnedGeneratedPublisher` and the new identity contract
-`generated-2026-v1`. The approved [pre-launch fresh start](../../docs/proposals/feature-id-fresh-start.md)
-retires the previous identity history. Historical releases remain readable;
-their IDs and legacy `ext_id` mappings cannot seed this contract. Each asset
-requires an explicitly reviewed reset inventory and installed publication state.
-Missing state stops the job; it cannot silently restart numbering.
+Both assets use `OwnedGeneratedPublisher` under `generated-2026-v1`. The
+[reset runbook](../../docs/feature-id-reset-installation.md) defines the one-time
+transition and first-publication checks. Historical releases remain readable;
+their IDs do not seed the new contract. Both assets require installed reset state
+before this shared job deploys. Missing state is an error.
 
-The publisher reserves IDs and claims the asset before checkpointing or exposing
-the release bundle. Later builds read the exact current manifest and referenced
-metadata generations, and retain the counter when features disappear. Runtime
-identity comes from `CLOUD_RUN_EXECUTION` and the image's embedded
-`SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the same captured intent. A crash
-before all local inputs have durable checkpoints stops with the claim held;
-starting another execution does not abandon the reservation.
+The publisher reserves IDs and claims the asset before exposing artifacts.
+Later builds read the exact committed manifest/metadata generations and retain
+the counter when features disappear. Runtime identity binds `CLOUD_RUN_EXECUTION`
+and the image's embedded `SHARED_DATASETS_EXECUTOR_SHA`. Retries resume the
+captured intent; an interrupted checkpoint holds its claim and reservation.
+Starting another execution does not abandon them.
 
-The first new release must replace every captured `latest/` object. The user
-chose to rebuild the ten old locale aliases identified in the
-[readiness report](../../docs/proposals/feature-id-readiness-2026-09-29.md).
-The publisher requires all six locale outputs. Local September-snapshot
-candidates now have complete requested-row coverage and validated CSV/locale
-joins. The new descriptions were corrected by the agent, and the user chose to
-preserve official names. The corrected supplement is staged for immutable reset
-review. The complete new-ID release and native validation remain prerequisites
-for cutover. Historical releases stay intact.
-
-Deployment remains blocked on the protected reset installation path, exclusion
-of older writers, and native artifact and serving checks. Both WDPA assets must
-be ready before this shared job resumes. The local adapter and an offline review
-envelope are not production cutover authority.
+The first new release replaces every captured latest object, including all six
+locale sidecars. It consumes the [verified translation supplement](../../docs/wdpa-translation-reset-evidence.md)
+and requires complete joins before reserving IDs. Resume scheduling only after
+both asset publications finish and their native artifacts and joins validate.

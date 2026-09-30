@@ -98,13 +98,18 @@ de-duplicating footprints; do not use hashes as URL lookup handles.
 
 ## How a release decided its feature IDs
 
-`feature_id` is meant to stay stable for the same logical feature across
-releases, so each release publishes how it settled that question. Read
+Within an identity contract, refreshes preserve IDs for matched features.
+Each release publishes how it assigned IDs. Retain the release context
+when joining data and metadata; the same numeric ID across different contracts
+has no implied relationship. Read
 `identity` in the release manifest, `{asset-slug}.manifest.json`, which sits
 beside the data in `releases/{date}/` and `latest/`:
 
 - `strategy` and `assignment_key` — whether IDs are copied from a source field
   or assigned as a monotonic sequence, and what key they are assigned from.
+- `contract_id` — the generated identity history this release belongs to.
+  Historical manifests may omit it; they remain readable in their original
+  release context and must not be joined to a new contract by numeric ID alone.
 - `previous_release` and `next_generated_feature_id_after_release` — the
   baseline this release continued from, and where the sequence stands after it.
   New generated releases also include `sequence_state_version: 1` and
