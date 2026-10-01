@@ -98,5 +98,30 @@ jobs:
           terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/metadata-retirement.tfplan" > "${RUNNER_TEMP}/metadata-retirement.tfplan.json"
           python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-retirement.tfplan.json"
 
+      - name: Authorize deletion of remaining retired accounts
+        run: |
+          set -euo pipefail
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-retirement.tfplan.json" --service-account-ids > "${RUNNER_TEMP}/metadata-delete-iam.tfvars.json"
+          terraform -chdir=terraform/envs/metadata-retirement-iam init -input=false
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/metadata-retirement-iam plan -input=false \
+            -var-file="${RUNNER_TEMP}/metadata-delete-iam.tfvars.json" \
+            -out="${RUNNER_TEMP}/metadata-delete-iam.tfplan"
+          terraform -chdir=terraform/envs/metadata-retirement-iam show -json "${RUNNER_TEMP}/metadata-delete-iam.tfplan" > "${RUNNER_TEMP}/metadata-delete-iam.tfplan.json"
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-delete-iam.tfplan.json" \
+            --delete-iam-grants-from "${RUNNER_TEMP}/metadata-retirement.tfplan.json"
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/metadata-retirement-iam apply -input=false "${RUNNER_TEMP}/metadata-delete-iam.tfplan"
+
+      - name: Wait for account deletion authority
+        run: python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-retirement.tfplan.json" --wait-for-delete-permission
+
       - name: Apply approved retirement plan
         run: bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/metadata-retirement.tfplan"
+
+      - name: Remove temporary deletion authority
+        run: |
+          set -euo pipefail
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/metadata-retirement-iam plan -input=false \
+            -out="${RUNNER_TEMP}/metadata-delete-iam-cleanup.tfplan"
+          terraform -chdir=terraform/envs/metadata-retirement-iam show -json "${RUNNER_TEMP}/metadata-delete-iam-cleanup.tfplan" > "${RUNNER_TEMP}/metadata-delete-iam-cleanup.tfplan.json"
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-delete-iam-cleanup.tfplan.json" --delete-iam-cleanup
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/metadata-retirement-iam apply -input=false "${RUNNER_TEMP}/metadata-delete-iam-cleanup.tfplan"

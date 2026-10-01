@@ -53,11 +53,14 @@ jobs:
       - name: Validate Terraform configurations
         run: |
           set -euo pipefail
-          for env_dir in terraform/envs/prod terraform/envs/preview; do
+          for env_dir in terraform/envs/prod terraform/envs/preview terraform/envs/metadata-retirement-iam; do
             echo "Validating ${env_dir}"
             terraform -chdir="${env_dir}" init -backend=false -input=false >/dev/null
             terraform -chdir="${env_dir}" validate
           done
+
+      - name: Test account-scoped retirement authority
+        run: terraform -chdir=terraform/envs/metadata-retirement-iam test
 
   tests:
     runs-on: ubuntu-latest
