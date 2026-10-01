@@ -60,8 +60,11 @@ def publish(publisher, asset, outputs, date=DATE):
     if asset.slug.startswith("wdpa-"):
         return wdpa.publish_asset(publisher=publisher, asset=asset, outputs=outputs, run_date=date,
                                   source_url="https://example.test/source.zip", source_version="Oct2026", source_fields=())
-    return sea_ice.publish_outputs(publisher=publisher, asset=asset, outputs=outputs,
-                                   source=sea_ice.AvailableSource(filename_date=date, source_url="https://example.test/ims.tif.gz", source_filename="ims2026274_4km_GIS_v1.3.tif.gz"))
+    source_date = date - dt.timedelta(days=1)
+    readme = outputs.fgb.parent / "asset_README.md"
+    readme.write_text("# IMS Sea-Ice Extent\nReviewed new-contract documentation.\n")
+    return sea_ice.publish_outputs(publisher=publisher, asset=asset, outputs=outputs, asset_readme=readme,
+                                   source=sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date)))
 
 
 class OwnedPublicationTests(unittest.TestCase):
@@ -112,6 +115,10 @@ class OwnedPublicationTests(unittest.TestCase):
                 index = store.read_json(f"gs://bucket/_catalog/releases/{asset.slug}.json").value
                 self.assertEqual(index["latest_release"]["date"], DATE.isoformat())
                 run = store.read_json(record["run_record"]["path"])
+                if asset.slug == sea_ice.ASSET.slug:
+                    readme_uri = f"gs://bucket/{asset.root}/README.md"
+                    version = store.inspect(readme_uri)
+                    self.assertEqual(version.sha256, p.digest((outputs.fgb.parent / "asset_README.md").read_bytes()))
                 self.assertEqual(run.value["sha256"]["manifest"], store.inspect(f"gs://bucket/{asset.release_object(DATE, '.manifest.json')}").sha256)
                 if asset.slug.startswith("wdpa-"):
                     self.assertEqual(len(record["release_paths"]), 12)

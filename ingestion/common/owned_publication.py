@@ -203,7 +203,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
             p.require(f"release-{role}" in operations and f"latest-{role}" in operations, "incomplete vector bundle")
         p.require("run-record" in operations and "release-index" in operations, "publication must include run and release-index effects")
 
-    def publish_generated(self, *, asset, run_date, outputs, identity, object_metadata, source_inputs, record, extra_suffix_paths=()):
+    def publish_generated(self, *, asset, run_date, outputs, identity, object_metadata, source_inputs, record, extra_suffix_paths=(), asset_readme: Path | None = None):
         context = self.context(asset)
         existing = self.resume(asset)
         if existing is not None:
@@ -244,6 +244,14 @@ class OwnedGeneratedPublisher(GcsPublisher):
             source = {"kind": "local", "key": role, "sha256": sha, "size": path.stat().st_size}
             checkpoint_suffix = suffix if suffix != ".metadata-translations.csv" else ".csv"
             operations.append(self.operation(f"input-{role}", "checkpoint", f"gs://{context.bucket}/{asset.root}/publications/inputs/{context.proposal_key}/{index}{checkpoint_suffix}", source, 0, asset.slug))
+        if asset_readme is not None:
+            data = asset_readme.read_bytes()
+            p.require(bool(data), "asset README must not be empty")
+            local_sources["asset-readme"] = asset_readme
+            source = {"kind": "local", "key": "asset-readme", "sha256": p.digest(data), "size": len(data)}
+            operations.append(self.operation("input-asset-readme", "checkpoint",
+                f"gs://{context.bucket}/{asset.root}/publications/inputs/{context.proposal_key}/{len(roles)}.md",
+                source, 0, asset.slug))
         for prefix in ("release", "latest"):
             for role, (suffix, _path) in roles.items():
                 destination = f"gs://{context.bucket}/" + (asset.release_object(run_date, suffix) if prefix == "release" else asset.latest_object(suffix))
@@ -265,6 +273,12 @@ class OwnedGeneratedPublisher(GcsPublisher):
         dependencies = [op["id"] for op in operations if op["phase"] in {"data", "commit"}]
         operations.append(self.operation("run-record", "asset_derived", f"gs://{context.bucket}/{asset.run_record_object(run_date)}",
                                          {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": run_parameters, "dependencies": dependencies}, 0, asset.slug))
+        if asset_readme is not None:
+            uri = f"gs://{context.bucket}/{asset.root}/README.md"
+            head = self.store.head(uri)
+            operations.append(self.operation("asset-readme", "asset_derived", uri,
+                {"kind": "result", "operation": "input-asset-readme"},
+                head.generation if head else 0, asset.slug))
         index_uri = release_index.release_index_uri(context.bucket, asset.slug)
         index = self.store.read_json(index_uri)
         now = dt.datetime.now(dt.UTC).isoformat()

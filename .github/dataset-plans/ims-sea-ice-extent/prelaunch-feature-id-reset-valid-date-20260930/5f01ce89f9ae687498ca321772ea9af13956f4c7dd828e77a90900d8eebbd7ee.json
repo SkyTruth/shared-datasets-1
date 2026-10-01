@@ -9,45 +9,45 @@
         "asset_slug": "ims-sea-ice-extent",
         "baseline": {
           "latest_manifest": {
-            "generation": 1790694254792164,
+            "generation": 1790780692082677,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.manifest.json",
-            "sha256": "6152732a1633cc3f18fd5f5012fd3c76eefe56fade6c7c9e0f9e1a99932783de"
+            "sha256": "1c158241f0c8baac7db5ebb4434a7c35e7492ea995ba318659ccbd676ad48b25"
           },
-          "release": "2026-09-28",
+          "release": "2026-09-29",
           "release_manifest": {
-            "generation": 1790694254528517,
-            "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/releases/2026-09-28/ims-sea-ice-extent.manifest.json",
-            "sha256": "6152732a1633cc3f18fd5f5012fd3c76eefe56fade6c7c9e0f9e1a99932783de"
+            "generation": 1790780691857706,
+            "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/releases/2026-09-29/ims-sea-ice-extent.manifest.json",
+            "sha256": "1c158241f0c8baac7db5ebb4434a7c35e7492ea995ba318659ccbd676ad48b25"
           }
         },
         "bucket": "skytruth-shared-datasets-1",
         "contract_id": "generated-2026-v1",
-        "first_release": "2026-09-29",
+        "first_release": "2026-09-30",
         "latest_objects": [
           {
-            "generation": 1790694253205319,
+            "generation": 1790780690494512,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.fgb",
-            "sha256": "4bc4a773ceb28d537eec32c1df8c34db08cc73f75caa175f00a77473e7c3e7da"
+            "sha256": "9116dd2696258b474b514c8aad9773d818344dbfd8b5852128bd23f7f5725bf1"
           },
           {
-            "generation": 1790694254792164,
+            "generation": 1790780692082677,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.manifest.json",
-            "sha256": "6152732a1633cc3f18fd5f5012fd3c76eefe56fade6c7c9e0f9e1a99932783de"
+            "sha256": "1c158241f0c8baac7db5ebb4434a7c35e7492ea995ba318659ccbd676ad48b25"
           },
           {
-            "generation": 1790694253930403,
+            "generation": 1790780691262345,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.metadata.ndjson.gz",
-            "sha256": "6424db0d8db0d685c7a48dd94f288f078814099d1181a4f017d5eae92523e595"
+            "sha256": "7cf6d556ee0976f11c040dc218224ca201d170ff24296371d3bf19dbacdcef8b"
           },
           {
-            "generation": 1790694253591491,
+            "generation": 1790780690905883,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.pmtiles",
-            "sha256": "eff3cbca8251df99aebe484b216b5803340ce2207d388256b169f202b4dc5d4a"
+            "sha256": "9c0f8cff48fb3660ada2dba1ea7d5e20c8655ab967b071e40a68f3496a455339"
           },
           {
-            "generation": 1790694254239254,
+            "generation": 1790780691566271,
             "path": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/latest/ims-sea-ice-extent.schema.json",
-            "sha256": "d9e519d4b3dec2efe86a258264fc15c01d03d330137f7c950ed68f16c6aaa635"
+            "sha256": "4ca55c13e678f14bbb0714dce74273df562795081cf766605b3d62480a3b56ae"
           }
         ],
         "schema_version": 1,
@@ -60,18 +60,18 @@
         "compatibility_waiver": null,
         "content_type": "application/json",
         "destination_generation": "",
-        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/publications/inputs/65a469e0558001e68a7b41f0dbf3c28a79be8ea0ff59a585ff50b3d0990094fa/0.catalog.json",
-        "source_generation": "1790744999377340",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-20260930/0.json"
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/publications/inputs/ea1843967d141296e4e2980827f19be776ff0b919b026572d8813daa4295eec3/0.catalog.json",
+        "source_generation": "1790819934171041",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-valid-date-20260930/0.json"
       },
       {
         "cache_control": "no-cache",
         "compatibility_waiver": null,
         "content_type": "application/json",
         "destination_generation": "",
-        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/publications/receipts/31852bc76b4e7e0a19b3efee3b4a37da31f3ff1a71c54a6892b42e2925818867.json",
-        "source_generation": "1790745001130936",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-20260930/1.json"
+        "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/publications/receipts/e8c3e23ac523f38180722621584b0246184d95fc3c721c7702fd5f6ae3c383e9.json",
+        "source_generation": "1790819935895239",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-valid-date-20260930/1.json"
       },
       {
         "cache_control": "no-cache",
@@ -79,11 +79,11 @@
         "content_type": "application/json",
         "destination_generation": "",
         "destination_uri": "gs://skytruth-shared-datasets-1/200-imagery-derived/250-weather-climate/ims-sea-ice-extent/publications/state.json",
-        "source_generation": "1790745002869914",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-20260930/2.json"
+        "source_generation": "1790819937522505",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/ims-sea-ice-extent/prelaunch-feature-id-reset-valid-date-20260930/2.json"
       }
     ],
-    "proposal_id": "prelaunch-feature-id-reset-20260930",
+    "proposal_id": "prelaunch-feature-id-reset-valid-date-20260930",
     "release_index_asset_slugs": []
   }
 }
