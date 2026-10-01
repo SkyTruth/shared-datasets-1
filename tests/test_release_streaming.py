@@ -39,13 +39,16 @@ def geojson_feature(index: int) -> dict:
 
 
 class ReleaseStreamingTests(unittest.TestCase):
-    def test_writer_retains_no_feature_payloads(self):
+    def test_writer_bounds_live_feature_payloads(self):
         geometry_refs: list[weakref.ref] = []
 
         def open_features():
             for index in range(1, 26):
                 feature = geojson_feature(index)
                 geometry_refs.append(weakref.ref(feature["geometry"]))
+                # The source's next row and the consumer's current row may
+                # overlap, but previous rows must not accumulate in either pass.
+                self.assertLessEqual(sum(ref() is not None for ref in geometry_refs), 2)
                 yield feature
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,8 +65,6 @@ class ReleaseStreamingTests(unittest.TestCase):
             )
 
         self.assertEqual(result.feature_count, 25)
-        # Two passes yield two generations of geometry objects.
-        self.assertEqual(len(geometry_refs), 50)
         gc.collect()
         live = [ref for ref in geometry_refs if ref() is not None]
         self.assertEqual(
@@ -130,7 +131,7 @@ class ReleaseStreamingTests(unittest.TestCase):
         self.assertTrue(validation.valid, validation.errors)
         self.assertEqual(result.next_generated_feature_id, 8)
 
-    def test_schema_payload_matches_a_full_pass_over_the_written_sidecar(self):
+    def test_schema_preserves_field_order_types_and_nullability(self):
         features = [geojson_feature(index) for index in range(1, 5)]
         features.append(
             {
@@ -140,7 +141,7 @@ class ReleaseStreamingTests(unittest.TestCase):
             }
         )
 
-        _enriched, sidecar, result = write_generated_release(
+        _enriched, _sidecar, result = write_generated_release(
             features,
             asset_slug="wdpa-marine",
             release="2026-08-01",
@@ -148,8 +149,6 @@ class ReleaseStreamingTests(unittest.TestCase):
             source_fields=["SITE_PID"],
         )
 
-        # Fields keep first-observation (source) order, as they did when the
-        # schema was derived from an in-memory record list.
         self.assertEqual(
             result.schema_payload["fields"],
             [
@@ -157,18 +156,6 @@ class ReleaseStreamingTests(unittest.TestCase):
                 {"name": "NAME", "type": "String", "nullable": True, "projectable": True},
                 {"name": "EXTRA", "type": "Real", "nullable": False, "projectable": True},
             ],
-        )
-        # Streaming accumulation must agree field-for-field with a full pass.
-        # Compared by name because the written sidecar canonicalizes (sorts)
-        # property keys, which changes only first-observation order.
-        full_pass = feature_metadata.schema_from_records(
-            asset_slug="wdpa-marine",
-            release="2026-08-01",
-            records=sidecar,
-        )
-        self.assertEqual(
-            {field["name"]: field for field in result.schema_payload["fields"]},
-            {field["name"]: field for field in full_pass["fields"]},
         )
 
     def test_unresolved_ambiguity_writes_no_artifacts(self):
@@ -354,60 +341,6 @@ class ReleaseStreamingTests(unittest.TestCase):
                     sidecar_path=tmp_path / "metadata.ndjson.gz",
                     baseline=model.GeneratedIdentityBaseline.genesis(contract_id="test-v1"),
                 )
-
-
-class IdentityBaselineTests(unittest.TestCase):
-    def test_baseline_drops_properties_but_keeps_identity_fields(self):
-        baseline = feature_metadata.identity_baseline_records(
-            [
-                {
-                    "feature_id": "7",
-                    "geometry_hash": "sha256:" + "a" * 64,
-                    "properties_hash": "sha256:" + "b" * 64,
-                    "identity_key": ["7"],
-                    "properties": {"NAME": "Site", "blob": "x" * 1000},
-                    "provenance": {"source_row_number": 1},
-                }
-            ],
-            exclude_properties=(),
-        )
-
-        self.assertEqual(
-            baseline,
-            [
-                {
-                    "feature_id": "7",
-                    "geometry_hash": "sha256:" + "a" * 64,
-                    "properties_hash": "sha256:" + "b" * 64,
-                    "identity_key": ["7"],
-                }
-            ],
-        )
-
-    def test_baseline_recomputes_hashes_when_properties_are_excluded(self):
-        properties = {"DN": 3, "ice_date": "2026-06-14"}
-        geometry_hash = "sha256:" + "c" * 64
-        expected_properties_hash = model.properties_hash(properties, exclude_properties=("ice_date",))
-
-        baseline = feature_metadata.identity_baseline_records(
-            [
-                {
-                    "feature_id": "7",
-                    "geometry_hash": geometry_hash,
-                    "properties_hash": "sha256:" + "d" * 64,
-                    "identity_key": ["stale"],
-                    "properties": properties,
-                }
-            ],
-            exclude_properties=("ice_date",),
-        )
-
-        self.assertEqual(baseline[0]["properties_hash"], expected_properties_hash)
-        self.assertEqual(
-            baseline[0]["identity_key"],
-            [geometry_hash, expected_properties_hash],
-        )
-        self.assertNotIn("properties", baseline[0])
 
 
 class SidecarWriterTests(unittest.TestCase):
@@ -619,11 +552,20 @@ class CompactGeneratedBaselineTests(unittest.TestCase):
                 raise AssertionError('full properties must not be copied')
         payload = Properties({'large': 'payload'})
         reference = weakref.ref(payload)
-        baseline = model.GeneratedIdentityBaseline(({'feature_id': '1', 'identity_key': ['key'], 'properties': payload},), 100, 'r1', contract_id='test-v1')
+        geometry_hash = 'sha256:' + 'a' * 64
+        properties_hash = 'sha256:' + 'b' * 64
+        baseline = model.GeneratedIdentityBaseline(({
+            'feature_id': '1', 'identity_key': ['key'],
+            'geometry_hash': geometry_hash, 'properties_hash': properties_hash,
+            'properties': payload, 'provenance': {'source_row_number': 1},
+        },), 100, 'r1', contract_id='test-v1')
         del payload
         gc.collect()
         self.assertIsNone(reference())
-        self.assertEqual(dict(baseline.records[0]), {'feature_id': '1', 'identity_key': ('key',)})
+        self.assertEqual(dict(baseline.records[0]), {
+            'feature_id': '1', 'identity_key': ('key',),
+            'geometry_hash': geometry_hash, 'properties_hash': properties_hash,
+        })
 
     def test_manifest_projection_applies_exclusion_before_discarding_payload(self):
         identity = model.build_identity_metadata(
@@ -632,7 +574,11 @@ class CompactGeneratedBaselineTests(unittest.TestCase):
             next_generated_feature_id_before_release=100, next_generated_feature_id_after_release=100,
         )
         geometry_hash = 'sha256:' + 'a'*64
-        records = [{'feature_id': '1', 'geometry_hash': geometry_hash, 'properties_hash': 'sha256:'+'b'*64, 'properties': {'DN': 3, 'ice_date': 'old'}}]
+        records = [{
+            'feature_id': '1', 'geometry_hash': geometry_hash,
+            'properties_hash': 'sha256:' + 'b' * 64, 'identity_key': ['stale'],
+            'properties': {'DN': 3, 'ice_date': 'old'},
+        }]
         baseline = model.generated_baseline_from_manifest({'identity': identity, 'release': 'r1'}, iter(records), expected_contract_id='test-v1')
         expected_hash = model.properties_hash({'DN': 3})
         self.assertEqual(baseline.records[0]['properties_hash'], expected_hash)

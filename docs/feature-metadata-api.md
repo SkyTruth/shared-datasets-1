@@ -1,7 +1,7 @@
 ---
 title: Feature Metadata API
 description: Contract and operations for release-oriented vector metadata lookup.
-last_updated: 2026-06-03
+last_updated: 2026-10-01
 audience: Shared-datasets maintainers and consuming application backend owners
 ---
 
@@ -9,8 +9,11 @@ audience: Shared-datasets maintainers and consuming application backend owners
 
 Release-oriented vector assets publish full feature metadata outside PMTiles.
 The durable source is the release feature model, release manifest, canonical
-FGB, and `.metadata.ndjson.gz` sidecar in GCS. When serving is enabled,
-Firestore is a rebuildable serving index loaded from that sidecar.
+FGB, and `.metadata.ndjson.gz` sidecar in GCS. Current catalog and
+feature-preview viewers read GCS sidecars directly. Firestore serving is
+inactive; the standalone service and index-loader plumbing remain dormant.
+A future explicitly enabled Firestore index would be a rebuildable copy of the
+sidecar.
 Canonical FGB artifacts and canonical metadata sidecar records always include
 `feature_id`, `geometry_hash`, and `properties_hash`. PMTiles are lightweight
 lookup tiles and expose only `feature_id` as a feature property.
@@ -207,8 +210,10 @@ release metadata is rebuilt from the post-localization release indexes.
 
 The catalog viewer and feature-preview viewer can serve same-origin lookups by
 reading the selected release sidecar through their sidecar-backed index. The
-standalone Firestore-backed metadata service remains inactive unless explicitly
-deployed and loaded.
+standalone Firestore-backed metadata service remains inactive. Deploying it or
+loading an index alone does not enable serving: the current service rejects
+the inactive policy with `409 index_not_ready`. Enabling Firestore requires a
+separately reviewed serving-contract change.
 
 Firestore metadata serving is inactive for this refactor. Release manifests and
 release indexes should record:

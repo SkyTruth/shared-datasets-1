@@ -129,32 +129,6 @@ class GcsPublisher:
         except (ValueError, TypeError, KeyError, NotFound, PreconditionFailed) as exc:
             raise RuntimeError(f"{asset.slug} generated identity baseline is unavailable or unverified: {exc}") from exc
 
-    def load_latest_metadata_records(self, asset: ReleaseAsset) -> list[dict[str, Any]] | None:
-        object_name = asset.latest_object(".metadata.ndjson.gz")
-        blob = self.bucket.blob(object_name)
-        try:
-            blob.reload()
-        except NotFound:
-            return None
-        try:
-            records = list(
-                release_feature_model.read_metadata_sidecar_bytes(
-                    blob.download_as_bytes(),
-                    label=f"gs://{self.bucket.name}/{object_name}",
-                )
-            )
-            validation = release_feature_model.validate_sidecar_records(records)
-            if not validation.valid:
-                raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
-            release_feature_model.previous_feature_id_mapping(records)
-        except release_feature_model.ReleaseFeatureModelError as exc:
-            raise RuntimeError(
-                f"{asset.slug} latest metadata sidecar has incompatible feature identity mappings; "
-                "refusing to reset generated sequence feature_id values: "
-                f"{exc}"
-            ) from exc
-        return records
-
     def load_successful_run_record(
         self,
         asset: ReleaseAsset,
@@ -246,13 +220,6 @@ class GcsPublisher:
         ) as exc:
             return str(exc)
         return None
-
-    def release_metadata_contract_is_valid(
-        self,
-        asset: ReleaseAsset,
-        record: Mapping[str, Any] | None,
-    ) -> bool:
-        return self.release_metadata_contract_issue(asset, record) is None
 
     def _contract_blob(self, uri: str):
         bucket_name, object_name = release_index.split_gs_uri(uri)
@@ -370,61 +337,6 @@ class GcsPublisher:
             "generation": int(blob.generation),
             "size": int(blob.size or 0),
         }
-
-    def replace_latest_metadata_from_run_record(
-        self,
-        asset: ReleaseAsset,
-        run_date: dt.date,
-        metadata: dict[str, str],
-    ) -> list[dict[str, Any]]:
-        loaded = self.load_successful_run_record(asset, run_date)
-        if loaded is None:
-            return []
-        record, _run_record_info = loaded
-        refreshed = []
-        for value in record.get("latest_paths") or []:
-            path = release_index.path_from_info(value)
-            if not path:
-                continue
-            bucket_name, object_name = release_index.split_gs_uri(path)
-            if bucket_name != self.bucket.name:
-                raise RuntimeError(
-                    f"Latest object bucket does not match publisher bucket: {path}"
-                )
-            expected_generation = value.get("generation") if isinstance(value, dict) else None
-            blob = self.bucket.blob(object_name)
-            try:
-                blob.reload()
-            except NotFound:
-                self.logger.warning("latest object is missing: %s", path)
-                continue
-            if expected_generation is not None and int(blob.generation) != int(expected_generation):
-                self.logger.warning(
-                    "latest object generation changed before metadata refresh: %s",
-                    path,
-                )
-                continue
-            metageneration_match = int(getattr(blob, "metageneration", 0) or 0) or None
-            blob.metadata = metadata
-            patch_kwargs = {}
-            if metageneration_match is not None:
-                patch_kwargs["if_metageneration_match"] = metageneration_match
-            try:
-                blob.patch(**patch_kwargs)
-            except PreconditionFailed as exc:
-                raise RuntimeError(
-                    f"Latest object metadata changed before patch: {path}"
-                ) from exc
-            blob.reload()
-            refreshed.append(
-                {
-                    "path": path,
-                    "generation": int(blob.generation),
-                    "metageneration": int(getattr(blob, "metageneration", 0) or 0),
-                    "size": int(blob.size or 0),
-                }
-            )
-        return refreshed
 
     def write_run_record(
         self,

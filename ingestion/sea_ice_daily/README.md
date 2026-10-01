@@ -82,48 +82,30 @@ docker build -f ingestion/sea_ice_daily/Dockerfile -t sea-ice-daily .
 
 ## Cost Controls and Teardown
 
-Immediate stop:
+Pause future scheduled runs through the protected workflow:
 
 ```bash
-gcloud scheduler jobs pause sea-ice-daily \
-  --location=us-central1 \
-  --project=shared-datasets-1
+gh workflow run ingestion-schedule-control.yml --ref main \
+  -f job=sea-ice-daily \
+  -f action=pause
 ```
 
-Pausing the scheduler stops future automatic daily runs without deleting the
-Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
+Wait for the workflow to complete and verify the scheduler is paused. Pausing
+stops future automatic runs but does not cancel an execution already running.
+It preserves the job, identities, Terraform state, and published data.
 
-To remove the scheduled job infrastructure with Terraform, first provide the
-required image variables for the prod environment:
+For permanent teardown, remove the sea-ice resources from Terraform in a
+reviewed PR and summarize a local review plan's resource deletions. The protected
+production workflow must support those exact deletions; if its allowlist does
+not, extend the constrained workflow in the same PR. Apply only after
+`jonaraphael` review and merge to `main`, through the
+`shared-datasets-production` environment. Follow
+[protected Terraform guidance](../../.claude/skills/protected-terraform-apply/SKILL.md);
+do not run a local production destroy or apply.
 
-```bash
-export TF_VAR_wdpa_monthly_image="$(gcloud run jobs describe wdpa-monthly \
-  --region=us-central1 \
-  --project=shared-datasets-1 \
-  --format='value(spec.template.spec.template.spec.containers[0].image)')"
-export TF_VAR_sea_ice_daily_image="$(gcloud run jobs describe sea-ice-daily \
-  --region=us-central1 \
-  --project=shared-datasets-1 \
-  --format='value(spec.template.spec.template.spec.containers[0].image)')"
-```
-
-Then destroy only the sea-ice cron resources:
-
-```bash
-terraform -chdir=terraform/envs/prod destroy \
-  -target=module.sea_ice_daily_scheduler \
-  -target=google_cloud_run_v2_job_iam_member.sea_ice_scheduler_invoker \
-  -target=module.sea_ice_daily_job \
-  -target=google_storage_bucket_iam_member.sea_ice_job_object_user \
-  -target=module.sea_ice_scheduler_service_account \
-  -target=module.sea_ice_job_service_account
-```
-
-If the teardown should be permanent, remove or comment the sea-ice Terraform
-blocks before the next untargeted apply; otherwise Terraform will recreate them.
-Do not delete existing GCS releases, latest files, run records, README files, or
-catalog rows as part of cost teardown unless the team explicitly decides to
-remove the dataset asset.
+Infrastructure teardown preserves existing GCS releases, latest files, run
+records, README files, and catalog rows. A separately requested canonical
+deletion requires its own immutable reviewed dataset plan.
 
 ## Generated-ID publication
 

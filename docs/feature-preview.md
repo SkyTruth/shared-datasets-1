@@ -100,9 +100,10 @@ The deploy workflow creates an IAP-protected preview catalog viewer at the
 
 Preserve-mode deploys rebuild the catalog from existing release indexes under
 `gs://skytruth-shared-datasets-1-preview/_catalog/releases/*.json`. Reset-mode
-deploys publish a catalog shell with no listed assets until preview data is
-loaded again. The `Feature preview index load` workflow refreshes that catalog
-after each successful load by downloading every preview release index under
+deploys publish a catalog shell with no listed assets until preview bundles and
+release indexes are uploaded again. After uploading data, dispatch
+`Deploy Feature Branch to Preview` with `preview_data_mode=preserve`. It
+refreshes the catalog by downloading every preview release index under
 `gs://skytruth-shared-datasets-1-preview/_catalog/releases/*.json`, rebuilding
 the catalog web bundle, and publishing it back to the preview bucket with
 generation preconditions.
@@ -118,9 +119,9 @@ and any other new sidecar datafiles that belong to the preview release bundle.
 
 ## Load Preview Data
 
-The preview service reads only from the preview bucket and the preview
-Firestore database. A release bundle used for preview must therefore be written
-under:
+The preview service reads release indexes and feature metadata sidecars from
+the preview bucket. Firestore serving is inactive and is not required for
+current preview lookups. Write the complete release bundle under:
 
 ```text
 gs://skytruth-shared-datasets-1-preview/{category}/{subcategory}/{asset-slug}/releases/YYYY-MM-DD/
@@ -136,33 +137,36 @@ All schema, manifest, and related artifact paths inside those JSON files must
 point to `gs://skytruth-shared-datasets-1-preview/...`, not to the production
 bucket.
 
-Preview data loading is explicit and does not use the production
-`_scratch/pending-publishes/` promotion path. The preview load workflow requires
-preview-bucket artifact URIs and exact generations.
+Preview uploads do not use the production `_scratch/pending-publishes/`
+promotion path. Use `publishing_concierge.py start` with
+`--request-classification preview-only`, `--release-date`, and
+`--preview-ref`, then follow `next` and `confirm` through the preview bundle
+and validation gates.
 
-After the preview release bundle is in place, use the relevant preview load
-workflow for the feature under test.
+After uploading with safe generation preconditions, record every object's
+preview-bucket URI and exact generation in the concierge's `preview-upload`
+evidence. Follow its `preview-catalog-refresh` instructions:
 
-Inputs:
+```bash
+gh workflow run feature-preview-deploy.yml --ref "$PREVIEW_REF" \
+  -f preview_data_mode=preserve
+```
 
-- `ref`: branch, tag, or SHA whose loader code should run.
-- `asset_slug`: exact asset slug.
-- `release`: concrete `YYYY-MM-DD` release.
-- `sidecar_uri`, `schema_uri`, and `manifest_uri`: preview-bucket release
-  `.metadata.ndjson.gz`, `.schema.json`, and `.manifest.json` artifact URIs.
-- `sidecar_generation`, `schema_generation`, and `manifest_generation`: exact
-  GCS object generations.
-- `load_id`: optional; when omitted, the workflow uses
-  `github-{run_id}-{run_attempt}`.
+Select the source branch or tag in `$PREVIEW_REF`. Wait for the workflow's
+catalog collection, build, and publication steps to succeed, then verify that
+the preview viewer lists the intended release and enriches clicked features
+from its sidecar. Record the catalog generation and viewer verification in the
+concierge evidence before reporting completion.
 
-The workflow keeps the preview workflow code checked out at the workspace root
-and checks out the requested `ref` under `preview-source/` for the catalog and
-loader code. It authenticates with the preview loader identity, downloads the
-exact preview objects, loads documents into the preview Firestore database,
-writes a load record back to the preview bucket, and refreshes the preview
-catalog viewer bundle from the preview release indexes.
+### Dormant Firestore Loader
 
-Branches based on current `main` satisfy the preview loader requirements.
+`.github/workflows/feature-preview-index-load.yml` still contains Firestore
+loader plumbing, including generation-pinned sidecar/schema/manifest inputs.
+It is not part of the current sidecar-backed upload and catalog-refresh path.
+Do not dispatch it while serving is inactive. A feature that explicitly enables
+Firestore must establish its reviewed serving contract and validate the exact
+workflow and loader at the chosen ref before loading an index. See
+[Feature Metadata API operations](feature-metadata-api.md#operations).
 
 ## Authentication Note
 
@@ -185,5 +189,5 @@ Preview test data is not production publishing. Do not use production
 `_scratch/pending-publishes/`, `shared-datasets-publish-plan`, or the
 `Approved dataset mutation` workflow. Upload disposable release bundles directly
 to `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, stat the
-exact generations, and pass the explicit preview-bucket URIs and generations to
-the preview load workflow inputs documented above.
+exact generations, record them in concierge upload evidence, and refresh the
+catalog with a preserve-mode deploy. Firestore loads remain dormant.

@@ -77,27 +77,6 @@ def content_hashes(
     )
 
 
-def identity_baseline_records(
-    records: Iterable[Mapping[str, Any]],
-    *,
-    exclude_properties: Sequence[str],
-) -> list[dict[str, Any]]:
-    """Project previous-release records down to the fields identity work needs.
-
-    Identity comparison and feature_id assignment read only feature_id, the two
-    content hashes, and the identity key. Dropping `properties` here keeps the
-    previous-release baseline proportional to the identity data rather than to
-    the full previous release, which for large assets is the difference between
-    a few hundred megabytes and several gigabytes.
-
-    When `exclude_properties` is set, properties_hash and the derived content
-    identity key are recomputed from identity-only properties before the
-    projection discards them.
-    """
-
-    return list(release_feature_model.project_identity_records(records, exclude_properties=exclude_properties))
-
-
 class SchemaAccumulator:
     """Derive a release schema from sidecar records one record at a time."""
 

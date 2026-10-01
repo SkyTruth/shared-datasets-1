@@ -6,15 +6,15 @@ import json
 from pathlib import Path
 
 import pytest
+import test_ingestion_common
 
 from scripts import feature_id_sequence_audit as audit
 from scripts import release_feature_model as model
-from test_ingestion_common import GeneratedBaselineLoaderTests
 
 
 def fixture(tmp_path: Path):
     bucket, asset, manifest, latest, metadata = (
-        GeneratedBaselineLoaderTests().setup_baseline()
+        test_ingestion_common.GeneratedBaselineLoaderTests().setup_baseline()
     )
     root = f"gs://{bucket.name}/asset"
     manifest["identity"].pop("sequence_state_version")

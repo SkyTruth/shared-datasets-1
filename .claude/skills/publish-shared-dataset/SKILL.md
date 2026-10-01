@@ -439,8 +439,9 @@ input, follow this ordered path unless the user explicitly asks to stop earlier:
    and source version from filenames, embedded metadata, nearby docs, and source
    documentation. If source, license, citation, or safe canonical placement
    cannot be inferred, ask before remote writes.
-3. Run `scripts/publishing_concierge.py` for new or under-specified assets, using
-   `--write-draft-doc` when creating a new `docs/assets/{asset-slug}.md`.
+3. Run `scripts/publishing_concierge.py start` for new or under-specified assets
+   and follow its `next`/`confirm` steps. Create or update
+   `docs/assets/{asset-slug}.md` at the `document-asset` step.
    Resolve all `blocking_questions`. If the concierge cannot infer a canonical
    format because the supplied file is noncanonical, choose the approved output
    format from the data contents and standards, then rerun or document the plan;
