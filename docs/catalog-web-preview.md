@@ -22,7 +22,7 @@ URL exposed by the Terraform `catalog_viewer_uri` output.
 
 The feature-branch preview environment has a separate IAP-protected catalog
 viewer backed by `gs://skytruth-shared-datasets-1-preview/`; see
-`docs/feature-preview.md`. It is refreshed by the preview index-load workflow
+`docs/feature-preview.md`. It is refreshed by a preserve-mode preview deploy
 and intentionally lists only assets with preview-bucket release indexes.
 Preview-bucket objects are not served by the production
 `https://tiles.skytruth.org/artifacts/` CDN route. Private preview artifacts,

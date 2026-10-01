@@ -76,12 +76,12 @@ def get_blob(uri: str) -> storage.Blob:
     return get_client().bucket(bucket_name).blob(name)
 
 
-def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool = False, expected_generation: int | None = None) -> None:
+def require_mutation_allowed(uri: str, *, operation: str, unsafe_overwrite: bool = False) -> None:
     """Refuse non-scratch mutations unless an approved runtime explicitly opts in."""
     _bucket_name, name = parse_gs_uri(uri)
     if not name:
         raise typer.BadParameter(f"{operation} requires an object URI, not a bucket root")
-    require_unmanaged_target(name, expected_generation=expected_generation if operation == "upload" and not unsafe_overwrite else None)
+    require_unmanaged_target(name)
     if is_protocol_namespace(name):
         raise typer.BadParameter("publication state, receipts, and checkpoints require the publication executor")
     is_scratch = name.startswith("_scratch/")
@@ -340,8 +340,7 @@ def upload(
     Use --unsafe-overwrite only when explicitly approved.
     """
     ensure_expanded_local_path(src, label="upload source")
-    require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite,
-                             expected_generation=0 if replace_generation is None else replace_generation)
+    require_mutation_allowed(uri, operation="upload", unsafe_overwrite=unsafe_overwrite)
     blob = get_blob(uri)
     if cache_control:
         blob.cache_control = cache_control

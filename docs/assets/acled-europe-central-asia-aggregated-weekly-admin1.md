@@ -68,7 +68,6 @@ feature_identity:
   - properties_hash
 feature_metadata:
   storage: metadata_sidecar_v1
-  index_backend: firestore
   feature_id_column: feature_id
   geometry_hash_column: geometry_hash
   properties_hash_column: properties_hash
@@ -237,7 +236,7 @@ Output summary:
 - Composite feature IDs: 120,245 distinct values for 120,245 rows; 39 rows contain at least one `__NULL__` preimage sentinel.
 - PMTiles zoom 0 decoded point features: 120,245
 - PMTiles decoded properties: exactly `feature_id`
-- Metadata validation: sidecar row count 120,245; duplicate feature IDs 0; `feature_metadata_index.py --dry-run` succeeds with a local placeholder-generation manifest before protected promotion assigns canonical object generations.
+- Metadata validation: sidecar row count 120,245; duplicate feature IDs 0; local sidecar/schema/manifest validation succeeds (the retired loader’s dry-run checks are now in `validate_feature_metadata.py`) with a local placeholder-generation manifest before protected promotion assigns canonical object generations.
 
 ## Known caveats
 

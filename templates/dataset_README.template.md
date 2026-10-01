@@ -55,7 +55,6 @@ search_fields:
     notes: "{optional reason this is useful for search/filtering}"
 feature_metadata:
   storage: "metadata_sidecar_v1"
-  index_backend: "firestore"
   feature_id_column: "feature_id"
   geometry_hash_column: "geometry_hash"
   properties_hash_column: "properties_hash"
@@ -145,8 +144,7 @@ If the asset publishes localized display metadata, keep the editable translation
 source in `latest/{asset-slug}.metadata-translations.csv`, keyed by
 `feature_id`, `field`, `locale`, and `source_value_hash`, and list it with the
 generated locale-specific metadata sidecars in release metadata files. Resolve
-display labels through a locale sidecar, or the metadata API after Firestore
-serving is enabled; do not put `name` or declared
+display labels through a locale sidecar, or the viewer’s same-origin sidecar metadata API; do not put `name` or declared
 `name_${locale_code}` fields in PMTiles feature properties. The canonical FGB
 must keep unique nonblank URL-safe `feature_id` values matching
 `^[A-Za-z0-9]{1,64}$`.

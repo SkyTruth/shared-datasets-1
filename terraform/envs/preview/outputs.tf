@@ -2,10 +2,6 @@ output "preview_bucket" {
   value = google_storage_bucket.preview_bucket.name
 }
 
-output "preview_firestore_database" {
-  value = google_firestore_database.feature_preview.name
-}
-
 output "preview_service_name" {
   value = google_cloud_run_v2_service.feature_preview_service.name
 }

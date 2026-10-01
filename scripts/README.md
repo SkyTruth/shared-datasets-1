@@ -202,15 +202,16 @@ Release feature metadata helpers live in:
 ```text
 scripts/release_feature_model.py
 scripts/feature_metadata_localization.py
-scripts/feature_metadata_index.py
+scripts/validate_feature_metadata.py
 ```
 
 Use `release_feature_model.py` from publishing or ingestion code to construct
 stable `feature_id` values, compute separate `geometry_hash` and `properties_hash` values, serialize
 `{asset-slug}.metadata.ndjson.gz`, validate sidecar rows, and build release
-manifests. Use `feature_metadata_index.py --dry-run` to validate a sidecar
-without writing Firestore. Do not run non-dry-run index loads while Firestore
-metadata serving is inactive.
+manifests. Use `validate_feature_metadata.py` with local `--sidecar`, `--schema`,
+`--manifest`, `--asset-slug`, and `--release` inputs to validate a bundle. It has
+no Firestore dependency or remote write path. See
+[the metadata contract](../docs/feature-metadata-api.md#operations).
 
 Use `feature_metadata_localization.py` to materialize generated locale-specific
 metadata views from the canonical sidecar plus an editable translation source:
@@ -381,7 +382,8 @@ generation expectations before the workflow can render a PR.
 `preview-only` uses the disposable preview bucket and requires
 `--release-date`; provide `--preview-ref` when the branch cannot be detected.
 It completes through preview upload, catalog refresh, and viewer verification.
-Firestore index loading is skipped by default while serving is inactive.
+Firestore index loading is retired. Preview catalog refresh and viewer
+verification remain required.
 `scratch-only` and `diagnostic-only` use separate workflows rather than
 `start`. See [feature preview guidance](../docs/feature-preview.md).
 

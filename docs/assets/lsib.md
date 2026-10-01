@@ -63,7 +63,6 @@ feature_identity:
   next_generated_id: '396'
 feature_metadata:
   storage: metadata_sidecar_v1
-  index_backend: firestore
   feature_id_column: feature_id
   geometry_hash_column: geometry_hash
   properties_hash_column: properties_hash

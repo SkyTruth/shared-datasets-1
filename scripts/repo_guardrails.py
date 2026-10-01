@@ -581,11 +581,11 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
                 for step in job.get("steps", [])
             )
             required = {
-                "main ref validation": WORKFLOW_MAIN_REF_GUARD,
-                "resource-change allowlist": "allowed_exact",
+                "main ref validation": (WORKFLOW_MAIN_REF_GUARD,),
+                "resource-change allowlist": ("allowed_exact", "python scripts/metadata_retirement_plan.py "),
             }
-            for label, marker in required.items():
-                if marker not in job_text:
+            for label, markers in required.items():
+                if not any(marker in job_text for marker in markers):
                     errors.append(f"{rel}: job {job_name}: prod Terraform job is missing {label}")
 
     return errors

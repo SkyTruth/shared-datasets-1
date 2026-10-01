@@ -114,7 +114,7 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('wdpa-monthly-deploy.yml', 'deploy'),
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
-            ('metadata-service-deploy.yml', 'deploy'),
+            ('metadata-stack-retire.yml', 'retire'),
             ('catalog-viewer-deploy.yml', 'deploy'),
             ('pmtiles-cdn-sync.yml', 'sync'),
         })

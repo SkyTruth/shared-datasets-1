@@ -39,7 +39,6 @@ feature_identity:
   - properties_hash
 feature_metadata:
   storage: metadata_sidecar_v1
-  index_backend: firestore
   feature_id_column: feature_id
   geometry_hash_column: geometry_hash
   properties_hash_column: properties_hash
@@ -186,8 +185,8 @@ stored row counts, release paths, and checksums under the pre-contract IMS run
 record shape. No release FGB or PMTiles artifacts were rewritten by that repair.
 
 A 2026-06-05 metadata-contract refresh release was staged from the unchanged
-2026-06-03 latest FGB so consumers could use feature metadata sidecars and
-Firestore index loads without waiting for upstream data to change. The
+2026-06-03 latest FGB so consumers could use feature metadata sidecars without waiting for
+upstream data to change. The former Firestore index loaders are retired. The
 2026-06-08 revision replaces latest with a full v2 bundle from the current
 upstream source date and adds the missing dated metadata/schema/manifest
 objects for that release without backfilling older release folders.

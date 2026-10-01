@@ -33,8 +33,6 @@ jobs:
         google_project_iam_member.github_actions_preview_terraform
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
-        google_project_iam_member.feature_preview_service_firestore_viewer
-        google_project_iam_member.feature_preview_loader_firestore_user
       allowed_exact: |
         google_project_iam_custom_role.preview_terraform
         module.feature_preview_service_account.google_service_account.this
@@ -42,8 +40,6 @@ jobs:
         google_project_iam_member.github_actions_preview_terraform
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
-        google_project_iam_member.feature_preview_service_firestore_viewer
-        google_project_iam_member.feature_preview_loader_firestore_user
       tf_vars: |
         wdpa_monthly_image=unused-by-preview-terraform-iam-sync
         sea_ice_daily_image=unused-by-preview-terraform-iam-sync

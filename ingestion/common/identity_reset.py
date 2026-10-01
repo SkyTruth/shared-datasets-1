@@ -8,7 +8,6 @@ does not write remote objects or infer any historical allocation ceiling.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import Any
 
 from ingestion.common import publication as p
@@ -24,15 +23,9 @@ ASSET_ROOTS = {
 BASE_SUFFIXES = (".fgb", ".pmtiles", ".metadata.ndjson.gz", ".schema.json", ".manifest.json")
 
 
-def require_unmanaged_target(name: str, *, expected_generation: int | None = None) -> None:
-    """Protect identity-bearing roots; allow only new independent load reports."""
+def require_unmanaged_target(name: str) -> None:
+    """Protect every mutation under identity-bearing roots."""
     for slug, root in ASSET_ROOTS.items():
-        if name.startswith(root + "/index-loads/"):
-            parts = name.removeprefix(root + "/").split("/")
-            if (type(expected_generation) is int and expected_generation == 0
-                    and len(parts) == 3 and p.valid_date(parts[1])
-                    and re.fullmatch(r"[A-Za-z0-9._-]+\.json", parts[2])):
-                return
         if name == root or name.startswith(root + "/") or name in {
             f"_catalog/releases/{slug}.json", f"_catalog/schema-snapshots/{slug}.json",
         }:

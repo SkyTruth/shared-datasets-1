@@ -1,6 +1,6 @@
 ---
 name: feature-preview
-description: Use when deploying, destroying, uploading test data to, or loading data into the feature preview environment, including preview release bundles in gs://skytruth-shared-datasets-1-preview/, catalog refreshes, explicitly enabled Firestore experiments, and distinguishing preview uploads from production _scratch/pending-publishes promotion.
+description: Use when deploying, destroying, uploading test data to, or loading data into the feature preview environment, including preview release bundles in gs://skytruth-shared-datasets-1-preview/, catalog refreshes, and distinguishing preview uploads from production _scratch/pending-publishes promotion.
 ---
 
 # Feature Preview
@@ -19,8 +19,6 @@ Read these before preview work:
 - The exact deploy workflow and preview service at the ref that will execute.
   Do not assume local sidecar suffixes, resolver contracts, or validation logic
   match the selected preview ref.
-- `.github/workflows/feature-preview-index-load.yml` only for a feature that
-  explicitly enables Firestore serving. The loader is dormant otherwise.
 - `.claude/skills/gcp-shared-datasets/SKILL.md` before any GCS object
   inspection or write; use it for helper semantics and generation safety, but
   follow this skill for the preview-bucket destination policy
@@ -48,7 +46,7 @@ mutation` workflow.
   under `gs://skytruth-shared-datasets-1-preview/...`, stat exact generations,
   record the URIs and generations in concierge upload evidence, then refresh the
   preview catalog with a preserve-mode deploy. Current lookups read GCS sidecars;
-  do not dispatch Firestore index loads while serving is inactive.
+  Firestore index loaders and the standalone metadata endpoint are retired.
 
 If the user asks to add, update, upload, or publish a canonical shared dataset,
 use `publish-shared-dataset` instead. If the user asks to test a dataset in the
@@ -157,7 +155,7 @@ Use these checks before upload for hand-built vector preview bundles:
   catalog viewer code against already loaded preview data. This is the default
   and rebuilds the preview catalog from existing preview release indexes.
 - Select `preview_data_mode=reset` only when a clean preview slot is intended;
-  it destroys disposable preview bucket and Firestore contents, publishes an
+  it destroys disposable preview bucket contents, publishes an
   empty preview catalog shell, and requires reloading preview data.
 - For code-only preview fixes, push the branch, dispatch the deploy workflow
   with `preview_data_mode=preserve`, wait for the workflow to finish, and
@@ -281,9 +279,8 @@ gh workflow run feature-preview-deploy.yml --ref "$PREVIEW_REF" \
 ```
 
    Wait for the catalog collection, build, and publication steps to finish.
-   Firestore serving is inactive: do not run `Feature preview index load` for
-   this path. Its loader remains dormant plumbing for an explicitly enabled,
-   separately reviewed Firestore serving contract.
+   Firestore loaders are retired. The preview catalog publisher identity remains
+   required; deployment preserves historical Firestore database bytes.
 
 8. Confirm that the preserve-mode deploy refreshed the preview catalog viewer.
    The viewer includes only preview-bucket release-index assets, materializes

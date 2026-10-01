@@ -34,7 +34,6 @@ from services.http_base import (
 
 
 DEFAULT_BUCKET = "skytruth-shared-datasets-1"
-DEFAULT_COLLECTION_ROOT = "feature_preview_index"
 DEFAULT_ALLOWED_EMAIL_DOMAINS = ("skytruth.org",)
 DEFAULT_RELEASE_CACHE_TTL_SECONDS = 60.0
 DEFAULT_MAX_IDS = 500
@@ -413,51 +412,6 @@ def parse_sidecar_record(line: str, *, line_number: int, asset_slug: str, releas
     }
 
 
-class FirestoreFeatureIndex:
-    def __init__(self, *, collection_root: str = DEFAULT_COLLECTION_ROOT, client: Any = None) -> None:
-        self.collection_root = collection_root
-        self._client = client
-
-    @property
-    def client(self):
-        if self._client is None:
-            from google.cloud import firestore
-
-            project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-            database = os.environ.get("FEATURE_PREVIEW_FIRESTORE_DATABASE") or None
-            kwargs = {"project": project} if project else {}
-            if database:
-                kwargs["database"] = database
-            self._client = firestore.Client(**kwargs)
-        return self._client
-
-    def lookup(
-        self,
-        asset_slug: str,
-        release: str,
-        feature_ids: list[str],
-        *,
-        sidecar_uri: str = "",
-        sidecar_generation: int | None = None,
-    ) -> dict[str, dict[str, Any]]:
-        features = (
-            self.client.collection(self.collection_root)
-            .document(asset_slug)
-            .collection("releases")
-            .document(release)
-            .collection("features")
-        )
-        refs = [features.document(feature_id) for feature_id in feature_ids]
-        found: dict[str, dict[str, Any]] = {}
-        for snapshot in self.client.get_all(refs):
-            if not getattr(snapshot, "exists", False):
-                continue
-            data = snapshot.to_dict() or {}
-            feature_id = str(data.get("feature_id") or snapshot.reference.id)
-            found[feature_id] = data
-        return found
-
-
 def handle_request(
     method: str,
     path: str,
@@ -531,8 +485,8 @@ def handle_lookup(
         sidecar_uri=resolved.sidecar_uri,
         sidecar_generation=resolved.sidecar_generation,
     )
-    # Only the serving backend can attest which source it enforced. Legacy and
-    # Firestore dictionaries deliberately carry no sidecar provenance.
+    # Only the serving backend can attest which source it enforced.
+    # Legacy dictionaries deliberately carry no sidecar provenance.
     lookup = result if isinstance(result, LookupResult) else LookupResult(result)
     documents = lookup.documents
     items = [

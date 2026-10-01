@@ -73,7 +73,7 @@ where relevant:
 | `pmtiles_url` | Browser-facing PMTiles URL in the catalog JSON. |
 | `citation`, `license`, and `source_url` | Provenance for UI, reports, and downstream outputs. |
 | `latest_release` or `last_updated` | Freshness metadata. |
-| `feature_metadata` | Metadata sidecar, schema, manifest, and optional localized metadata sidecars for assets that publish feature-level metadata. Firestore-backed lookup is available only when serving is enabled. |
+| `feature_metadata` | Metadata sidecar, schema, manifest, and optional localized metadata sidecars for assets that publish feature-level metadata. Viewers provide bounded lookups from generation-pinned release sidecars. |
 | `colorizer_metadata` | Declared source of browser color fields: release metadata schema, PMTiles vector-layer metadata, or none. |
 
 Localized display-name consumers should resolve labels through a materialized
@@ -90,7 +90,7 @@ should be returned by a consumer backend as one short-lived signed artifact URL
 only after slug, release, locale, tier, and user entitlement checks pass.
 
 Release-oriented vector PMTiles carry geometry plus `feature_id` only. Use the
-release metadata sidecar, or the metadata API when Firestore serving is active,
+release metadata sidecar, or the viewer’s same-origin metadata API,
 for full attributes, display labels, hashes, and provenance instead of
 expecting source columns in PMTiles. After loading the sidecar, use
 `geometry_hash` as the stable geometry-equivalence key for grouping or
@@ -283,11 +283,10 @@ caller-provided bucket object paths.
 
 ## Feature Metadata API
 
-The metadata API is an IAP-protected Cloud Run service. Initial access is
-SkyTruth-only for all assets, even when the underlying catalog asset is public.
-While Firestore metadata serving is inactive, otherwise valid lookup requests
-return `409 index_not_ready`; use release metadata sidecars for active
-consumer workflows.
+The IAP-protected catalog and preview viewers serve bounded metadata lookups
+from GCS sidecars on the same origin. The separate Firestore metadata service
+is retired. SDK consumers continue to read release sidecars. A `409
+index_not_ready` from a viewer indicates unavailable or invalid sidecar data.
 
 Lookup endpoint:
 

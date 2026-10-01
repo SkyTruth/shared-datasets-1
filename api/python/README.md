@@ -69,11 +69,10 @@ and should use the TypeScript server helpers.
 Feature metadata is published beside the data, not inside PMTiles.
 Release-oriented vector PMTiles carry geometry plus `feature_id` values only;
 callers that need full attributes, hashes, or provenance should read the
-release metadata sidecar (see "Feature Metadata Sidecars" below). The
-IAP-protected metadata lookup API
-(`POST /v1/assets/{slug}/releases/{release}:lookup`) is dormant while Firestore
-metadata serving is inactive — otherwise valid lookup requests return
-`409 index_not_ready` — so active consumer workflows must use the sidecar.
+release metadata sidecar (see "Feature Metadata Sidecars" below). Catalog and
+preview viewers also serve same-origin sidecar lookups at
+`POST /v1/assets/{slug}/releases/{release}:lookup`. The standalone Firestore
+endpoint is retired; SDK sidecar readers are unchanged.
 
 `feature_id` values are unique URL-safe strings matching `^[A-Za-z0-9]{1,64}$`.
 They are either copied from a verified-unique source field (for example

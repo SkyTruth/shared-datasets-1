@@ -235,8 +235,8 @@ Remote GCS objects:
   `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, record
   exact preview-bucket URIs and generations in concierge upload evidence, and
   refresh the preview catalog with `preview_data_mode=preserve`. Current
-  preview lookups read GCS sidecars; do not dispatch the dormant Firestore
-  index-load workflow while serving is inactive.
+  preview lookups read GCS sidecars; Firestore index loaders and the standalone
+  metadata service are retired. Keep the sidecar and localization contracts intact.
 
 Dataset metadata and local files:
 

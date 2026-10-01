@@ -10,10 +10,9 @@ audience: Shared-datasets maintainers and consuming application backend owners
 Release-oriented vector assets publish full feature metadata outside PMTiles.
 The durable source is the release feature model, release manifest, canonical
 FGB, and `.metadata.ndjson.gz` sidecar in GCS. Current catalog and
-feature-preview viewers read GCS sidecars directly. Firestore serving is
-inactive; the standalone service and index-loader plumbing remain dormant.
-A future explicitly enabled Firestore index would be a rebuildable copy of the
-sidecar.
+feature-preview viewers serve same-origin lookups from GCS sidecars. The
+standalone Firestore endpoint and index loaders are retired. See
+[retirement scope and infrastructure rollout](metadata-stack-retirement.md).
 Canonical FGB artifacts and canonical metadata sidecar records always include
 `feature_id`, `geometry_hash`, and `properties_hash`. PMTiles are lightweight
 lookup tiles and expose only `feature_id` as a feature property.
@@ -28,9 +27,10 @@ POST /v1/assets/{slug}/releases/{release}:lookup
 from `_catalog/releases/{slug}.json`; every successful response includes
 `resolved_release`.
 
-The service is IAP-protected for all assets at launch. Consuming browser apps
-should call their own backend, and that backend should call the metadata
-service.
+These routes are served by the IAP-protected catalog viewer and feature-preview
+viewer. Browsers call their viewer on the same origin. Other applications can
+read generation-pinned release sidecars through the SDKs; there is no separate
+metadata service deployment.
 
 `lookup` is keyed by the `feature_id` values emitted in PMTiles. Use `lookup`
 for browser/user URL workflows that carry those public handles.
@@ -66,9 +66,6 @@ Rules:
   "requested_release": "latest",
   "resolved_release": "2026-05-01",
   "release_index_generation": 123,
-  "manifest_generation": 125,
-  "schema_generation": 124,
-  "index_load_id": "load-1",
   "sidecar_uri": "gs://skytruth-shared-datasets-1/.../releases/2026-05-01/example-asset.metadata.ndjson.gz",
   "sidecar_generation": 126,
   "items": [
@@ -94,19 +91,18 @@ Rules:
     "max_ids": 500,
     "max_fields": 500,
     "max_response_bytes": 10485760
-  },
-  "deduplicated_lookup_count": 2
+  }
 }
 ```
 
 `sidecar_uri` and `sidecar_generation` describe the identity actually enforced by
 the serving backend, not merely the resolver's requested identity. The GCS
-sidecar backend reports its pinned/cache identity. Firestore and legacy backends
-currently return null for both fields because they do not prove a particular
-same-date sidecar generation. A successful lookup or `index_load_id` alone is
-not that proof. Consumers joining exact tiles must match asset, concrete date,
+sidecar backend reports its pinned/cache identity. An injected backend that
+does not enforce source identity returns null for both fields. A successful
+lookup alone does not prove a particular same-date sidecar generation. Consumers
+joining exact tiles must match asset, concrete date,
 sidecar path, and generation before enrichment; an unverified result leaves
-compact tile properties available. No new Firestore provenance scheme is implied.
+compact tile properties available.
 
 Duplicate IDs preserve request order in `items`; the backend lookup is
 deduplicated. Missing IDs are item-level `"found": false` results in a `200`
@@ -115,9 +111,9 @@ response after the index is confirmed ready. Lookup requests are keyed only by
 Found items also return top-level `geometry_hash` and `properties_hash`.
 `geometry_hash` is stable for geometry-equivalent footprints and can be used by
 consumers to group or de-duplicate loaded sidecar/API records.
-Unknown fields are rejected against the release schema before index lookup, even
-if every requested ID is missing. Explicit valid fields that are absent from a
-particular document return `null`.
+Requested fields absent from a particular record return `null`. The viewer
+validates request shape and limits; it does not validate field names against
+the release schema.
 
 ## Errors
 
@@ -139,8 +135,7 @@ Status codes:
 - `401`: IAP identity missing.
 - `403`: IAP identity is outside the allowed domains.
 - `404`: unknown asset, unknown release, or no latest release.
-- `409`: Firestore serving index is not ready, including while the release
-  carries the `inactive_firestore_serving` policy.
+- `409`: release sidecar is absent, malformed, or unavailable at the pinned generation.
 - `413`: response would exceed 10 MiB.
 - `503`: transient serving backend failure.
 
@@ -194,7 +189,7 @@ may still return one signed GCS URL. Clients must treat `download_url` as an
 opaque sidecar URL and must not fetch a translation overlay or merge
 translations in the browser.
 
-Localized sidecars are generated during publish/build/index preparation from
+Localized sidecars are generated during publish/build preparation from
 the canonical sidecar and `{asset-slug}.metadata-translations.csv`. Translation
 rows are keyed by `feature_id`, property field, locale, and source-value hash.
 Rows whose hash no longer matches the canonical property value are stale; the
@@ -208,15 +203,14 @@ release metadata is rebuilt from the post-localization release indexes.
 
 ## Operations
 
-The catalog viewer and feature-preview viewer can serve same-origin lookups by
-reading the selected release sidecar through their sidecar-backed index. The
-standalone Firestore-backed metadata service remains inactive. Deploying it or
-loading an index alone does not enable serving: the current service rejects
-the inactive policy with `409 index_not_ready`. Enabling Firestore requires a
-separately reviewed serving-contract change.
+Both viewers construct `GcsSidecarFeatureIndex`. A lookup resolves a concrete
+release and opens its sidecar with a generation precondition. The browser also
+checks the returned path and generation against the mounted layer before joining
+metadata. Retiring Firestore does not change this route, the download resolver,
+the SDK sidecar readers, or localization materialization.
 
-Firestore metadata serving is inactive for this refactor. Release manifests and
-release indexes should record:
+Release manifests and release indexes retain these persisted compatibility
+fields:
 
 ```json
 {
@@ -228,27 +222,30 @@ release indexes should record:
 }
 ```
 
-While this policy is present, valid lookup requests return
-`409 index_not_ready` before any Firestore lookup.
+The words identify the established serialized format. They do not enable a
+Firestore backend or prevent sidecar lookups. Do not rename them or rewrite
+historical release objects as part of retirement.
 
-Do not dispatch `.github/workflows/feature-metadata-index-load.yml`, rebuild a
-Firestore database, or load production/preview indexes as part of this contract
-change. `scripts/feature_metadata_index.py` and the workflow files remain as
-dormant implementation plumbing only. Local dry-run validation may still inspect
-sidecar/schema/manifest bundles, but it must not write Firestore or publish
-serving index records.
+Validate downloaded local sidecar/schema/manifest bytes without credentials:
 
-Operational checks while serving is inactive:
+```bash
+uv run python scripts/validate_feature_metadata.py \
+  --asset-slug example-asset --release 2026-05-01 \
+  --sidecar "$WORK_ROOT/example-asset.metadata.ndjson.gz" \
+  --schema "$WORK_ROOT/example-asset.schema.json" \
+  --manifest "$WORK_ROOT/example-asset.manifest.json"
+```
 
-- Sidecar row count matches the release schema and manifest.
-- PMTiles lookup properties contain `feature_id` only.
-- Canonical FGBs and metadata sidecars preserve `feature_id`, `geometry_hash`,
-  `properties_hash`, full metadata properties, and provenance.
-- Release manifests and release indexes both carry the inactive Firestore
-  serving policy.
+Use a named workspace from [local temp workspaces](standards/local-temp-workspaces.md).
+The validator checks release identity, row IDs and hashes, uniqueness, schema
+projection, manifest artifact generations, sidecar/schema checksums, and declared
+feature count. Optional `--sidecar-uri`, `--sidecar-generation`, `--schema-uri`,
+`--schema-generation`, and `--manifest-uri` cross-check download evidence. Pin
+the manifest generation when downloading; a manifest cannot embed its own
+generation. This CLI has no remote write path.
 
-The production `Feature metadata service deploy` workflow is deferred by
-default while Firestore serving remains disabled. It exits green after a
-no-op gate and skips the Docker build and protected Terraform deploy job unless
-repository variable `ENABLE_METADATA_SERVICE_DEPLOY` is set to `true`. Manual
-dispatches also require `deploy_metadata_service=true`.
+Keep the release-model, publisher, ingestion, localization, PMTiles, catalog,
+and viewer validation suites. PMTiles lookup properties remain `feature_id`
+only; canonical FGB and sidecar records retain both hashes, full properties,
+and provenance. No Firestore index-load or standalone service-deploy workflow
+remains.

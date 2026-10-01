@@ -144,7 +144,8 @@ Use `scripts/release_feature_model.py` helpers for stable JSON hashing,
 source-field or generated `feature_id` construction, geometry/properties hash
 calculation, sidecar serialization, sidecar validation, and manifest creation.
 Sidecars and manifests are canonical GCS artifacts. Firestore serving and
-index-load records are inactive dormant plumbing for now. Every
+its loaders are retired. Historical index-load records remain readable and
+are not rewritten or deleted. Every
 release-oriented row has a `feature_id`; if no valid source field exists, use a
 generated monotonic decimal `feature_id`.
 

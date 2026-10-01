@@ -15,8 +15,8 @@ allocation history.** Installing state does not publish data or resume schedules
 approved retiring the old identity history. Historical releases stay readable;
 the same numeric ID in an old and new contract has no implied relationship.
 Consumers must join data, metadata, and translations within one resolved release
-and retain its path/generation in caches. Keep optional Firestore serving inactive
-during this transition.
+and retain its path/generation in caches. Keep the persisted inactive Firestore
+policy for compatibility; its serving stack is retired.
 
 The real WDPA and sea-ice publishers reserve IDs and claim publication ownership
 before exposing new artifacts. Deletion, empty output, crashes, and retries cannot

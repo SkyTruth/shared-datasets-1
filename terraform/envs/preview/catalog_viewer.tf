@@ -33,16 +33,6 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       }
 
       env {
-        name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
-        value = google_firestore_database.feature_preview.name
-      }
-
-      env {
-        name  = "FEATURE_PREVIEW_COLLECTION_ROOT"
-        value = var.feature_preview_collection_root
-      }
-
-      env {
         name  = "CATALOG_VIEWER_SIGNING_SERVICE_ACCOUNT"
         value = local.preview_service_account_email
       }
