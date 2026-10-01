@@ -9,6 +9,51 @@ import json
 import re
 
 
+# Older preview identities survived a prior rename in production state.
+# Require their observed identity as well as their address before removal.
+LEGACY_DELETE_IDENTITIES = {
+    "module.preview_metadata_index_loader_service_account.google_service_account.this": {
+        "project": "shared-datasets-1",
+        "account_id": "metadata-index-loader-preview",
+        "email": "metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com",
+    },
+    "module.preview_metadata_service_account.google_service_account.this": {
+        "project": "shared-datasets-1",
+        "account_id": "metadata-service-preview",
+        "email": "metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com",
+    },
+    "google_project_iam_member.preview_metadata_index_loader_firestore_user": {
+        "project": "shared-datasets-1",
+        "role": "roles/datastore.user",
+        "member": "serviceAccount:metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com",
+        "condition": [
+            {
+                "title": "preview_firestore_write",
+                "description": "Limit preview loader writes to the preview Firestore database.",
+                "expression": "resource.name == 'projects/shared-datasets-1/databases/feature-metadata-preview' || resource.name.startsWith('projects/shared-datasets-1/databases/feature-metadata-preview/')",
+            }
+        ],
+    },
+    "google_project_iam_member.preview_metadata_service_firestore_viewer": {
+        "project": "shared-datasets-1",
+        "role": "roles/datastore.viewer",
+        "member": "serviceAccount:metadata-service-preview@shared-datasets-1.iam.gserviceaccount.com",
+        "condition": [
+            {
+                "title": "preview_firestore_read",
+                "description": "Limit preview service reads to the preview Firestore database.",
+                "expression": "resource.name == 'projects/shared-datasets-1/databases/feature-metadata-preview' || resource.name.startsWith('projects/shared-datasets-1/databases/feature-metadata-preview/')",
+            }
+        ],
+    },
+    "google_service_account_iam_member.preview_metadata_index_loader_github_wif": {
+        "service_account_id": "projects/shared-datasets-1/serviceAccounts/metadata-index-loader-preview@shared-datasets-1.iam.gserviceaccount.com",
+        "role": "roles/iam.workloadIdentityUser",
+        "member": "principal://iam.googleapis.com/projects/12695949518/locations/global/workloadIdentityPools/github/subject/repo:SkyTruth/shared-datasets-1:environment:shared-datasets-production",
+    },
+}
+
+
 DELETE_ADDRESSES = frozenset(
     {
         "module.metadata_service_account.google_service_account.this",
@@ -26,6 +71,7 @@ DELETE_ADDRESSES = frozenset(
         "google_project_iam_member.feature_preview_service_firestore_viewer",
         "google_project_iam_member.feature_preview_loader_firestore_user",
     }
+    | LEGACY_DELETE_IDENTITIES.keys()
 )
 UPDATE_ADDRESSES = frozenset(
     {
@@ -79,6 +125,12 @@ def blocked_changes(plan: dict) -> list[str]:
         address = resource["address"]
         if address in DELETE_ADDRESSES or ACCESSOR_RE.fullmatch(address):
             if actions == ["delete"]:
+                if address in LEGACY_DELETE_IDENTITIES and any(
+                    change["before"].get(key) != value
+                    for key, value in LEGACY_DELETE_IDENTITIES[address].items()
+                ):
+                    blocked.append(f"unexpected legacy metadata identity {address}")
+                    continue
                 continue
         elif address in UPDATE_ADDRESSES and actions == ["update"]:
             if address == "google_project_iam_custom_role.preview_terraform":
