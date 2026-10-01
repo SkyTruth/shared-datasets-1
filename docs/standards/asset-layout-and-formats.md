@@ -227,9 +227,8 @@ Required release artifacts for vector releases:
 
 The metadata sidecar is canonical and durable in GCS. Current catalog and
 feature-preview lookups read the selected release sidecar directly. Firestore
-serving is inactive; its index-loader plumbing remains available for a future
-explicitly enabled serving contract. Any such index is a rebuildable copy of
-the sidecar, not a source of truth. Follow the active serving policy in
+serving and index loaders are retired. Persisted inactive-index policy fields
+remain compatible with historical releases. Follow the sidecar serving contract in
 [Feature Metadata API operations](../feature-metadata-api.md#operations).
 
 Locale-specific metadata sidecars are derived artifacts, not translation
@@ -442,7 +441,6 @@ For vector assets, add `feature_metadata` frontmatter:
 ```yaml
 feature_metadata:
   storage: metadata_sidecar_v1
-  index_backend: firestore
   feature_id_column: feature_id
   geometry_hash_column: geometry_hash
   properties_hash_column: properties_hash
@@ -452,10 +450,9 @@ feature_metadata:
   provenance_default: true
 ```
 
-Existing `index_backend: firestore` frontmatter describes the dormant
-serving-index backend; it does not indicate that an index is loaded or serving.
-Current viewers use GCS sidecars, and release manifests/indexes record the
-inactive Firestore policy.
+Current viewers use GCS sidecars. Release manifests/indexes retain the serialized
+`inactive_firestore_serving` policy for persisted-format compatibility. Historical
+`index-loads/` records remain valid archival evidence; no loader produces new ones.
 
 ### Metadata Translation Sidecars
 
@@ -465,8 +462,7 @@ Release-oriented metadata sidecar assets use the
 without localized display metadata omit this metadata. Release-oriented PMTiles
 do not carry `name` or `name_*` properties; they carry only `feature_id`, and
 feature inspectors or apps resolve display labels through one materialized
-locale-specific metadata sidecar, or through the metadata API after Firestore
-serving is enabled. Any dataset that publishes localized display metadata must
+locale-specific metadata sidecar, or through the viewer’s same-origin sidecar metadata API. Any dataset that publishes localized display metadata must
 stage a translation CSV at
 `latest/{asset-slug}.metadata-translations.csv` and list it with the generated
 locale-specific metadata sidecars in the release metadata files.

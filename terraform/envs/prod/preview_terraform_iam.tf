@@ -1,7 +1,3 @@
-locals {
-  preview_firestore_database_resource_name = "projects/${var.project_id}/databases/feature-preview"
-}
-
 import {
   to = google_project_iam_custom_role.preview_terraform
   id = "projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform"
@@ -13,16 +9,6 @@ resource "google_project_iam_custom_role" "preview_terraform" {
   title       = "Shared Datasets Preview Terraform"
   description = "Allows approved GitHub Actions Terraform to manage the replaceable feature branch preview slot."
   permissions = [
-    "datastore.databases.create",
-    "datastore.databases.delete",
-    "datastore.databases.get",
-    "datastore.databases.getMetadata",
-    "datastore.databases.list",
-    "datastore.databases.update",
-    "datastore.locations.get",
-    "datastore.locations.list",
-    "datastore.operations.get",
-    "datastore.operations.list",
     "iam.serviceAccounts.actAs",
     "iam.serviceAccounts.create",
     "iam.serviceAccounts.get",
@@ -106,28 +92,4 @@ resource "google_service_account_iam_member" "feature_preview_service_self_sign_
   service_account_id = "projects/${var.project_id}/serviceAccounts/${module.feature_preview_service_account.email}"
   role               = google_project_iam_custom_role.catalog_viewer_sign_blob.name
   member             = module.feature_preview_service_account.member
-}
-
-resource "google_project_iam_member" "feature_preview_service_firestore_viewer" {
-  project = var.project_id
-  role    = "roles/datastore.viewer"
-  member  = module.feature_preview_service_account.member
-
-  condition {
-    title       = "preview_firestore_read"
-    description = "Limit preview service reads to the preview Firestore database."
-    expression  = "resource.name == '${local.preview_firestore_database_resource_name}' || resource.name.startsWith('${local.preview_firestore_database_resource_name}/')"
-  }
-}
-
-resource "google_project_iam_member" "feature_preview_loader_firestore_user" {
-  project = var.project_id
-  role    = "roles/datastore.user"
-  member  = module.feature_preview_loader_service_account.member
-
-  condition {
-    title       = "preview_firestore_write"
-    description = "Limit preview loader writes to the preview Firestore database."
-    expression  = "resource.name == '${local.preview_firestore_database_resource_name}' || resource.name.startsWith('${local.preview_firestore_database_resource_name}/')"
-  }
 }

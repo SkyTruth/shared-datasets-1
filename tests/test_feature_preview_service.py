@@ -559,24 +559,9 @@ if __name__ == "__main__":
 
 
 def test_lookup_identity_is_enforced_by_backend_not_echoed_from_resolver():
-    from types import SimpleNamespace
-
-    class Firestore:
-        def collection(self, _name):
-            return self
-
-        def document(self, _name):
-            return self
-
-        def get_all(self, _refs):
-            # Same-date stale record: the resolver asks for generation 1001, but
-            # Firestore has no corresponding source-generation enforcement.
-            return [SimpleNamespace(exists=True, to_dict=lambda: sidecar_record("1", name="Stale"))]
-
-    firestore = run.FirestoreFeatureIndex(client=Firestore())
     sidecar_blob = FakeGcsBlob(SIDECAR_OBJECT, sidecar_bytes([sidecar_record("1", name="Exact")]), generation=1001)
     gcs = run.GcsSidecarFeatureIndex(bucket_name=PREVIEW_BUCKET, client=FakeGcsClient(FakeGcsBucket({SIDECAR_OBJECT: sidecar_blob})))
-    for backend, name, generation in [(firestore, "Stale", None), (gcs, "Exact", 1001), (FakeIndex(), "A", None)]:
+    for backend, name, generation in [(gcs, "Exact", 1001), (FakeIndex(), "A", None)]:
         response = run.handle_request("POST", "/v1/assets/wdpa-marine/releases/2026-06-01:lookup", {}, b'{"ids":["1"]}',
                                       release_resolver=FakeResolver(), feature_index=backend, require_iap=False)
         assert response.status == 200

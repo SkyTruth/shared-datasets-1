@@ -1,3 +1,11 @@
+removed {
+  from = google_firestore_database.feature_preview
+
+  lifecycle {
+    destroy = false
+  }
+}
+
 data "google_project" "current" {
   project_id = var.project_id
 }
@@ -33,17 +41,6 @@ resource "google_storage_bucket" "preview_bucket" {
     response_header = ["Content-Length", "Content-Range", "ETag", "Range"]
     max_age_seconds = 3600
   }
-}
-
-resource "google_firestore_database" "feature_preview" {
-  project                     = var.project_id
-  name                        = var.feature_preview_firestore_database_id
-  location_id                 = "nam5"
-  type                        = "FIRESTORE_NATIVE"
-  delete_protection_state     = "DELETE_PROTECTION_DISABLED"
-  deletion_policy             = "DELETE"
-  concurrency_mode            = "OPTIMISTIC"
-  app_engine_integration_mode = "DISABLED"
 }
 
 removed {
@@ -82,6 +79,7 @@ resource "google_storage_bucket_iam_member" "feature_preview_loader_object_viewe
   member = local.preview_loader_member
 }
 
+# Historical address retained: this grant publishes the preview catalog web bundle.
 resource "google_storage_bucket_iam_member" "feature_preview_loader_index_load_creator" {
   bucket = google_storage_bucket.preview_bucket.name
   role   = "roles/storage.objectUser"
@@ -115,16 +113,6 @@ resource "google_cloud_run_v2_service" "feature_preview_service" {
       env {
         name  = "SHARED_DATASETS_BUCKET"
         value = google_storage_bucket.preview_bucket.name
-      }
-
-      env {
-        name  = "FEATURE_PREVIEW_FIRESTORE_DATABASE"
-        value = google_firestore_database.feature_preview.name
-      }
-
-      env {
-        name  = "FEATURE_PREVIEW_COLLECTION_ROOT"
-        value = var.feature_preview_collection_root
       }
 
       env {
@@ -170,7 +158,6 @@ resource "google_cloud_run_v2_service" "feature_preview_service" {
     ignore_changes = [launch_stage, scaling]
   }
 
-  depends_on = [google_firestore_database.feature_preview]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "feature_preview_service_iap_invoker" {

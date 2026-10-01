@@ -1675,34 +1675,6 @@ def index_status_policy_issue(
     return ""
 
 
-def index_load_matches(
-    record: Any,
-    *,
-    asset_slug: str,
-    release: str,
-    metadata_entry: dict[str, Any],
-    schema_entry: dict[str, Any],
-    manifest_entry: dict[str, Any],
-) -> bool:
-    if not isinstance(record, dict):
-        return False
-    if record.get("status") != "success" or record.get("dry_run") is True:
-        return False
-    load_id = record.get("load_id")
-    if not isinstance(load_id, str) or not LOAD_ID_RE.fullmatch(load_id):
-        return False
-    if record.get("asset_slug") != asset_slug or record.get("release") != release:
-        return False
-    return (
-        record.get("sidecar_uri") == metadata_entry.get("path")
-        and same_generation(record.get("sidecar_generation"), metadata_entry.get("generation"))
-        and record.get("schema_uri") == schema_entry.get("path")
-        and same_generation(record.get("schema_generation"), schema_entry.get("generation"))
-        and record.get("manifest_uri") == manifest_entry.get("path")
-        and same_generation(record.get("manifest_generation"), manifest_entry.get("generation"))
-    )
-
-
 def validate_feature_metadata_readiness(
     *,
     bucket: str,
@@ -1870,7 +1842,7 @@ def validate_feature_metadata_readiness(
                     + "; ".join(issues),
                     "unknown",
                     "Publish or repair a complete metadata-backed release through the approved workflow before advertising feature metadata.",
-                    "Consumers may see feature metadata in the catalog but receive missing-object errors or metadata-service 409 responses.",
+                    "Consumers may see feature metadata in the catalog but receive missing-object errors or viewer metadata lookup 409 responses.",
                     "feature-metadata",
                     feature_metadata_prompt(asset_slug=slug),
                 )

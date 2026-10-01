@@ -485,31 +485,6 @@ def preview_upload_required(state: dict[str, Any]) -> bool:
     return is_preview_workflow(state)
 
 
-def preview_firestore_load_enabled(state: dict[str, Any]) -> bool:
-    plan = plan_from_state(state)
-    for value in (
-        state.get("preview_firestore_load"),
-        state.get("preview_firestore_load_required"),
-        plan.get("preview_firestore_load"),
-        plan.get("preview_firestore_load_required"),
-    ):
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "enabled", "required"}:
-            return True
-    return False
-
-
-def preview_load_required(state: dict[str, Any]) -> bool:
-    plan = plan_from_state(state)
-    return (
-        is_preview_workflow(state)
-        and preview_firestore_load_enabled(state)
-        and plan.get("canonical_format") == "fgb"
-        and bool(plan.get("release_date"))
-    )
-
-
 def preview_catalog_refresh_required(state: dict[str, Any]) -> bool:
     return is_preview_workflow(state)
 
@@ -950,29 +925,6 @@ def uploaded_preview_objects_by_role(state: dict[str, Any]) -> dict[str, dict[st
         if isinstance(obj, dict) and obj.get("role"):
             by_role[str(obj["role"])] = obj
     return by_role
-
-
-def commands_for_preview_load(state: dict[str, Any]) -> list[str]:
-    plan = plan_from_state(state)
-    preview_ref = state.get("preview_ref") or "PREVIEW_REF"
-    by_role = uploaded_preview_objects_by_role(state)
-    sidecar = by_role.get("feature-metadata-sidecar", {})
-    schema = by_role.get("schema", {})
-    manifest = by_role.get("manifest", {})
-    if sidecar and schema and manifest:
-        return [
-            f"Re-check `.github/workflows/feature-preview-index-load.yml` for preview ref {preview_ref} before dispatching.",
-            f"gh workflow run feature-preview-index-load.yml --ref {preview_ref} "
-            f"-f ref={preview_ref} -f asset_slug={plan['asset_slug']} -f release={plan['release_date']} "
-            f"-f sidecar_uri={sidecar['uri']} -f sidecar_generation={sidecar['generation']} "
-            f"-f schema_uri={schema['uri']} -f schema_generation={schema['generation']} "
-            f"-f manifest_uri={manifest['uri']} -f manifest_generation={manifest['generation']}",
-            "Record the workflow run URL/status and verify the preview catalog viewer refreshed against the preview bucket.",
-        ]
-    return [
-        "After preview-upload evidence is recorded, dispatch Feature preview index load with sidecar/schema/manifest URIs and generations.",
-        "Use only preview-bucket URIs as workflow inputs, then record the workflow run URL/status.",
-    ]
 
 
 def commands_for_preview_catalog_refresh(state: dict[str, Any]) -> list[str]:
@@ -1487,70 +1439,6 @@ def validate_preview_upload(state: dict[str, Any], evidence: dict[str, Any]) -> 
         raise WorkflowError(f"missing required preview upload role(s): {', '.join(missing)}")
     return {
         "uploaded_objects": normalized,
-        "notes": str(evidence.get("notes", "")).strip(),
-    }
-
-
-def validate_preview_load(state: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
-    plan = plan_from_state(state)
-    asset_slug = require_non_empty_string(evidence, "asset_slug")
-    if asset_slug != plan["asset_slug"]:
-        raise WorkflowError(f"evidence.asset_slug must match concierge plan value {plan['asset_slug']!r}")
-    release = require_non_empty_string(evidence, "release")
-    if release != plan.get("release_date"):
-        raise WorkflowError(f"evidence.release must match concierge plan release_date {plan.get('release_date')!r}")
-    workflow_name = require_non_empty_string(evidence, "workflow_name")
-    if workflow_name not in {"feature-preview-index-load.yml", "Feature preview index load"}:
-        raise WorkflowError("evidence.workflow_name must be feature-preview-index-load.yml or Feature preview index load")
-    require_bool(evidence, "workflow_inputs_checked_against_preview_ref", expected=True)
-    inputs = evidence.get("inputs")
-    if not isinstance(inputs, dict):
-        raise WorkflowError("evidence.inputs must be an object")
-    prefix = f"gs://{PREVIEW_BUCKET}/"
-    normalized_inputs = {}
-    for key in ("sidecar_uri", "schema_uri", "manifest_uri"):
-        uri = require_non_empty_string(inputs, key)
-        if not uri.startswith(prefix):
-            raise WorkflowError(f"evidence.inputs.{key} must start with {prefix}")
-        normalized_inputs[key] = uri
-    for key in ("sidecar_generation", "schema_generation", "manifest_generation"):
-        normalized_inputs[key] = normalize_generation(
-            inputs.get(key),
-            label=f"evidence.inputs.{key}",
-            required=True,
-        )
-    uploaded = uploaded_preview_objects_by_role(state)
-    for role, input_prefix in (
-        ("feature-metadata-sidecar", "sidecar"),
-        ("schema", "schema"),
-        ("manifest", "manifest"),
-    ):
-        uploaded_object = uploaded.get(role)
-        if not uploaded_object:
-            raise WorkflowError(f"preview-load requires uploaded preview object role {role}")
-        uri_key = f"{input_prefix}_uri"
-        generation_key = f"{input_prefix}_generation"
-        if normalized_inputs[uri_key] != uploaded_object.get("uri"):
-            raise WorkflowError(f"evidence.inputs.{uri_key} must match preview-upload {role} uri")
-        if normalized_inputs[generation_key] != uploaded_object.get("generation"):
-            raise WorkflowError(f"evidence.inputs.{generation_key} must match preview-upload {role} generation")
-    dispatched_ref = require_non_empty_string(evidence, "dispatched_ref")
-    preview_ref = str(state.get("preview_ref") or "").strip()
-    if preview_ref and dispatched_ref != preview_ref:
-        raise WorkflowError(f"evidence.dispatched_ref must match preview_ref {preview_ref!r}")
-    status = require_non_empty_string(evidence, "status").lower()
-    if status not in {"success", "completed", "succeeded"}:
-        raise WorkflowError("evidence.status must be success, completed, or succeeded")
-    return {
-        "workflow_name": workflow_name,
-        "workflow_run_url": require_non_empty_string(evidence, "workflow_run_url"),
-        "status": status,
-        "dispatched_ref": dispatched_ref,
-        "asset_slug": asset_slug,
-        "release": release,
-        "workflow_inputs_checked_against_preview_ref": True,
-        "inputs": normalized_inputs,
-        "viewer_refresh_verified": require_bool(evidence, "viewer_refresh_verified", expected=True),
         "notes": str(evidence.get("notes", "")).strip(),
     }
 
@@ -2170,32 +2058,6 @@ STEP_DEFINITIONS: tuple[StepDefinition, ...] = (
         is_required=preview_upload_required,
     ),
     StepDefinition(
-        "preview-load",
-        "Dispatch preview index load",
-        "Dispatch Feature preview index load with preview-bucket sidecar/schema/manifest URIs and generations.",
-        {
-            "workflow_name": "feature-preview-index-load.yml",
-            "workflow_run_url": "string",
-            "status": "success|completed|succeeded",
-            "dispatched_ref": "string matching preview_ref",
-            "workflow_inputs_checked_against_preview_ref": True,
-            "asset_slug": "string matching plan.asset_slug",
-            "release": "string matching plan.release_date",
-            "inputs": {
-                "sidecar_uri": f"gs://{PREVIEW_BUCKET}/...",
-                "sidecar_generation": "numeric string",
-                "schema_uri": f"gs://{PREVIEW_BUCKET}/...",
-                "schema_generation": "numeric string",
-                "manifest_uri": f"gs://{PREVIEW_BUCKET}/...",
-                "manifest_generation": "numeric string",
-            },
-            "viewer_refresh_verified": True,
-        },
-        commands_for_preview_load,
-        validate_preview_load,
-        is_required=preview_load_required,
-    ),
-    StepDefinition(
         "preview-catalog-refresh",
         "Refresh preview catalog viewer bundle",
         "Redeploy the preview branch in preserve mode so _catalog/web/catalog.json is rebuilt from preview release indexes; preview uploads do not trigger the production catalog web deploy.",
@@ -2475,24 +2337,11 @@ def render_completion_report_from_state(state: dict[str, Any]) -> str:
         )
     if is_preview_workflow(state):
         uploaded = step_record(state, "preview-upload").get("evidence", {}).get("uploaded_objects", [])
-        preview_load = step_record(state, "preview-load").get("evidence", {})
         catalog_refresh = step_record(state, "preview-catalog-refresh").get("evidence", {})
         viewer_verify = step_record(state, "preview-viewer-verify").get("evidence", {})
         remote_paths = [f"- {obj['uri']} (generation {obj['generation']}, role {obj['role']})" for obj in uploaded]
         retained = []
-        preview_load_status = preview_load.get("status", "not recorded")
-        if not preview_load_required(state):
-            preview_load_status = "skipped (Firestore preview serving inactive)"
-        followup_state = f"""## Preview Load State
-
-- Workflow: {preview_load.get('workflow_name', 'not recorded')}
-- Workflow run: {preview_load.get('workflow_run_url', 'not recorded')}
-- Dispatch ref: {preview_load.get('dispatched_ref', 'not recorded')}
-- Status: {preview_load_status}
-- Workflow inputs checked against preview ref: {preview_load.get('workflow_inputs_checked_against_preview_ref', False)}
-- Viewer refresh verified: {preview_load.get('viewer_refresh_verified', False)}
-
-## Preview Catalog Refresh
+        followup_state = f"""## Preview Catalog Refresh
 
 - Workflow: {catalog_refresh.get('workflow_name', 'not recorded')}
 - Workflow run: {catalog_refresh.get('workflow_run_url', 'not recorded')}

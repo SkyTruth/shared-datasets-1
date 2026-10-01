@@ -42,7 +42,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Static catalog web preview | `.claude/skills/static-catalog-web-preview/SKILL.md`, `docs/catalog-web-preview.md` |
 | Code/docs alignment workflow | `.claude/skills/sync-docs-with-code/SKILL.md` |
 | Consumer integration guide | `docs/consumer-guide.md` |
-| Feature metadata lookup API | `docs/feature-metadata-api.md`, `services/metadata_service/` |
+| Feature metadata lookup API | `docs/feature-metadata-api.md`, `services/catalog_viewer/`, `services/feature_preview_service/` |
 | Feature branch preview | `.claude/skills/feature-preview/SKILL.md`, `docs/feature-preview.md`, `terraform/envs/preview/`, `Deploy Feature Branch to Preview`, `Destroy Preview Environment`, `Preview Terraform IAM sync` |
 | Python SDK usage | `api/python/README.md` |
 | TypeScript SDK usage and npm package contents | `api/typescript/README.md` |
@@ -186,7 +186,8 @@ source of truth. FGB remains the canonical vector artifact for consumers,
 PMTiles are intentionally lightweight geometry-plus-`feature_id` lookup tiles,
 and the full feature metadata lives in a durable GCS sidecar. Current catalog
 and feature-preview viewers read that sidecar directly; the rebuildable
-Firestore serving index remains inactive. Canonical FGBs and metadata sidecars
+Firestore serving stack is retired; viewers use generation-pinned GCS sidecars.
+Canonical FGBs and metadata sidecars
 must carry `feature_id`, `geometry_hash`, and `properties_hash`; consumers may use
 `geometry_hash` from the sidecar as the stable geometry-equivalence key for
 grouping or de-duplicating footprints.
@@ -593,8 +594,8 @@ preconditions and record exact URIs and generations in concierge upload
 evidence. Refresh the preview catalog by deploying with
 `preview_data_mode=preserve`. The catalog is built from preview-bucket release
 indexes, shows only preview assets, and preserves the full release `files` list
-for sidecar datafiles. Current lookups read GCS sidecars; do not dispatch
-Firestore index loads while serving is inactive. Canonical dataset adds and
+for sidecar datafiles. Current lookups read GCS sidecars; the Firestore index
+loaders are retired. Canonical dataset adds and
 updates still use the reviewed `_scratch/pending-publishes/` promotion path in
 `publish-shared-dataset`.
 

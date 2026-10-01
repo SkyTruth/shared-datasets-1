@@ -309,7 +309,6 @@ def handle_request(
     allowed_email_domains: tuple[str, ...] = DEFAULT_ALLOWED_EMAIL_DOMAINS,
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
-    feature_collection_root: str = feature_preview_run.DEFAULT_COLLECTION_ROOT,
     feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
@@ -330,7 +329,6 @@ def handle_request(
             allowed_email_domains=allowed_email_domains,
             feature_release_resolver=feature_release_resolver,
             feature_index=feature_index,
-            feature_collection_root=feature_collection_root,
             feature_max_ids=feature_max_ids,
             feature_max_fields=feature_max_fields,
             feature_max_response_bytes=feature_max_response_bytes,
@@ -377,7 +375,6 @@ def handle_feature_lookup(
     allowed_email_domains: tuple[str, ...],
     feature_release_resolver: feature_preview_run.ReleaseResolver | None,
     feature_index: feature_preview_run.FeatureIndex | None,
-    feature_collection_root: str,
     feature_max_ids: int,
     feature_max_fields: int,
     feature_max_response_bytes: int,
@@ -777,10 +774,6 @@ def allowed_email_domains_from_env() -> tuple[str, ...]:
     return tuple(part.strip().lstrip("@") for part in raw.split(",") if part.strip())
 
 
-def feature_collection_root_from_env() -> str:
-    return os.environ.get("FEATURE_PREVIEW_COLLECTION_ROOT", feature_preview_run.DEFAULT_COLLECTION_ROOT)
-
-
 def int_env(name: str, default: int) -> int:
     raw = os.environ.get(name, "")
     try:
@@ -871,7 +864,6 @@ def make_handler(
     allowed_email_domains: tuple[str, ...],
     feature_release_resolver: feature_preview_run.ReleaseResolver | None = None,
     feature_index: feature_preview_run.FeatureIndex | None = None,
-    feature_collection_root: str = feature_preview_run.DEFAULT_COLLECTION_ROOT,
     feature_max_ids: int = feature_preview_run.DEFAULT_MAX_IDS,
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
@@ -911,7 +903,6 @@ def make_handler(
             allowed_email_domains=allowed_email_domains,
             feature_release_resolver=feature_release_resolver,
             feature_index=feature_index,
-            feature_collection_root=feature_collection_root,
             feature_max_ids=feature_max_ids,
             feature_max_fields=feature_max_fields,
             feature_max_response_bytes=feature_max_response_bytes,
@@ -947,7 +938,6 @@ def main() -> None:
         allowed_email_domains=allowed_email_domains_from_env(),
         feature_release_resolver=feature_release_resolver,
         feature_index=feature_index,
-        feature_collection_root=feature_collection_root_from_env(),
         feature_max_ids=int_env("FEATURE_PREVIEW_MAX_IDS", feature_preview_run.DEFAULT_MAX_IDS),
         feature_max_fields=int_env("FEATURE_PREVIEW_MAX_FIELDS", feature_preview_run.DEFAULT_MAX_FIELDS),
         feature_max_response_bytes=int_env(

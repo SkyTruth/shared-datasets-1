@@ -5,7 +5,7 @@ The feature branch preview is one replaceable test slot inside the
 branches before deciding whether to merge them to `main`.
 
 The preview is not a second production environment. It owns only preview-named
-Cloud Run, Cloud Storage, Firestore, IAM, and service account resources, with
+Cloud Run, Cloud Storage, IAM, and service account resources, with
 Terraform state isolated under `000-system/terraform/state/preview`.
 
 The preview bucket is disposable and uses `force_destroy = true` so the preview
@@ -22,9 +22,7 @@ Selection:
   deploy into the preview slot.
 - In **Preview data handling**, choose `preserve` to update the preview services
   and catalog viewer while keeping the existing preview bucket, release indexes,
-  and dormant Firestore metadata state. Choose `reset` only when you want a
-  clean preview slot; do not reload preview Firestore metadata while serving is
-  inactive.
+  and release artifacts. Choose `reset` only when you want a clean preview slot.
 
 The selected branch or tag is both the workflow ref and the preview source ref.
 The protected workflow checks out `main` at the workspace root and checks out
@@ -35,11 +33,10 @@ after verifying the protected preview IAM bootstrap, then plans and applies
 allowlist. This lets feature branches exercise preview-only Terraform changes
 before merge while still refusing non-preview resources. In `preserve` mode, it
 plans and applies the updated preview stack without first destroying the preview
-bucket or Firestore database, then rebuilds the catalog web bundle from
-existing preview release indexes. In `reset` mode, it first plans and applies a
-saved destroy reset from the selected branch preview Terraform, waits if the
-preview Firestore database ID needs reuse time, then creates the new preview
-stack and publishes a catalog shell. In both modes, it prints the preview
+bucket, then rebuilds the catalog web bundle from existing preview release
+indexes. In `reset` mode, it first plans and applies a
+saved destroy reset from the selected branch preview Terraform, then creates
+the new preview stack and publishes a catalog shell. In both modes, it prints the preview
 service and catalog viewer Cloud Run URLs.
 
 This split is intentional. The workflow branch dropdown provides the source and
@@ -48,29 +45,31 @@ production-scoped IAM bootstrap remains on `main` through the separate sync
 workflow.
 
 The selected feature branch must include the baseline preview service source,
-catalog viewer source, catalog site generator, preview Terraform, and preview
-Firestore database override. Feature branches should rebase or merge from
-`main` before using the preview workflow.
+catalog viewer source, catalog site generator, and preview Terraform with the
+sidecar backend and Firestore retirement configuration. Feature branches should
+rebase or merge from `main` before using the preview workflow.
 
 To replace the preview with a different feature branch, run the same workflow
 again and select the new branch or tag in the workflow branch dropdown. There is
 only one active preview slot. Use `preserve` when you are iterating on preview
 service or catalog viewer code against already loaded test data. Use `reset`
-when you need to tear down the previous preview bucket, Firestore database,
+when you need to tear down the previous preview bucket,
 Cloud Run services, and preview bucket/IAP IAM bindings before creating the new
 preview deployment. Reset clears previous preview data that is no longer present
 in the selected ref.
 
-The deploy workflow does not own the stable conditioned project IAM grants that
-let the preview service and preview loader use the preview Firestore database,
-the stable preview service accounts, the preview service self-signing grant used
-for catalog viewer signed URLs, or the preview loader Workload Identity binding.
+The deploy workflow does not own the stable preview service accounts, the
+preview service self-signing grant used for catalog viewer signed URLs, or the
+preview loader Workload Identity binding.
 Those bootstrap resources are managed by the protected GitHub Actions workflow
 named `Preview Terraform IAM sync` from
 `terraform/envs/prod/preview_terraform_iam.tf`.
 That sync owns creation of `feature-preview-service` and
 `feature-preview-loader`; deploy and destroy only validate or use those stable
 identities.
+
+`feature-preview-loader` remains the catalog web publisher; its account,
+Workload Identity binding, and preview bucket write grant are required.
 That sync workflow applies only from `main` after the reviewed control-plane
 changes have landed. Deploy validates those bootstrap resources before Docker
 build or Terraform reset, and fails without mutating the preview slot if the
@@ -82,14 +81,21 @@ preview Terraform state without deleting the live resources. The saved preview
 reset plan may also delete old preview-stack resources that remain in
 `terraform/envs/preview` state from earlier naming.
 
+Before deployment, reset, or destruction, a saved plan detaches the retired
+`feature-preview` Firestore database from Terraform state with `destroy = false`.
+The retirement validator refuses database deletion. Existing Firestore data
+remains untouched and no longer belongs to the disposable preview slot. Selected
+branches must include this retirement configuration. See
+[metadata stack retirement](metadata-stack-retirement.md).
+
 ## Destroy The Preview
 
 Use the GitHub Actions workflow named `Destroy Preview Environment`. The
 protected workflow applies only from `main`, checks out the reviewed `main`
 control plane, plans `terraform/envs/preview` with `-destroy`, enforces the
 preview-resource allowlist, and applies only that saved destroy plan. This
-removes the preview Cloud Run services, preview bucket contents, preview
-Firestore database, preview IAM bindings owned by the preview root. It does not
+removes the preview Cloud Run services, preview bucket contents, and preview
+IAM bindings owned by the preview root. It does not
 delete the stable preview service accounts or loader Workload Identity binding.
 
 ## Preview Catalog Viewer
@@ -120,8 +126,8 @@ and any other new sidecar datafiles that belong to the preview release bundle.
 ## Load Preview Data
 
 The preview service reads release indexes and feature metadata sidecars from
-the preview bucket. Firestore serving is inactive and is not required for
-current preview lookups. Write the complete release bundle under:
+the preview bucket. Firestore serving and its loaders are retired. Write the
+complete release bundle under:
 
 ```text
 gs://skytruth-shared-datasets-1-preview/{category}/{subcategory}/{asset-slug}/releases/YYYY-MM-DD/
@@ -158,15 +164,6 @@ the preview viewer lists the intended release and enriches clicked features
 from its sidecar. Record the catalog generation and viewer verification in the
 concierge evidence before reporting completion.
 
-### Dormant Firestore Loader
-
-`.github/workflows/feature-preview-index-load.yml` still contains Firestore
-loader plumbing, including generation-pinned sidecar/schema/manifest inputs.
-It is not part of the current sidecar-backed upload and catalog-refresh path.
-Do not dispatch it while serving is inactive. A feature that explicitly enables
-Firestore must establish its reviewed serving contract and validate the exact
-workflow and loader at the chosen ref before loading an index. See
-[Feature Metadata API operations](feature-metadata-api.md#operations).
 
 ## Authentication Note
 
@@ -190,4 +187,4 @@ Preview test data is not production publishing. Do not use production
 `Approved dataset mutation` workflow. Upload disposable release bundles directly
 to `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, stat the
 exact generations, record them in concierge upload evidence, and refresh the
-catalog with a preserve-mode deploy. Firestore loads remain dormant.
+catalog with a preserve-mode deploy.

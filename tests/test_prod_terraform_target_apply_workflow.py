@@ -14,7 +14,6 @@ from workflow_helpers import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REUSABLE = REPO_ROOT / ".github/workflows/prod-terraform-target-apply.yml"
 ARTIFACT_REGISTRY = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.yml"
-METADATA_INDEX_LOADER = REPO_ROOT / ".github/workflows/metadata-index-loader-iam-sync.yml"
 PREVIEW_TERRAFORM = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.yml"
 SCHEDULED_INGESTION = REPO_ROOT / ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
 SCRATCH_CLEANUP = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
@@ -113,43 +112,6 @@ class TargetApplyCallerTests(unittest.TestCase):
             },
         )
 
-    def test_metadata_index_loader_iam_sync_caller(self):
-        expected_targets = {
-            'google_project_service.required["firestore.googleapis.com"]',
-            "google_firestore_database.feature_metadata",
-            "module.metadata_index_loader_service_account.google_service_account.this",
-            "google_project_iam_member.metadata_index_loader_firestore_user",
-            "google_storage_bucket_iam_member.metadata_index_loader_object_viewer",
-            "google_storage_bucket_iam_member.metadata_index_loader_index_load_creator",
-            "google_storage_bucket_iam_member.metadata_index_loader_index_load_folder_admin",
-            "google_service_account_iam_member.metadata_index_loader_github_wif",
-        }
-        assert_target_apply_caller(
-            self,
-            METADATA_INDEX_LOADER,
-            expected_name="Feature metadata index-loader IAM sync",
-            push_paths={
-                ".github/workflows/metadata-index-loader-iam-sync.yml",
-                REUSABLE_PATH_ENTRY,
-                "terraform/envs/prod/main.tf",
-                "terraform/envs/prod/metadata_service.tf",
-                "terraform/envs/prod/variables.tf",
-                "terraform/envs/prod/versions.tf",
-            },
-            sync_name="Metadata index-loader IAM sync",
-            refusal_prefix="Refusing metadata index-loader IAM sync",
-            expected_targets=expected_targets,
-            expected_allowed_exact=expected_targets
-            - {"module.metadata_index_loader_service_account.google_service_account.this"},
-            expected_allowed_patterns={r"^module\.metadata_index_loader_service_account\."},
-            expected_tf_vars={
-                "metadata_service_image=unused-by-metadata-index-loader-iam-sync",
-                "wdpa_monthly_image=unused-by-metadata-index-loader-iam-sync",
-                "sea_ice_daily_image=unused-by-metadata-index-loader-iam-sync",
-                "eamlis_monthly_image=unused-by-metadata-index-loader-iam-sync",
-            },
-            blocked_resources={"google_cloud_run_v2_service.metadata_service"},
-        )
 
     def test_preview_terraform_iam_sync_caller_blocks_deletes(self):
         assert_target_apply_caller(
@@ -174,8 +136,6 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "google_project_iam_member.github_actions_preview_terraform",
                 "google_service_account_iam_member.feature_preview_loader_github_wif",
                 "google_service_account_iam_member.feature_preview_service_self_sign_blob",
-                "google_project_iam_member.feature_preview_service_firestore_viewer",
-                "google_project_iam_member.feature_preview_loader_firestore_user",
             },
             expected_tf_vars={
                 "wdpa_monthly_image=unused-by-preview-terraform-iam-sync",

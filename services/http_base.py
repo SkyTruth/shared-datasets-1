@@ -2,7 +2,7 @@
 
 Only helpers that were duplicated verbatim (or near-verbatim with identical
 behavior) across at least two services live here. Service-specific variants
-(for example the metadata service's CORS ``api_headers`` or its
+(for example the viewer service's CORS ``api_headers`` or its
 ``Content-Length``-adding ``_send``) intentionally stay in their own modules.
 
 Every Dockerfile under ``services/`` copies the whole ``services`` directory

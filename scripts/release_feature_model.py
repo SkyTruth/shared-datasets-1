@@ -67,7 +67,6 @@ REQUIRED_VECTOR_FGB_PROPERTIES = (
     "properties_hash",
 )
 EXACT_VECTOR_PMTILES_PROPERTIES = ("feature_id",)
-MAX_FIRESTORE_DOCUMENT_BYTES = 1_048_576
 DEFAULT_MAX_SIDECAR_RECORD_BYTES = 900 * 1024
 HASH_EXCLUDED_PROPERTIES = frozenset(
     {
@@ -1484,10 +1483,3 @@ def build_release_manifest(
             "path": None,
         },
     }
-
-
-def index_load_record_name(asset_root: str, release: str, load_id: str) -> str:
-    safe_load_id = re.sub(r"[^A-Za-z0-9]+", "", str(load_id))
-    if not safe_load_id:
-        raise ReleaseFeatureModelError("load_id contains no usable alphanumeric characters")
-    return f"{asset_root.rstrip('/')}/index-loads/{release}/{safe_load_id}.json"

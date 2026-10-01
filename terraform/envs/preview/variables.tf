@@ -52,18 +52,6 @@ variable "feature_preview_loader_service_account_id" {
   default     = "feature-preview-loader"
 }
 
-variable "feature_preview_firestore_database_id" {
-  description = "Named Firestore Native database used only by the preview slot."
-  type        = string
-  default     = "feature-preview"
-}
-
-variable "feature_preview_collection_root" {
-  description = "Root Firestore collection for preview documents."
-  type        = string
-  default     = "feature_preview_index"
-}
-
 variable "feature_preview_iap_accessor_members" {
   description = "IAM members allowed through direct Cloud Run IAP to the preview service run.app URL."
   type        = set(string)

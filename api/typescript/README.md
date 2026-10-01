@@ -85,11 +85,10 @@ Credentials.
 Release-oriented vector PMTiles are intentionally lightweight and should not be
 treated as the source of full feature attributes. They expose exactly one
 feature property, `feature_id`. Use it for click-to-metadata joins through a
-release metadata sidecar resolved from the release index. The IAP-protected
-metadata lookup API (`POST /v1/assets/{slug}/releases/{release}:lookup`) is
-dormant while Firestore metadata serving is inactive — otherwise valid lookup
-requests return `409 index_not_ready` — so active consumer workflows must use
-the sidecar.
+release metadata sidecar resolved from the release index. Catalog and preview
+viewers also serve same-origin sidecar lookups at
+`POST /v1/assets/{slug}/releases/{release}:lookup`. The standalone Firestore
+endpoint is retired; SDK sidecar readers are unchanged.
 
 `feature_id` values are URL-safe strings matching `^[A-Za-z0-9]{1,64}$`, either
 copied from a verified-unique source field or assigned as monotonic decimal
