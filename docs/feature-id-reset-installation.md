@@ -53,8 +53,12 @@ cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
    gh workflow run publish-dataset.yml --ref main -f pr_number=<merged-reset-pr>
    ```
 4. Run the existing ingestion deployment workflow from reviewed `main`, setting
-   `canary_run_date` to the first release date in the reset plan. Sea ice searches
-   upstream from this date; confirm its available source date matches the plan.
+   `canary_run_date` to the first release date in the reset plan for WDPA.
+   For sea ice, set it to the preceding NOAA filename date: new-contract
+   releases use the documented valid date, one day after the filename date.
+   Confirm that the selected source's valid date matches the reset plan.
+   This can rebuild yesterday's raster into the new identity contract while
+   preserving its true filename date, `ice_date`, and historical release.
    Before image build or Terraform, it verifies the same publication state and
    receipts as the runtime. Both WDPA resets must be complete; sea ice is independent.
 5. Validate the first release using the checks below before resuming the affected

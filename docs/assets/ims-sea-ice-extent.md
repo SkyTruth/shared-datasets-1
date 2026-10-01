@@ -115,9 +115,10 @@ This asset contains polygons vectorized from the 4 km IMS GeoTIFF raster class
 `3`, which NSIDC describes as sea/lake ice. It is a raw class extraction and does
 not remove inland or lake ice.
 
-The release folder and `ice_date` field use the date encoded in the GeoTIFF
-filename. NSIDC documents the GeoTIFF imagery as valid for the next day; the run
-record preserves that documented valid date.
+For `generated-2026-v1`, the release folder uses the documented valid date,
+one day after the GeoTIFF filename date. The `ice_date` field and run record's
+`source_filename_date` preserve the filename date. Historical releases retain
+their original filename-date folders.
 
 ## When to use it
 
@@ -194,6 +195,6 @@ objects for that release without backfilling older release folders.
 ## Known caveats
 
 IMS GeoTIFF filename dates are documented by NSIDC as creation dates, while the
-images are valid for the next day. This asset intentionally uses the filename
-date for release folders and `ice_date`, and stores the documented valid date in
-the run record.
+images are valid for the next day. New-contract release folders use that valid
+date; `ice_date` remains the filename date. The run record and manifest preserve
+both dates so consumers can distinguish release validity from source creation.
