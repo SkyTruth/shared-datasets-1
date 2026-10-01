@@ -60,7 +60,25 @@ google_service_account_iam_member.metadata_index_loader_github_wif
 google_monitoring_alert_policy.metadata_service_error_logs
 google_project_iam_member.feature_preview_service_firestore_viewer
 google_project_iam_member.feature_preview_loader_firestore_user
+module.preview_metadata_index_loader_service_account.google_service_account.this
+module.preview_metadata_service_account.google_service_account.this
+google_project_iam_member.preview_metadata_index_loader_firestore_user
+google_project_iam_member.preview_metadata_service_firestore_viewer
+google_service_account_iam_member.preview_metadata_index_loader_github_wif
 ```
+
+Read-only live state inspection on 2026-10-01 found the last five older preview
+addresses after the original retirement PR merged. Their principals are
+`metadata-index-loader-preview` and `metadata-service-preview`, not the active
+`feature-preview-loader` catalog publisher or `feature-preview-service`. The
+older Firestore grants name the absent `feature-metadata-preview` database.
+Neither older identity appears in live Cloud Run service/job consumers or
+preview bucket IAM. Their source resources had already been removed; the
+follow-up expands the protected target list to clean up this orphaned state.
+The validator requires the observed project, account/role/member, database
+condition, or Workload Identity binding before allowing each legacy deletion.
+No replacement, permission expansion, active-preview identity removal, or
+database deletion is allowed.
 
 Two updates are also allowed: remove only `datastore.*` permissions from the
 preview Terraform custom role, and remove only the production metadata loader's

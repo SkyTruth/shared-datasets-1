@@ -31,9 +31,12 @@ def plan(address, actions, before=None, after=None):
 
 class RetirementPlanTests(unittest.TestCase):
     def test_only_retired_resources_can_be_deleted(self):
-        for address in retirement.DELETE_ADDRESSES | {
-            'google_iap_web_cloud_run_service_iam_member.metadata_service_accessors["user:maintainer@skytruth.org"]',
-        }:
+        for address in (
+            retirement.DELETE_ADDRESSES - retirement.LEGACY_DELETE_IDENTITIES.keys()
+            | {
+                'google_iap_web_cloud_run_service_iam_member.metadata_service_accessors["user:maintainer@skytruth.org"]',
+            }
+        ):
             with self.subTest(address=address):
                 self.assertFalse(retirement.blocked_changes(plan(address, ["delete"])))
                 for actions in (["create"], ["update"], ["delete", "create"]):
@@ -45,6 +48,57 @@ class RetirementPlanTests(unittest.TestCase):
             'google_project_service.required["firestore.googleapis.com"]',
         ):
             self.assertTrue(retirement.blocked_changes(plan(address, ["delete"])))
+
+    def test_legacy_removal_requires_exact_observed_identity(self):
+        for address, identity in retirement.LEGACY_DELETE_IDENTITIES.items():
+            with self.subTest(address=address):
+                self.assertFalse(
+                    retirement.blocked_changes(plan(address, ["delete"], identity))
+                )
+                for key in identity:
+                    invalid = {**identity, key: "different-active-resource"}
+                    self.assertTrue(
+                        retirement.blocked_changes(plan(address, ["delete"], invalid))
+                    )
+                self.assertTrue(
+                    retirement.blocked_changes(plan(address, ["delete"], {}))
+                )
+                for actions in (["create"], ["update"], ["delete", "create"]):
+                    self.assertTrue(
+                        retirement.blocked_changes(plan(address, actions, identity))
+                    )
+
+        account = "module.preview_metadata_index_loader_service_account.google_service_account.this"
+        self.assertTrue(
+            retirement.blocked_changes(
+                plan(
+                    account,
+                    ["delete"],
+                    {
+                        "project": "shared-datasets-1",
+                        "account_id": "feature-preview-loader",
+                        "email": "feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com",
+                    },
+                )
+            )
+        )
+        binding = (
+            "google_project_iam_member.preview_metadata_index_loader_firestore_user"
+        )
+        self.assertTrue(
+            retirement.blocked_changes(
+                plan(
+                    binding,
+                    ["delete"],
+                    {
+                        "project": "shared-datasets-1",
+                        "role": "roles/datastore.user",
+                        "member": "serviceAccount:feature-preview-loader@shared-datasets-1.iam.gserviceaccount.com",
+                        "condition": [],
+                    },
+                )
+            )
+        )
 
     def test_both_databases_can_only_be_forgotten_without_destruction(self):
         for database, (address, name) in retirement.DATABASES.items():
