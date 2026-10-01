@@ -3,6 +3,7 @@
 Status: proposed
 Owner: jonaraphael
 Date: 2026-08-05
+Product decisions recorded: 2026-09-30
 
 ## Problem
 
@@ -50,15 +51,18 @@ What is missing is when it runs, what it publishes, and who it tells.
   they sit beside.
 - Translation debt is classified deterministically, with no human judgement
   about *whether* action is needed.
-- Maintainers are told once per release, only when there is something to do,
-  and handed something they can act on immediately.
+- Maintainers receive at most one notice per asset release in one shared channel
+  when at least one maintained locale has 1% or more missing usable translations,
+  and are handed something they can act on immediately.
 - Consumers can distinguish a translated value from a source fallback.
 - A release is never blocked by missing translations.
 
 ## Non-goals
 
 - Performing machine translation inside the pipeline.
-- A translation-management system, vendor integration, or human review workflow.
+- A translation-management system, vendor integration, or separate approval UI.
+  Experts approve translations by manually updating and reuploading the CSV
+  through the existing reviewed publication workflow.
 - Adding locales, or changing canonical metadata.
 
 ## Design
@@ -69,20 +73,28 @@ For each (`feature_id`, `field`, `locale`) in a release:
 
 | State | Condition | Action |
 |---|---|---|
-| `current` | a row exists and its `source_value_hash` equals the current source value's hash | apply the translation |
+| `current` | a usable row exists and its `source_value_hash` equals the current source value's hash | apply the translation, including an unreviewed AI translation |
 | `stale` | a row exists, hashes differ — the source text changed | fall back to source, count as debt |
-| `missing` | the field has a translatable value, no row for this locale | fall back to source, count as debt |
+| `missing` | the field has a translatable value but no usable current or stale row for this locale, including a failed translation task | fall back to source, count as debt |
 | `orphan` | a row exists for a `feature_id` absent from the release | retire the row, not debt |
 
-`iter_localized_records` already computes all four. No new rules.
+`iter_localized_records` already applies current translations and reports stale,
+orphan, missing-field and failed rows. Extend reporting to enumerate every
+eligible translatable field value per locale: a record with one translated field
+can still have another field missing. Count each eligible field value exactly
+once as `current`, `stale` or `missing`; prefer a usable current row when historical
+stale rows also exist. Orphan rows and removed fields do not enter that denominator.
+Hash equality establishes freshness, not translation accuracy or expert approval.
 
 ### 2. Translations carry forward automatically
 
 **This is the "straight copied over" case.** A translation is keyed by the hash
 of the text it was made from, so when a feature's source value is unchanged
 between releases, its existing translation applies to the new release with no
-human involvement. A release whose translatable text is entirely unchanged
-therefore produces complete locale sidecars, zero debt, and **no notification**.
+human involvement. If translations were already complete and the translatable
+text is unchanged, the new release has zero debt and **no notification**.
+Existing gaps remain debt even when source text is unchanged, and the same 1%
+notification threshold still applies.
 
 Copying the *sidecar object* itself is not a viable shortcut and should not be
 attempted: every sidecar record embeds its own `release` field, so the canonical
@@ -111,12 +123,17 @@ Each localized sidecar record gains an additive block:
   "locale": "fr",
   "state": "partial",
   "translated_fields": ["NAME_ENG"],
-  "fallback_fields": ["DESIG_ENG"]
+  "fallback_fields": ["DESIG_ENG"],
+  "machine_fields": ["NAME_ENG"],
+  "human_reviewed_fields": []
 }
 ```
 
-Optional, so sidecars published before this stay valid. A UI can then choose to
-mark or suppress fallback values instead of presenting English as French.
+Optional, so sidecars published before this stay valid. AI translations are
+published and visible to users before expert approval. `machine_fields` and
+`human_reviewed_fields` identify their review provenance separately from
+`translated_fields` and `fallback_fields`; missing review provenance does not
+imply expert approval. A UI can mark AI-generated or fallback values explicitly.
 
 ### 5. Coverage travels with the data
 
@@ -134,30 +151,55 @@ following the same principle — provenance ships next to the bytes:
       "missing": 6296,
       "orphan": 44,
       "coverage": 0.979,
-      "machine_placeholder": 5120
+      "machine_placeholder": 5120,
+      "human_reviewed": 293282
     }
   }
 }
 ```
 
-`machine_placeholder` is counted separately from human-approved translations so
-coverage never overstates human review.
+`coverage` measures usable current translations, including AI-generated values.
+`machine_placeholder` and existing machine/document provenance are reported
+separately from `human_reviewed`, so usable coverage does not imply expert
+approval. `current + stale + missing = translatable_values`; orphan rows and
+removed fields are counted separately. AI values awaiting approval are usable
+translations and do not count as missing solely because they are unreviewed.
 
-### 6. One notification per release, only when there is debt
+### 6. One channel, at most one notice per release, at a 1% threshold
 
-Fires after publish, only when some locale has `stale > 0` or `missing > 0`.
+After publish, compute missing usable translations separately for each maintained
+locale:
 
-**Exactly-once is enforced by the data, not by the caller.** Before sending,
-write a marker object at
+```text
+missing_usable = stale + missing
+eligible = translatable_values > 0
+           and 100 * missing_usable >= translatable_values
+```
+
+The threshold is inclusive: exactly 1% triggers a notice. Compare integer counts
+rather than rounded coverage percentages. Failed tasks count as missing; usable
+AI translations count as current even before approval. Orphan rows and removed
+fields are excluded. A locale with zero eligible values does not trigger a notice.
+
+Send one combined message to the single configured channel when any locale meets
+the threshold, identifying the qualifying locales and their counts. No per-locale
+routing or separate notices. Debt below 1% remains visible in manifests and
+reports without generating a notice.
+
+Before sending, claim a marker object at
 
 ```
 {asset-root}/runs/{release}.translation-notice.json
 ```
 
-with `if_generation_match=0`. If the write fails with a precondition error the
-notice was already sent for that release and the send is skipped. Retries,
-duplicate canaries and re-runs therefore cannot produce a second message — the
-same guarantee the run records already give publishing.
+with `if_generation_match=0`. A precondition error means another attempt already
+claimed the notice, so skip sending. Retries, duplicate canaries and re-runs
+cannot start a second send for that asset release.
+
+This provides **at-most-once sending**, not guaranteed delivery. A crash or failed
+send after the marker is created can leave the release without a notification;
+surface that failure operationally rather than reporting the marker as proof of
+delivery. The notification outcome never blocks or rolls back the release.
 
 ### 7. The copy-pastable prompt
 
@@ -191,9 +233,25 @@ Constraints that shape it:
 - **Access tier.** Per the tier rule already adopted for identity evidence,
   public assets may carry source values inline; for `private` and `internal`
   assets the message carries counts and the object URI only, never the values.
-- **`review_state` vocabulary** becomes explicit: `machine_placeholder` (usable,
-  not reviewed), `needs_review` (existing), `human_approved`. Coverage reporting
-  distinguishes them; publishing does not.
+- **Review provenance.** `machine_placeholder`, `machine_translated` and
+  `document_translated` are usable without expert approval. Preserve existing
+  `needs_review` and `source_provided` provenance. `human_reviewed` is the existing
+  repository value for expert approval; do not introduce a second
+  `human_approved` label. `translation_failed` has an empty value and is never
+  applied. Coverage distinguishes provenance; approval is not a publication gate.
+
+### Expert approval by manual update and reupload
+
+An expert reviews the translation source CSV, corrects values where necessary,
+sets reviewed rows to `review_state=human_reviewed`, and reuploads the updated
+source through the existing reviewed dataset publication workflow. Preserve the
+feature, field, locale and current source-value hash keys; when the source changed,
+review against the new source value and update its hash and translation together.
+
+Regenerate and publish the affected locale sidecars and coverage from that source
+file. There is no separate approval service or new review workflow, and no direct
+local write to canonical bucket objects. Expert approval changes review provenance;
+it does not by itself change usable coverage or trigger missing-translation alerts.
 
 ### 8. Never blocks a release
 
@@ -206,7 +264,7 @@ available for a deliberate manual run.
 | Where | Change | Compatibility |
 |---|---|---|
 | `docs/assets/{slug}.md` + catalog | `translation_locales` | new column, empty for assets without locales |
-| translations CSV | documented `review_state` vocabulary | additive; existing `needs_review` unchanged |
+| translations CSV | machine provenance retained; experts set `human_reviewed` after manual review | additive; existing provenance unchanged |
 | localized sidecar records | optional `translation` block | additive, readers unaffected |
 | release manifest | optional `translations` block | additive, validated when present |
 | bucket | `runs/{release}.translation-notice.json`, `_scratch/translation-debt/...` | new non-canonical objects |
@@ -215,16 +273,27 @@ available for a deliberate manual run.
 
 - Each of the four states classified from a fixture where one value changed, one
   is new, one is unchanged and one feature was removed.
-- A release with no changed translatable text produces complete sidecars, zero
-  debt and **no notification** — the carry-forward case.
-- The notice marker makes a second send impossible: two consecutive notify calls
-  for one release produce one message.
+- A release with complete existing translations and no changed translatable
+  text produces complete sidecars, zero debt and **no notification**.
+- Unchanged source text with existing gaps retains those gaps and applies the
+  same notification threshold.
+- Below 1% emits no notice; exactly 1% and above emit one combined channel
+  message. Cover small denominators, zero eligible values, and one undercovered
+  locale among otherwise complete locales.
+- Count missing and stale values per eligible field, including partially
+  translated records; exclude orphan rows and count failed tasks as missing.
+- A current AI translation is visible before expert approval and does not count
+  as missing. After an expert CSV update and reupload, materialization records
+  `human_reviewed` provenance and corrected values.
+- Two eligible notify calls for one asset release start at most one send; a
+  failed send after claiming the marker is reported without a duplicate send.
 - The generated prompt round-trips: feeding its declared CSV header and columns
   back through `read_translation_source` yields rows that materialize.
 - Tier gating: a private asset's message contains counts and a URI and none of
   its source values.
 - Coverage counts in the manifest equal a full recomputation from the written
-  sidecar, and `machine_placeholder` is excluded from human coverage.
+  sidecar; AI provenance is included in usable coverage and excluded from expert
+  approval counts.
 - A missing translation never fails the release.
 
 ## Rollout
@@ -234,24 +303,27 @@ available for a deliberate manual run.
 3. Publish the `translations` coverage block and the per-record state.
 4. Add the notice, the marker and the prompt.
 5. Backfill: regenerate the five stale `wdpa-terrestrial` locales against
-   2026-08-01, which will surface the first real debt report.
+   2026-08-01, which will surface the first real debt report and trigger a notice
+   only if at least one locale meets the 1% threshold.
 
-Steps 1–3 are safe to land without 4; the debt becomes visible in the manifest
-before anyone is paged about it, which is the right order for calibrating
-thresholds.
+Steps 1–3 can land before 4; debt and review provenance become visible in the
+manifest before channel notifications are enabled. Apply the agreed inclusive
+1% threshold when step 4 ships.
 
-## Open questions
+## Product decisions
 
-1. **Should machine placeholders be published at all**, or should unreviewed
-   values fall back to source until a human approves? Publishing them raises
-   coverage and helps users of low-resource locales; it also risks a wrong name
-   being displayed as authoritative. Recommendation: publish them, marked, with
-   `state` visible per record so consumers can choose — but this is a
-   product-facing call, not an engineering one.
-2. **Who moves `machine_placeholder` to `human_approved`**, and does that need
-   its own review path, or is a PR against the CSV enough?
-3. **Per-locale ownership** — should the notification route to different people
-   per locale, or is one channel message sufficient?
-4. **Threshold** — notify on any debt, or only above a floor? Starting at "any"
-   is noisier but calibrates the real volume; step 3 above answers this before
-   step 4 ships.
+The maintainer resolved these decisions on 2026-09-30:
+
+1. **Publish AI translations before approval.** Users may see usable AI-generated
+   values immediately; retain their machine provenance so they are distinguishable
+   from expert-reviewed values.
+2. **Expert approval is a manual update and reupload.** An expert corrects the
+   translation CSV, marks reviewed rows `human_reviewed`, and republishes it
+   through the existing reviewed upload path. No separate approval system.
+3. **One notification channel.** Send one combined notice per qualifying asset
+   release rather than routing notices to separate locale owners.
+4. **A minimum of 1% missing usable translations.** Evaluate each maintained
+   locale independently using `(stale + missing) / translatable_values >= 0.01`.
+   AI values awaiting approval are not missing; below-threshold debt stays visible
+   in coverage reporting without an alert.
+
