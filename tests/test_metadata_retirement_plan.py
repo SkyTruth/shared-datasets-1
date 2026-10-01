@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,38 +47,48 @@ class RetirementPlanTests(unittest.TestCase):
             self.assertTrue(retirement.blocked_changes(plan(address, ["delete"])))
 
     def test_both_databases_can_only_be_forgotten_without_destruction(self):
-        for address, name, check in (
-            (retirement.DATABASE_ADDRESS, "(default)", retirement.blocked_changes),
-            (
-                retirement.PREVIEW_DATABASE_ADDRESS,
-                "feature-preview",
-                retirement.blocked_preview_database_changes,
-            ),
-        ):
+        for database, (address, name) in retirement.DATABASES.items():
             with self.subTest(address=address):
-                self.assertFalse(check(plan(address, ["forget"], {"name": name})))
-                self.assertTrue(check(plan(address, ["forget"], {"name": "other"})))
+                self.assertFalse(
+                    retirement.blocked_database_changes(
+                        plan(address, ["forget"], {"name": name}), database
+                    )
+                )
+                self.assertTrue(
+                    retirement.blocked_changes(
+                        plan(address, ["forget"], {"name": name})
+                    )
+                )
+                self.assertTrue(
+                    retirement.blocked_database_changes(
+                        plan(address, ["forget"], {"name": "other"}), database
+                    )
+                )
                 for actions in (
+                    ["no-op"],
                     ["delete"],
                     ["create"],
                     ["update"],
                     ["delete", "create"],
                 ):
-                    self.assertTrue(check(plan(address, actions, {"name": name})))
-        self.assertTrue(
-            retirement.blocked_preview_database_changes(
-                plan("google_storage_bucket.preview_bucket", ["delete"])
-            )
-        )
-        self.assertTrue(
-            retirement.blocked_preview_database_changes(
-                plan(
-                    retirement.PREVIEW_DATABASE_ADDRESS,
-                    ["no-op"],
-                    {"name": "feature-preview"},
+                    self.assertTrue(
+                        retirement.blocked_database_changes(
+                            plan(address, actions, {"name": name}), database
+                        )
+                    )
+                self.assertTrue(
+                    retirement.blocked_database_changes(
+                        plan("google_storage_bucket.preview_bucket", ["delete"]),
+                        database,
+                    )
                 )
-            )
-        )
+                other_database = "preview" if database == "production" else "production"
+                other_address, other_name = retirement.DATABASES[other_database]
+                self.assertTrue(
+                    retirement.blocked_database_changes(
+                        plan(other_address, ["forget"], {"name": other_name}), database
+                    )
+                )
 
     def test_preview_role_can_only_lose_datastore_permissions(self):
         address = "google_project_iam_custom_role.preview_terraform"
@@ -147,6 +163,126 @@ class RetirementPlanTests(unittest.TestCase):
         )
         self.assertNotIn("-refresh=false", steps["Plan metadata retirement"]["run"])
 
+    def test_production_workflow_executes_both_plans_and_blocks_database_deletion(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = load_workflow(root / ".github/workflows/metadata-stack-retire.yml")
+        steps = workflow_steps_by_name(workflow, "retire")
+        names = list(steps)
+        self.assertLess(
+            names.index("Preserve retired production database"),
+            names.index("Plan metadata retirement"),
+        )
+        # Terraform requires all root inputs even when the jobs are not targeted.
+        required_inputs = set()
+        for file in (root / "terraform/envs/prod").glob("*.tf"):
+            for name, body in re.findall(
+                r'variable "([^"]+)"\s*\{(.*?)^\}', file.read_text(), re.M | re.S
+            ):
+                if not re.search(r"\bdefault\s*=", body):
+                    required_inputs.add(name)
+        supplied_inputs = {
+            key.removeprefix("TF_VAR_")
+            for key in workflow["env"]
+            if key.startswith("TF_VAR_")
+        }
+        for file in (root / "terraform/envs/prod").glob("*.auto.tfvars"):
+            supplied_inputs.update(re.findall(r"^(\w+)\s*=", file.read_text(), re.M))
+        self.assertFalse(required_inputs - supplied_inputs)
+
+        temp_root = Path(tempfile.gettempdir()) / "shared-datasets-1" / "_scratch"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="metadata-workflow-test-", dir=temp_root
+        ) as directory:
+            work = Path(directory)
+            stub = work / "terraform"
+            stub.write_text(
+                f"#!{sys.executable}\n"
+                + """import json, os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ["TEST_TERRAFORM_LOG"], "a") as handle:
+    handle.write(json.dumps(args) + "\\n")
+command = args[1]
+if command == "plan":
+    for name in ("wdpa_monthly_image", "sea_ice_daily_image", "eamlis_monthly_image"):
+        if not os.environ.get("TF_VAR_" + name):
+            raise SystemExit("Missing required image: " + name)
+    output = next(arg.removeprefix("-out=") for arg in args if arg.startswith("-out="))
+    database = "-target=google_firestore_database.feature_metadata" in args
+    change = {
+        "address": "google_firestore_database.feature_metadata" if database else "google_cloud_run_v2_service.metadata_service",
+        "change": {"actions": [os.environ.get("TEST_DATABASE_ACTION", "forget") if database else "delete"], "before": {"name": "(default)"}},
+    }
+    pathlib.Path(output).write_text(json.dumps({"resource_changes": [change]}))
+elif command == "show":
+    print(pathlib.Path(args[-1]).read_text())
+"""
+            )
+            stub.chmod(0o755)
+            log = work / "calls.jsonl"
+            env = {
+                **os.environ,
+                **{
+                    key: str(value)
+                    for key, value in workflow["env"].items()
+                    if "${{" not in str(value)
+                },
+                "PATH": f"{work}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+                "RUNNER_TEMP": directory,
+                "TEST_TERRAFORM_LOG": str(log),
+            }
+            run = "\n".join(
+                steps[name]["run"]
+                for name in (
+                    "Preserve retired production database",
+                    "Plan metadata retirement",
+                    "Export and validate retirement plan",
+                    "Apply approved retirement plan",
+                )
+            )
+            result = subprocess.run(
+                ["bash", "-e", "-c", run],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual(
+                [call[1] for call in calls],
+                ["plan", "show", "apply", "plan", "show", "apply"],
+            )
+            self.assertIn("-refresh=false", calls[0])
+            self.assertNotIn("-refresh=false", calls[3])
+            self.assertEqual(
+                {
+                    arg.removeprefix("-target=")
+                    for arg in calls[3]
+                    if arg.startswith("-target=")
+                },
+                retirement.DELETE_ADDRESSES
+                | retirement.UPDATE_ADDRESSES
+                | {
+                    "google_iap_web_cloud_run_service_iam_member.metadata_service_accessors",
+                },
+            )
+            self.assertEqual(calls[2][-1], calls[0][-1].removeprefix("-out="))
+            self.assertEqual(calls[5][-1], calls[3][3].removeprefix("-out="))
+
+            log.write_text("")
+            result = subprocess.run(
+                ["bash", "-e", "-c", run],
+                cwd=root,
+                env={**env, "TEST_DATABASE_ACTION": "delete"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Refusing metadata retirement plan", result.stdout)
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertEqual([call[1] for call in calls], ["plan", "show"])
+
     def test_preview_detaches_database_before_destructive_plans(self):
         root = Path(__file__).resolve().parents[1]
         for filename, job, detach_name, destroy_name in (
@@ -167,5 +303,5 @@ class RetirementPlanTests(unittest.TestCase):
             steps = workflow_steps_by_name(workflow, job)
             names = list(steps)
             self.assertLess(names.index(detach_name), names.index(destroy_name))
-            self.assertIn("--preview-database-only", steps[detach_name]["run"])
+            self.assertIn("--database-only preview", steps[detach_name]["run"])
             self.assertIn("-refresh=false", steps[detach_name]["run"])

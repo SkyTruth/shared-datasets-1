@@ -304,7 +304,7 @@ jobs:
             -target=google_firestore_database.feature_preview \
             -out="${RUNNER_TEMP}/preview-database-retirement.tfplan"
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/preview-database-retirement.tfplan" > "${RUNNER_TEMP}/preview-database-retirement.json"
-          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/preview-database-retirement.json" --preview-database-only
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/preview-database-retirement.json" --database-only preview
           terraform -chdir="${PREVIEW_TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/preview-database-retirement.tfplan"
 
       - name: Terraform reset plan

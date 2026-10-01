@@ -91,7 +91,7 @@ jobs:
             -target=google_firestore_database.feature_preview \
             -out="${RUNNER_TEMP}/preview-database-retirement.tfplan"
           terraform -chdir=terraform/envs/preview show -json "${RUNNER_TEMP}/preview-database-retirement.tfplan" > "${RUNNER_TEMP}/preview-database-retirement.json"
-          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/preview-database-retirement.json" --preview-database-only
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/preview-database-retirement.json" --database-only preview
           terraform -chdir=terraform/envs/preview apply -input=false "${RUNNER_TEMP}/preview-database-retirement.tfplan"
 
       - name: Terraform destroy plan

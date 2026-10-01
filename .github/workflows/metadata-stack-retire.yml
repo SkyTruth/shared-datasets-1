@@ -17,6 +17,10 @@ env:
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
+  # Required root inputs; these jobs are outside both targeted plans.
+  TF_VAR_wdpa_monthly_image: unused-by-metadata-stack-retire
+  TF_VAR_sea_ice_daily_image: unused-by-metadata-stack-retire
+  TF_VAR_eamlis_monthly_image: unused-by-metadata-stack-retire
   TERRAFORM_VERSION: "1.8.5"
   TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
@@ -60,6 +64,17 @@ jobs:
       - name: Terraform init
         run: terraform -chdir=terraform/envs/prod init -input=false
 
+      - name: Preserve retired production database
+        run: |
+          set -euo pipefail
+          # State-only detachment must work after datastore read IAM is removed.
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false -refresh=false \
+            -target=google_firestore_database.feature_metadata \
+            -out="${RUNNER_TEMP}/metadata-database-retirement.tfplan"
+          terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/metadata-database-retirement.tfplan" > "${RUNNER_TEMP}/metadata-database-retirement.json"
+          python scripts/metadata_retirement_plan.py "${RUNNER_TEMP}/metadata-database-retirement.json" --database-only production
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/metadata-database-retirement.tfplan"
+
       - name: Plan metadata retirement
         run: |
           set -euo pipefail
@@ -67,8 +82,8 @@ jobs:
           while IFS= read -r address; do
             args+=("-target=${address}")
           done < <(python - <<'PY'
-          from scripts.metadata_retirement_plan import DATABASE_ADDRESS, DELETE_ADDRESSES, UPDATE_ADDRESSES
-          for address in sorted(DELETE_ADDRESSES | UPDATE_ADDRESSES | {DATABASE_ADDRESS}):
+          from scripts.metadata_retirement_plan import DELETE_ADDRESSES, UPDATE_ADDRESSES
+          for address in sorted(DELETE_ADDRESSES | UPDATE_ADDRESSES):
               print(address)
           # Target every prior IAP accessor instance; the plan check restricts
           # these to delete-only changes on the retired standalone service.

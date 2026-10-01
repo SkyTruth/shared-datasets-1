@@ -36,8 +36,10 @@ UPDATE_ADDRESSES = frozenset(
 ACCESSOR_RE = re.compile(
     r'^google_iap_web_cloud_run_service_iam_member\.metadata_service_accessors\["[^"\n]+"\]$'
 )
-DATABASE_ADDRESS = "google_firestore_database.feature_metadata"
-PREVIEW_DATABASE_ADDRESS = "google_firestore_database.feature_preview"
+DATABASES = {
+    "production": ("google_firestore_database.feature_metadata", "(default)"),
+    "preview": ("google_firestore_database.feature_preview", "feature-preview"),
+}
 
 
 def removes_only_loader_alert_exemption(before: dict, after: dict) -> bool:
@@ -50,15 +52,16 @@ def removes_only_loader_alert_exemption(before: dict, after: dict) -> bool:
     return after == expected
 
 
-def blocked_preview_database_changes(plan: dict) -> list[str]:
-    """Detach only the retired preview DB before any reset/destroy plan."""
+def blocked_database_changes(plan: dict, database: str) -> list[str]:
+    """Detach only the named database; never mutate a live resource."""
+    database_address, database_name = DATABASES[database]
     blocked = []
     for resource in plan.get("resource_changes", []):
         address = resource["address"]
         change = resource["change"]
         actions = change["actions"]
-        if address == PREVIEW_DATABASE_ADDRESS:
-            if actions == ["forget"] and change["before"]["name"] == "feature-preview":
+        if address == database_address:
+            if actions == ["forget"] and change["before"]["name"] == database_name:
                 continue
         elif actions in (["no-op"], ["read"]):
             continue
@@ -74,10 +77,7 @@ def blocked_changes(plan: dict) -> list[str]:
         if actions in (["no-op"], ["read"]):
             continue
         address = resource["address"]
-        if address == DATABASE_ADDRESS and actions == ["forget"]:
-            if change["before"]["name"] == "(default)":
-                continue
-        elif address in DELETE_ADDRESSES or ACCESSOR_RE.fullmatch(address):
+        if address in DELETE_ADDRESSES or ACCESSOR_RE.fullmatch(address):
             if actions == ["delete"]:
                 continue
         elif address in UPDATE_ADDRESSES and actions == ["update"]:
@@ -110,15 +110,15 @@ def blocked_changes(plan: dict) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan_json")
-    parser.add_argument("--preview-database-only", action="store_true")
+    parser.add_argument("--database-only", choices=DATABASES)
     args = parser.parse_args()
     with open(args.plan_json) as handle:
-        check = (
-            blocked_preview_database_changes
-            if args.preview_database_only
-            else blocked_changes
+        plan = json.load(handle)
+        blocked = (
+            blocked_database_changes(plan, args.database_only)
+            if args.database_only
+            else blocked_changes(plan)
         )
-        blocked = check(json.load(handle))
     if blocked:
         print("Refusing metadata retirement plan:")
         for item in blocked:

@@ -65,14 +65,17 @@ google_project_iam_member.feature_preview_loader_firestore_user
 Two updates are also allowed: remove only `datastore.*` permissions from the
 preview Terraform custom role, and remove only the production metadata loader's
 exemption from the canonical-write alert filter. All other creates, updates,
-replacements, deletions, or database destruction are rejected. The workflow
-refreshes state, validates the saved plan, and applies that same plan.
+replacements, deletions, or database destruction are rejected. Required root
+ingestion-image inputs use placeholders because ingestion jobs are outside the
+targeted scope. The workflow validates each saved plan and applies that same plan.
 
 Preview deploy/destroy workflows detach the retired preview database with a
 separate validated saved plan before a reset or destroy can affect the slot.
-Only this state-only preview plan skips refresh: it cannot mutate a live resource
-and must remain usable after Terraform loses its Firestore read permissions.
-The production service/IAM retirement plan still refreshes live resources.
+The production retirement workflow also detaches its database in a separate
+validated saved plan before service/IAM removal. Only these state-only database
+plans skip refresh: they cannot mutate a live resource and must remain usable
+after Terraform loses its Firestore read permissions. The production service/IAM
+retirement plan still refreshes live resources and rejects database changes.
 Source branches with a Firestore database resource are refused. Preview service
 accounts and their signing/WIF bindings remain. In particular,
 `feature-preview-loader` still publishes `_catalog/web/`; its bucket write grant
@@ -120,6 +123,16 @@ their identity, translation, and artifact declarations. An isolated local-state
 plan confirmed `forget` in the targeted removal plan and `delete` under destroy
 mode, validating the need to detach before preview reset/destruction. No apply,
 workflow dispatch, GCS write, or live IAM change was performed.
+
+Follow-up readiness checks passed 44 focused tests and 118 subtests, including
+execution of the actual production workflow shell against a Terraform stub.
+Both targeted plans received all required root inputs, applied their own saved
+plans, and a simulated database deletion stopped before any apply. Static
+guardrails and Ruff also passed. A fresh read-only GCP check still required
+interactive reauthentication. GitHub access worked; the current main rules do
+not require CODEOWNER approval and the production environment has no reviewer
+gate. The repository's maintainer-review requirement therefore remains a
+manual prerequisite; these GitHub settings do not waive it.
 
 After maintainer review and merge, run the opt-in retirement workflow. It checks
 the fresh saved plan before applying; unexpected drift stops the run and requires
