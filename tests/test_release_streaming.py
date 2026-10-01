@@ -358,18 +358,20 @@ class ReleaseStreamingTests(unittest.TestCase):
 
 class IdentityBaselineTests(unittest.TestCase):
     def test_baseline_drops_properties_but_keeps_identity_fields(self):
-        baseline = feature_metadata.identity_baseline_records(
-            [
-                {
-                    "feature_id": "7",
-                    "geometry_hash": "sha256:" + "a" * 64,
-                    "properties_hash": "sha256:" + "b" * 64,
-                    "identity_key": ["7"],
-                    "properties": {"NAME": "Site", "blob": "x" * 1000},
-                    "provenance": {"source_row_number": 1},
-                }
-            ],
-            exclude_properties=(),
+        baseline = list(
+            model.project_identity_records(
+                [
+                    {
+                        "feature_id": "7",
+                        "geometry_hash": "sha256:" + "a" * 64,
+                        "properties_hash": "sha256:" + "b" * 64,
+                        "identity_key": ["7"],
+                        "properties": {"NAME": "Site", "blob": "x" * 1000},
+                        "provenance": {"source_row_number": 1},
+                    }
+                ],
+                exclude_properties=(),
+            )
         )
 
         self.assertEqual(
@@ -389,17 +391,19 @@ class IdentityBaselineTests(unittest.TestCase):
         geometry_hash = "sha256:" + "c" * 64
         expected_properties_hash = model.properties_hash(properties, exclude_properties=("ice_date",))
 
-        baseline = feature_metadata.identity_baseline_records(
-            [
-                {
-                    "feature_id": "7",
-                    "geometry_hash": geometry_hash,
-                    "properties_hash": "sha256:" + "d" * 64,
-                    "identity_key": ["stale"],
-                    "properties": properties,
-                }
-            ],
-            exclude_properties=("ice_date",),
+        baseline = list(
+            model.project_identity_records(
+                [
+                    {
+                        "feature_id": "7",
+                        "geometry_hash": geometry_hash,
+                        "properties_hash": "sha256:" + "d" * 64,
+                        "identity_key": ["stale"],
+                        "properties": properties,
+                    }
+                ],
+                exclude_properties=("ice_date",),
+            )
         )
 
         self.assertEqual(baseline[0]["properties_hash"], expected_properties_hash)

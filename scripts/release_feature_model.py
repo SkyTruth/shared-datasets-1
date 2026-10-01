@@ -1132,20 +1132,6 @@ def read_metadata_sidecar_bytes(payload: bytes, *, label: str = "<sidecar>") -> 
         yield record
 
 
-def release_artifact_name(asset_slug: str, role: str) -> str:
-    suffixes = {
-        "fgb": ".fgb",
-        "pmtiles": ".pmtiles",
-        "metadata": ".metadata.ndjson.gz",
-        "schema": ".schema.json",
-        "manifest": ".manifest.json",
-    }
-    suffix = suffixes.get(role)
-    if suffix is None:
-        raise ReleaseFeatureModelError(f"unsupported release artifact role: {role}")
-    return f"{asset_slug}{suffix}"
-
-
 def build_release_schema(
     *,
     asset_slug: str,

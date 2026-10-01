@@ -394,7 +394,7 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertTrue(release.uploads)
         self.assertTrue(release_metadata.uploads)
 
-    def test_contract_refresh_does_not_load_incompatible_latest_sidecar(self):
+    def test_contract_refresh_rebuilds_with_incompatible_latest_sidecar(self):
         bucket = FakeBucket()
         previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))
         previous.exists = True
@@ -426,6 +426,9 @@ class EamlisMonthlyTests(unittest.TestCase):
                 },
             }
         )
+        latest_metadata = bucket.blob(eamlis.ASSET.latest_object(".metadata.ndjson.gz"))
+        latest_metadata.exists = True
+        latest_metadata.data = b"incompatible prior sidecar"
         source = sample_source_state(fingerprint_hash="same")
         with tempfile.TemporaryDirectory() as tmp:
             output = fake_asset_output(Path(tmp), fgb_sha=VALID_FGB_SHA)
@@ -435,17 +438,15 @@ class EamlisMonthlyTests(unittest.TestCase):
                 mock.patch.object(eamlis.storage, "Client", lambda project: FakeClient(bucket)),
                 mock.patch.object(eamlis, "fetch_source_state", return_value=source),
                 mock.patch.object(GcsPublisher, "release_metadata_contract_issue", return_value="metadata sidecar is invalid"),
-                mock.patch.object(
-                    GcsPublisher,
-                    "load_latest_metadata_records",
-                    side_effect=AssertionError("source-field EAMLIS refresh must not load old sidecar mappings"),
-                ),
                 mock.patch.object(eamlis, "download_source_geojson", return_value=mock.Mock()),
-                mock.patch.object(eamlis, "build_asset_output", return_value=output),
+                mock.patch.object(eamlis, "build_asset_output", return_value=output) as build_output,
             ):
                 records = eamlis.run()
 
+        build_output.assert_called_once()
         self.assertEqual(records[0]["status"], "success")
+        self.assertEqual(len(records[0]["release_paths"]), 5)
+        self.assertTrue(latest_metadata.uploads)
 
     def test_download_source_geojson_pages_until_expected_count(self):
         source = sample_source_state(feature_count=3)

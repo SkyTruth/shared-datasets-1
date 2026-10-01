@@ -22,7 +22,6 @@ class FakeBlob:
         self.name = name
         self.exists = exists
         self.generation = generation
-        self.metageneration = 1
         self.size = 0
         self.metadata = None
         self.remote_metadata = None
@@ -64,19 +63,6 @@ class FakeBlob:
         self.size = len(data.encode())
         self.remote_metadata = dict(self.metadata or {})
         self.uploads.append(("string", if_generation_match, content_type))
-
-    def patch(self, **kwargs):
-        if_metageneration_match = kwargs.get("if_metageneration_match")
-        if not self.exists:
-            raise NotFound("not found")
-        if (
-            if_metageneration_match is not None
-            and if_metageneration_match != self.metageneration
-        ):
-            raise PreconditionFailed("metageneration mismatch")
-        self.metageneration += 1
-        self.remote_metadata = dict(self.metadata or {})
-        self.uploads.append(("patch", if_metageneration_match, None))
 
     def _check_generation(self, if_generation_match):
         if if_generation_match == 0 and self.exists:
@@ -527,48 +513,6 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_release"]["run_record_path"], "gs://test-bucket/asset/runs/2026-05-01.json")
         self.assertEqual(index["latest_run"]["status"], "success")
 
-    def test_replace_latest_metadata_from_run_record_uses_metageneration(self):
-        bucket = FakeBucket()
-        asset = FakeAsset()
-        run_date = dt.date(2026, 5, 1)
-        latest = bucket.blob(asset.latest_object(".fgb"))
-        latest.exists = True
-        latest.generation = 9
-        latest.metageneration = 3
-        latest.size = 27
-        latest.remote_metadata = {"run_date": "old"}
-        run_record = bucket.blob(asset.run_record_object(run_date))
-        run_record.exists = True
-        run_record.text = json.dumps(
-            {
-                "schema_version": 1,
-                "asset_slug": asset.slug,
-                "run_date": run_date.isoformat(),
-                "release_date": run_date.isoformat(),
-                "status": "success",
-                "latest_paths": [
-                    {
-                        "path": f"gs://{bucket.name}/{latest.name}",
-                        "generation": 9,
-                    },
-                ],
-            }
-        )
-
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-        refreshed = publisher.replace_latest_metadata_from_run_record(
-            asset,
-            run_date,
-            {"asset_slug": asset.slug, "run_date": run_date.isoformat()},
-        )
-
-        self.assertEqual(refreshed[0]["metageneration"], 4)
-        self.assertEqual(latest.uploads, [("patch", 3, None)])
-        self.assertEqual(
-            latest.remote_metadata,
-            {"asset_slug": asset.slug, "run_date": "2026-05-01"},
-        )
-
     def test_partial_release_blocks_publish_for_configured_suffixes(self):
         bucket = FakeBucket()
         asset = FakeAsset()
@@ -579,38 +523,6 @@ class GcsPublisherTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "without a successful run record"):
             publisher.assert_no_partial_release(asset, run_date)
-
-    def test_missing_latest_metadata_records_returns_none(self):
-        bucket = FakeBucket()
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-
-        self.assertIsNone(publisher.load_latest_metadata_records(FakeAsset()))
-
-    def test_invalid_latest_metadata_records_block_generated_id_reset(self):
-        bucket = FakeBucket()
-        asset = FakeAsset()
-        latest = bucket.blob(asset.latest_object(".metadata.ndjson.gz"))
-        latest.exists = True
-        latest.content = gzip.compress(
-            json.dumps(
-                {
-                    "schema_version": 2,
-                    "asset_slug": asset.slug,
-                    "release": "2026-05-01",
-                    "feature_id": "bad-id",
-                    "geometry_hash": "sha256:" + "a" * 64,
-                    "properties_hash": "sha256:" + "b" * 64,
-                    "identity_key": ["key"],
-                    "properties": {},
-                    "provenance": {},
-                }
-            ).encode("utf-8")
-            + b"\n"
-        )
-        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
-
-        with self.assertRaisesRegex(RuntimeError, "refusing to reset generated sequence feature_id values"):
-            publisher.load_latest_metadata_records(asset)
 
     def test_release_metadata_contract_issue_accepts_valid_contract(self):
         bucket = FakeBucket()

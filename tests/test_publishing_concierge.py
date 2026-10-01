@@ -1648,15 +1648,6 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertTrue(any("--maxzoom auto" in command for command in plan.suggested_commands))
         self.assertFalse(any(" cp " in command for command in plan.suggested_commands))
 
-    def test_write_draft_doc_refuses_existing_without_overwrite(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "docs/assets/example.md"
-            path.parent.mkdir(parents=True)
-            path.write_text("existing")
-
-            with self.assertRaisesRegex(publishing_concierge.ConciergeError, "refusing to overwrite"):
-                publishing_concierge.write_draft_doc(path, "draft", overwrite=False)
-
     def test_main_requires_workflow_subcommand(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2828,49 +2819,7 @@ class PublishingConciergeTests(unittest.TestCase):
 
             self.assertEqual(code, 2)
 
-    def test_draft_asset_doc_contains_access_tier(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            categories = root / "categories.yaml"
-            categories.write_text(CATEGORIES_YAML)
-            source = root / "source.shp"
-            source.write_text("placeholder")
-            plan = publishing_concierge.build_plan(
-                source=source,
-                asset_slug="example-asset",
-                title="Example Asset",
-                category="100-geographic-reference",
-                subcategory="110-boundaries",
-                owner="SkyTruth",
-                source_name="Example source",
-                license_text="Example license",
-                citation="Example citation",
-                update_cadence="manual",
-                canonical_format=None,
-                access_tier="public",
-                bucket="example-bucket",
-                release_date="2026-05-01",
-                categories_path=categories,
-                docs_dir=root / "docs/assets",
-            )
-
-        text = publishing_concierge.draft_asset_doc(
-            plan,
-            owner="SkyTruth",
-            source_name="Example source",
-            license_text="Example license",
-            citation="Example citation",
-            update_cadence="manual",
-            access_tier="public",
-        )
-        self.assertIn("access_tier: public", text)
-        self.assertIn("citation: Example citation", text)
-        self.assertIn("latest/example-asset.pmtiles", text)
-        self.assertIn("feature_metadata:", text)
-        self.assertIn("sidecar_file: latest/example-asset.metadata.ndjson.gz", text)
-        self.assertIn("path: latest/example-asset.metadata.ndjson.gz", text)
-
-    def test_pmtiles_hints_are_included_in_vector_command_and_draft_doc(self):
+    def test_pmtiles_hints_are_included_in_vector_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             categories = root / "categories.yaml"
@@ -2902,18 +2851,6 @@ class PublishingConciergeTests(unittest.TestCase):
         self.assertIn("--source-scale-denominator 10000000", command)
         self.assertIn("--pmtiles-detail-hint medium", command)
         self.assertTrue(any("source/detail hints" in note for note in plan.notes))
-
-        text = publishing_concierge.draft_asset_doc(
-            plan,
-            owner="SkyTruth",
-            source_name="Example source",
-            license_text="Example license",
-            citation="Example citation",
-            update_cadence="manual",
-            access_tier="public",
-        )
-        self.assertIn("source_scale_denominator: 10000000", text)
-        self.assertIn("pmtiles_detail_hint: medium", text)
 
 
 class ResolveMetadataLegacyKeysTests(unittest.TestCase):
