@@ -75,13 +75,16 @@ Use this workflow for production ingestion jobs in `shared-datasets-1`.
 - Keep each production cron job in its own package under `ingestion/<job_slug>/`, with a README, `run.py`, a Dockerfile when containerized, focused tests, and distinct Terraform blocks such as `terraform/envs/prod/<job_slug>.tf`.
 - Put shared runtime and publishing behavior in `ingestion/common/`: GCS generation-precondition helpers, run-record writes, logging setup, subprocess helpers, content type selection, hashes, and temp cleanup.
 - Keep source-specific parsing, filtering, schema choices, asset slugs, canonical paths, conversion rules, environment variables, and scheduler configuration inside the owning job package and its Terraform file.
-- For new vector/table ingestion jobs, make the identity decision part of job
-  design: preserve verified source/provider IDs when available, choose
-  high-value `search_fields`, and decide with the curator whether generated
-  `shared_datasets_group_id` is required. Do not auto-generate IDs from guessed
-  fields. If generated IDs are approved, keep the grouping field in job config
-  and tests, write the native column before publication, preserve it in PMTiles,
-  and document `generated_group_id` in the asset doc and PR.
+- For new vector/table ingestion jobs, present the standard feature identity
+  decision table from `AGENTS.md` and
+  `docs/standards/asset-layout-and-formats.md` before publication. Prefer a
+  verified unique non-null source field whose values satisfy the `feature_id`
+  rules; otherwise obtain curator approval for a monotonic decimal sequence
+  using an approved assignment key or the stored geometry/properties hash pair.
+  Preserve source/provider fields in the canonical data and choose high-value
+  `search_fields`. Keep `feature_id`, `geometry_hash`, and `properties_hash`
+  in the FGB and metadata sidecar; PMTiles carry geometry and `feature_id` only.
+  Consumers group equivalent footprints using `geometry_hash` from metadata.
 - Do not import from another job package, such as `ingestion.wdpa_monthly`, unless the task is explicitly maintaining that job.
 - Do not edit a functioning live job to support a new job unless the user explicitly requests a behavior-preserving refactor.
 - Preserve live surfaces unless explicitly approved: Cloud Run job names, scheduler names, service account identities, asset slugs, canonical GCS paths, output formats, schemas, entrypoints, and run-record shape.
@@ -136,12 +139,24 @@ gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name=
 ```
 
 If an execution is still running and a safer image or config must be deployed,
-cancel the obsolete execution explicitly before starting a replacement canary.
+cancel the obsolete execution explicitly. Before starting a replacement canary,
+inspect publication ownership; cancellation does not release an active claim.
 
 If the current-day release already has partial objects without a success run
-record, do not overwrite or delete them from the deployment workflow. Use a
-deliberate backfill/canary `RUN_DATE` for the manual async execution, or ask for
-explicit approval to clean up the partial release.
+record, do not overwrite or delete them from the deployment workflow.
+
+- WDPA and sea ice use `OwnedGeneratedPublisher`. Interrupted publications
+  retain their claim, reserved IDs, captured intent, and checkpoints. Retries
+  must resume the original execution's transaction with its captured inputs and
+  executor contract. A new execution or different `RUN_DATE` cannot bypass that
+  ownership. If the original execution cannot be retried, report the blocker and
+  obtain reviewed recovery; do not delete publication state or reset counters.
+  Follow the owning job README and `docs/feature-id-reset-installation.md`.
+- For jobs without durable publication ownership, inspect exact object
+  generations and follow the reviewed repair process in
+  `.claude/skills/publish-shared-dataset/SKILL.md`. A backfill `RUN_DATE` is
+  appropriate only for a separately intended release after confirming there is
+  no active publication claim.
 
 ## Alerting
 

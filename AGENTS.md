@@ -233,8 +233,10 @@ Remote GCS objects:
   `Approved dataset mutation` workflow. Use `feature-preview`: upload
   disposable preview release bundles directly to
   `gs://skytruth-shared-datasets-1-preview/` with safe preconditions, record
-  exact generations, and pass those explicit preview-bucket URIs and generations
-  to the preview load workflow.
+  exact preview-bucket URIs and generations in concierge upload evidence, and
+  refresh the preview catalog with `preview_data_mode=preserve`. Current
+  preview lookups read GCS sidecars; do not dispatch the dormant Firestore
+  index-load workflow while serving is inactive.
 
 Dataset metadata and local files:
 

@@ -121,8 +121,9 @@ The build sequence is standardized as:
    min/max zoom metadata and any compact property filters such as `feature_id`.
 5. Convert the MBTiles archive to PMTiles with `pmtiles convert`.
 6. Local validation with `ogrinfo`, PMTiles v3 magic-byte checks,
-   `pmtiles verify`, `pmtiles show`, and a decoded PMTiles property sample when
-   those tools exist.
+   `pmtiles verify`, `pmtiles show`, and a decoded representative PMTiles tile.
+   Missing tools or an unavailable decode leave the artifact unvalidated and
+   block upload or success reporting.
 
 The static catalog generator emits `colorizer_metadata` for each asset. For
 release-oriented feature metadata assets, the colorizer source is the published
@@ -354,6 +355,10 @@ uv run python scripts/publishing_concierge.py render-pr --state-file "$STATE_FIL
 uv run python scripts/publishing_concierge.py render-report --state-file "$STATE_FILE"
 ```
 
+Read the workflow state JSON at `$STATE_FILE` for the saved contract, plan,
+curator field options, and step evidence. `status --json` reports progress and
+the `state_file` path; it does not include the plan or curator field options.
+
 The concierge is guide-and-verify only. It never stages Git changes, commits,
 pushes, opens PRs, uploads scratch objects, writes canonical Cloud Storage
 objects, or promotes data. Do not use it to run Terraform apply; production
@@ -365,13 +370,20 @@ and renders its matching `shared-datasets-publish-plan` fence using
 For manual/delete/combined plans, use `reviewed_dataset_plan.py prepare`; see
 [plan preparation and migration](../.github/dataset-plans/README.md).
 
-`start` requires an explicit request classification and only proceeds for
-`canonical-publish`. It also blocks duplicate first-upload asset slugs unless
-`--allow-existing-asset` is passed after review. Later evidence gates require
-metadata/admission fields, generated-ID decisions, artifact paths, validation
-commands, resolved tool paths/versions or not-applicable notes, scratch source
-generations, and canonical destination generation expectations before the
-workflow can render a PR.
+`start` requires an explicit request classification and accepts
+`canonical-publish` or `preview-only`. Canonical publishing blocks duplicate
+first-upload asset slugs unless `--allow-existing-asset` is passed after review.
+Its evidence gates require metadata/admission fields, generated-ID decisions,
+artifact paths, validation commands, resolved tool paths/versions or
+not-applicable notes, scratch source generations, and canonical destination
+generation expectations before the workflow can render a PR.
+
+`preview-only` uses the disposable preview bucket and requires
+`--release-date`; provide `--preview-ref` when the branch cannot be detected.
+It completes through preview upload, catalog refresh, and viewer verification.
+Firestore index loading is skipped by default while serving is inactive.
+`scratch-only` and `diagnostic-only` use separate workflows rather than
+`start`. See [feature preview guidance](../docs/feature-preview.md).
 
 Slack notification helpers live in:
 

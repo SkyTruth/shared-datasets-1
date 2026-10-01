@@ -184,9 +184,10 @@ See `docs/standards/asset-layout-and-formats.md` for full layout, naming, README
 Release-oriented vector assets use a normalized release feature model as the
 source of truth. FGB remains the canonical vector artifact for consumers,
 PMTiles are intentionally lightweight geometry-plus-`feature_id` lookup tiles,
-and the full feature metadata lives in a durable GCS sidecar loaded into a
-rebuildable Firestore serving index. Canonical FGBs and metadata sidecars must
-carry `feature_id`, `geometry_hash`, and `properties_hash`; consumers may use
+and the full feature metadata lives in a durable GCS sidecar. Current catalog
+and feature-preview viewers read that sidecar directly; the rebuildable
+Firestore serving index remains inactive. Canonical FGBs and metadata sidecars
+must carry `feature_id`, `geometry_hash`, and `properties_hash`; consumers may use
 `geometry_hash` from the sidecar as the stable geometry-equivalence key for
 grouping or de-duplicating footprints.
 
@@ -465,13 +466,15 @@ Production Terraform defines log-based Cloud Monitoring alerts for scheduled
 ingestion failures. The alerts cover two cases:
 
 - Cloud Scheduler cannot start a configured ingestion job.
-- A scheduler-created Cloud Run Job execution exits failed.
+- A Cloud Run Job execution exits failed, including a manual deploy canary.
 
-Manual canary failures are not matched by the Cloud Run alert because the log
-filter requires the execution creator to be the job's Cloud Scheduler service
-account. Configure Slack delivery by changing Terraform in a reviewed PR and
-letting the protected production workflow apply it after merge. A local review
-plan can pass the existing Cloud Monitoring Slack notification channel:
+The Cloud Run alert filter covers all job execution failures in the configured
+project and region; it does not restrict the execution creator to a Scheduler
+service account. Verify the deployed filter and notification channel when
+checking live alert delivery. Configure Slack delivery by changing Terraform in
+a reviewed PR and letting the protected production workflow apply it after
+merge. A local review plan can pass the existing Cloud Monitoring Slack
+notification channel:
 
 ```bash
 terraform -chdir=terraform/envs/prod plan \
@@ -586,12 +589,14 @@ Stable preview IAM bootstrap is managed by the protected
 `Preview Terraform IAM sync` workflow.
 Preview test data is not production publishing: upload disposable release
 bundles directly to `gs://skytruth-shared-datasets-1-preview/` with safe
-preconditions, record exact generations, and pass those preview-bucket URIs and
-generations to the preview load workflow. The load workflow refreshes the
-preview catalog viewer from preview-bucket release indexes, shows only
-preview-loaded assets, and preserves the full release `files` list for sidecar
-datafiles. Canonical dataset adds and updates still use the reviewed
-`_scratch/pending-publishes/` promotion path in `publish-shared-dataset`.
+preconditions and record exact URIs and generations in concierge upload
+evidence. Refresh the preview catalog by deploying with
+`preview_data_mode=preserve`. The catalog is built from preview-bucket release
+indexes, shows only preview assets, and preserves the full release `files` list
+for sidecar datafiles. Current lookups read GCS sidecars; do not dispatch
+Firestore index loads while serving is inactive. Canonical dataset adds and
+updates still use the reviewed `_scratch/pending-publishes/` promotion path in
+`publish-shared-dataset`.
 
 ## Standard local setup
 

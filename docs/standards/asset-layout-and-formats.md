@@ -225,9 +225,12 @@ Required release artifacts for vector releases:
 | `{asset-slug}.schema.json` | Field names, types, nullable fields, reserved fields, and projection allowlist. |
 | `{asset-slug}.manifest.json` | Source inputs, artifact paths, checksums, destination generations for non-manifest artifacts, schema version, identity policy, validation, and dormant-index status. The manifest does not embed its own object generation. |
 
-The metadata sidecar is canonical and durable in GCS. Firestore is the initial
-serving index for lookup APIs, but it is a rebuildable copy/cache loaded from
-the sidecar.
+The metadata sidecar is canonical and durable in GCS. Current catalog and
+feature-preview lookups read the selected release sidecar directly. Firestore
+serving is inactive; its index-loader plumbing remains available for a future
+explicitly enabled serving contract. Any such index is a rebuildable copy of
+the sidecar, not a source of truth. Follow the active serving policy in
+[Feature Metadata API operations](../feature-metadata-api.md#operations).
 
 Locale-specific metadata sidecars are derived artifacts, not translation
 sources of truth. Maintain translations in a compact CSV source named
@@ -448,6 +451,11 @@ feature_metadata:
   manifest_file: latest/example-asset.manifest.json
   provenance_default: true
 ```
+
+Existing `index_backend: firestore` frontmatter describes the dormant
+serving-index backend; it does not indicate that an index is loaded or serving.
+Current viewers use GCS sidecars, and release manifests/indexes record the
+inactive Firestore policy.
 
 ### Metadata Translation Sidecars
 

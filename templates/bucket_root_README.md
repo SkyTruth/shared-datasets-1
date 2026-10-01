@@ -74,20 +74,39 @@ NetCDF, GRIB, HDF, or non-COG GeoTIFFs belong only under documented
 
 ## For Maintainers
 
-Use the repository tooling for bucket writes. Do not blindly overwrite existing
-objects.
+Humans and general-purpose agents stage reviewed bytes under
+`_scratch/pending-publishes/`. Canonical uploads, replacements, and deletions
+require an explicit PR containing one immutable `.github/dataset-plans/`
+document and its matching publish or delete fence. The approved publisher
+workflow executes that plan after review and merge to `main`.
 
-Recommended workflow:
+For a manual upload:
+
+1. Prepare approved artifacts and update the asset documentation and catalog in
+   the repository.
+2. Stat each intended canonical destination and record its current generation or
+   explicit absence.
+3. Stage the candidates with no-clobber uploads and record their exact source
+   generations:
 
 ```bash
-UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py validate-path gs://skytruth-shared-datasets-1/path/to/object
-UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py stat gs://skytruth-shared-datasets-1/path/to/object
-UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload ./local-file gs://skytruth-shared-datasets-1/path/to/object
+UV_CACHE_DIR=.uv-cache uv run python scripts/gcs_asset.py upload ./local-file \
+  gs://skytruth-shared-datasets-1/_scratch/pending-publishes/example-asset/pr-123/local-file
 ```
 
-For replacements, capture the current object generation with `stat` and upload
-with `--replace-generation`. For deletes, use the generation-checked `delete`
-command and document the changed remote paths in the pull request.
+4. Render the immutable plan with `publishing_concierge.py render-pr` or
+   `reviewed_dataset_plan.py prepare`, include it in the PR, and request the
+   required review.
+5. After merge, verify the approved workflow's results and report canonical
+   paths and generations.
+
+Replacements must carry destination-generation expectations in the reviewed
+plan. Deletions require explicitly requested exact object URIs, current
+generations, rationale, and consumer impact in an immutable delete plan.
+Generation checks alone do not authorize direct local canonical writes.
+See the repository's
+[publish skill](https://github.com/SkyTruth/shared-datasets-1/blob/main/.claude/skills/publish-shared-dataset/SKILL.md)
+and [reviewed-plan contract](https://github.com/SkyTruth/shared-datasets-1/blob/main/.github/dataset-plans/README.md).
 
 Do not place new files at the bucket root. This `README.md` is the only
 intentional root-level object.
