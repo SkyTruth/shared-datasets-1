@@ -232,6 +232,29 @@ class SeaIceDailyTests(unittest.TestCase):
         self.assertEqual(source.filename_date, dt.date(2026, 4, 28))
         self.assertEqual(source.documented_valid_date, dt.date(2026, 4, 29))
 
+    def test_new_contract_publication_preserves_source_date_and_uses_valid_date(self):
+        source = sea_ice.AvailableSource(
+            filename_date=dt.date(2026, 9, 29),
+            source_url="https://example.test/ims2026272_4km_GIS_v1.3.tif.gz",
+            source_filename="ims2026272_4km_GIS_v1.3.tif.gz",
+        )
+        publisher = mock.Mock()
+        publisher.bucket.name = "test-bucket"
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = fake_asset_outputs(Path(tmp), release="2026-09-30")
+            readme = Path(tmp) / "README.md"
+            readme.write_text("# Sea ice\n")
+            sea_ice.publish_outputs(
+                publisher=publisher, asset=sea_ice.ASSET, outputs=outputs, source=source, asset_readme=readme,
+            )
+        call = publisher.publish_generated.call_args.kwargs
+        self.assertEqual(call["run_date"], dt.date(2026, 9, 30))
+        self.assertEqual(call["record"]["release_date"], "2026-09-30")
+        self.assertEqual(call["record"]["source_filename_date"], "2026-09-29")
+        self.assertEqual(call["object_metadata"]["run_date"], "2026-09-30")
+        self.assertEqual(call["object_metadata"]["source_filename_date"], "2026-09-29")
+        self.assertEqual(call["source_inputs"][0]["documented_valid_date"], "2026-09-30")
+
     def test_parse_text_ogrinfo_output(self):
         text = """
 Layer name: ims_sea_ice_extent
@@ -353,12 +376,13 @@ ice_date: String (0.0)
         bucket = FakeBucket()
         asset = sea_ice.ASSET
         source_date = dt.date(2026, 5, 11)
-        run_record = bucket.blob(asset.run_record_object(source_date))
+        release_date = sea_ice.documented_valid_date_for_filename_date(source_date)
+        run_record = bucket.blob(asset.run_record_object(release_date))
         run_record.exists = True
         run_record.text = json.dumps(
             {
                 "status": "success",
-                "run_date": source_date.isoformat(),
+                "run_date": release_date.isoformat(),
                 "source_version": sea_ice.ims_filename_for_day(source_date),
                 "release_paths": [],
                 "latest_paths": [],
@@ -409,6 +433,7 @@ ice_date: String (0.0)
 
         self.assertEqual(record["status"], "skipped")
         self.assertEqual(record["source_filename_date"], "2026-05-11")
+        self.assertEqual(record["release_date"], "2026-05-12")
         self.assertEqual(record["source_request_warnings"][0]["http_status"], 500)
         self.assertFalse(bucket.blob(asset.release_object(source_date, ".fgb")).uploads)
         self.assertFalse(bucket.blob(asset.latest_object(".fgb")).uploads)
@@ -520,6 +545,10 @@ class SeaIceDailyIntegrationTests(unittest.TestCase):
             self.assertTrue(outputs.pmtiles.exists())
             self.assertTrue(outputs.metadata.exists())
             self.assertTrue(outputs.schema.exists())
+            self.assertEqual(outputs.schema_payload["release"], "2026-04-29")
+            records = list(sea_ice.feature_metadata.release_feature_model.read_metadata_sidecar(outputs.metadata))
+            self.assertTrue(records)
+            self.assertTrue(all(record["properties"]["ice_date"] == "2026-04-28" for record in records))
 
 
 if __name__ == "__main__":

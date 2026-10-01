@@ -10,6 +10,7 @@ on:
       - "scripts/publication_rollout_gate.py"
       - "ingestion/common/**"
       - "ingestion/sea_ice_daily/**"
+      - "docs/assets/ims-sea-ice-extent.md"
       - "scripts/pmtiles_zoom.py"
       - "scripts/release_feature_model.py"
       - "scripts/vector_asset.py"
@@ -23,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       canary_run_date:
-        description: "Optional source search date (YYYY-MM-DD) for the first reviewed feature-ID release or a backfill."
+        description: "Optional NOAA filename search date (YYYY-MM-DD). The new-contract release date is its documented valid date, one day later."
         required: false
         type: string
         default: ""
@@ -185,6 +186,9 @@ jobs:
               source_tif=source_tif,
               source_date=dt.date(2026, 4, 28),
               workdir=tmp,
+              baseline=sea_ice.feature_metadata.release_feature_model.GeneratedIdentityBaseline.genesis(
+                  contract_id="generated-2026-v1",
+              ),
           )
           assert outputs.row_count > 0
           assert outputs.fgb.exists()

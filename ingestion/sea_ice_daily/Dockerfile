@@ -48,5 +48,8 @@ COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
 COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
+COPY docs/assets/ims-sea-ice-extent.md /tmp/ims-asset-doc.md
+RUN python -c 'from pathlib import Path; text = Path("/tmp/ims-asset-doc.md").read_text(); assert text.startswith("---\n"); body = text.split("\n---\n", 1)[1].strip() + "\n"; Path("/app/asset_README.md").write_text(body)' \
+    && rm /tmp/ims-asset-doc.md
 
 CMD ["python", "-m", "ingestion.sea_ice_daily.run"]

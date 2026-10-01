@@ -33,13 +33,17 @@ SEA_ICE_SOURCE_URL_TEMPLATE=https://noaadata.apps.nsidc.org/NOAA/G02156/GIS/4km/
 SEA_ICE_MAX_LOOKBACK_DAYS=14
 ```
 
-`RUN_DATE` is the source lookup anchor. The job probes backward from that date
-until it finds an available 4 km IMS GeoTIFF. Release folders and the `ice_date`
-field use the GeoTIFF filename date. The run record also stores the
-source-documented valid date, which is the filename date plus one day for these
-GeoTIFFs.
+`RUN_DATE` is the NOAA filename lookup anchor. The job probes backward from that
+date until it finds an available 4 km IMS GeoTIFF. New-contract release folders
+use the documented valid date, one day after the filename date. The `ice_date`
+field and `source_filename_date` preserve the filename date. Historical releases
+retain their original filename-date folders.
 
 ## Publishing Behavior
+
+The reviewed asset README is embedded in the image and updated through the same
+owned publication transaction after the release commits. Its checkpoint and
+generation precondition make documentation updates recoverable with the bundle.
 
 The job writes:
 
@@ -119,6 +123,8 @@ captured intent; an interrupted checkpoint holds its claim and reservation.
 Starting another execution does not abandon them. Historical success records
 cannot skip the first new-contract release.
 
-The first release date must match an available NOAA source filename date. Keep
+The first release date must match the available NOAA source's documented valid
+date. Set `canary_run_date` to the preceding filename date; for example, the
+September 29 raster produces the September 30 new-contract release. Keep
 the schedule paused until that publication and its native artifact checks finish;
 resuming through the protected workflow requires a completed publication receipt.

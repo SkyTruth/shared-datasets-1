@@ -523,7 +523,7 @@ def build_outputs(
     release_outputs = feature_metadata.write_generated_id_release(
         open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
         asset_slug=ASSET.slug,
-        release=source_date.isoformat(),
+        release=documented_valid_date_for_filename_date(source_date).isoformat(),
         provenance={"source_date": source_date.isoformat(), "identity_strategy": "generated_sequence_content_hash"},
         enriched_features_path=enriched_geojsonseq,
         sidecar_path=metadata,
@@ -589,9 +589,10 @@ def publish_outputs(
     asset: AssetSpec,
     outputs: AssetOutputs,
     source: DownloadedSource | AvailableSource,
+    asset_readme: Path,
     source_request_warnings: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
-    run_date = source.filename_date
+    run_date = source.documented_valid_date
     metadata = metadata_for_source(asset=asset, source=source)
     record = add_source_request_warnings(
         {
@@ -611,8 +612,8 @@ def publish_outputs(
             "row_count": outputs.row_count,
             "notes": (
                 "Generated from raw IMS class 3, described by NSIDC as sea/lake ice. "
-                "Release date and ice_date use the GeoTIFF filename date by repository "
-                "decision; NSIDC documents GeoTIFF imagery as valid for the next day."
+                "Release date uses the documented valid date, one day after the "
+                "GeoTIFF filename date. ice_date preserves the filename date."
             ),
         },
         source_request_warnings,
@@ -622,8 +623,11 @@ def publish_outputs(
         run_date=run_date,
         outputs=outputs,
         record=record,
+        asset_readme=asset_readme,
         object_metadata=metadata,
-        source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename}],
+        source_inputs=[{"uri": source.source_url, "source_filename": source.source_filename,
+                        "source_filename_date": source.filename_date.isoformat(),
+                        "documented_valid_date": source.documented_valid_date.isoformat()}],
         identity=feature_metadata.release_feature_model.build_identity_metadata(
             contract_id=outputs.identity_contract,
             strategy="generated_sequence_content_hash",
@@ -666,7 +670,7 @@ def metadata_for_source(
 ) -> dict[str, str]:
     return {
         "asset_slug": asset.slug,
-        "run_date": source.filename_date.isoformat(),
+        "run_date": source.documented_valid_date.isoformat(),
         "source_filename_date": source.filename_date.isoformat(),
         "documented_valid_date": source.documented_valid_date.isoformat(),
         "source_filename": source.source_filename,
@@ -724,27 +728,28 @@ def run() -> dict[str, Any]:
         return record
 
     available_source = lookup.source
+    release_day = available_source.documented_valid_date
     existing_record = load_existing_successful_release(
         publisher=publisher,
         asset=ASSET,
-        run_date=available_source.filename_date,
+        run_date=release_day,
     )
     if existing_record is not None:
         LOGGER.info(
             "%s already has a successful run record for %s",
             ASSET.slug,
-            available_source.filename_date,
+            release_day,
         )
         successful_release_index = publisher.record_existing_successful_release(
             ASSET,
-            available_source.filename_date,
+            release_day,
         )
         record = add_source_request_warnings(
             {
                 "schema_version": 1,
                 "asset_slug": ASSET.slug,
                 "run_date": anchor_day.isoformat(),
-                "release_date": available_source.filename_date.isoformat(),
+                "release_date": release_day.isoformat(),
                 "status": "skipped",
                 "reason": "latest available source already published",
                 "source": available_source.source_url,
@@ -763,7 +768,7 @@ def run() -> dict[str, Any]:
             payload=record,
         )
         return record
-    publisher.assert_no_partial_release(ASSET, available_source.filename_date)
+    publisher.assert_no_partial_release(ASSET, release_day)
 
     with tempfile.TemporaryDirectory(prefix="sea-ice-daily-") as tmp:
         workdir = Path(tmp)
@@ -779,7 +784,7 @@ def run() -> dict[str, Any]:
             baseline=publisher.load_generated_identity_baseline(ASSET, contract_id=CONTRACT_ID),
             identity_resolution_decisions=feature_metadata.release_feature_model.load_identity_resolution_decisions(
                 asset_slug=ASSET.slug,
-                release=downloaded.filename_date.isoformat(),
+                release=downloaded.documented_valid_date.isoformat(),
             ),
         )
         return publish_outputs(
@@ -787,6 +792,7 @@ def run() -> dict[str, Any]:
             asset=ASSET,
             outputs=outputs,
             source=downloaded,
+            asset_readme=Path("/app/asset_README.md"),
             source_request_warnings=source_request_warnings,
         )
 
