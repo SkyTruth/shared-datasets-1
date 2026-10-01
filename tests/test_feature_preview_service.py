@@ -512,7 +512,6 @@ class FeaturePreviewServiceTests(unittest.TestCase):
         duplicate = sidecar_record("1")
         unsafe_feature_id = sidecar_record("badid")
         unsafe_feature_id["feature_id"] = "bad-id"
-        duplicate_feature_id = sidecar_record("1")
         malformed_hash = sidecar_record("2")
         malformed_hash["geometry_hash"] = "not-a-hash"
         missing_asset_slug = sidecar_record("2")
@@ -528,7 +527,6 @@ class FeaturePreviewServiceTests(unittest.TestCase):
             "bad ndjson": (gzip.compress(b"{bad\n"), ["999"]),
             "duplicate feature_id": (sidecar_bytes([duplicate, duplicate]), ["1", "2"]),
             "invalid feature_id": (sidecar_bytes([unsafe_feature_id]), ["999"]),
-            "duplicate feature_id second pass": (sidecar_bytes([sidecar_record("1"), duplicate_feature_id]), ["1", "2"]),
             "malformed hash": (sidecar_bytes([malformed_hash]), ["2"]),
             "missing asset_slug": (sidecar_bytes([missing_asset_slug]), ["2"]),
             "missing release": (sidecar_bytes([missing_release]), ["2"]),

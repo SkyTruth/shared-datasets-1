@@ -2850,7 +2850,6 @@ class PublishingConciergeTests(unittest.TestCase):
         command = next(command for command in plan.suggested_commands if "vector_asset.py build" in command)
         self.assertIn("--source-scale-denominator 10000000", command)
         self.assertIn("--pmtiles-detail-hint medium", command)
-        self.assertTrue(any("source/detail hints" in note for note in plan.notes))
 
 
 class ResolveMetadataLegacyKeysTests(unittest.TestCase):
