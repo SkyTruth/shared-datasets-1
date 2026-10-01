@@ -77,6 +77,7 @@ def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -
             "scripts/pmtiles_zoom.py",
             "scripts/release_feature_model.py",
             "scripts/vector_asset.py",
+            "terraform/envs/metadata-retirement-iam/**",
             "terraform/envs/prod/artifact_registry_iam.tf",
             "terraform/envs/prod/canonical_mutation_iam.tf",
             "terraform/envs/prod/main.tf",

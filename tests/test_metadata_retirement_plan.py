@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import metadata_retirement_plan as retirement
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
@@ -32,7 +33,9 @@ def plan(address, actions, before=None, after=None):
 class RetirementPlanTests(unittest.TestCase):
     def test_only_retired_resources_can_be_deleted(self):
         for address in (
-            retirement.DELETE_ADDRESSES - retirement.LEGACY_DELETE_IDENTITIES.keys()
+            retirement.DELETE_ADDRESSES
+            - retirement.LEGACY_DELETE_IDENTITIES.keys()
+            - retirement.DELETE_ACCOUNT_IDENTITIES.keys()
             | {
                 'google_iap_web_cloud_run_service_iam_member.metadata_service_accessors["user:maintainer@skytruth.org"]',
             }
@@ -50,7 +53,10 @@ class RetirementPlanTests(unittest.TestCase):
             self.assertTrue(retirement.blocked_changes(plan(address, ["delete"])))
 
     def test_legacy_removal_requires_exact_observed_identity(self):
-        for address, identity in retirement.LEGACY_DELETE_IDENTITIES.items():
+        for address, identity in {
+            **retirement.LEGACY_DELETE_IDENTITIES,
+            **retirement.DELETE_ACCOUNT_IDENTITIES,
+        }.items():
             with self.subTest(address=address):
                 self.assertFalse(
                     retirement.blocked_changes(plan(address, ["delete"], identity))
@@ -99,6 +105,181 @@ class RetirementPlanTests(unittest.TestCase):
                 )
             )
         )
+
+    def test_deletion_authority_uses_immutable_ids_from_validated_plan(self):
+        for address, identity in retirement.DELETE_ACCOUNT_IDENTITIES.items():
+            with self.subTest(address=address):
+                self.assertEqual(
+                    retirement.retirement_account_ids(
+                        plan(address, ["delete"], identity)
+                    ),
+                    [identity["unique_id"]],
+                )
+                with self.assertRaises(ValueError):
+                    retirement.retirement_account_ids(
+                        plan(
+                            address,
+                            ["delete"],
+                            {**identity, "unique_id": "recreated-account"},
+                        )
+                    )
+        self.assertEqual(retirement.retirement_account_ids({}), [])
+        with self.assertRaises(ValueError):
+            retirement.retirement_account_ids(
+                plan(
+                    "module.feature_preview_loader_service_account.google_service_account.this",
+                    ["delete"],
+                )
+            )
+
+    def test_temporary_iam_only_grants_planned_account_deletions_and_cleans_up(self):
+        for account_id in retirement.DELETE_ACCOUNT_IDS:
+            address = (
+                f'google_service_account_iam_member.retirement_deleter["{account_id}"]'
+            )
+            identity = {
+                "service_account_id": f"projects/shared-datasets-1/serviceAccounts/{retirement.DELETE_ACCOUNT_EMAILS[account_id]}",
+                "role": retirement.DELETE_ROLE,
+                "member": retirement.TERRAFORM_MEMBER,
+                "condition": [],
+            }
+            with self.subTest(account_id=account_id):
+                self.assertFalse(
+                    retirement.blocked_delete_iam_changes(
+                        plan(address, ["create"], after=identity), {account_id}
+                    )
+                )
+                self.assertFalse(
+                    retirement.blocked_delete_iam_changes(
+                        plan(address, ["delete"], before=identity), set()
+                    )
+                )
+                self.assertTrue(
+                    retirement.blocked_delete_iam_changes(
+                        plan(address, ["create"], after=identity), set()
+                    )
+                )
+                for key in identity:
+                    invalid = {**identity, key: "another-resource-or-authority"}
+                    for actions, before, after in (
+                        (["create"], None, invalid),
+                        (["delete"], invalid, None),
+                    ):
+                        self.assertTrue(
+                            retirement.blocked_delete_iam_changes(
+                                plan(address, actions, before, after), {account_id}
+                            )
+                        )
+                for actions in (["update"], ["delete", "create"]):
+                    self.assertTrue(
+                        retirement.blocked_delete_iam_changes(
+                            plan(address, actions, identity, identity), {account_id}
+                        )
+                    )
+        for address in (
+            'google_service_account_iam_member.retirement_deleter["100846506355649701710"]',
+            "google_project_iam_member.project_wide_deletion",
+            "google_project_iam_custom_role.preview_terraform",
+        ):
+            self.assertTrue(
+                retirement.blocked_delete_iam_changes(
+                    plan(address, ["create"], after={}),
+                    set(retirement.DELETE_ACCOUNT_IDS),
+                )
+            )
+
+    def test_iam_root_matches_plan_authority_and_defaults_to_no_grants(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "terraform/envs/metadata-retirement-iam/main.tf").read_text()
+        self.assertEqual(
+            set(re.findall(r'"(\d{21})"', source)), retirement.DELETE_ACCOUNT_IDS
+        )
+        self.assertIn('role               = "roles/iam.serviceAccountDeleter"', source)
+        self.assertIn(
+            'member             = "' + retirement.TERRAFORM_MEMBER + '"', source
+        )
+        self.assertIn("default     = []", source)
+        self.assertIn("condition     = self.unique_id == each.key", source)
+        self.assertIn(
+            "data.google_service_account.retirement_target[each.key].name", source
+        )
+        self.assertIn(
+            'prefix = "000-system/terraform/state/metadata-retirement-iam"', source
+        )
+        ci = load_workflow(root / ".github/workflows/ci.yml")
+        self.assertIn(
+            "terraform/envs/metadata-retirement-iam",
+            workflow_steps_by_name(ci, "lint")["Validate Terraform configurations"][
+                "run"
+            ],
+        )
+
+    def test_delete_permission_wait_is_bounded_and_only_checks_planned_ids(self):
+        address, identity = next(iter(retirement.DELETE_ACCOUNT_IDENTITIES.items()))
+        retire_plan = plan(address, ["delete"], identity)
+        with (
+            mock.patch.object(
+                retirement.subprocess, "check_output", return_value="token\n"
+            ) as token,
+            mock.patch.object(
+                retirement, "test_delete_permission", side_effect=[False, True]
+            ) as check,
+            mock.patch.object(retirement.time, "monotonic", side_effect=[0, 1]),
+            mock.patch.object(retirement.time, "sleep") as sleep,
+        ):
+            retirement.wait_for_delete_permissions(retire_plan)
+            self.assertEqual(
+                check.call_args_list, [mock.call(identity["unique_id"], "token")] * 2
+            )
+            sleep.assert_called_once_with(10)
+            token.assert_called_once_with(
+                ["gcloud", "auth", "print-access-token"], text=True
+            )
+        with (
+            mock.patch.object(
+                retirement.subprocess, "check_output", return_value="token"
+            ),
+            mock.patch.object(retirement, "test_delete_permission", return_value=False),
+            mock.patch.object(retirement.time, "monotonic", side_effect=[0, 300]),
+            mock.patch.object(retirement.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(TimeoutError):
+                retirement.wait_for_delete_permissions(retire_plan)
+            sleep.assert_not_called()
+        with mock.patch.object(retirement.subprocess, "check_output") as token:
+            retirement.wait_for_delete_permissions({})
+            token.assert_not_called()
+
+    def test_permission_api_checks_only_delete_without_exposing_token(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = (
+            b'{"permissions":["iam.serviceAccounts.delete"]}'
+        )
+        with mock.patch.object(
+            retirement.urllib.request, "urlopen", return_value=response
+        ) as open_url:
+            self.assertTrue(
+                retirement.test_delete_permission(
+                    "117696104962177306505", "private-token"
+                )
+            )
+            request = open_url.call_args.args[0]
+            self.assertTrue(
+                request.full_url.endswith("/117696104962177306505:testIamPermissions")
+            )
+            self.assertEqual(
+                json.loads(request.data),
+                {"permissions": ["iam.serviceAccounts.delete"]},
+            )
+            self.assertEqual(request.get_method(), "POST")
+            self.assertEqual(open_url.call_args.kwargs, {"timeout": 30})
+        with mock.patch.object(
+            retirement.urllib.request, "urlopen", side_effect=OSError("API failure")
+        ):
+            with self.assertRaisesRegex(OSError, "API failure"):
+                retirement.test_delete_permission(
+                    "117696104962177306505", "private-token"
+                )
 
     def test_both_databases_can_only_be_forgotten_without_destruction(self):
         for database, (address, name) in retirement.DATABASES.items():
@@ -262,6 +443,9 @@ if command == "plan":
         if not os.environ.get("TF_VAR_" + name):
             raise SystemExit("Missing required image: " + name)
     output = next(arg.removeprefix("-out=") for arg in args if arg.startswith("-out="))
+    if "metadata-retirement-iam" in args[0]:
+        pathlib.Path(output).write_text(json.dumps({"resource_changes": []}))
+        raise SystemExit(0)
     database = "-target=google_firestore_database.feature_metadata" in args
     change = {
         "address": "google_firestore_database.feature_metadata" if database else "google_cloud_run_v2_service.metadata_service",
@@ -291,7 +475,10 @@ elif command == "show":
                     "Preserve retired production database",
                     "Plan metadata retirement",
                     "Export and validate retirement plan",
+                    "Authorize deletion of remaining retired accounts",
+                    "Wait for account deletion authority",
                     "Apply approved retirement plan",
+                    "Remove temporary deletion authority",
                 )
             )
             result = subprocess.run(
@@ -305,7 +492,21 @@ elif command == "show":
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             self.assertEqual(
                 [call[1] for call in calls],
-                ["plan", "show", "apply", "plan", "show", "apply"],
+                [
+                    "plan",
+                    "show",
+                    "apply",
+                    "plan",
+                    "show",
+                    "init",
+                    "plan",
+                    "show",
+                    "apply",
+                    "apply",
+                    "plan",
+                    "show",
+                    "apply",
+                ],
             )
             self.assertIn("-refresh=false", calls[0])
             self.assertNotIn("-refresh=false", calls[3])
@@ -322,7 +523,11 @@ elif command == "show":
                 },
             )
             self.assertEqual(calls[2][-1], calls[0][-1].removeprefix("-out="))
-            self.assertEqual(calls[5][-1], calls[3][3].removeprefix("-out="))
+            self.assertEqual(calls[9][-1], calls[3][3].removeprefix("-out="))
+            self.assertEqual(calls[8][-1], calls[6][-1].removeprefix("-out="))
+            self.assertEqual(calls[12][-1], calls[10][-1].removeprefix("-out="))
+            self.assertIn("metadata-retirement-iam", calls[6][0])
+            self.assertNotIn("-var-file=", " ".join(calls[10]))
 
             log.write_text("")
             result = subprocess.run(

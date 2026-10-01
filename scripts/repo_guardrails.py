@@ -465,7 +465,13 @@ def job_uses_prod_terraform(workflow: dict, job: dict) -> bool:
                 continue
             if "terraform/envs/preview" in args:
                 continue
-            if "terraform/envs/prod" in args or "terraform/envs/prod" in declarations:
+            if any(
+                directory in args or directory in declarations
+                for directory in (
+                    "terraform/envs/prod",
+                    "terraform/envs/metadata-retirement-iam",
+                )
+            ):
                 return True
     return False
 

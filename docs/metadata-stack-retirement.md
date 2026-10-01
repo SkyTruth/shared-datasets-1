@@ -77,8 +77,9 @@ preview bucket IAM. Their source resources had already been removed; the
 follow-up expands the protected target list to clean up this orphaned state.
 The validator requires the observed project, account/role/member, database
 condition, or Workload Identity binding before allowing each legacy deletion.
-No replacement, permission expansion, active-preview identity removal, or
-database deletion is allowed.
+No replacement, active-preview identity removal, or database deletion is allowed
+in the retirement plan. Temporary account-scoped deletion authority is validated
+separately as described below.
 
 Two updates are also allowed: remove only `datastore.*` permissions from the
 preview Terraform custom role, and remove only the production metadata loader's
@@ -86,6 +87,46 @@ exemption from the canonical-write alert filter. All other creates, updates,
 replacements, deletions, or database destruction are rejected. Required root
 ingestion-image inputs use placeholders because ingestion jobs are outside the
 targeted scope. The workflow validates each saved plan and applies that same plan.
+
+The first protected retirement run on 2026-10-01 detached the production database
+and removed ten obsolete IAM grants. Its apply then failed because
+`shared-datasets-terraform` lacked `iam.serviceAccounts.delete` on the three
+remaining retired accounts. Both databases survived; production state contained
+only these three retired service-account resources afterward. Retrying without
+changing that authority cannot complete retirement.
+
+The permission repair uses `terraform/envs/metadata-retirement-iam` with its own
+state prefix, `000-system/terraform/state/metadata-retirement-iam`, under the same
+protected production queue. It grants `roles/iam.serviceAccountDeleter` to
+`shared-datasets-terraform` on individual retired accounts, never on the project.
+The three permitted immutable IDs are:
+
+| Retired account | Immutable ID |
+|---|---|
+| `metadata-index-loader` | `117696104962177306505` |
+| `metadata-index-loader-preview` | `104364831142635248810` |
+| `metadata-service-preview` | `115924014602363410114` |
+
+The retirement validator requires the observed account ID, email, project, and
+immutable ID before deleting these resources. Temporary IAM grants are derived
+only from account deletions present in that validated saved plan; their own
+validator requires the exact resource ID, recipient, and deletion-only role.
+The provider requires an email for the IAM binding, so a fresh Terraform account
+lookup must also match the reviewed immutable ID before authority is granted.
+An account recreated with the same email fails that postcondition.
+[Google documents account-level IAM grants](https://docs.cloud.google.com/iam/docs/manage-access-service-accounts)
+and the [deletion permission](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/delete).
+
+After applying the saved IAM plan, the workflow polls the authenticated caller's
+deletion permission with a five-minute deadline and 30-second request timeouts,
+using `testIamPermissions` without logging the access token. API errors and timeout
+stop before the retirement apply. The workflow then applies the original saved
+retirement plan. It finishes with an empty-input IAM plan, validated as
+delete-only, to remove temporary authority and clear its state. If a run stops
+partway through, remote IAM state supports a subsequent reviewed retry;
+any surviving grant can affect only a still-existing reviewed retired account.
+The new IAM root defaults to no grants and receives backend-disabled CI
+validation alongside production and preview.
 
 Preview deploy/destroy workflows detach the retired preview database with a
 separate validated saved plan before a reset or destroy can affect the slot.
@@ -106,7 +147,8 @@ are separate follow-ups requiring an explicit scope and live usage evidence.
 
 ## Compatibility And Consequences
 
-No release objects or catalog objects are rewritten. The serialized
+Retirement does not rewrite dataset releases or release-index objects. Normal
+viewer deployments still rebuild `_catalog/web/`. The serialized
 `index_load_status` string and `index_status_policy.mode = inactive_firestore_serving`
 remain in manifest/release-index producers and validators. Changing them would
 be a persisted-format migration. Historical `index-loads/` paths continue to be
@@ -115,16 +157,18 @@ recognized by object-layout validation and compliance audits.
 Consumers of the old standalone Cloud Run URL lose that endpoint after the
 protected retirement runs. Repository consumers already use sidecars or viewer
 routes, and the old resolver had no successful serving path. External callers,
-out-of-repository loader users, live database contents, and current traffic have
-not been conclusively checked: available local GCP credentials expired during
-the read-only review. Repository reachability is confirmed; absence of external
-live usage is not. Confirm ownership of those standalone identities and URL
-before approving the infrastructure removal. Database bytes remain preserved.
+out-of-repository loader users, and database contents remain unknown. GCP access
+was restored for rollout checks: the standalone service was already absent,
+neither older preview identity appeared in project Cloud Run service/job
+consumers, and bounded 30-day logs contained no matching requests or principal
+activity. Absence of those logs does not establish absence of external or
+other-project usage. The maintainer approved the identity removals;
+database bytes remain preserved.
 
 ## Validation And Rollout
 
 Before merge, run the full Python suite, Ruff, TypeScript SDK tests, static repo
-guardrails, Terraform formatting, and backend-disabled validation of both roots
+guardrails, Terraform formatting, and backend-disabled validation of all three roots
 with the CI version. Validator tests exercise duplicate/invalid IDs, hashes,
 release identity, schema projection, checksums, counts, and generation/path
 mismatches. Viewer tests retain pinned downloads, cache isolation, ETags,
