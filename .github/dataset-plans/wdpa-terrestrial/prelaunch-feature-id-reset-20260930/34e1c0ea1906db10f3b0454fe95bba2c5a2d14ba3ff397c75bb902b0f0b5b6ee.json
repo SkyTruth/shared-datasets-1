@@ -1,0 +1,128 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "wdpa-terrestrial",
+    "breaking_changes": [],
+    "identity_reset": {
+      "inventory": {
+        "asset_slug": "wdpa-terrestrial",
+        "baseline": {
+          "latest_manifest": {
+            "generation": 1788264544985809,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+            "sha256": "4a2c9f6fcfb1aeaff5ebc312feb025f7c119063a8f5c773e13e8052bb98fa77f"
+          },
+          "release": "2026-09-01",
+          "release_manifest": {
+            "generation": 1788264544729991,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-01/wdpa-terrestrial.manifest.json",
+            "sha256": "4a2c9f6fcfb1aeaff5ebc312feb025f7c119063a8f5c773e13e8052bb98fa77f"
+          }
+        },
+        "bucket": "skytruth-shared-datasets-1",
+        "contract_id": "generated-2026-v1",
+        "first_release": "2026-09-30",
+        "latest_objects": [
+          {
+            "generation": 1788264523218805,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.fgb",
+            "sha256": "55cf89a0c934b44271201442a85ad9abd692701fb1e0881304fee834a42f0382"
+          },
+          {
+            "generation": 1788264544985809,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+            "sha256": "4a2c9f6fcfb1aeaff5ebc312feb025f7c119063a8f5c773e13e8052bb98fa77f"
+          },
+          {
+            "generation": 1788264544144668,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata-translations.csv",
+            "sha256": "a79a70f843c757c8d35ac6bc538c298f7ecd78dbb9e1ddf10f3dfad024344d11"
+          },
+          {
+            "generation": 1788264542871526,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.es.ndjson.gz",
+            "sha256": "ceaf7f402ebc4fcedf9aa93fb9e3468b21664f9632be3bf3c5fc9e14adbc2c2f"
+          },
+          {
+            "generation": 1781110614068145,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.fr.ndjson.gz",
+            "sha256": "d0b6ff4fac764d4c7f5c7cd34c483143051d18a4b0a60fa9b1951952764b3dd3"
+          },
+          {
+            "generation": 1781110616468063,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.id.ndjson.gz",
+            "sha256": "bb1d3617725497f0a2692bd22c40f7baa7dd34b2bf15d885a2b1e1f55580b068"
+          },
+          {
+            "generation": 1788264542038587,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.ndjson.gz",
+            "sha256": "ceaf7f402ebc4fcedf9aa93fb9e3468b21664f9632be3bf3c5fc9e14adbc2c2f"
+          },
+          {
+            "generation": 1781110618867718,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt.ndjson.gz",
+            "sha256": "a35c990d26e30d8c428ebe10385b3203e8b64ab846c5416f06968659e9301578"
+          },
+          {
+            "generation": 1781110621272233,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+            "sha256": "a35c990d26e30d8c428ebe10385b3203e8b64ab846c5416f06968659e9301578"
+          },
+          {
+            "generation": 1781110623716463,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.sw.ndjson.gz",
+            "sha256": "0f175da54cc0f64da606930dc081c106570d1196faf1c72bb43969cc0de45b69"
+          },
+          {
+            "generation": 1788264541134345,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.pmtiles",
+            "sha256": "0c9fde62de2ef7b0930fb744a137ff6725389514fab719aaa43f66c5302edaf0"
+          },
+          {
+            "generation": 1788264544473715,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.schema.json",
+            "sha256": "2830cb035d99d42e2a7589dc48f9a05d401cb229a747bba502b272a0bc40d54f"
+          }
+        ],
+        "schema_version": 1,
+        "translation_supplement": {
+          "generation": 1790741746636085,
+          "path": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-feature-id-reset/pr-154-20260930/gap-supplement.ndjson",
+          "sha256": "83d0b86e761a2b2963f0e7b54d406242602e737835b8edeb279112067a5902b9"
+        }
+      }
+    },
+    "promotions": [
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/publications/inputs/cc7bf633052289653baf15bd59db2e8d46d43d077717a5897fe8f9f908ec4677/0.catalog.json",
+        "source_generation": "1790744994284913",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/prelaunch-feature-id-reset-20260930/0.json"
+      },
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/publications/receipts/2e0557acbf4606900d61b0d29ac1a8e2fb7f0eddcfd63e777e9cf4f9588d851d.json",
+        "source_generation": "1790744996029753",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/prelaunch-feature-id-reset-20260930/1.json"
+      },
+      {
+        "cache_control": "no-cache",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/publications/state.json",
+        "source_generation": "1790744997670496",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/prelaunch-feature-id-reset-20260930/2.json"
+      }
+    ],
+    "proposal_id": "prelaunch-feature-id-reset-20260930",
+    "release_index_asset_slugs": []
+  }
+}

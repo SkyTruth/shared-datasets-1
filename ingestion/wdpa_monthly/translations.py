@@ -1,7 +1,8 @@
 """Generation-pinned WDPA translation evidence and monthly reuse.
 
 The initial evidence predates the ID reset and is joined only by SITE_PID and
-exact source text. Later runs consume their owned publication's committed CSV.
+exact source text. Both historical bundles remain fixed until both reset
+publications finish. Later runs consume their owned publication's committed CSV.
 """
 
 from contextlib import contextmanager
@@ -47,17 +48,23 @@ def download_source(bucket, version: p.ObjectVersion, destination: Path, *, comp
 
 @contextmanager
 def prepare_memory(publisher, assets, workdir: Path):
-    sources = []
+    committed = {asset.slug: publisher.committed_artifacts(asset, suffixes=SUFFIXES) for asset in assets}
     supplement = None
     for asset in assets:
-        versions = publisher.committed_artifacts(asset, suffixes=SUFFIXES)
-        if versions is None:
+        if committed[asset.slug] is None:
             # This branch is reachable only through the explicit pending-reset
             # adoption state, never through a missing manifest or failed read.
             p.require(publisher.bucket.name == "skytruth-shared-datasets-1", "legacy reset evidence is pinned to the production dataset bucket")
             approved = publisher.reset_translation_supplement(asset)
             p.require(supplement is None or supplement == approved, "pending WDPA resets must approve the same shared translation supplement")
             supplement = approved
+
+    sources = []
+    for asset in assets:
+        versions = committed[asset.slug]
+        if supplement is not None:
+            # An area can move between realms. A partially completed reset must
+            # retain both historical sources, including the published realm's.
             release = "2026-06-09"
             versions = {suffix: p.ObjectVersion(f"gs://{publisher.bucket.name}/{asset.root}/releases/{release}/{asset.slug}{suffix}", *pin)
                         for suffix, pin in zip(SUFFIXES, LEGACY[asset.slug], strict=True)}

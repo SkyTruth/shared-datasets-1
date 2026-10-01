@@ -11,6 +11,7 @@ resource "google_project_iam_custom_role" "scheduled_ingestion_deployer" {
     "run.executions.list",
     "run.jobs.get",
     "run.jobs.run",
+    "run.jobs.runWithOverrides",
     "run.jobs.update",
     "run.operations.get",
     "run.operations.list",

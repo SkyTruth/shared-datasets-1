@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import tempfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -37,8 +38,12 @@ class GcsStore:
         return self.client.bucket(bucket).blob(name, generation=generation)
 
     @staticmethod
-    def _version(uri: str, blob: Any, sha256: str) -> ObjectVersion:
-        return ObjectVersion(uri, int(blob.generation), sha256, int(blob.size), str(blob.content_type or ""), str(blob.cache_control or ""), tuple(sorted((blob.metadata or {}).items())))
+    def _head(uri: str, blob: Any) -> ObjectHead:
+        return ObjectHead(uri, int(blob.generation), int(blob.size), str(blob.content_type or ""), str(blob.cache_control or ""), tuple(sorted((blob.metadata or {}).items())))
+
+    @classmethod
+    def _version(cls, uri: str, blob: Any, sha256: str) -> ObjectVersion:
+        return ObjectVersion(**asdict(cls._head(uri, blob)), sha256=sha256)
 
     def head(self, uri: str) -> ObjectHead | None:
         blob = self._blob(uri)
@@ -46,12 +51,12 @@ class GcsStore:
             blob.reload()
         except NotFound:
             return None
-        return ObjectHead(uri, int(blob.generation), int(blob.size), str(blob.content_type or ""), str(blob.cache_control or ""), tuple(sorted((blob.metadata or {}).items())))
+        return self._head(uri, blob)
 
     def list_heads(self, prefix: str):
         bucket, name = split_uri(prefix.rstrip("/"))
         for blob in self.client.list_blobs(bucket, prefix=name + "/"):
-            yield ObjectHead(f"gs://{bucket}/{blob.name}", int(blob.generation), int(blob.size), str(blob.content_type or ""), str(blob.cache_control or ""), tuple(sorted((blob.metadata or {}).items())))
+            yield self._head(f"gs://{bucket}/{blob.name}", blob)
 
     def read_json(self, uri: str) -> JsonObject | None:
         blob = self._blob(uri)
@@ -59,9 +64,11 @@ class GcsStore:
             blob.reload()
         except NotFound:
             return None
-        generation = int(blob.generation)
+        # Downloads mutate Blob metadata with HTTP transport headers. Preserve
+        # the stored object metadata from the generation-pinned metadata read.
+        head = self._head(uri, blob)
         try:
-            data = blob.download_as_bytes(if_generation_match=generation)
+            data = blob.download_as_bytes(if_generation_match=head.generation)
         except (NotFound, PreconditionFailed) as exc:
             raise Conflict(f"JSON changed during read: {uri}") from exc
         try:
@@ -69,7 +76,7 @@ class GcsStore:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PublicationError(f"invalid publication JSON: {uri}") from exc
         require(isinstance(value, dict), "publication JSON must be an object")
-        return JsonObject(value, self._version(uri, blob, digest(data)))
+        return JsonObject(value, ObjectVersion(**asdict(head), sha256=digest(data)))
 
     def inspect(self, uri: str, generation: int | None = None) -> ObjectVersion | None:
         blob = self._blob(uri, generation)
@@ -79,15 +86,15 @@ class GcsStore:
             return None
         except PreconditionFailed as exc:
             raise Conflict(f"object generation changed: {uri}") from exc
-        observed = int(blob.generation)
+        head = self._head(uri, blob)
         try:
             with tempfile.TemporaryFile(dir=work_root()) as handle:
-                blob.download_to_file(handle, if_generation_match=observed)
+                blob.download_to_file(handle, if_generation_match=head.generation)
                 handle.seek(0)
                 sha256 = hashlib.file_digest(handle, "sha256").hexdigest()
         except (NotFound, PreconditionFailed) as exc:
             raise Conflict(f"object changed while hashing: {uri}") from exc
-        return self._version(uri, blob, sha256)
+        return ObjectVersion(**asdict(head), sha256=sha256)
 
     def write_json(self, uri: str, value: dict[str, Any], expected: int) -> ObjectVersion:
         return self.write_bytes(uri, canonical(value), expected, {}, "application/json", "no-cache")

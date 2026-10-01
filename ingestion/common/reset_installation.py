@@ -58,7 +58,14 @@ def install_reset(
         marker = store.read_json(marker_uri)
         if marker is not None:
             validate_installation_marker(marker.value, identity["inventory_sha256"])
-            p.require(all(marker.value[k] == v for k, v in identity.items()), "another reset installation owns this asset")
+            p.require(all(marker.value[k] == identity[k] for k in ("schema_version", "inventory_sha256", "proposal_key")),
+                      "another reset installation owns this asset")
+            if marker.value["execution_contract_sha256"] != identity["execution_contract_sha256"]:
+                # An updated executor may only verify an already written state
+                # and finish its journal (or read a completed installation).
+                # It cannot continue creating objects under another executor.
+                p.require(marker.value["phase"] in {"activating", "complete"},
+                          "reset creation requires the original executor")
         return marker
 
     def matching_object(item):
@@ -73,10 +80,13 @@ def install_reset(
         return version
 
     marker = read_marker()
+    if marker is not None:
+        identity["execution_contract_sha256"] = marker.value["execution_contract_sha256"]
+        tags = {"identity-reset-execution": identity["execution_contract_sha256"]}
     if marker is not None and marker.value["phase"] == "complete":
         # The publisher may already have advanced state. Verify its owned
         # current/active receipts instead of comparing to genesis or replacing it.
-        context = p.Context(authorization["proposal_key"], authorization["execution_contract_sha256"],
+        context = p.Context(identity["proposal_key"], identity["execution_contract_sha256"],
                             "0" * 40, p.FINALIZATION_VERSION, candidate.value["bucket"],
                             candidate.adoption["asset_root"], candidate.value["asset_slug"], candidate.value["contract_id"])
         state = store.read_json(state_uri)

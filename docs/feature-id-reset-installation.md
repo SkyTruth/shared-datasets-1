@@ -8,10 +8,27 @@ organization IAM export, policy registry, or new service account is required.
 The invariant is: **initialize once; retries must never recreate or rewind
 allocation history.** Installing state does not publish data or resume schedules.
 
+## Identity contract
+
+`wdpa-marine`, `wdpa-terrestrial`, and `ims-sea-ice-extent` begin the explicit
+`generated-2026-v1` contract. The service has no existing users and the owner
+approved retiring the old identity history. Historical releases stay readable;
+the same numeric ID in an old and new contract has no implied relationship.
+Consumers must join data, metadata, and translations within one resolved release
+and retain its path/generation in caches. Keep optional Firestore serving inactive
+during this transition.
+
+The real WDPA and sea-ice publishers reserve IDs and claim publication ownership
+before exposing new artifacts. Deletion, empty output, crashes, and retries cannot
+lower the durable counter. Missing state after installation is an error, never
+permission to initialize it again. Current generic publish/localization paths
+cannot bypass these managed assets. EAMLIS uses provider IDs and needs no reset.
+
 ## Deployment sequence
 
-1. After PR #154 merges, let `Scheduled ingestion deploy IAM sync` apply the
-   added `cloudscheduler.jobs.pause` permission to the existing deployer role.
+1. Let `Scheduled ingestion deploy IAM sync` apply the deployer's scheduler-pause
+   and dated-canary permissions, plus WDPA's exact-object read grant for the
+   approved translation supplement in `terraform/envs/prod/wdpa_reset_iam.tf`.
    Run `Ingestion schedule control` from `main`, selecting the affected job and
    `pause`. It operates only on the two ingestion schedules in project
    `shared-datasets-1`, region `us-central1`. Wait for
@@ -21,20 +38,29 @@ allocation history.** Installing state does not publish data or resume schedules
 2. Capture the current object inventory, prepare and stage the reset inputs,
    and submit the immutable reset plan described below. WDPA requires one plan
    per asset. The corrected translation supplement is already staged; use the
-   exact generation and SHA in the [translation report](proposals/wdpa-translation-rebuild-2026-09-29.md).
+   exact generation and SHA in the [translation evidence](wdpa-translation-reset-evidence.md).
 3. After review and merge, `Approved dataset mutation` installs the reset. It
    verifies the immutable authority before authentication and rechecks review
    acceptance, the paused schedule, and every page of execution status before
    each write. A running/pending/reconciling execution or failed read stops it.
+   If GitHub rejects the PR-event job because `refs/pull/.../merge` is outside
+   the production environment's allowed branches, run the existing workflow
+   from `main` with `pr_number` set to that merged PR. This restricted retry
+   verifies the same immutable plan and review authority; no environment-policy
+   change is needed. For example:
+
+   ```bash
+   gh workflow run publish-dataset.yml --ref main -f pr_number=<merged-reset-pr>
+   ```
 4. Run the existing ingestion deployment workflow from reviewed `main`, setting
    `canary_run_date` to the first release date in the reset plan. Sea ice searches
    upstream from this date; confirm its available source date matches the plan.
-   Before image
-   build or Terraform, it verifies the same publication state and receipts as
-   the runtime. Both WDPA resets must be complete; sea ice is independent.
-5. Validate the complete first release and its feature-ID/metadata/translation
-   joins before resuming the affected schedule with `Ingestion schedule control`.
-   Its `resume` action also requires a completed first-publication receipt. WDPA's canary is asynchronous:
+   Before image build or Terraform, it verifies the same publication state and
+   receipts as the runtime. Both WDPA resets must be complete; sea ice is independent.
+5. Validate the first release using the checks below before resuming the affected
+   schedule with `Ingestion schedule control`.
+   Its `resume` action requires a completed first-publication receipt. WDPA's
+   canary is asynchronous:
    a successful dispatch is not successful publication. Preserve the paused
    state on failure and retry the owned publication rather than reset IDs.
 
@@ -42,9 +68,11 @@ The installer shares the `prod-terraform-state` workflow queue with deployments.
 It reads scheduler/execution status as the existing `shared-datasets-terraform`
 identity and writes objects as the existing `shared-datasets-publisher` identity.
 Both authenticate through their existing protected-environment federation.
-The existing protected IAM-sync workflow adds only `cloudscheduler.jobs.pause`
-to the existing deployment role. No new identity or organization permission is
-needed. Schedule control, reset installation, and deployment share the same queue.
+The protected IAM-sync workflow grants `cloudscheduler.jobs.pause` and
+`run.jobs.runWithOverrides` to the existing deployment role. WDPA's runtime
+receives read-only access to the single approved supplement object, not the
+surrounding scratch prefix. No new identity or organization permission is needed.
+Schedule control, reset installation, and deployment share the same queue.
 
 This is an operational cutover under the project's existing administrator trust
 boundary. Administrators must not restart old jobs or rerun old publishing
@@ -133,6 +161,14 @@ accept only matching bytes and installer metadata; competing proposals or
 unrelated publication objects stop the operation. After completion, a retry
 validates the existing owned state and receipts without changing its counter.
 
+A repaired executor on reviewed `main` may finish an `activating` journal for
+the **same immutable PR plan** only when all three objects already exist and
+match the approved bytes and original ownership tags. It preserves the original
+executor identity and state generation, updating only the journal to
+`complete`. It cannot continue a `prepared` installation, recreate a missing
+object, or replace changed state. Completed retries remain read-only. This
+allows storage-client fixes without restarting allocation or changing the plan.
+
 A crash after `activating` but before a confirmed state leaves an intentionally
 bounded stop: **if state is absent, reviewed recovery is required**. Absence
 cannot distinguish a write that never happened from a state that was created
@@ -143,6 +179,27 @@ schedule paused while reviewing recovery; never restore an old writer.
 Tests cover immutable authorization and revocation, simultaneous installers,
 changed inventory/job status, every durable-write crash boundary, completed
 retries after subsequent publication, and runtime refusal before completion.
-These use controlled stores/API fixtures; they are not live production cutover
-evidence. The first complete new-ID release and its native/serving checks remain
-deployment checks in the [fresh-start plan](proposals/feature-id-fresh-start.md).
+These use controlled stores/API fixtures; production cutover still requires the
+following checks.
+
+## First-publication acceptance
+
+Before resuming each job, verify:
+
+- The manual execution finished successfully. WDPA must complete both assets;
+  check its full-build memory use as well as the exit status.
+- The dated release and `latest/` manifests name the planned release and
+  `generated-2026-v1`, and match the recorded object generations and hashes.
+- FGB, PMTiles, canonical metadata, and schema agree on feature IDs and counts.
+  Verify the PMTiles archive and decode a representative tile. WDPA must also
+  pass every canonical/CSV/locale join for all six locales; old aliases must not
+  retain IDs from the retired contract.
+- `publications/state.json` has no active owner and points to the completed
+  publication receipt with its advanced allocation counter. The run record and
+  `_catalog/releases/{asset}.json` report the new release. Latest-object custom
+  metadata describes the new bytes.
+- Historical releases remain readable in their original release context, and
+  metadata/cache lookups distinguish historical and new releases.
+
+On failure, leave the schedule paused and use the captured transaction's recovery
+path. Do not delete publication state, recycle its IDs, or restart an old writer.
