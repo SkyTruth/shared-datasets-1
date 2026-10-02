@@ -54,6 +54,13 @@ executions must use the same URI. Capture these deployment facts alongside
 raw reports rather than rewriting a raw compatibility or measurement result.
 The image artifact lasts seven days; expired bytes require rerunning stages.
 
+The protected deployer's existing scheduled-ingestion role also needs
+`run.jobs.list` for the pre-deploy existence check. This is a read permission;
+the role still grants no job IAM editing, deletion or extra runtime dataset
+access. The narrowly allowlisted scheduled-ingestion IAM sync applies the role
+update. Observer IAM creation remains a separate rollout prerequisite; do not
+assume the deployer has `run.jobs.setIamPolicy` or Scheduler creation permission.
+
 Protected target applies refresh live infrastructure before creating their saved
 plans. A failed provider update can leave cached Terraform values ahead of the
 live resource. Disabling refresh made the alert-filter retry report no changes

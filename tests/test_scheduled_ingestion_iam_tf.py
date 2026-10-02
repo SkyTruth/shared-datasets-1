@@ -247,6 +247,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             "run.executions.list",
             "run.jobs.create",
             "run.jobs.get",
+            "run.jobs.list",
             "run.jobs.run",
             "run.jobs.runWithOverrides",
             "run.jobs.update",
