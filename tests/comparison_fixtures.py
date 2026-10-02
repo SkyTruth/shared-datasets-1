@@ -72,7 +72,7 @@ def bundle(root: Path, release, records, *, identity=None, fields=None, generati
     paths["manifest"].write_text(json.dumps(manifest))
     files = {}
     for item in artifacts:
-        if item["role"] in {"metadata", "schema", "manifest", "pmtiles"}:
+        if item["role"] in {"metadata", "schema", "manifest", "pmtiles", "fgb"}:
             path = paths[item["role"]]
             files[item["role"]] = {
                 "path": item["path"],
@@ -90,3 +90,81 @@ def generated(contract="contract-v1"):
         next_generated_feature_id_before_release=1,
         next_generated_feature_id_after_release=10,
     )
+
+
+def historical_bundle(root, release):
+    """A persisted v1 polygon bundle, including exact full-precision FGB bytes."""
+    import geopandas as gpd
+    import pyogrio
+    from shapely.geometry import MultiPolygon, Polygon, mapping
+
+    # The historical reader must not round MultiPolygon coordinates to 6 decimals.
+    geom = MultiPolygon(
+        [Polygon([(0.123456789012345, 0), (1, 0), (1, 1), (0.123456789012345, 0)])]
+    )
+    feature_id = "gen:coral-example"
+    properties = {"ext_id": "1", "name": "reef"}
+    feature_hash = (
+        "sha256:"
+        + hashlib.sha256(
+            model.canonical_json(
+                {"geometry": mapping(geom), "properties": properties}
+            ).encode()
+        ).hexdigest()
+    )
+    ref, paths = bundle(
+        root,
+        release,
+        [],
+        fields=[
+            {"name": "ext_id", "type": "string"},
+            {"name": "name", "type": "string"},
+        ],
+    )
+    pyogrio.write_dataframe(
+        gpd.GeoDataFrame(
+            [{"feature_id": feature_id, "feature_hash": feature_hash, **properties}],
+            geometry=[geom],
+            crs="EPSG:4326",
+        ),
+        paths["fgb"],
+        driver="FlatGeobuf",
+    )
+    old = {
+        "schema_version": 1,
+        "asset_slug": "example",
+        "release": release,
+        "feature_id": feature_id,
+        "feature_hash": feature_hash,
+        "properties": properties,
+    }
+    import gzip
+
+    with gzip.open(paths["metadata"], "wt") as output:
+        output.write(json.dumps(old) + "\n")
+    schema = json.loads(paths["schema"].read_text())
+    schema["schema_version"] = 1
+    paths["schema"].write_text(json.dumps(schema))
+    manifest = json.loads(paths["manifest"].read_text())
+    manifest.update(
+        schema_version=1,
+        release_feature_model_schema_version=1,
+        schema=schema,
+        feature_hash_algorithm="sha256:canonical-feature-content:v1",
+        identity={"strategy": "generated_hash"},
+        validation={"feature_count": 1},
+    )
+    for item in manifest["artifacts"]:
+        role = item["role"]
+        if role != "manifest":
+            item.update(
+                size=paths[role].stat().st_size,
+                sha256=hashlib.sha256(paths[role].read_bytes()).hexdigest(),
+            )
+    paths["manifest"].write_text(json.dumps(manifest))
+    for role, file in ref["files"].items():
+        file.update(
+            size=paths[role].stat().st_size,
+            sha256=hashlib.sha256(paths[role].read_bytes()).hexdigest(),
+        )
+    return (ref, paths), mapping(geom)

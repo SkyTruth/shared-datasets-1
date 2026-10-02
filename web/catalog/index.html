@@ -79,34 +79,6 @@
           </header>
 
           <p id="workspace-status" class="workspace-status" role="status" aria-live="polite"></p>
-          <div id="version-path-row" class="path-row version-row" hidden>
-            <label id="version-control" class="version-control" for="version-select">
-              <span>Version</span><select id="version-select"></select>
-            </label>
-            <div id="compare-release-controls" class="compare-controls" hidden>
-              <label for="compare-before">Before <select id="compare-before"></select></label>
-              <label for="compare-after">After <select id="compare-after"></select></label>
-            </div>
-            <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-panel">Compare releases</button>
-          </div>
-            <section id="use-section" class="use-section" aria-labelledby="use-title" hidden>
-              <h3 id="use-title">Use this dataset</h3>
-              <div class="use-code-toolbar">
-                <div class="use-tabs" role="tablist" aria-label="Code language">
-                  <button id="use-tab-python" type="button" role="tab" aria-selected="true" aria-controls="use-python">Python</button>
-                  <button id="use-tab-typescript" type="button" role="tab" aria-selected="false" aria-controls="use-typescript" tabindex="-1">TypeScript</button>
-                </div>
-                <button id="use-copy-code" class="icon-button" type="button">Copy code</button>
-              </div>
-              <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python"></pre>
-              <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" hidden></pre>
-              <p id="use-error" role="status" hidden></p>
-              <div class="use-credit">
-                <a id="use-attribution" target="_blank" rel="noopener"></a>
-                <button id="use-copy-attribution" type="button" aria-label="Copy attribution" title="Copy attribution">Copy credit</button>
-                <a class="use-help" href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/consumer-guide.md#use-this-dataset" target="_blank" rel="noopener">SDK setup</a>
-              </div>
-            </section>
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
               <div class="map-actions map-actions-left">
@@ -153,15 +125,25 @@
             <div id="feature-inspector" class="feature-inspector" hidden></div>
           </section>
 
+          <div id="version-path-row" class="path-row version-row" hidden>
+            <label id="version-control" class="version-control" for="version-select">
+              <span>Version</span><select id="version-select"></select>
+            </label>
+            <div id="compare-release-controls" class="compare-release-controls" hidden>
+              <label for="compare-before"><span class="compare-before-label">Before</span><select id="compare-before"></select></label>
+              <label for="compare-after"><span class="compare-after-label">After</span><select id="compare-after"></select></label>
+            </div>
+            <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-release-controls">Compare releases</button>
+            <button id="compare-details" class="compare-details" type="button" aria-expanded="false" aria-controls="compare-panel" hidden>▸ Details</button>
+          </div>
+          <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
-              <p id="compare-status" role="status" aria-live="polite"></p>
               <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
-                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 120 seconds. Larger inputs require an explicit local budget. No sampling is used.</p>
+                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 120 seconds. Historical v1 releases also stream up to 512 MiB of canonical FGB geometry; current releases use their stored hashes. Larger inputs require an explicit local budget. No sampling is used.</p>
                 <pre>uv run python scripts/compare_releases.py --baseline baseline.json --target target.json --output report.json</pre>
                 <a href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/compare-releases.md" target="_blank" rel="noopener">Pinned bundle preparation and CLI guide</a>
               </details>
               <div class="compare-overview"><div id="compare-summary"></div><div id="compare-schema"></div></div>
-              <button id="compare-report" class="icon-button" type="button" disabled>Export complete report</button>
               <div id="compare-table" hidden>
                 <div class="compare-controls">
                   <label>Search IDs and source properties <input id="compare-search" type="search" maxlength="200"></label>
@@ -248,6 +230,24 @@
             </div>
           </section>
 
+            <section id="use-section" class="use-section" aria-labelledby="use-title" hidden>
+              <h3 id="use-title">Use this dataset</h3>
+              <div class="use-code-toolbar">
+                <div class="use-tabs" role="tablist" aria-label="Code language">
+                  <button id="use-tab-python" type="button" role="tab" aria-selected="true" aria-controls="use-python">Python</button>
+                  <button id="use-tab-typescript" type="button" role="tab" aria-selected="false" aria-controls="use-typescript" tabindex="-1">TypeScript</button>
+                </div>
+                <button id="use-copy-code" class="icon-button" type="button">Copy code</button>
+              </div>
+              <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python"></pre>
+              <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" hidden></pre>
+              <p id="use-error" role="status" hidden></p>
+              <div class="use-credit">
+                <a id="use-attribution" target="_blank" rel="noopener"></a>
+                <button id="use-copy-attribution" type="button" aria-label="Copy attribution" title="Copy attribution">Copy credit</button>
+                <a class="use-help" href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/consumer-guide.md#use-this-dataset" target="_blank" rel="noopener">SDK setup</a>
+              </div>
+            </section>
           <section class="path-section" aria-label="Dataset paths">
 
             <div class="path-row">

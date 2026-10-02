@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {executionStatusText} from '../../web/catalog/execution-status.js';
+import {executionStatusText} from '../../web/catalog/release-reference.js';
 
 const observation = {
   schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: '2026-10-01T12:00:00Z',

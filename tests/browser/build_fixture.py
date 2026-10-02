@@ -138,6 +138,10 @@ def build(work: Path) -> None:
                 )["features"]
                 records = []
                 for feature in geometry:
+                    if tier == "polygons":
+                        from shapely.geometry import shape, mapping
+
+                        feature["geometry"] = mapping(shape(feature["geometry"]))
                     id = feature["properties"]["feature_id"]
                     props = (
                         {
@@ -191,6 +195,42 @@ def build(work: Path) -> None:
                     {"name": "optional", "type": "string"},
                 ],
             )
+            historical = tier == "polygons" and old
+            fgb_bytes = None
+            if historical:
+                import geopandas as gpd
+                import pyogrio
+                from shapely.geometry import shape
+
+                for record, feature in zip(records, geometry):
+                    record["schema_version"] = 1
+                    record["feature_hash"] = (
+                        "sha256:"
+                        + hashlib.sha256(
+                            model.canonical_json(
+                                {
+                                    "geometry": feature["geometry"],
+                                    "properties": record["properties"],
+                                }
+                            ).encode()
+                        ).hexdigest()
+                    )
+                    record.pop("geometry_hash")
+                    record.pop("properties_hash")
+                fgb_path = inputs / f"{slug}-{release['date']}.fgb"
+                pyogrio.write_dataframe(
+                    gpd.GeoDataFrame(
+                        [
+                            {**r["properties"], "feature_hash": r["feature_hash"]}
+                            for r in records
+                        ],
+                        geometry=[shape(f["geometry"]) for f in geometry],
+                        crs="EPSG:4326",
+                    ),
+                    fgb_path,
+                    driver="FlatGeobuf",
+                )
+                fgb_bytes = fgb_path.read_bytes()
             for file in release["files"]:
                 file["path"] = file["path"].replace("example-layer", slug)
                 if file["format"] == "pmtiles":
@@ -212,9 +252,15 @@ def build(work: Path) -> None:
                         mtime=0,
                     )
                 elif file["format"] == "schema":
-                    data = json.dumps(schema).encode()
+                    data = json.dumps(
+                        {**schema, "schema_version": 1} if historical else schema
+                    ).encode()
                 else:
-                    data = b"Download URL assertion only; not a FlatGeobuf fixture."
+                    data = (
+                        fgb_bytes
+                        if historical
+                        else b"Download URL assertion only; not a FlatGeobuf fixture."
+                    )
                 file["size"] = len(data)
                 file["sha256"] = hashlib.sha256(data).hexdigest()
                 target = objects / file["path"].split("example-bucket/", 1)[1]
@@ -248,6 +294,14 @@ def build(work: Path) -> None:
                 ),
                 validation={"feature_count": len(records)},
             )
+            if historical:
+                manifest.update(
+                    schema_version=1,
+                    release_feature_model_schema_version=1,
+                    schema={**schema, "schema_version": 1},
+                    feature_hash_algorithm="sha256:canonical-feature-content:v1",
+                    identity={"strategy": "generated_hash"},
+                )
             data = json.dumps(manifest).encode()
             file = {
                 "format": "manifest",

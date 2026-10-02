@@ -49,7 +49,7 @@ LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-
 EXECUTION_STATUS_FILE = "wdpa-monthly-execution.json"
 ROOT_STATIC_FILES = {
     "index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js",
-    "execution-status.js", "compare-releases.js", "workspace.js",
+    "compare-releases.js", "workspace.js",
     "workspace-contract.js", "catalog.json", EXECUTION_STATUS_FILE,
 }
 

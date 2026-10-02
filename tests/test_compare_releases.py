@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from dataclasses import replace
 
@@ -435,3 +436,109 @@ def test_geometry_colors_survive_generated_id_reset_without_matching_ids(tmp_pat
     ]:
         with pytest.raises(compare.ComparisonError):
             engine.map_features(side, ids)
+
+
+def test_historical_coral_geometry_uses_full_precision_without_joining_ids(tmp_path):
+    from tests.comparison_fixtures import historical_bundle
+
+    old, geom = historical_bundle(tmp_path / "before", A)
+    new = record(1, B, geometry=geom, name="reef")
+    new["properties"] = {"name": "reef"}
+    new["properties_hash"] = model.properties_hash(new["properties"])
+    engine = run(
+        tmp_path,
+        old,
+        bundle(
+            tmp_path / "after",
+            B,
+            [new],
+            identity=generated(),
+            fields=[{"name": "name", "type": "string"}],
+        ),
+    )
+    assert engine.summary["geometry_counts"] == dict(
+        novel=0, removed=0, metadata_changed=0, unchanged=1
+    )
+    assert engine.summary["counts"] is None
+    assert engine.map_features("baseline", ["gen:coral-example"]) == [
+        {"feature_id": "gen:coral-example", "change": "unchanged"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure", ["checksum", "truncated", "properties", "budget", "missing"]
+)
+def test_historical_geometry_boundary_rejects_incomplete_or_unpinned_bytes(
+    tmp_path, failure
+):
+    from tests.comparison_fixtures import historical_bundle
+
+    a, _ = historical_bundle(tmp_path / "a", A)
+    b = bundle(tmp_path / "b", B, [record(1, B)])
+    limits = compare.Limits()
+    if failure == "checksum":
+        # Pin intact bytes against an incorrect declared digest, exercising the
+        # final stream checksum rather than failing early during FGB decoding.
+        a[0]["files"]["fgb"]["sha256"] = "0" * 64
+        manifest = json.loads(a[1]["manifest"].read_text())
+        for item in manifest["artifacts"]:
+            if item["role"] == "fgb":
+                item["sha256"] = "0" * 64
+        a[1]["manifest"].write_text(json.dumps(manifest))
+        a[0]["files"]["manifest"].update(
+            size=a[1]["manifest"].stat().st_size,
+            sha256=hashlib.sha256(a[1]["manifest"].read_bytes()).hexdigest(),
+        )
+    elif failure == "truncated":
+        a[1]["fgb"].write_bytes(a[1]["fgb"].read_bytes()[:-8])
+    elif failure == "properties":
+        import gzip
+
+        with gzip.open(a[1]["metadata"], "rt") as stream:
+            value = json.load(stream)
+        value["properties"]["name"] = "altered"
+        with gzip.open(a[1]["metadata"], "wt") as stream:
+            stream.write(json.dumps(value))
+        evidence = {
+            "size": a[1]["metadata"].stat().st_size,
+            "sha256": hashlib.sha256(a[1]["metadata"].read_bytes()).hexdigest(),
+        }
+        a[0]["files"]["metadata"].update(evidence)
+        manifest = json.loads(a[1]["manifest"].read_text())
+        for item in manifest["artifacts"]:
+            if item["role"] == "metadata":
+                item.update(evidence)
+        a[1]["manifest"].write_text(json.dumps(manifest))
+        a[0]["files"]["manifest"].update(
+            size=a[1]["manifest"].stat().st_size,
+            sha256=hashlib.sha256(a[1]["manifest"].read_bytes()).hexdigest(),
+        )
+    elif failure == "budget":
+        limits = replace(limits, max_geometry_bytes=1)
+    else:
+        a[0]["files"].pop("fgb")
+    expected = {
+        "checksum": "checksum",
+        "truncated": "truncated",
+        "properties": "metadata differs",
+        "budget": "streaming geometry budget",
+        "missing": "exact canonical FGB",
+    }
+    with pytest.raises(compare.ComparisonError, match=expected[failure]):
+        run(tmp_path, a, b, limits=limits)
+
+
+def test_historical_identity_cannot_claim_modern_id_continuity():
+    fields = {
+        "feature_id": model.ReleaseSchemaField("feature_id", "string", False, True)
+    }
+    modern = {
+        "release_feature_model_schema_version": 2,
+        "identity": generated(),
+        "hashes": {
+            "geometry_hash_algorithm": model.GEOMETRY_HASH_ALGORITHM,
+            "properties_hash_algorithm": model.PROPERTIES_HASH_ALGORITHM,
+        },
+    }
+    old = {**modern, "release_feature_model_schema_version": 1}
+    assert not compare.identity_compatibility(old, modern, fields, fields)["compatible"]

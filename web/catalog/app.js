@@ -1,6 +1,5 @@
-import {executionStatusText} from "./execution-status.js";
 import {createComparisonController} from "./compare-releases.js";
-import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
+import {executionStatusText, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
 import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, SNAPSHOT_MAX_BYTES} from "./workspace.js";
 

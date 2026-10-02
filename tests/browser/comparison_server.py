@@ -20,7 +20,7 @@ class FixtureStore(viewer.LocalCatalogWebStore):
         return super().read_static(name)
 
 
-def reader(ref, target, *, bucket_name, comparison):
+def fixture_path(ref):
     indexes = [
         json.loads(p.read_text()) for p in (work / "inputs/indexes").glob("*.json")
     ]
@@ -36,12 +36,22 @@ def reader(ref, target, *, bucket_name, comparison):
     ):
         raise OSError("Fixture generation not retained")
     source = work / "objects" / ref["path"].split("example-bucket/", 1)[1]
-    target.write_bytes(source.read_bytes())
+    return source
+
+
+def reader(ref, target, *, bucket_name, comparison):
+    target.write_bytes(fixture_path(ref).read_bytes())
     comparison.verify_bytes(target, ref)
 
 
+def geometry_opener(ref, *, bucket_name):
+    return fixture_path(ref).open("rb")
+
+
 store = FixtureStore(work / "site")
-jobs = comparisons.ComparisonJobs(root=work / "comparison-jobs", reader=reader)
+jobs = comparisons.ComparisonJobs(
+    root=work / "comparison-jobs", reader=reader, geometry_opener=geometry_opener
+)
 handler = viewer.make_handler(
     catalog_cache=viewer.CatalogJsonCache(loader=store.read_catalog_json),
     object_store=store,
@@ -51,4 +61,6 @@ handler = viewer.make_handler(
     allowed_email_domains=("skytruth.org",),
     comparison_jobs=jobs,
 )
-ThreadingHTTPServer(("127.0.0.1", int(os.environ.get("CATALOG_BROWSER_PORT", "4179"))), handler).serve_forever()
+ThreadingHTTPServer(
+    ("127.0.0.1", int(os.environ.get("CATALOG_BROWSER_PORT", "4179"))), handler
+).serve_forever()

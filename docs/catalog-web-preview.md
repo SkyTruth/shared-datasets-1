@@ -29,6 +29,13 @@ Preview-bucket objects are not served by the production
 including localized metadata sidecars, continue to resolve through the preview
 viewer as signed GCS URLs unless a separate preview CDN is explicitly created.
 
+Catalog web files publish before the separately protected viewer image deploy.
+Startup dependencies must therefore remain in JavaScript modules already served
+by the existing viewer allowlist. WDPA execution formatting lives in
+`release-reference.js`; adding it as a new eager `execution-status.js` import
+made the catalog fail to start on older viewer revisions. The browser acceptance
+transport enforces the previous module allowlist while exercising current code.
+
 ## Build locally
 
 ```bash
