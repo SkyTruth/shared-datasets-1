@@ -482,6 +482,12 @@ terraform -chdir=terraform/envs/prod plan \
   -var='cron_alert_notification_channels=["projects/shared-datasets-1/notificationChannels/CHANNEL_ID"]'
 ```
 
+The protected alert-policy deployer needs both
+`logging.notificationRules.create` and `logging.notificationRules.delete`:
+updating a log-based policy replaces its internal notification rule. If the
+sync reports a missing permission, repair the custom role through the existing
+bootstrap and policy-sync workflow before treating the new filter as deployed.
+
 Alternatively, Terraform can create a Slack channel when both
 `cron_alert_slack_channel_name` and sensitive `cron_alert_slack_auth_token` are
 provided, but using an existing Google Cloud Slack notification channel is
