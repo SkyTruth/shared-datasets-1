@@ -94,6 +94,24 @@ source-property changes. No feature counts come from PMTiles.
 The primary map displays the union of Before and After geometry. New geometry
 is green, removed geometry red, and identical geometry with altered source
 metadata yellow. Unchanged geometry is gray with faint fill and outline opacity.
+Changed fills, outlines, lines and points draw above all unchanged geometry from
+both releases, so later gray layers cannot obscure the red, green or yellow marks.
+
+Click **New geometry**, **Removed geometry**, **Metadata changed** or **Unchanged**
+in the legend to show only that category and zoom to its display geometry. The
+selected button is pressed; click it again to restore the full union. Map clicks
+ignore hidden categories, including transparent overlapping gray points. The
+feature table also filters by geometry membership when feature IDs are comparable;
+a moved ID can belong to both the new and removed categories. Category selection
+survives a basemap change and resets when either release changes or comparison closes.
+
+Category zoom visits the union overview to include items outside the current
+viewport, then fits matching loaded display geometry. It retains bounds seen at
+finer zooms. This uses PMTiles geometry without reading canonical FGB or increasing
+the comparison disk budget. Overview tiles may omit fine features; if no matching
+display geometry is available, the viewer explains that finer tiles need inspection.
+An empty category hides all features without moving the map.
+
 A moved feature has a red old footprint and green new footprint. Exact shared
 geometry renders once from the After source to avoid doubling its opacity.
 
@@ -120,7 +138,13 @@ metadata using its captured path and generation, without joining a reused ID to
 another release. Map clicks remain available while the comparison runs and on
 static viewers without comparison jobs. Clicking empty space, changing either
 release, closing comparison or rebuilding the map clears the selection; delayed
-metadata cannot restore a superseded inspector.
+metadata cannot restore a superseded inspector. Once both clicked hits load source
+metadata, changed fields and their values are highlighted yellow. Pairing uses
+identical canonical geometry hashes across the two releases, including historical
+v1 geometry recovered by the engine; it never assumes reset IDs identify the same
+feature. Missing fields differ from explicit nulls; object key order does not
+create a change. Hash-excluded operational fields stay unhighlighted. Paired table
+inspection also highlights its source-property changes.
 
 Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
 historical tile generations produce visible errors. Map signer and comparison
@@ -141,19 +165,39 @@ The v2 writer contract is unchanged. The historical reader stays necessary while
 these citable releases remain available; removing it requires migrating their
 comparison evidence or retiring this explicitly supported reader capability.
 
+WDPA Marine's June 5 and June 7 releases also use v1; June 9 and later releases
+use stored separate hashes. June 7's canonical FGB is 1,293,973,624 bytes, which
+the former 512-MiB stream ceiling rejected before opening it. The reader now
+allows a bounded 2-GiB stream per release and a ten-minute complete-job deadline,
+with 8-MiB generation-pinned GCS reads. These allowances do not allocate that
+amount of memory or copy the FGB to the job workspace.
+
+FlatGeobuf omits null-valued property entries. The historical boundary therefore
+compares the projected properties with null entries omitted on both sides, while
+retaining exact feature hashes, IDs, counts and archive checksum validation.
+Source-property hashes and inspection still distinguish missing fields from null.
+The previous reader falsely rejected WDPA's null `GIS_AREA` and `GIS_M_AREA` values
+as a metadata mismatch.
+
 Read-only checks on October 2 against pinned published inputs established:
 
 | Asset / Before → After | Rows Before / After | Local viewer job | Workspace size | Unique geometry changes |
 | --- | ---: | ---: | ---: | --- |
 | Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 47.44 s | 19.6 MiB | 14 new, 14 removed, 18,409 unchanged |
 | WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 4.24 s | 15.1 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
+| WDPA marine / 2026-06-07 → 2026-10-01 | 17,657 / 17,938 | 165.36 s | 14.1 MiB | 842 new, 556 removed, 572 metadata, 16,019 unchanged |
 | EAMLIS / 2026-10-01 → 2026-10-02 | 64,386 / 64,400 | 17.02 s | 45.8 MiB | 4 new, 2 removed, 22,272 metadata, 1,226 unchanged |
 
 These timings run the real viewer job code with already downloaded, pinned
 canonical inputs. Workspace sizes include its downloaded sidecars and contracts. Coral's historical FGB is
 329,582,712 bytes; local downloading took about 294 seconds, outside this cached
-comparison measurement. Cloud Run/GCS transport and CPU timings remain unverified.
-WDPA and EAMLIS use sidecars only. Their classifications depend on IDs and hashes,
+comparison measurement. The June 7 WDPA comparison also completed through the real
+viewer GCS readers with default budgets in 273.77 seconds, using 14.1 MiB of
+workspace files and 905.4 MiB peak process RSS. Both release-scoped map lookups
+returned canonical hashes and categories. This read pinned June 7 FGB generation
+`1780838301984256` and October 1 sidecar generation `1790866699087905`.
+Cloud Run CPU timings remain unverified. September WDPA and EAMLIS use sidecars
+only. Their classifications depend on IDs and hashes,
 not expanded property payloads. The previous full-record SQLite representation
 made EAMLIS exceed the 128-MiB budget: its two approximately 8.3-MiB compressed
 sidecars each expand to about 100 MiB. The compact index removes that expanded
@@ -174,7 +218,7 @@ paths/generations are equality checks, not download authority.
 
 ```http
 POST /api/comparisons
-GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=
+GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=&geometry_change=
 GET /api/comparisons/{job_id}?feature_id=1
 POST /api/comparisons/{job_id}/map
 POST /api/comparisons/{job_id}/cancel
@@ -188,7 +232,11 @@ returns `202` with a job ID and pinned inputs. Polls return state/progress and,
 on completion, summary plus a bounded page when feature identity is comparable.
 `POST /api/comparisons/{job_id}/map` takes `side` (`baseline` or `target`) and
 1–200 unique `feature_ids`, with a 16-KiB request cap. It returns geometry colors
-within that release even when cross-release feature identity is incompatible.
+and canonical `geometry_hash` within that release even when cross-release feature
+identity is incompatible. Summary `property_hash_exclusions` includes exclusions
+from both manifests regardless of feature-ID compatibility. Optional page
+`geometry_change` accepts `novel`, `removed`, `metadata_changed`, `unchanged` or
+empty, and intersects with search and feature classification filters.
 Unknown IDs fail visibly rather than being treated as unchanged. Invalid selectors/options return
 400; missing authentication 401; denied domains 403; expired/unavailable jobs 404;
 changed selected snapshots 409; oversized requests/responses/reports 413; job
@@ -202,12 +250,12 @@ a 15-second transport timeout with retries disabled.
 | --- | ---: |
 | Records per release | 100,000 |
 | Bytes per downloaded sidecar/schema/manifest | 64 MiB |
-| Historical canonical FGB streamed per release | 512 MiB |
+| Historical canonical FGB streamed per release | 2 GiB |
 | Individual FGB feature | 64 MiB |
 | Schema/manifest contract each | 4 MiB |
 | Expanded bytes per sidecar | 256 MiB |
 | Workspace files per job | 128 MiB |
-| Computation/download deadline | 120 seconds |
+| Computation/download deadline | 600 seconds |
 | Individual sidecar row | 900 KiB |
 | Page size | 100 maximum; UI uses 50 |
 | Response or complete report | 10 MiB |

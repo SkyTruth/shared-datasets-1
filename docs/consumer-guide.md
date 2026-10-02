@@ -450,12 +450,8 @@ corner of your interface; link it to the original source. Full citation,
 license, lifecycle guidance, and source caveats remain in the dataset's Source
 section and documentation. Follow any additional attribution required by those terms.
 
-The catalog retains **Open workspace** for importing existing v1 JSON files.
-It validates the complete file, checks artifact access, then restores supported
-selection and map controls together. Unavailable bytes or unsupported state
-fail visibly without substituting a release. Workspace saving and lockfile
-export are no longer part of the catalog interface. Advanced snapshot APIs
-remain available for programmatic workflows.
+Advanced snapshot APIs remain available for programmatic workflows; the catalog
+uses inline integration examples and does not import workspace files.
 
 Pinned references do not archive remote bytes or guarantee retention. Preserve
 local files if your analysis requires independent retention. See the

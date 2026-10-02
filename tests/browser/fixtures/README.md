@@ -106,3 +106,35 @@ with only `feature_id`. Metadata contains no machine-local workspace paths.
 | --- | ---: | --- |
 | union-polygons-before.pmtiles | 3407 | 0c372994eb305e3e52e88f1ba138cc5c38d463c9d70ef125bd687c5990ea24b2 |
 | union-polygons-after.pmtiles | 3016 | 8c4603fb7bb5db14ee051d00ab48c4d04f9ff2ecc30545aea343fa6d91dd1d40 |
+
+
+The `union-overlap-before`/`union-overlap-after` CC0 fixtures have five points
+per release. Gray unchanged neighbors are just 0.0005 degrees from the red,
+green and yellow points, so their dots overlap at overview zoom. Tests verify
+changed colors remain on top across both sources and that category focus filters
+clicks as well as paint. All five IDs survive zoom 0; tiles have only `feature_id`.
+
+Built on 2026-10-02 with resolved `/usr/local/bin/tippecanoe` v2.79.0,
+`/usr/local/bin/pmtiles` reporting `dev, commit none, built at unknown`, and
+`/usr/local/bin/tippecanoe-decode` from the same Tippecanoe installation.
+Commands ran in a named task directory with relative filenames:
+
+```sh
+tippecanoe -f -Z0 -z4 --drop-rate=1 --no-feature-limit --no-tile-size-limit \
+  -l changes --name 'Synthetic overlapping comparison before' \
+  --description 'Repository-authored overlapping points; CC0' \
+  -o union-overlap-before.mbtiles union-overlap-before.geojson
+pmtiles convert union-overlap-before.mbtiles union-overlap-before.pmtiles
+pmtiles verify union-overlap-before.pmtiles
+pmtiles show union-overlap-before.pmtiles
+tippecanoe-decode union-overlap-before.pmtiles 0 0 0
+```
+
+Repeat with `after`. Both have PMTiles v3 magic, verified gzip MVT contents,
+17 addressed tiles and five decoded zoom-0 points. No machine-local workspace paths appear
+in archive metadata. The tests enforce these exact verified bytes.
+
+| File | Bytes | SHA256 |
+| --- | ---: | --- |
+| union-overlap-before.pmtiles | 2585 | c1c15f45c64f4b275ed971bf08fd3df59c298066da1ea696e32a9106c6eeef20 |
+| union-overlap-after.pmtiles | 2602 | d76eb6fdc9a61545746d13bb54131eeb05848e736df9c55d52204ee1a17fa19f |

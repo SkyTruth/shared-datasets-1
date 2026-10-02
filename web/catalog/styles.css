@@ -1341,7 +1341,13 @@ h3 {
 .compare-method, .compare-inputs { font-size: .8rem; color: var(--muted); margin: .7rem 0; }
 .compare-local-guide { margin: .7rem 0; font-size: .8rem; color: var(--muted); }
 .compare-legend { display: flex; flex-wrap: wrap; gap: .8rem; font-size: .8rem; margin: .7rem 0; }
-.compare-legend span::before { content: ""; display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; background: var(--change-color); margin-right: .3rem; }
+.compare-legend button { padding: .3rem .45rem; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.compare-legend button::before { content: ""; display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; background: var(--change-color); margin-right: .3rem; }
+.compare-legend button:hover, .compare-legend button:focus-visible { border-color: var(--change-color); }
+.compare-legend button[aria-pressed="true"] { border-color: var(--change-color); background: var(--panel); font-weight: 700; }
+.compare-legend:has([aria-pressed="true"]) button[aria-pressed="false"] { opacity: .5; }
+.compare-legend button:disabled { cursor: wait; opacity: .5; }
+.feature-table .metadata-changed, #compare-inspector .metadata-changed > * { background: #fff3b0; color: #40370c; }
 .compare-unchanged::before { opacity: .4; }
 .compare-map-note { font-size: .8rem; color: var(--muted); margin: .4rem 0; }
 .comparison-active #colorize-control, .comparison-active #layer-control, .comparison-active #metadata-language-control { display: none !important; }
@@ -1368,7 +1374,5 @@ h3 {
 .use-credit button { border: 0; padding: 2px 4px; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
 .use-help { margin-left: auto; }
 .use-credit button:hover { color: var(--accent); }
-#workspace-status:empty { display: none; }
 @media (max-width: 620px) { .detail-header { grid-template-columns: minmax(0, 1fr); } }
-.workspace-status { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .detail-actions { flex-wrap: wrap; }

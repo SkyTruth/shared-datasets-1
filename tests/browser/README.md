@@ -58,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal sixteen-scenario count gate cannot supply a misleading failure.
+so the normal fourteen-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -77,6 +77,12 @@ operation, narrow layout, cancellation and a delayed start. Polygon clicks inspe
 both pinned releases across ID resets, preserve identical overlapping hits, and
 discard delayed metadata after a selection change. `comparison_server.py`
 uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
+The overlapping-point scenario checks actual red, green and yellow pixels above
+unchanged gray neighbors. It clicks all four category buttons, verifies filtered
+hits and table membership, checks zoom, toggling, basemap persistence and release
+reset. Polygon map inspection and paired table inspection also assert yellow
+source-property cells, including absent versus explicit null.
+
 Each scenario has its own real comparison job store, retaining the production
 job limits without accumulating retained jobs from earlier scenarios.
 Set `CATALOG_BROWSER_PORT` to use another loopback port for a concurrent local run.
@@ -88,8 +94,8 @@ browsing/inspection still work.
 Historical comparison-map denial stays visible while the table is searched and
 inspected; changing Before/After selections automatically retries using their pinned inputs.
 
-The suite has sixteen required scenarios, including generated TypeScript
-execution, inline copying/layout, workspace imports and WDPA execution status. The WDPA scenario
+The suite has fourteen required scenarios, including generated TypeScript
+execution, inline copying/layout, removal of workspace import controls and WDPA execution status. The WDPA scenario
 preserves each realm's published release alongside overall execution failures,
 newer running executions, cancellation and stale observations. The SDK build in the setup above is
 required for the generated integration test.

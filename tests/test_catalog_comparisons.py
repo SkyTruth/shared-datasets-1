@@ -7,6 +7,7 @@ import pytest
 
 from services.catalog_viewer import comparisons, run as viewer
 from scripts import compare_releases as engine
+from scripts import release_feature_model as model
 from tests.comparison_fixtures import bundle, record, generated
 
 A, B = "2026-01-01", "2026-02-01"
@@ -240,7 +241,19 @@ def test_map_endpoint_is_release_scoped_even_without_compatible_feature_ids(tmp_
                 context, path=path, payload={"side": side, "feature_ids": ["1"]}
             )
             assert status == 200
-            assert result["map_features"] == [{"feature_id": "1", "change": color}]
+            assert result["map_features"] == [
+                {
+                    "feature_id": "1",
+                    "change": color,
+                    "geometry_hash": record(
+                        1,
+                        A if side == "baseline" else B,
+                        geometry={"type": "Point", "coordinates": [9, 0]}
+                        if side == "target"
+                        else None,
+                    )["geometry_hash"],
+                }
+            ]
         assert call(context, path=path, headers={})[0] == 401
         assert (
             call(
@@ -314,7 +327,11 @@ def test_historical_coral_completes_through_viewer_and_colors_legacy_handles(tmp
         )
         assert status == 200
         assert colors["map_features"] == [
-            {"feature_id": "gen:coral-example", "change": "metadata_changed"}
+            {
+                "feature_id": "gen:coral-example",
+                "change": "metadata_changed",
+                "geometry_hash": model.geometry_hash(geom),
+            }
         ]
     finally:
         jobs.pool.shutdown(wait=True)
