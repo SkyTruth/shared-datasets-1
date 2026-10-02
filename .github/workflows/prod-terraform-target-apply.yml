@@ -133,7 +133,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          plan_args=(-input=false -refresh=false -out="${RUNNER_TEMP}/target-apply.tfplan")
+          plan_args=(-input=false -refresh=true -out="${RUNNER_TEMP}/target-apply.tfplan")
           while IFS= read -r target; do
             [[ -z "${target}" ]] && continue
             plan_args+=("-target=${target}")

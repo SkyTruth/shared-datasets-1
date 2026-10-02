@@ -67,7 +67,8 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         apply_run = self.steps["Terraform apply"]["run"]
         step_names = [step["name"] for step in self.job["steps"] if "name" in step]
 
-        self.assertIn("-refresh=false", plan_run)
+        self.assertIn("-refresh=true", plan_run)
+        self.assertNotIn("-refresh=false", plan_run)
         self.assertIn('plan_args+=("-target=${target}")', plan_run)
         self.assertIn('plan_args+=("-var=${tf_var}")', plan_run)
         self.assertIn("scripts/terraform_plan_allowlist.py", enforce_run)

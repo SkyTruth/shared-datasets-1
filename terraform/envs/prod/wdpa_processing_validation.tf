@@ -4,6 +4,12 @@ variable "wdpa_validation_image" {
   default     = "unused-until-validation-deploy"
 }
 
+variable "wdpa_validation_runtime_inspection" {
+  description = "Inspect cgroup files in the existing isolated image without source processing."
+  type        = bool
+  default     = false
+}
+
 # Public frozen inputs need no bucket IAM. This identity cannot publish datasets.
 locals {
   wdpa_validation_account_id    = "wdpa-processing-validation"
@@ -31,7 +37,7 @@ module "wdpa_processing_validation_job" {
   location              = var.region
   name                  = "wdpa-processing-validation"
   image                 = var.wdpa_validation_image
-  command               = ["python", "scripts/cloud_wdpa_validation.py"]
+  command               = var.wdpa_validation_runtime_inspection ? jsondecode(file("${path.module}/../../../catalog/wdpa-runtime-inspection.json")).command : ["python", "scripts/cloud_wdpa_validation.py"]
   service_account_email = local.wdpa_validation_account_email
   cpu                   = "4"
   memory                = "8Gi"

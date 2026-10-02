@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from pathlib import Path
 
 SA = "module.wdpa_validation_service_account.google_service_account.this"
 JOB = "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this"
@@ -13,7 +14,18 @@ IAM = "google_service_account_iam_member.wdpa_validation_deployer"
 ALLOWED = {SA, JOB, IAM}
 
 
-def check(plan, *, image, deployer):
+def check(plan, *, image, deployer, runtime_inspection=False):
+    command = ["python", "scripts/cloud_wdpa_validation.py"]
+    if runtime_inspection:
+        recipe = json.loads(
+            (
+                Path(__file__).resolve().parents[1]
+                / "catalog/wdpa-runtime-inspection.json"
+            ).read_text()
+        )
+        if recipe["schema_version"] != 1:
+            raise ValueError("Unsupported runtime inspection recipe")
+        command = recipe["command"]
     if not re.fullmatch(
         r"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:[0-9a-f]{64}",
         image,
@@ -64,15 +76,14 @@ def check(plan, *, image, deployer):
                 or len(task["containers"]) != 1
                 or len(task["volumes"]) != 1
                 or container["image"] != image
-                or container["command"]
-                != ["python", "scripts/cloud_wdpa_validation.py"]
+                or container["command"] != command
                 or container["resources"][0]["limits"] != {"cpu": "4", "memory": "8Gi"}
                 or volume["empty_dir"][0] != {"medium": "DISK", "size_limit": "100Gi"}
                 or [
-                    (m["name"], m["mount_path"], m.get("sub_path"))
+                    (m["name"], m["mount_path"], m.get("sub_path") in (None, ""))
                     for m in container["volume_mounts"]
                 ]
-                != [("work", "/work", None)]
+                != [("work", "/work", True)]
                 or {e["name"]: e.get("value") for e in container["env"]}
                 != {
                     "TMPDIR": "/work/tmp",
@@ -87,9 +98,15 @@ def main():
     parser.add_argument("plan")
     parser.add_argument("--image", required=True)
     parser.add_argument("--deployer", required=True)
+    parser.add_argument("--runtime-inspection", action="store_true")
     args = parser.parse_args()
     with open(args.plan) as source:
-        check(json.load(source), image=args.image, deployer=args.deployer)
+        check(
+            json.load(source),
+            image=args.image,
+            deployer=args.deployer,
+            runtime_inspection=args.runtime_inspection,
+        )
 
 
 if __name__ == "__main__":
