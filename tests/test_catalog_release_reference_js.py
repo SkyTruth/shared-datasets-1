@@ -149,7 +149,7 @@ let mountCount=0, cancelCount=0;
 const modulePromise=new Promise(resolve=>{finishImport=resolve;});
 const noOp=()=>{};
 const node={hidden:false,textContent:'',replaceChildren:noOp};
-const renderContext=vm.createContext({state:{mapRequestSerial:0,featureLookupSerial:0,selectedSlugs:['example-layer']},old,
+const renderContext=vm.createContext({comparisonController:{isOpen:()=>false},state:{mapRequestSerial:0,featureLookupSerial:0,selectedSlugs:['example-layer']},old,
  document:{querySelector:()=>node}, elements:{mapSection:{},mapStatus:{},pmtilesRow:{},pmtiles:{},},
  loadMapModule:()=>modulePromise, setZoomSelectionEnabled:noOp,clearFeatureInspector:noOp,clearColorLegend:noOp,
  resetMetadataLanguageControl:noOp,renderMetadataSidecarPath:noOp,resetColorizeControl:noOp,resetLayerControl:noOp,

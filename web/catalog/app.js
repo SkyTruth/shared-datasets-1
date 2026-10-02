@@ -150,7 +150,16 @@ const elements = {
   toast: createToastElement(),
 };
 
-const comparisonController = createComparisonController({loadMapModule});
+const comparisonController = createComparisonController({loadMapModule, getBasemap: () => state.basemap,
+  onModeChange(enabled, {restore}) {
+    state.mapRequestSerial++; state.featureLookupSerial++;
+    clearFeatureInspector(); clearColorLegend(); setZoomSelectionEnabled(false);
+    elements.mapSection.classList.toggle("comparison-active", enabled);
+    if (enabled) elements.mapSection.hidden = false;
+    for (const id of ["use-dataset", "save-workspace"]) document.getElementById(id).disabled = enabled;
+    if (restore) renderSelectedPmtiles();
+  },
+});
 
 const collator = new Intl.Collator("en", { sensitivity: "base" });
 const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1212,6 +1221,7 @@ function flashFgbDownloadState(label) {
 }
 
 function renderSelectedPmtiles() {
+  if (comparisonController.isOpen()) { comparisonController.refreshMap(); return; }
   const assets = selectedAssets();
   if (!assets.length) {
     return;
@@ -1221,6 +1231,7 @@ function renderSelectedPmtiles() {
 }
 
 async function renderPmtiles(assets) {
+  if (comparisonController.isOpen()) return;
   const requestSerial = ++state.mapRequestSerial;
   state.mapModule?.cancelMapPreview();
   const references = Array.isArray(assets) ? assets : [assets];
