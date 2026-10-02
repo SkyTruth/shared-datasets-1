@@ -278,11 +278,15 @@ class Comparison:
         self.cancelled, self.progress = cancelled, progress
         self.started = time.monotonic()
         self.summary = None
+        self.metadata_sources = {}
 
-    def check(self):
+    def check(self, *, started=None):
         if self.cancelled():
             raise ComparisonCancelled("Comparison cancelled")
-        if time.monotonic() - self.started > self.limits.max_seconds:
+        if (
+            time.monotonic() - (self.started if started is None else started)
+            > self.limits.max_seconds
+        ):
             raise ComparisonLimit(
                 "Comparison time budget exceeded; use the local CLI with a larger explicit budget"
             )
@@ -292,8 +296,8 @@ class Comparison:
         ):
             raise ComparisonLimit("Comparison disk budget exceeded; use the local CLI")
 
-    def verify_bytes(self, path: Path, ref: dict):
-        self.check()
+    def verify_bytes(self, path: Path, ref: dict, *, started=None):
+        self.check(started=started)
         size = path.stat().st_size
         if size > self.limits.max_input_bytes:
             raise ComparisonLimit("Input exceeds max_input_bytes; use the local CLI")
@@ -306,6 +310,54 @@ class Comparison:
                 raise ComparisonError(
                     "Input checksum does not match pinned declaration"
                 )
+
+    def iter_records(self, path: Path, *, started=None):
+        """Stream bounded records without retaining expanded metadata."""
+        count, expanded = 0, 0
+        with gzip.open(path, "rb") as handle:
+            while True:
+                self.check(started=started)
+                offset = handle.tell()
+                line = handle.readline(model.DEFAULT_MAX_SIDECAR_RECORD_BYTES + 1)
+                if not line:
+                    break
+                expanded += len(line)
+                if (
+                    len(line) > model.DEFAULT_MAX_SIDECAR_RECORD_BYTES
+                    or expanded > self.limits.max_expanded_bytes
+                ):
+                    raise ComparisonLimit(
+                        "Expanded sidecar or row exceeds the comparison budget; use the local CLI"
+                    )
+                if not line.strip():
+                    continue
+                count += 1
+                if count > self.limits.max_rows:
+                    raise ComparisonLimit("Sidecar exceeds max_rows; use the local CLI")
+                yield offset, read_json(line)
+
+    def detail_source(self, side, *, started):
+        path, ref = self.metadata_sources[side]
+        # CLI paths can be changed after classification. Recheck the pinned bytes
+        # before using them as the detail/search source.
+        self.verify_bytes(path, ref, started=started)
+        return path
+
+    def detail_record(self, side, feature_id, offset, *, started):
+        path = self.detail_source(side, started=started)
+        with gzip.open(path, "rb") as handle:
+            # Offsets point into the validated uncompressed stream. Seeking
+            # decompresses preceding bytes without parsing preceding JSON rows.
+            handle.seek(offset)
+            self.check(started=started)
+            record = read_json(
+                handle.readline(model.DEFAULT_MAX_SIDECAR_RECORD_BYTES + 1)
+            )
+        if record["feature_id"] != feature_id:
+            raise ComparisonError(
+                "Validated metadata offset differs from the indexed feature"
+            )
+        return record
 
     def load(self, db, side: str, ref: dict, paths: dict, open_geometry=None):
         for role in ("metadata", "schema", "manifest"):
@@ -379,8 +431,13 @@ class Comparison:
                 if role in paths and role != "fgb":
                     self.verify_bytes(paths[role], evidence)
         db.execute(
-            f"CREATE TABLE {side} (id TEXT PRIMARY KEY, identity_key TEXT UNIQUE, geometry TEXT, properties_hash TEXT, record TEXT)"
+            f"CREATE TABLE {side} (id TEXT PRIMARY KEY, identity_key TEXT UNIQUE, geometry BLOB, properties_hash BLOB, metadata_offset INTEGER NOT NULL)"
         )
+        if legacy:
+            # Only v1's FGB validation needs these hashes, not the full properties.
+            db.execute(
+                "CREATE TEMP TABLE legacy_records (id TEXT PRIMARY KEY, feature_hash TEXT, projection_hash TEXT)"
+            )
         raw_identity = manifest.get("identity")
         try:
             model.validate_identity_metadata(raw_identity)
@@ -396,74 +453,65 @@ class Comparison:
             raise ComparisonError(
                 "Manifest needs a non-negative complete feature_count"
             )
-        count, expanded = 0, 0
-        with gzip.open(paths["metadata"], "rb") as handle:
-            while True:
-                self.check()
-                line = handle.readline(model.DEFAULT_MAX_SIDECAR_RECORD_BYTES + 1)
-                if not line:
-                    break
-                expanded += len(line)
+        count = 0
+        for offset, record in self.iter_records(paths["metadata"]):
+            if legacy:
                 if (
-                    len(line) > model.DEFAULT_MAX_SIDECAR_RECORD_BYTES
-                    or expanded > self.limits.max_expanded_bytes
+                    record.get("schema_version") != 1
+                    or record.get("asset_slug") != ref["asset_slug"]
+                    or record.get("release") != ref["release"]
+                    or not isinstance(record.get("feature_id"), str)
+                    or not LEGACY_FEATURE_ID_RE.fullmatch(record["feature_id"])
+                    or not isinstance(record.get("properties"), dict)
                 ):
-                    raise ComparisonLimit(
-                        "Expanded sidecar or row exceeds the comparison budget; use the local CLI"
+                    raise ComparisonError("Invalid historical sidecar record")
+                model.validate_hash(
+                    record.get("feature_hash", ""), label="feature_hash"
+                )
+                if set(record["properties"]) - set(fields):
+                    raise ComparisonError(
+                        "Historical properties are outside the release schema"
                     )
-                if not line.strip():
-                    continue
-                record = read_json(line)
+                record["properties"] = {
+                    k: v
+                    for k, v in record["properties"].items()
+                    if k not in LEGACY_BOOKKEEPING
+                }
+                record["geometry_hash"] = None
+                record["properties_hash"] = model.properties_hash(
+                    record["properties"]
+                )
+            else:
+                self.validate_record(record, ref, fields, identity)
+            key_value = None if legacy else model.identity_key_from_record(record)
+            key = None if legacy else model.canonical_json(key_value)
+            try:
+                db.execute(
+                    f"INSERT INTO {side} VALUES (?, ?, ?, ?, ?)",
+                    (
+                        record["feature_id"],
+                        key,
+                        bytes.fromhex(record["geometry_hash"][7:]) if not legacy else None,
+                        bytes.fromhex(record["properties_hash"][7:]),
+                        offset,
+                    ),
+                )
                 if legacy:
-                    if (
-                        record.get("schema_version") != 1
-                        or record.get("asset_slug") != ref["asset_slug"]
-                        or record.get("release") != ref["release"]
-                        or not isinstance(record.get("feature_id"), str)
-                        or not LEGACY_FEATURE_ID_RE.fullmatch(record["feature_id"])
-                        or not isinstance(record.get("properties"), dict)
-                    ):
-                        raise ComparisonError("Invalid historical sidecar record")
-                    model.validate_hash(
-                        record.get("feature_hash", ""), label="feature_hash"
-                    )
-                    if set(record["properties"]) - set(fields):
-                        raise ComparisonError(
-                            "Historical properties are outside the release schema"
-                        )
-                    record["properties"] = {
-                        k: v
-                        for k, v in record["properties"].items()
-                        if k not in LEGACY_BOOKKEEPING
-                    }
-                    record["geometry_hash"] = None
-                    record["properties_hash"] = model.properties_hash(
-                        record["properties"]
-                    )
-                else:
-                    self.validate_record(record, ref, fields, identity)
-                key_value = None if legacy else model.identity_key_from_record(record)
-                key = None if legacy else model.canonical_json(key_value)
-                try:
                     db.execute(
-                        f"INSERT INTO {side} VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO legacy_records VALUES (?, ?, ?)",
                         (
                             record["feature_id"],
-                            key,
-                            record["geometry_hash"],
-                            record["properties_hash"],
-                            model.canonical_json(record),
+                            record["feature_hash"],
+                            model.sha256_hex(model.canonical_json(record["properties"])),
                         ),
                     )
-                except sqlite3.IntegrityError as exc:
-                    raise ComparisonError(
-                        "Duplicate feature_id or record identity key"
-                    ) from exc
-                count += 1
-                if count > self.limits.max_rows:
-                    raise ComparisonLimit("Sidecar exceeds max_rows; use the local CLI")
-                if count % 500 == 0:
-                    self.progress(side, count)
+            except sqlite3.IntegrityError as exc:
+                raise ComparisonError(
+                    "Duplicate feature_id or record identity key"
+                ) from exc
+            count += 1
+            if count % 500 == 0:
+                self.progress(side, count)
         if assertions["feature_count"] != count:
             raise ComparisonError(
                 "Manifest feature_count differs from the complete sidecar"
@@ -479,6 +527,11 @@ class Comparison:
                 open_geometry,
                 artifacts.get("fgb", {}),
             )
+            db.execute("DROP TABLE legacy_records")
+        self.metadata_sources[side] = (
+            paths["metadata"],
+            {**artifact(artifacts["metadata"]), **ref["files"]["metadata"]},
+        )
         self.progress(side, count)
         declared_fields = {
             f["name"]: model.ReleaseSchemaField(
@@ -664,21 +717,21 @@ class Comparison:
                 props = parse_properties(value, header.columns)
                 feature_id = props.get("feature_id")
                 row = db.execute(
-                    f"SELECT record, geometry FROM {side} WHERE id=?", (feature_id,)
+                    f"SELECT r.geometry, l.feature_hash, l.projection_hash FROM {side} r JOIN legacy_records l USING(id) WHERE r.id=?",
+                    (feature_id,),
                 ).fetchone()
-                if row is None or row[1] is not None:
+                if row is None or row[0] is not None:
                     raise ComparisonError(
                         "Historical FGB IDs differ from the complete sidecar"
                     )
-                record = json.loads(row[0])
                 projected = {
                     k: v
                     for k, v in props.items()
                     if k in fields and k not in LEGACY_BOOKKEEPING
                 }
                 if (
-                    projected != record["properties"]
-                    or props.get("feature_hash") != record["feature_hash"]
+                    model.sha256_hex(model.canonical_json(projected)) != row[2]
+                    or props.get("feature_hash") != row[1]
                 ):
                     raise ComparisonError(
                         "Historical FGB metadata differs from the pinned sidecar"
@@ -688,7 +741,8 @@ class Comparison:
                     geometry(raw, header.geometry_type) if raw else None
                 )
                 db.execute(
-                    f"UPDATE {side} SET geometry=? WHERE id=?", (hashed, feature_id)
+                    f"UPDATE {side} SET geometry=? WHERE id=?",
+                    (bytes.fromhex(hashed[7:]), feature_id),
                 )
                 count += 1
                 if count % 500 == 0:
@@ -705,12 +759,13 @@ class Comparison:
             )
 
     @contextmanager
-    def checked_connection(self):
+    def checked_connection(self, *, started=None):
+        self.check(started=started)
         interrupted = []
 
         def check_query():
             try:
-                self.check()
+                self.check(started=started)
                 return 0
             except ComparisonError as exc:
                 interrupted.append(exc)
@@ -798,6 +853,7 @@ class Comparison:
                     )
                 )
                 self.check()
+        self.check()
         self.summary = {
             "result_schema_version": RESULT_VERSION,
             "policy": POLICY,
@@ -878,22 +934,40 @@ class Comparison:
             or classification not in ("", *CLASSES)
         ):
             raise ComparisonError("Invalid page options")
-        where, args = (
-            "WHERE (instr(lower(c.id), lower(?)) > 0 OR instr(lower(json_extract(a.record, '$.properties')), lower(?)) > 0 OR instr(lower(json_extract(b.record, '$.properties')), lower(?)) > 0)",
-            [query, query, query],
-        )
+        started = time.monotonic()
+        where, args = "WHERE 1=1", []
         if classification:
             where += " AND c.classification=?"
             args.append(classification)
-        with sqlite3.connect(self.db_path) as db:
+        with self.checked_connection(started=started) as db:
+            if query:
+                # Search is optional. Retain only matching IDs for this request,
+                # not another expanded copy of either release's metadata.
+                db.execute("PRAGMA temp_store=MEMORY")
+                db.execute(
+                    "CREATE TEMP TABLE search_ids (id TEXT PRIMARY KEY) WITHOUT ROWID"
+                )
+                needle = query.lower()
+                for side in ("baseline", "target"):
+                    path = self.detail_source(side, started=started)
+                    for _, record in self.iter_records(path, started=started):
+                        if (
+                            needle in record["feature_id"].lower()
+                            or needle in model.canonical_json(record["properties"]).lower()
+                        ):
+                            db.execute(
+                                "INSERT OR IGNORE INTO search_ids VALUES (?)",
+                                (record["feature_id"],),
+                            )
+                where += " AND c.id IN (SELECT id FROM search_ids)"
             total = db.execute(
-                f"SELECT count(*) FROM changes c LEFT JOIN baseline a USING(id) LEFT JOIN target b USING(id) {where}",
+                f"SELECT count(*) FROM changes c {where}",
                 args,
             ).fetchone()[0]
             rows = [
                 {"feature_id": i, "classification": c, **self.map_membership(db, i)}
                 for i, c in db.execute(
-                    f"SELECT c.id, c.classification FROM changes c LEFT JOIN baseline a USING(id) LEFT JOIN target b USING(id) {where} ORDER BY c.id COLLATE BINARY LIMIT ? OFFSET ?",
+                    f"SELECT c.id, c.classification FROM changes c {where} ORDER BY c.id COLLATE BINARY LIMIT ? OFFSET ?",
                     [*args, limit, offset],
                 )
             ]
@@ -907,7 +981,9 @@ class Comparison:
                 (feature_id,),
             ).fetchone()
             result["map_before" if side == "baseline" else "map_after"] = (
-                {"geometry_hash": row[0], "change": row[1]} if row else None
+                {"geometry_hash": "sha256:" + row[0].hex(), "change": row[1]}
+                if row
+                else None
             )
         return result
 
@@ -915,7 +991,8 @@ class Comparison:
         model.validate_feature_id(feature_id)
         if not self.summary or not self.summary["identity"]["compatible"]:
             raise ComparisonError("Authoritative feature inspection is unavailable")
-        with sqlite3.connect(self.db_path) as db:
+        started = time.monotonic()
+        with self.checked_connection(started=started) as db:
             classification = db.execute(
                 "SELECT classification FROM changes WHERE id=?", (feature_id,)
             ).fetchone()
@@ -925,9 +1002,13 @@ class Comparison:
             records = []
             for side in ("baseline", "target"):
                 row = db.execute(
-                    f"SELECT record FROM {side} WHERE id=?", (feature_id,)
+                    f"SELECT metadata_offset FROM {side} WHERE id=?", (feature_id,)
                 ).fetchone()
-                records.append(json.loads(row[0]) if row else None)
+                records.append(
+                    self.detail_record(side, feature_id, row[0], started=started)
+                    if row
+                    else None
+                )
         return {
             "feature_id": feature_id,
             "classification": classification[0],

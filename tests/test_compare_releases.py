@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import shutil
 from dataclasses import replace
 
 import pytest
@@ -55,6 +56,98 @@ def test_complete_mutually_exclusive_classifications_and_inspection(tmp_path):
     report = json.loads((tmp_path / "report.json").read_text())
     assert len(report["features"]) == 7
     assert report["summary"]["inputs"]["baseline"]["files"]["manifest"]["generation"]
+
+
+def test_large_properties_do_not_expand_the_comparison_workspace(tmp_path):
+    notes = "large source description " * 3000
+    old = [record(i, A, extra={"notes": notes}) for i in range(1, 81)]
+    new = [record(i, B, extra={"notes": notes}) for i in range(2, 82)]
+    old[-1]["properties"]["name"] = "Before-only search phrase"
+    old[-1]["properties_hash"] = model.properties_hash(old[-1]["properties"])
+    new[0]["properties"]["name"] = "After-only search phrase"
+    new[0]["properties_hash"] = model.properties_hash(new[0]["properties"])
+    fields = [
+        {"name": "feature_id", "type": "string", "nullable": False},
+        {"name": "name", "type": "string"},
+        {"name": "notes", "type": "string"},
+    ]
+    bundles = [
+        bundle(tmp_path / "old", A, old, fields=fields),
+        bundle(tmp_path / "new", B, new, fields=fields),
+    ]
+    engine = compare.Comparison(
+        tmp_path / "index",
+        limits=replace(compare.Limits(), max_disk_bytes=256 * 1024),
+    )
+    paths = []
+    for side, (_, sources) in zip(("baseline", "target"), bundles):
+        local = {}
+        for role in ("metadata", "schema", "manifest"):
+            local[role] = engine.directory / f"{side}-{role}"
+            shutil.copyfile(sources[role], local[role])
+        paths.append(local)
+    engine.run(bundles[0][0], bundles[1][0], *paths)
+    assert engine.summary["counts"] == dict(
+        added=1, removed=1, geometry_only=0, properties_only=2, both=0, unchanged=77
+    )
+    assert engine.page(query="search phrase")["total"] == 2
+    assert engine.page(query="BEFORE-ONLY")["rows"][0]["feature_id"] == "80"
+    assert engine.page(query="after-only")["rows"][0]["feature_id"] == "2"
+    assert engine.page(query="source description", limit=1, offset=1)["total"] == 81
+    assert engine.page(query="source description", classification="added")["rows"][0][
+        "feature_id"
+    ] == "81"
+    # Provenance is not source metadata.
+    assert engine.page(query="Synthetic")["total"] == 0
+    assert engine.inspect("2")["before"] == old[1]
+    assert engine.inspect("2")["after"] == new[0]
+    assert engine.inspect("1")["after"] is None
+    assert engine.inspect("81")["before"] is None
+    assert (
+        sum(p.stat().st_size for p in engine.directory.iterdir())
+        < engine.limits.max_disk_bytes
+    )
+
+
+def test_detail_requests_have_their_own_deadline_and_obey_cancellation(tmp_path):
+    engine = run(
+        tmp_path,
+        bundle(tmp_path / "old", A, [record(1, A, name="before")]),
+        bundle(tmp_path / "new", B, [record(1, B, name="after")]),
+    )
+    # The viewer retains completed jobs for longer than their computation budget.
+    engine.started -= engine.limits.max_seconds + 1
+    assert engine.page()["total"] == 1
+    assert engine.page(query="before")["total"] == 1
+    assert engine.inspect("1")["after"]["properties"]["name"] == "after"
+    engine.cancelled = lambda: True
+    with pytest.raises(compare.ComparisonCancelled):
+        engine.page(query="before")
+    with pytest.raises(compare.ComparisonCancelled):
+        engine.page()
+    with pytest.raises(compare.ComparisonCancelled):
+        engine.inspect("1")
+
+
+@pytest.mark.parametrize("operation", ["inspect", "search"])
+@pytest.mark.parametrize("evidence", ["index", "manifest"])
+def test_changed_local_detail_bytes_cannot_replace_pinned_records(
+    tmp_path, operation, evidence
+):
+    a = bundle(tmp_path / "old", A, [record(1, A)])
+    b = bundle(tmp_path / "new", B, [record(1, B)])
+    if evidence == "manifest":
+        b[0]["files"]["metadata"].pop("size")
+        b[0]["files"]["metadata"].pop("sha256")
+    engine = run(tmp_path, a, b)
+    payload = bytearray(b[1]["metadata"].read_bytes())
+    payload[-1] ^= 1  # Same-size corruption must still fail the checksum.
+    b[1]["metadata"].write_bytes(payload)
+    with pytest.raises(compare.ComparisonError, match="checksum"):
+        if operation == "inspect":
+            engine.inspect("1")
+        else:
+            engine.page(query="value")
 
 
 def test_absent_null_schema_only_and_provenance_are_distinct(tmp_path):
