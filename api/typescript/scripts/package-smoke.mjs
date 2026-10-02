@@ -22,7 +22,7 @@ export function createWorkDir() {
 
 export function checkPackedFiles(files) {
   const paths = new Set(files.map(file => file.path));
-  for (const required of ['package.json', 'README.md', 'dist/index.js', 'dist/index.d.ts', 'dist/server.js', 'dist/server.d.ts']) {
+  for (const required of ['package.json', 'README.md', 'dist/index.js', 'dist/index.d.ts', 'dist/server.js', 'dist/server.d.ts', 'dist/maplibre.js', 'dist/maplibre.d.ts']) {
     assert(paths.has(required), `Packed package is missing ${required}`);
   }
   for (const path of paths) {
@@ -55,7 +55,7 @@ import { fileURLToPath } from 'node:url';
 import { getPmtilesFetchCredentials, validateWorkspaceSnapshot, resolveSnapshotLayer } from '${packageName}';
 import { getExpiredPmtilesCookies, authorizeSnapshotArtifact } from '${packageName}/server';
 const root = realpathSync('./node_modules/${packageName}') + '/';
-for (const name of ['${packageName}', '${packageName}/server']) {
+for (const name of ['${packageName}', '${packageName}/server', '${packageName}/maplibre']) {
   assert(realpathSync(fileURLToPath(import.meta.resolve(name))).startsWith(root));
 }
 assert.equal(JSON.parse(readFileSync(root + 'package.json')).version, ${JSON.stringify(expectedVersion)});

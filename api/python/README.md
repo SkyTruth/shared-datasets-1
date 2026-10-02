@@ -384,10 +384,31 @@ values. Browser PMTiles code should use the tiered CDN URL and, for private or
 internal layers, a consumer backend session endpoint implemented with the
 TypeScript server helpers.
 
+## Fetch an exact artifact
+
+The catalog's inline Python example uses `fetch_artifact(reference)` to fetch a
+selected file with ADC, reuse the verified local cache, and return a `Path`:
+
+```python
+import geopandas as gpd
+from skytruth_shared_datasets import fetch_artifact
+path = fetch_artifact("gs://skytruth-shared-datasets-1/100-geographic-reference/110-boundaries/lsib/releases/2026-06-26/lsib.fgb#1782497493616165")
+data = gpd.read_file(path)
+```
+
+The `#generation` suffix is required. This reads the exact object directly,
+without a catalog or release-index lookup; missing bytes fail without substituting
+latest. It supports FGB, CSV, GeoJSON, NDGeoJSON, COG, and PMTiles. Install the
+reader used by your example separately. Optional `bucket`, `client`, `cache_dir`,
+`force`, and `timeout` arguments match the snapshot fetch API. The cache records
+locally verified size and checksum; this shorthand does not carry published
+integrity expectations. Use a full snapshot when those expectations matter.
+
 ## Exact portable lockfiles
 
-The catalog's **Use this dataset** action exports a v1 JSON lockfile.
-**Save workspace** adds the supported map controls. The normative
+Advanced callers can construct or consume v1 JSON documents. The catalog's
+**Open workspace** action imports them; saving and export controls are absent.
+The normative
 [portable contract](../../docs/standards/workspace-snapshot-v1.md) separates
 required exact artifacts, captured attribution, and presentation.
 

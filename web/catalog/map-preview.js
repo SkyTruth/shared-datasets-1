@@ -1847,82 +1847,116 @@ function normalizedBounds(minLon, minLat, maxLon, maxLat) {
   ];
 }
 
-// Comparison maps own their lifecycle; browsing and overlay state remain independent.
-export async function renderComparisonMaps({container, baseline, target, signal, onSelect, mode = "union"}) {
-  const maps = [], sourceGroups = [];
-  let disposed = false, syncing = false;
+// Comparison owns the same primary map slot and release-scoped feature states.
+export async function renderComparisonMap({container, status, baseline, target, signal, onSelect, lookupGeometry, onError, basemap = "map", viewport = null}) {
+  const previousViewport = viewport || captureViewport();
+  const renderSerial = ++activeRenderSerial;
+  clearActiveMap();
+  let map = null, disposed = false, ready = false, refreshing = false, rerun = false;
+  const sources = [], colors = {novel: "#168153", removed: "#c33b3b", metadata_changed: "#e3bd20", unchanged: MISSING_COLOR};
+  const known = [new Map(), new Map()], applied = new Set();
+  const isCurrent = () => !disposed && !signal.aborted && renderIsCurrent(renderSerial);
+  const check = () => { if (!isCurrent()) throw new DOMException("Cancelled", "AbortError"); };
   const dispose = () => {
     if (disposed) return;
-    disposed = true;
-    signal.removeEventListener("abort", dispose);
-    maps.forEach(map => map.remove());
+    disposed = true; signal.removeEventListener("abort", dispose);
+    if (activeMap === map) { activeMap = null; activeSelectionBounds = null; }
+    map?.remove();
   };
   signal.addEventListener("abort", dispose, {once: true});
-  const check = () => { if (disposed || signal.aborted) throw new DOMException("Cancelled", "AbortError"); };
+  container.replaceChildren(status); status.hidden = false; status.textContent = "Loading release union…";
+  async function refresh() {
+    if (!ready || !isCurrent()) return;
+    if (refreshing) { rerun = true; return; }
+    refreshing = true;
+    try {
+      do {
+        rerun = false;
+        for (const [index, source] of sources.entries()) {
+          const layers = source.sourceLayers.map(layer => ({layer, ids: new Set(map.querySourceFeatures(source.sourceId, {sourceLayer: layer.sourceLayer}).map(feature => String(feature.properties?.feature_id ?? "")))}));
+          const ids = [...new Set(layers.flatMap(item => [...item.ids]))];
+          if (ids.includes("")) throw new Error("Display tiles lack feature IDs; geometry colors are unavailable.");
+          const missing = ids.filter(id => !known[index].has(id));
+          for (let offset = 0; offset < missing.length; offset += 200) {
+            const batch = missing.slice(offset, offset + 200), rows = await lookupGeometry(index === 0 ? "baseline" : "target", batch);
+            check();
+            if (rows.length !== batch.length || rows.some(row => !batch.includes(row.feature_id) || !Object.hasOwn(colors, row.change)) || new Set(rows.map(row => row.feature_id)).size !== rows.length) throw new Error("Geometry lookup does not match the displayed release features.");
+            rows.forEach(row => known[index].set(row.feature_id, row.change));
+          }
+          for (const {layer, ids: layerIds} of layers) for (const id of layerIds) {
+            const key = `${source.sourceId}/${layer.sourceLayer}/${id}`;
+            if (applied.has(key)) continue;
+            map.setFeatureState({source: source.sourceId, sourceLayer: layer.sourceLayer, id}, {comparisonChange: known[index].get(id)});
+            applied.add(key);
+          }
+        }
+      } while (rerun && isCurrent());
+    } catch (error) { if (isCurrent()) onError(error); }
+    finally { refreshing = false; }
+  }
   try {
     await loadDependencies(); check();
-    const protocol = installProtocol(), sources = [];
-    container.replaceChildren();
-    container.classList.toggle("compare-union", mode === "union");
+    const protocol = installProtocol();
     for (const [index, reference] of [baseline, target].entries()) {
       if (!reference.pmtiles_file) throw new Error("Selected release has no display tiles.");
-      let asset = reference;
-      if (pmtilesCanUseSigner(asset)) asset = await resolvePmtilesAccess(asset);
-      check();
-      const source = await mapSourceForAsset(asset, index, "map", "", protocol);
-      check(); sources.push(source);
+      const asset = pmtilesCanUseSigner(reference) ? await resolvePmtilesAccess(reference) : reference;
+      check(); sources.push(await mapSourceForAsset(asset, index, basemap, "", protocol)); check();
     }
-    const groups = mode === "union" ? [sources] : sources.map(source => [source]);
-    for (const [index, group] of groups.entries()) {
-      const section = document.createElement("section"), title = document.createElement("h4");
-      title.textContent = mode === "union" ? `Union · ${baseline.date} → ${target.date}` : `${index === 0 ? "Before" : "After"} · ${group[0].asset.date}`;
-      const canvas = document.createElement("div"); canvas.className = "compare-map";
-      canvas.setAttribute("aria-label", mode === "union" ? "Union release map" : `${index === 0 ? "Before" : "After"} release map`);
-      section.append(title, canvas); container.append(section);
-      const style = styleFor(group, "map");
-      for (const layer of style.layers) if (layer.source !== "basemap" && layer.paint) {
-        for (const property of ["fill-color", "line-color", "circle-color"]) if (property in layer.paint) layer.paint[property] = MISSING_COLOR;
+    const tiers = restrictedPmtilesTiers(sources.map(source => source.asset));
+    if (tiers.length) { await ensureRestrictedPmtilesSessions(tiers); check(); }
+    const style = styleFor(sources, basemap);
+    const change = ["coalesce", ["feature-state", "comparisonChange"], "pending"];
+    const color = ["match", change, ...Object.entries(colors).flat(), MISSING_COLOR];
+    const changed = ["in", change, ["literal", ["novel", "removed", "metadata_changed"]]];
+    for (const [index, source] of sources.entries()) {
+      const opacity = (strong, faint) => ["case", ...(index === 0 ? [["in", change, ["literal", ["unchanged", "metadata_changed"]]], 0] : []), changed, strong, faint];
+      for (const layer of style.layers.filter(layer => layer.source === source.sourceId)) {
+        for (const property of ["fill-color", "line-color", "circle-color"]) if (property in layer.paint) layer.paint[property] = color;
+        if (layer.type === "fill") layer.paint["fill-opacity"] = opacity(.48, .08);
+        if (layer.type === "line") layer.paint["line-opacity"] = opacity(.95, .22);
+        if (layer.type === "circle") { layer.paint["circle-opacity"] = opacity(.95, .3); layer.paint["circle-stroke-opacity"] = opacity(.95, .22); }
       }
-      const map = new window.maplibregl.Map({container: canvas, style, cooperativeGestures: true, attributionControl: false, center: [0, 15], zoom: 1});
-      maps.push(map); sourceGroups.push(group);
-      map.addControl(new window.maplibregl.NavigationControl(), "top-right");
-      map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
-      await withTimeout(new Promise((resolve, reject) => {
-        const abort = () => reject(new DOMException("Cancelled", "AbortError"));
-        const finish = () => { signal.removeEventListener("abort", abort); resolve(); };
-        map.once("load", finish);
-        map.once("error", event => { signal.removeEventListener("abort", abort); reject(event.error || new Error("Selected tile generation is unavailable.")); });
-        signal.addEventListener("abort", abort, {once: true});
-      }), 10000, "Comparison map timed out.");
-      check();
-      map.on("error", () => { title.textContent = "Selected tile generation unavailable; this map is incomplete."; });
-      const layers = group.flatMap(source => source.sourceLayers.flatMap(layer => [layer.fillId, layer.polygonOutlineId, layer.lineId, layer.pointId]));
-      map.on("click", event => {
-        const feature = map.queryRenderedFeatures(event.point, {layers})[0];
-        if (feature?.properties?.feature_id != null) onSelect(String(feature.properties.feature_id));
-      });
     }
-    const bounds = combinedBounds(sources.map(source => source.bounds).filter(Boolean));
-    if (bounds) maps.forEach(map => map.fitBounds(bounds, {padding: 34, duration: 0, maxZoom: 8}));
-    if (maps.length === 2) maps.forEach((map, index) => map.on("move", () => {
-      if (syncing || disposed) return;
-      syncing = true;
-      maps[1 - index].jumpTo({center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch()});
-      syncing = false;
-    }));
-    return {dispose, highlight(rows) {
-      if (disposed) return;
-      const colors = {novel: "#168153", removed: "#c33b3b", metadata_changed: "#e3bd20", unchanged: MISSING_COLOR};
-      maps.forEach((map, index) => sourceGroups[index].forEach(source => {
-        const side = source === sources[0] ? "map_before" : "map_after";
-        const values = rows.filter(row => row[side]).flatMap(row => [row.feature_id, colors[row[side].change]]);
-        const expression = values.length ? ["match", ["to-string", ["get", "feature_id"]], ...values, MISSING_COLOR] : MISSING_COLOR;
-        for (const layer of source.sourceLayers) {
-          for (const [id, property] of [[layer.fillId, "fill-color"], [layer.polygonOutlineId, "line-color"], [layer.lineId, "line-color"], [layer.pointId, "circle-color"]]) map.setPaintProperty(id, property, expression);
+    const canvas = document.createElement("div"); canvas.className = "map-canvas"; canvas.setAttribute("aria-label", "Union release map");
+    container.append(canvas);
+    map = new window.maplibregl.Map({container: canvas, style, cooperativeGestures: true, attributionControl: false, center: [0, 15], zoom: 1});
+    activeMap = map;
+    map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+    map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
+    await withTimeout(new Promise((resolve, reject) => {
+      const abort = () => reject(new DOMException("Cancelled", "AbortError"));
+      const finish = () => { signal.removeEventListener("abort", abort); resolve(); };
+      map.once("load", finish);
+      map.once("error", event => { signal.removeEventListener("abort", abort); reject(event.error || new Error("Selected tile generation is unavailable.")); });
+      signal.addEventListener("abort", abort, {once: true});
+    }), 10000, "Comparison map timed out.");
+    check(); status.hidden = true;
+    activeSelectionBounds = combinedBounds(sources.map(source => source.bounds).filter(Boolean));
+    if (previousViewport) map.jumpTo(previousViewport);
+    else if (activeSelectionBounds) map.fitBounds(activeSelectionBounds, {padding: 44, duration: 0, maxZoom: 8});
+    map.on("idle", () => void refresh());
+    map.on("error", event => { if (isCurrent()) onError(event.error || new Error("Selected tile generation unavailable; this map is incomplete.")); });
+    const layerIds = sources.flatMap(source => source.sourceLayers.flatMap(layer => [layer.fillId, layer.polygonOutlineId, layer.lineId, layer.pointId]));
+    map.on("click", event => {
+      const feature = map.queryRenderedFeatures(event.point, {layers: layerIds})[0];
+      if (feature?.properties?.feature_id != null) onSelect(String(feature.properties.feature_id));
+    });
+    return {dispose, viewport: () => isCurrent() ? captureViewport() : null,
+      refreshGeometry() { ready = true; void refresh(); },
+      selectFeature(id) {
+        if (!isCurrent()) return;
+        const selected = ["==", ["to-string", ["get", "feature_id"]], id || ""];
+        for (const source of sources) for (const layer of source.sourceLayers) {
+          map.setPaintProperty(layer.polygonOutlineId, "line-width", ["case", selected, 4, 1.5]);
+          map.setPaintProperty(layer.lineId, "line-width", ["case", selected, 5, 2]);
+          map.setPaintProperty(layer.pointId, "circle-stroke-width", ["case", selected, 3, 1.2]);
         }
-      }));
-    }};
-  } catch (error) { dispose(); throw error; }
+      }};
+  } catch (error) {
+    dispose();
+    if (!signal.aborted && renderIsCurrent(renderSerial)) { status.hidden = false; status.textContent = `Map inspection unavailable: ${error.message}`; }
+    throw error;
+  }
 }
 
 export function captureViewport() {

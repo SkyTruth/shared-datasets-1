@@ -81,3 +81,12 @@ def bundle(root: Path, release, records, *, identity=None, fields=None, generati
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             }
     return {"asset_slug": "example", "release": release, "files": files}, paths
+
+
+def generated(contract="contract-v1"):
+    return model.build_identity_metadata(
+        strategy="generated_sequence_content_hash",
+        contract_id=contract,
+        next_generated_feature_id_before_release=1,
+        next_generated_feature_id_after_release=10,
+    )

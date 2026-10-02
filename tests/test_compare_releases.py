@@ -6,7 +6,7 @@ import pytest
 
 from scripts import compare_releases as compare
 from scripts import release_feature_model as model
-from tests.comparison_fixtures import bundle, record
+from tests.comparison_fixtures import bundle, record, generated
 
 A, B = "2026-01-01", "2026-02-01"
 
@@ -148,15 +148,6 @@ def test_malformed_complete_inputs_rejected(tmp_path, mutation):
             bundle(tmp_path / "a", A, records),
             bundle(tmp_path / "b", B, [record(1, B)]),
         )
-
-
-def generated(contract="contract-v1"):
-    return model.build_identity_metadata(
-        strategy="generated_sequence_content_hash",
-        contract_id=contract,
-        next_generated_feature_id_before_release=1,
-        next_generated_feature_id_after_release=10,
-    )
 
 
 @pytest.mark.parametrize(
@@ -409,3 +400,38 @@ def test_schema_changes_include_nonprojectable_fields(tmp_path):
     ]
     b = bundle(tmp_path / "b", B, [record(1, B)], fields=fields)
     assert run(tmp_path, a, b).summary["schema_changes"]["added"][0]["name"] == "hidden"
+
+
+def test_geometry_colors_survive_generated_id_reset_without_matching_ids(tmp_path):
+    a = bundle(tmp_path / "a", A, [record(1, A)], identity=generated("before"))
+    b = bundle(
+        tmp_path / "b",
+        B,
+        [record(1, B, geometry={"type": "Point", "coordinates": [9, 0]})],
+        identity=generated("after"),
+    )
+    engine = run(tmp_path, a, b)
+    assert engine.summary["counts"] is None
+    assert engine.summary["geometry_counts"] == {
+        "novel": 1,
+        "removed": 1,
+        "metadata_changed": 0,
+        "unchanged": 0,
+    }
+    assert engine.map_features("baseline", ["1"]) == [
+        {"feature_id": "1", "change": "removed"}
+    ]
+    assert engine.map_features("target", ["1"]) == [
+        {"feature_id": "1", "change": "novel"}
+    ]
+    for side, ids in [
+        ("latest", ["1"]),
+        ([], ["1"]),
+        ("target", []),
+        ("target", ["1"] * 201),
+        ("target", [1]),
+        ("target", ["1", "1"]),
+        ("target", ["2"]),
+    ]:
+        with pytest.raises(compare.ComparisonError):
+            engine.map_features(side, ids)

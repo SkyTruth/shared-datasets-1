@@ -73,3 +73,36 @@ requiring native build tools or claiming tool-version-independent reproduction.
 | --- | ---: | --- |
 | union-before.pmtiles | 2316 | d3f55632463ab954c1eb611fb58ddde25f2ba0926899db351588d5aa36c7ac99 |
 | union-after.pmtiles | 2050 | f2ed884416a9e502ee949141a029d2d3b967e3c598b919e60770db3494e6f5d2 |
+
+
+The `union-polygons-before`/`union-polygons-after` CC0 fixtures contain four
+polygons per release: an old/new shape with the same reset numeric ID, shared
+geometry with altered metadata, unchanged geometry, and a moved shape. Each
+release uses a different generated identity contract. The browser test checks
+actual fill pixels for red/green/yellow and reduced unchanged opacity while
+feature-ID classifications remain withheld.
+
+Built on 2026-10-02 with resolved tools `/usr/local/bin/tippecanoe` v2.79.0,
+`/usr/local/bin/pmtiles` reporting `dev, commit none, built at unknown`, and
+`/usr/local/bin/tippecanoe-decode` from the same Tippecanoe installation. Each
+command ran in a named task workspace with relative filenames:
+
+```sh
+tippecanoe -f -Z0 -z6 --no-tiny-polygon-reduction --no-feature-limit --no-tile-size-limit \
+  -l changes --name 'Synthetic comparison polygons before' \
+  --description 'Repository-authored polygons; CC0' \
+  -o union-polygons-before.mbtiles union-polygons-before.geojson
+pmtiles convert union-polygons-before.mbtiles union-polygons-before.pmtiles
+pmtiles verify union-polygons-before.pmtiles
+pmtiles show union-polygons-before.pmtiles
+tippecanoe-decode union-polygons-before.pmtiles 0 0 0
+```
+
+Repeat with `after` for the other archive. Both have PMTiles v3 magic,
+verified gzip MVT contents, 25 addressed tiles, and four decoded zoom-0 polygons
+with only `feature_id`. Metadata contains no machine-local workspace paths.
+
+| File | Bytes | SHA256 |
+| --- | ---: | --- |
+| union-polygons-before.pmtiles | 3407 | 0c372994eb305e3e52e88f1ba138cc5c38d463c9d70ef125bd687c5990ea24b2 |
+| union-polygons-after.pmtiles | 3016 | 8c4603fb7bb5db14ee051d00ab48c4d04f9ff2ecc30545aea343fa6d91dd1d40 |

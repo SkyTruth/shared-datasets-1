@@ -27,30 +27,40 @@ export function captureWorkspace(references, {bucket = 'skytruth-shared-datasets
   return validateSnapshot({kind: 'skytruth-workspace', schema_version: 1, bucket, datasets, presentation}, {bucket});
 }
 export function attribution(snapshot) {
-  return snapshot.datasets.map(d => `${d.provenance.title || d.asset_slug} (${d.asset_slug}, release ${d.release || 'unknown'}). ${d.provenance.citation || 'Citation unknown.'}\nSource: ${d.provenance.source || 'Unknown'}${d.provenance.source_url ? ` — ${d.provenance.source_url}` : ''}\nTerms: ${d.provenance.license || 'Unknown'}\n${[d.provenance.notes, d.provenance.lifecycle_reason, d.provenance.consumer_guidance].filter(Boolean).join('\n')}`).join('\n\n');
+  return snapshot.datasets.map(d => `Data: ${d.provenance.source || d.provenance.title || d.asset_slug} · SkyTruth`).join('; ');
 }
-function pythonLiteral(value) { return JSON.stringify(JSON.stringify(value)); }
+function pinnedUri(artifact) { return `${artifact.gs_uri}#${artifact.generation}`; }
 export function pythonSnippet(snapshot) {
   const dataset = snapshot.datasets[0], artifact = dataset.artifacts.find(a => a.role === 'canonical');
+  const bucket = snapshot.bucket === 'skytruth-shared-datasets-1' ? '' : `, bucket=${JSON.stringify(snapshot.bucket)}`;
+  const fetch = `path = fetch_artifact(${JSON.stringify(pinnedUri(artifact))}${bucket})`;
+  if (artifact.format === 'pmtiles') return ['from skytruth_shared_datasets import fetch_artifact', fetch, 'print(path)'].join('\n');
   const examples = {
-    csv: 'import csv\nwith path.open(newline="", encoding="utf-8") as source:\n    print(next(csv.DictReader(source), None))',
-    geojson: 'data = json.loads(path.read_text(encoding="utf-8"))\nprint(len(data.get("features", [])))',
-    ndgeojson: 'with path.open(encoding="utf-8") as source:\n    print(json.loads(next(source)))',
-    fgb: 'import geopandas as gpd  # uv pip install geopandas\nfeatures = gpd.read_file(path)\nprint(features.head())',
-    cog: 'import rasterio  # uv pip install rasterio\nwith rasterio.open(path) as raster:\n    print(raster.bounds, raster.count)',
-    pmtiles: 'with path.open("rb") as source:\n    print(source.read(8))  # PMTiles archive header',
+    csv: ['import csv', 'data = list(csv.DictReader(path.open(encoding="utf-8", newline="")))'],
+    geojson: ['import json', 'data = json.loads(path.read_text(encoding="utf-8"))'],
+    ndgeojson: ['import json', 'with path.open(encoding="utf-8") as source:', '    data = [json.loads(line) for line in source]'],
+    fgb: ['import geopandas as gpd', 'data = gpd.read_file(path)'],
+    cog: ['import rasterio', 'with rasterio.open(path) as raster:', '    data = raster.read()'],
   };
-  return `import json\nfrom pathlib import Path\nfrom skytruth_shared_datasets import fetch_snapshot_artifact\n\nlock = json.loads(${pythonLiteral(snapshot)})\n# ADC from your runtime identity, or gcloud auth application-default login locally.\nfetched = fetch_snapshot_artifact(lock, ${JSON.stringify(dataset.asset_slug)}, bucket=${JSON.stringify(snapshot.bucket)})\npath = fetched.cache_path\nlineage = fetched.lineage()\nPath("dataset-lineage.json").write_text(json.dumps(lineage, indent=2))\nprint(path, lineage)\n\n${examples[artifact.format]}\n`;
+  const [dependency, ...consumer] = examples[artifact.format];
+  return [dependency, 'from skytruth_shared_datasets import fetch_artifact', fetch, ...consumer].join('\n');
 }
 export function typescriptSnippet(snapshot) {
   const dataset = snapshot.datasets[0];
-  if (!dataset.artifacts.some(a => a.format === 'pmtiles')) return 'This selection does not publish PMTiles. Use the Python exact-fetch example.';
-  const restricted = dataset.access_tier !== 'public';
-  return `import maplibregl from "maplibre-gl";\nimport "maplibre-gl/dist/maplibre-gl.css";\nimport {Protocol, PMTiles} from "pmtiles";\nimport {validateWorkspaceSnapshot, resolveSnapshotLayer, fetchSnapshotMetadata} from "@skytruth/shared-datasets";\n\nconst lock = validateWorkspaceSnapshot(${JSON.stringify(snapshot, null, 2)}, {bucket: ${JSON.stringify(snapshot.bucket)}});\n${restricted ? '// Integration requires your application’s authenticated POST /api/snapshot-artifact route.\n// Server: authorizeSnapshotArtifact from @skytruth/shared-datasets/server.\n// Recheck catalog tier, entitlement, release root, and indexed URI/generation; never sign arbitrary paths.\n' : '// Complete public data integration. Provide a <div id="map" style="height: 500px"></div>.\n'}const layer = await resolveSnapshotLayer(lock, ${JSON.stringify(dataset.asset_slug)}, {bucket: lock.bucket${restricted ? ',\n  authorizeArtifact: async (dataset, artifact) => {\n    const response = await fetch("/api/snapshot-artifact", {method: "POST", credentials: "include",\n      headers: {"Content-Type": "application/json"},\n      body: JSON.stringify({snapshot: lock, asset_slug: dataset.asset_slug, role: artifact.role, locale: artifact.resolved_locale})});\n    if (!response.ok) throw new Error(`Snapshot access failed: HTTP ${response.status}`);\n    return response.json();\n  }' : ''}});\nconst records = await fetchSnapshotMetadata(layer);\nconst protocol = new Protocol();\nmaplibregl.addProtocol("pmtiles", protocol.tile);\nconst archive = new PMTiles(layer.tileUrl);\nprotocol.add(archive);\nconst metadata = await archive.getMetadata();\nconst header = await archive.getHeader();\nconst sourceLayers = metadata && typeof metadata === "object" && "vector_layers" in metadata ? metadata.vector_layers : null;\nif (!Array.isArray(sourceLayers) || !sourceLayers.length || !sourceLayers.every(layer => layer && typeof layer.id === "string")) throw new Error("This example requires vector PMTiles");\nconst layers = sourceLayers.flatMap<maplibregl.LayerSpecification>(({id}, index) => [\n  {id: "fill-" + index, type: "fill", source: "dataset", "source-layer": id, filter: ["==", ["geometry-type"], "Polygon"], paint: {"fill-color": "#1f7a59", "fill-opacity": 0.35}},\n  {id: "line-" + index, type: "line", source: "dataset", "source-layer": id, filter: ["!=", ["geometry-type"], "Point"], paint: {"line-color": "#1f7a59", "line-width": 2}},\n  {id: "point-" + index, type: "circle", source: "dataset", "source-layer": id, filter: ["==", ["geometry-type"], "Point"], paint: {"circle-color": "#1f7a59", "circle-radius": 5}}\n]);\nconst map = new maplibregl.Map({container: "map", center: [0, 15], zoom: 1,\n  style: {version: 8, sources: {dataset: {type: "vector", url: "pmtiles://" + layer.tileUrl}}, layers: [{id: "background", type: "background", paint: {"background-color": "#f7faf8"}}, ...layers]}});\nmap.once("load", () => map.fitBounds([[header.minLon, header.minLat], [header.maxLon, header.maxLat]], {padding: 34, maxZoom: 8, duration: 0}));\nmap.on("click", event => {\n  const hit = map.queryRenderedFeatures(event.point)[0];\n  const featureId = String(hit?.properties?.feature_id || "");\n  console.log(records.get(featureId)?.properties, {citation: layer.dataset.provenance.citation, accessTier: layer.dataset.access_tier});\n});\n`;
-}
-export function installationInstructions(revision) {
-  if (revision && /^[a-f0-9]{40}$/.test(revision)) return `uv pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/${revision}.zip#subdirectory=api/python"\n\nTypeScript: check out the same repository revision (${revision}), then run:\nnpm ci --prefix api/typescript\n\nThen, in your app (adjust the checkout path):\nnpm install /path/to/shared-datasets-1/api/typescript maplibre-gl@5.9.0 pmtiles@4.3.0`;
-  return 'Unreleased local build: from this repository checkout, run:\nuv pip install -e "api/python[gcs]"\nnpm ci --prefix api/typescript\n\nThen, in your app (adjust the checkout path):\nnpm install /path/to/shared-datasets-1/api/typescript maplibre-gl@5.9.0 pmtiles@4.3.0\n\nA deployed build must provide its reviewed 40-character SDK revision. The published npm version does not yet include these APIs.';
+  const tiles = dataset.artifacts.find(a => a.format === 'pmtiles');
+  if (!tiles) return null;
+  const metadata = dataset.artifacts.find(a => a.role === 'metadata' && a.requested_locale !== null)
+    || dataset.artifacts.find(a => a.role === 'metadata');
+  const options = [];
+  if (snapshot.bucket !== 'skytruth-shared-datasets-1') options.push(`bucket: ${JSON.stringify(snapshot.bucket)}`);
+  if (dataset.access_tier !== 'public') options.push(`access: ${JSON.stringify(dataset.access_tier)}, authorizationUrl: "/api/snapshot-artifact"`);
+  return [
+    'import {showDataset} from "@skytruth/shared-datasets/maplibre";',
+    'const dataset = await showDataset("map", {',
+    `  tiles: ${JSON.stringify(pinnedUri(tiles))},`,
+    `  metadata: ${metadata ? JSON.stringify(pinnedUri(metadata)) : 'null'},`,
+    `}${options.length ? `, {${options.join(', ')}}` : ''});`,
+  ].join('\n');
 }
 export async function prepareWorkspace(snapshot, assets, {bucket = 'skytruth-shared-datasets-1', fetchImpl = fetch} = {}) {
   snapshot = validateSnapshot(snapshot, {bucket});

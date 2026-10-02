@@ -28,7 +28,7 @@ MAX_JOBS = 8
 MAX_RUNNING = 2
 JOB_TTL_SECONDS = 900
 JOB_PATH = re.compile(
-    r"^/api/comparisons/(?P<id>[a-f0-9]{32})(?:/(?P<action>cancel|report))?$"
+    r"^/api/comparisons/(?P<id>[a-f0-9]{32})(?:/(?P<action>cancel|report|map))?$"
 )
 
 
@@ -351,9 +351,30 @@ def handle_request(
                     "state": "cancelling" if job.state == "running" else job.state,
                 },
             )
+        result = job.payload()
+        if match["action"] == "map":
+            if method != "POST":
+                return json_response(405, {"error": "Use POST for map feature lookups"})
+            if len(body) > 16 * 1024:
+                return json_response(413, {"error": "Map request exceeds 16 KiB"})
+            if result["state"] != "complete":
+                return json_response(409, {"error": "Comparison is not complete"})
+            payload = json.loads(body)
+            if not isinstance(payload, dict) or set(payload) != {"side", "feature_ids"}:
+                raise engine.ComparisonError(
+                    "Select a release side and map feature IDs"
+                )
+            return bounded_response(
+                200,
+                {
+                    "inputs": job.inputs,
+                    "map_features": job.comparison.map_features(
+                        payload["side"], payload["feature_ids"]
+                    ),
+                },
+            )
         if method != "GET":
             return json_response(405, {"error": "Use GET for comparison results"})
-        result = job.payload()
         if result["state"] != "complete":
             return json_response(200, result)
         if match["action"] == "report":

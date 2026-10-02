@@ -181,9 +181,8 @@ def test_generated_python_runs_actual_entrypoint_with_escaped_metadata(
         return_value=ExactClient(base64.b64decode(CORPUS["canonical_base64"])),
     ):
         exec(generated, {})
-    lineage = json.loads((tmp_path / "dataset-lineage.json").read_text())
-    assert lineage["generation"] == "9007199254740993"
-    assert lineage["published_sha256"] == lineage["verified_sha256"]
+    assert 3 <= len(generated.splitlines()) <= 5
+    assert not (tmp_path / "dataset-lineage.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -347,9 +346,7 @@ def test_generated_python_consumes_each_supported_format(fmt, tmp_path, monkeypa
     ):
         exec(generated, namespace)
     assert namespace["path"].read_bytes() == payload
-    assert (
-        namespace["lineage"]["verified_sha256"] == hashlib.sha256(payload).hexdigest()
-    )
+    assert 3 <= len(generated.splitlines()) <= 5
     assert client.requests == [
         (
             "category/subcategory/example-layer/releases/2026-01-01/" + filename,
@@ -357,6 +354,21 @@ def test_generated_python_consumes_each_supported_format(fmt, tmp_path, monkeypa
         )
     ]
     if fmt == "fgb":
-        assert namespace["features"].iloc[0]["name"] == "雪"
+        assert namespace["data"].iloc[0]["name"] == "雪"
     elif fmt == "geojson":
         assert namespace["data"]["features"][0]["properties"]["feature_id"] == "b2"
+
+
+def test_compact_artifact_reference_rejects_unsafe_input_before_fetch():
+    from skytruth_shared_datasets import fetch_artifact
+    with mock.patch("skytruth_shared_datasets.snapshot._fetch_ref") as fetch:
+        for uri in [
+            "gs://example-bucket/category/subcategory/example-layer/latest/example-layer.csv#1",
+            "gs://evil-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv#1",
+            "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv#0",
+            "gs://example-bucket/category/subcategory/example-layer/releases/2026-02-30/example-layer.csv#1",
+            "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv?token=secret#1",
+        ]:
+            with pytest.raises(SnapshotError):
+                fetch_artifact(uri, bucket="example-bucket")
+        fetch.assert_not_called()
