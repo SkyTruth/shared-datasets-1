@@ -611,7 +611,7 @@
         "provenance",
         "source_url"
       ],
-      "value": "https://source.test/?X-Goog-Signature=secret"
+      "value": "https://source.test/?X%2DGoog%2DSignature=synthetic-test-value"
     },
     {
       "name": "arbitrary index",
