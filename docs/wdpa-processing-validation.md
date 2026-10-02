@@ -94,23 +94,26 @@ has been published, complete artifact compatibility, or resource acceptance.
 ## Hosted complete-build runner
 
 The existing `CI` workflow has an opt-in `wdpa_full_benchmark` input. It builds
-one deployment image and runs two fresh containers at exactly 4 CPU / 8 GiB,
-with no swap and a 100 GiB ext4 disk at `/work`. The second replay starts with
-empty scratch. This is the production processing path, including rebuilding
+one deployment image and shares that exact image with two fresh job VMs. Each
+replay verifies the loaded image's configuration digest and runs a fresh
+container at exactly 4 CPU / 8 GiB, with no swap and a 100 GiB ext4 disk at
+`/work`. Both replays start with empty scratch. This is the production processing path, including rebuilding
 the translation index, with frozen baseline inputs and no publication.
 The optional `wdpa_benchmark_fraction=0.001` uses the same full input preparation
 and translation indexing for a shorter diagnostic probe, with separately named
 debug reports. It cannot satisfy acceptance. Complete builds use the default
 fraction `1`, which is also required by the rollout gate.
-GitHub hosted jobs have a six-hour ceiling, stricter than the production
+Each GitHub hosted job has a six-hour ceiling, stricter than the production
 24-hour target; a hosted timeout cannot establish the production timeout target.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
 sizes and hashes. `download_public_wdpa_benchmark.py` reconstructs the same frozen
 inputs anonymously, checking raw and compressed hashes. It neither exports
-credentials nor makes private objects public. Only scalar measurement reports
-are uploaded as Actions artifacts. Unused preinstalled tooling is removed only
+credentials nor makes private objects public. Dataset bytes are not uploaded as
+Actions artifacts: only scalar measurement reports and the deployment image
+shared between replay jobs are uploaded. The image artifact expires after one
+day. Unused preinstalled tooling is removed only
 on the disposable job VM to make room for the disk; provisioning failure is fatal.
 
 Set `wdpa_inputs_probe=true` for an input-preparation-only memory measurement.

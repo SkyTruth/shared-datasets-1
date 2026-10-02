@@ -48,9 +48,12 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
         self.assertIn("inputs.wdpa_full_benchmark", job["if"])
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+        self.assertEqual(job["needs"], "wdpa-benchmark-image")
+        self.assertFalse(job["strategy"]["fail-fast"])
+        self.assertIn("'[1,2]'", job["strategy"]["matrix"]["replay"])
+        self.assertIn("wdpa_inputs_probe", job["strategy"]["matrix"]["replay"])
         steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
-        run = steps["Run two frozen builds with 4 CPU and 8 GiB"]["run"]
-        self.assertIn("for replay in 1 2", run)
+        run = steps["Run one frozen build with 4 CPU and 8 GiB"]["run"]
         self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", run)
         self.assertIn("CLOUD_RUN_EXECUTION=wdpa-benchmark", run)
         self.assertIn("--translation-sources", run)
@@ -60,6 +63,13 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertNotIn("--genesis", run)
         upload = steps["Upload measurements only"]["with"]
         self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/*.json")
+        self.assertIn("matrix.replay", upload["name"])
+        image_steps = workflow_steps_by_name(self.workflow, "wdpa-benchmark-image")
+        self.assertIn("docker save", image_steps["Build the deployment image once"]["run"])
+        image_artifact = image_steps["Share the identical deployment image with both replays"]["with"]["name"]
+        self.assertEqual(steps["Download the shared deployment image"]["with"]["name"], image_artifact)
+        self.assertIn("containerimage.config.digest", steps["Load and verify the identical deployment image"]["run"])
+        self.assertIn('[[ "$actual" == "$expected" ]]', steps["Load and verify the identical deployment image"]["run"])
         self.assertIn("fallocate -l 100G", steps["Provision a 100 GiB disk scratch filesystem"]["run"])
 
     def test_benchmark_uses_public_frozen_inputs_without_credentials(self):
@@ -68,7 +78,7 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIn("scripts/download_public_wdpa_benchmark.py", run)
         self.assertIn("docs/wdpa-processing-public-inputs.json", run)
         self.assertNotIn("secrets.", str(self.workflow["jobs"]["wdpa-full-benchmark"]))
-        self.assertIn("!inputs.wdpa_inputs_probe", steps["Run two frozen builds with 4 CPU and 8 GiB"]["if"])
+        self.assertIn("!inputs.wdpa_inputs_probe", steps["Run one frozen build with 4 CPU and 8 GiB"]["if"])
         self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", steps["Measure input preparation only"]["run"])
         self.assertIn("wdpa_input_memory_probe.py:/app/scripts/wdpa_input_memory_probe.py:ro", steps["Measure input preparation only"]["run"])
 
