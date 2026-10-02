@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PACKAGE_NAME = '@skytruth/shared-datasets';
 const packagePrefix = 'api/typescript/';
-const packageFiles = new Set(['README.md', 'package.json', 'package-lock.json', 'tsconfig.json']);
+const packageFiles = new Set(['README.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'scripts/copy-snapshot-contract.mjs']);
 
 export function parseVersion(version) {
   if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
@@ -36,7 +36,7 @@ export function validatePackage(pkg, lock) {
 export function needsRelease(before, after, changedFiles) {
   const comparison = compareVersions(after.version, before.version);
   if (comparison < 0) throw new Error('SDK version must not decrease');
-  const contentChanged = changedFiles.some(file => file.startsWith(`${packagePrefix}src/`) ||
+  const contentChanged = changedFiles.some(file => file === 'web/catalog/workspace-contract.js' || file.startsWith(`${packagePrefix}src/`) ||
     (file.startsWith(packagePrefix) && packageFiles.has(file.slice(packagePrefix.length))));
   if (contentChanged && comparison === 0) {
     throw new Error('SDK package content changed: increase package.json and package-lock.json versions in this PR');

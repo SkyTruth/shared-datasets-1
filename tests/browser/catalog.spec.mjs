@@ -1,3 +1,4 @@
+import ts from '../../api/typescript/node_modules/typescript/lib/typescript.js';
 import { test as base, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -18,8 +19,9 @@ const test = base.extend({
     const catalog = await readJSON(resolve(siteDir, 'catalog.json'));
     const indexes = new Map(await Promise.all(catalog.assets.map(async (asset) => [asset.slug, await readJSON(resolve(workDir, 'inputs/indexes', `${asset.slug}.json`))])));
     const requests = [], errors = [], forbidden = [], expectedErrors = new Set();
+    const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
-    const state = { deny: 0, holdMetadata: false, held: false, release: () => releaseHeld?.(), requests };
+    const state = { deny: 0, holdMetadata: false, held: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -34,6 +36,7 @@ const test = base.extend({
         return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType });
       }
       if (/^https:\/\/tile\.openstreetmap\.org\/\d+\/\d+\/\d+\.png$/.test(url.href)) return route.fulfill({ body: basemapPNG, contentType: 'image/png' });
+      if (/^https:\/\/services\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\d+\/\d+\/\d+$/.test(url.href)) return route.fulfill({body: basemapPNG, contentType: 'image/png'});
       const asset = catalog.assets.find((entry) => new URL(entry.release_index_url, baseURL).href === `${url.origin}${url.pathname}`);
       if (asset) return json(indexes.get(asset.slug));
       if (url.origin === baseURL && ['/api/pmtiles/signed-url', '/api/download-url'].includes(url.pathname)) {
@@ -54,7 +57,11 @@ const test = base.extend({
       }
       if (url.hostname === 'tiles.skytruth.org' && url.pathname.startsWith('/artifacts/')) {
         const object = decodeURIComponent(url.pathname.slice('/artifacts/'.length));
-        const file = [...indexes.values()].flatMap((index) => index.releases.flatMap((entry) => entry.files)).find((entry) => entry.path === `gs://example-bucket/${object}` && String(entry.generation) === url.searchParams.get('generation'));
+        const file = storedFiles.find((entry) => entry.path === `gs://example-bucket/${object}` && String(entry.generation) === url.searchParams.get('generation'));
+        if (file && state.unavailable.has(`${file.path}#${file.generation}`)) {
+          expectedErrors.add(url.href);
+          return json({error: 'Synthetic captured generation unavailable'}, 404);
+        }
         if (!file) {
           forbidden.push(`Unpinned or unexpected artifact: ${url.href}`);
           return json({ error: 'Not retained' }, 404);
@@ -67,7 +74,7 @@ const test = base.extend({
         // Acceptance-only negative control: real wrong tiles cannot satisfy the inspector assertion.
         if (process.env.CATALOG_BROWSER_NEGATIVE_CONTROL === 'wrong-old-tiles' && file.format === 'pmtiles' && object.includes('/2026-01-01/')) data = await readFile(resolve(packageDir, 'fixtures/new.pmtiles'));
         const range = request.headers().range;
-        const headers = { 'accept-ranges': 'bytes', 'access-control-allow-origin': '*', 'access-control-expose-headers': 'Content-Range,Content-Length' };
+        const headers = { 'accept-ranges': 'bytes', 'access-control-allow-origin': '*', 'x-goog-generation': String(file.generation), 'access-control-expose-headers': 'Content-Range,Content-Length,x-goog-generation' };
         if (range) {
           const match = /^bytes=(\d+)-(\d*)$/.exec(range);
           if (!match) throw new Error(`Unexpected Range: ${range}`);
@@ -90,7 +97,7 @@ const test = base.extend({
       expect(forbidden, 'All data/auth/CDN boundaries must be explicitly served').toEqual([]);
       // Chromium SwiftShader emits a documented performance warning on screenshot readback.
       const expectedDriverWarning = (entry) => entry.type === 'warning' && /^\[\.WebGL-0x[0-9a-f]+\]GL Driver Message \(OpenGL, Performance, GL_CLOSE_PATH_NV, High\): GPU stall due to ReadPixels(?: \(this message will no longer repeat\))?$/.test(entry.text);
-      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (403|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
+      expect(errors.filter((entry) => !expectedDriverWarning(entry) && !(typeof entry === 'object' && expectedErrors.has(entry.url) && /^Failed to load resource: the server responded with a status of (403|404|409)/.test(entry.text))), 'Unexpected browser errors').toEqual([]);
     }
   }, { auto: true }],
 });
@@ -176,4 +183,138 @@ test('late historical metadata cannot replace the current inspector', async ({ p
   // Wait for response processing and a painted frame, not merely response headers.
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   await expectMetadata(page, false);
+});
+
+
+async function downloadedJson(page, button) {
+  const waiting = page.waitForEvent('download');
+  await button.click();
+  const download = await waiting;
+  return JSON.parse(await readFile(await download.path(), 'utf8'));
+}
+async function openSnapshot(page, snapshot) {
+  await page.locator('#open-workspace-file').setInputFiles({name: 'fixture.workspace.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(snapshot))});
+}
+
+test('Use this dataset opens, copies valid code, exports exact identity and executes the TypeScript integration', async ({page, context}, testInfo) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await select(page, 'public');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#use-dataset').click();
+  await expect(page.locator('#use-dataset-dialog')).toBeVisible();
+  await expect(page.locator('#use-summary')).toContainText('release 2026-09-22');
+  await expect(page.locator('#use-install')).toContainText(/Unreleased local build|skytruth-shared-datasets\[gcs\] @/);
+  await page.locator('#use-copy-python').click();
+  const python = await page.evaluate(() => navigator.clipboard.readText());
+  expect(python).toContain('fetch_snapshot_artifact');
+  await page.locator('#use-copy-typescript').click();
+  const code = await page.evaluate(() => navigator.clipboard.readText());
+  expect(code).toContain('resolveSnapshotLayer');
+  const lock = await downloadedJson(page, page.locator('#use-export'));
+  expect(lock.presentation).toBeNull();
+  expect(lock.datasets[0].artifacts.find(a => a.role === 'tiles').generation).toBe('201');
+  expect(JSON.stringify(lock)).not.toMatch(/Signature=|cookies|cache_path|download_url/);
+  await testInfo.attach('use-dataset-dialog.png', {body: await page.locator('#use-dataset-dialog').screenshot(), contentType: 'image/png'});
+  await testInfo.attach('generated-python.py', {body: python, contentType: 'text/x-python'});
+  await testInfo.attach('generated-typescript.ts', {body: code, contentType: 'text/plain'});
+  await page.locator('#use-close').click();
+  // A bundler resolves these imports in consumers. Here the real browser SDK
+  // modules and pinned MapLibre/PMTiles libraries are passed without mocks.
+  const compiledCode = ts.transpileModule(code, {compilerOptions: {module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022}}).outputText;
+  const generated = await page.evaluate(async source => {
+    const sdk = await import('/sdk/index.js');
+    const container = document.createElement('div'); container.id = 'map';
+    container.style.cssText = 'position:fixed;inset:100px;width:600px;height:500px;z-index:500'; document.body.append(container);
+    const body = source.replace(/^import .*;\n/gm, '');
+    const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
+    const result = await new AsyncFunction('maplibregl', 'Protocol', 'PMTiles', 'validateWorkspaceSnapshot', 'resolveSnapshotLayer', 'fetchSnapshotMetadata',
+      body + '\nawait new Promise((resolve,reject)=>{map.once("load",resolve);map.once("error",event=>reject(event.error))}); return {map,records,layer};'
+    )(window.maplibregl, window.pmtiles.Protocol, window.pmtiles.PMTiles, sdk.validateWorkspaceSnapshot, sdk.resolveSnapshotLayer, sdk.fetchSnapshotMetadata);
+    window.generatedIntegration = result;
+    return {ids: [...result.records.keys()], tileUrl: result.layer.tileUrl, metadataUrl: result.layer.metadata.url};
+  }, compiledCode);
+  expect(generated.ids).toEqual(['b1', 'b2']);
+  expect(generated.tileUrl).toContain('generation=201');
+  expect(generated.metadataUrl).toContain('generation=202');
+  await expect.poll(() => page.evaluate(() => window.generatedIntegration.map.queryRenderedFeatures().map(f => f.properties.feature_id))).toContain('b2');
+  await testInfo.attach('generated-map.png', {body: await page.locator('#map').screenshot(), contentType: 'image/png'});
+  await page.evaluate(() => {window.generatedIntegration.map.remove();document.querySelector('#map').remove();});
+});
+
+test('single workspace round-trip restores release, viewport, basemap and supported layer/color controls', async ({page, transport}, testInfo) => {
+  await select(page, 'public');
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await expect(page.locator('#map-status')).toBeHidden();
+  const layers = await page.locator('#layer-select option').evaluateAll(options => options.map(o => o.value).filter(Boolean));
+  if (layers.length) {
+    await page.locator('#layer-select').selectOption(layers[0]);
+    await expect(page.locator('#map-status')).toBeHidden();
+  }
+  await expect(page.locator('#colorize-select')).toContainText('name');
+  await page.locator('#colorize-select').selectOption('name');
+  await page.locator('#basemap-select').selectOption('satellite');
+  await expect(page.locator('#map-status')).toBeHidden();
+  const before = await downloadedJson(page, page.locator('#save-workspace'));
+  expect(before.presentation.basemap).toBe('satellite');
+  expect(before.presentation.layers[0].source_layer).toBe(layers[0] || null);
+  expect(before.presentation.layers[0].color_field).toBe('name');
+  expect(before.presentation.viewport.zoom).toBeGreaterThan(1);
+  await page.locator('#version-select').selectOption('latest');
+  await expect(page.locator('#map-status')).toBeHidden();
+  const index = transport.indexes.get('smoke-public'); index.latest_release = index.releases[1];
+  await openSnapshot(page, before);
+  await expect(page.locator('#workspace-status')).toContainText('Workspace restored');
+  const after = await downloadedJson(page, page.locator('#save-workspace'));
+  expect(after.presentation).toEqual(before.presentation);
+  expect(after.datasets[0].artifacts).toEqual(before.datasets[0].artifacts);
+  await clickPoint(page, true, testInfo);
+  await expectMetadata(page, true);
+});
+
+test('multiple dataset workspace preserves exact per-asset releases and display order', async ({page, transport}, testInfo) => {
+  await select(page, 'public');
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#asset-list [data-slug="smoke-private"]').click({modifiers: ['Meta']});
+  await expect(page.locator('#map-status')).toBeHidden();
+  const before = await downloadedJson(page, page.locator('#save-workspace'));
+  expect(before.datasets.map(d => [d.asset_slug, d.release])).toEqual([['smoke-public', '2026-01-01'], ['smoke-private', '2026-09-22']]);
+  const requests = transport.requests.length;
+  await page.locator('#asset-list [data-slug="smoke-internal"]').click();
+  await expect(page.locator('#map-status')).toBeHidden();
+  await openSnapshot(page, before);
+  await expect(page.locator('#workspace-status')).toContainText('Workspace restored');
+  const after = await downloadedJson(page, page.locator('#save-workspace'));
+  expect(after.datasets.map(d => d.artifacts)).toEqual(before.datasets.map(d => d.artifacts));
+  expect(after.presentation).toEqual(before.presentation);
+  expect(transport.requests.slice(requests).some(r => r.url.includes('/api/pmtiles/signed-url') && r.url.includes('slug=smoke-private'))).toBeTruthy();
+  await testInfo.attach('restored-workspace.png', {body: await page.screenshot(), contentType: 'image/png'});
+});
+
+test('unavailable or malformed workspace fails atomically without upgrading or requesting arbitrary paths', async ({page, transport}) => {
+  await select(page, 'public');
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await expect(page.locator('#map-status')).toBeHidden();
+  const snapshot = await downloadedJson(page, page.locator('#save-workspace'));
+  await page.locator('#version-select').selectOption('latest');
+  await expect(page.locator('#map-status')).toBeHidden();
+  const old = structuredClone(snapshot.datasets[0].artifacts.find(a => a.role === 'canonical'));
+  transport.unavailable.add(`${old.gs_uri}#${old.generation}`);
+  await openSnapshot(page, snapshot);
+  await expect(page.locator('#workspace-status')).toContainText('Workspace not restored');
+  await expect(page.locator('#workspace-status')).toContainText('#100');
+  await expect(page.locator('#version-select')).toHaveValue('latest');
+  await expect(page.locator('#workspace-status')).toContainText('no release was substituted');
+  snapshot.datasets[0].artifacts[0].gs_uri = 'gs://example-bucket/secrets/key.json';
+  const count = transport.requests.length;
+  await openSnapshot(page, snapshot);
+  await expect(page.locator('#workspace-status')).toContainText('Invalid workspace');
+  expect(transport.requests.slice(count).filter(r => r.url.includes('/api/'))).toEqual([]);
+  snapshot.datasets[0].artifacts[0].gs_uri = old.gs_uri;
+  transport.unavailable.clear();
+  snapshot.presentation.layers[0].source_layer = 'unsupported-source-layer';
+  await openSnapshot(page, snapshot);
+  await expect(page.locator('#workspace-status')).toContainText('Captured source layer is unavailable');
+  await expect(page.locator('#version-select')).toHaveValue('latest');
+  await expect(page.locator('#map-status')).toBeHidden();
 });

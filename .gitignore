@@ -32,3 +32,6 @@ dist/
 **/.terraform/
 *.tfstate
 *.tfstate.*
+
+# Shared browser/SDK contract compiled at TypeScript build time
+api/typescript/src/snapshot-contract.ts

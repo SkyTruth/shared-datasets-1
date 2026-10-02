@@ -101,7 +101,8 @@ class CatalogWebPmtilesJavascriptTests(unittest.TestCase):
             ),
         )
         self.assertNotIn(".blob()", app)
-        self.assertNotIn("createObjectURL", app)
+        fgb_handler = app.split("async function handleFgbDownloadClick", 1)[1].split("function setFgbDownloadBusy", 1)[0]
+        self.assertNotIn("createObjectURL", fgb_handler)
 
     def test_map_selection_and_identifier_color_mode_contracts_are_present(self):
         app = source("web/catalog/app.js")

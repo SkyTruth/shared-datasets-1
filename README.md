@@ -626,6 +626,10 @@ downloads are mocked or represented by local fixtures.
 UV_CACHE_DIR=.uv-cache uv run pytest
 ```
 
+The locked dev group includes GeoPandas and Rasterio to execute generated
+FGB/COG consumer examples against tiny synthetic fixtures. They are test-only
+dependencies; the Python SDK does not require them for exact byte fetching.
+
 Geospatial integration tests run only when the required native binaries are
 installed locally: GDAL CLI tools, PMTiles, and the Tippecanoe decoder used for
 PMTiles sampling. Enable the explicit GDAL integration flag for the tests that
@@ -654,6 +658,12 @@ terraform -chdir=terraform/envs/preview init -backend=false -input=false && terr
 Terraform validation requires the CI-pinned Terraform version (see
 `TERRAFORM_VERSION` in `.github/workflows/ci.yml`); older binaries reject the
 `optional(type, default)` variable syntax used by the prod environment.
+
+The catalog's **Use this dataset** action provides integration code, attribution,
+and exact-generation lockfiles. **Save workspace** / **Open workspace** round-trip
+supported map controls and concrete dataset references. See the
+[consumer workflow](docs/consumer-guide.md#use-a-dataset-and-reopen-a-workspace) and
+[portable v1 contract](docs/standards/workspace-snapshot-v1.md).
 
 ## TypeScript SDK release
 
@@ -897,3 +907,7 @@ This repo should not become:
 - A mirror of large data files.
 - A second uncontrolled copy of the shared bucket.
 - A place where agents invent new bucket conventions without updating the docs.
+
+The portable workspace validator (`web/catalog/workspace-contract.js`) is an
+SDK build input. Changes to it or the contract-copy build script require the
+same reviewed TypeScript version increase as packed package sources.

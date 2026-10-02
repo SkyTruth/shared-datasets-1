@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -83,6 +84,8 @@ def build(work: Path) -> None:
                     "--categories", str(inputs / "categories.yaml"), "--docs-dir", str(docs),
                     "--release-index-dir", str(indexes), "--bucket", "example-bucket",
                     "--generated-at", "2026-09-24T00:00:00Z", "--out", str(work / "site")], cwd=REPO, check=True)
+
+    shutil.copytree(REPO / "api/typescript/dist", work / "site/sdk", dirs_exist_ok=True)
 
     if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "stale-inspector":
         app_path = work / "site/app.js"

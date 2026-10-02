@@ -383,3 +383,53 @@ GCS credentials, service account keys, raw signing keys, or signed cookie
 values. Browser PMTiles code should use the tiered CDN URL and, for private or
 internal layers, a consumer backend session endpoint implemented with the
 TypeScript server helpers.
+
+## Exact portable lockfiles
+
+The catalog's **Use this dataset** action exports a v1 JSON lockfile.
+**Save workspace** adds the supported map controls. The normative
+[portable contract](../../docs/standards/workspace-snapshot-v1.md) separates
+required exact artifacts, captured attribution, and presentation.
+
+```python
+import json
+from pathlib import Path
+from skytruth_shared_datasets import validate_snapshot, fetch_snapshot_artifact
+
+lock = validate_snapshot(Path("dataset.lock.json").read_text())
+fetched = fetch_snapshot_artifact(lock, lock["datasets"][0]["asset_slug"])
+path = fetched.cache_path
+Path("dataset-lineage.json").write_text(json.dumps(fetched.lineage(), indent=2))
+```
+
+These are additive APIs. Existing `Catalog`, `resolve_dataset`, and
+`fetch_dataset` behavior is preserved. `validate_snapshot` accepts JSON text or
+a dictionary and rejects unknown fields/versions, duplicate JSON keys,
+arbitrary paths, untrusted buckets, unsafe generations, and unsupported map
+settings. An alternate trusted bucket must be supplied explicitly by the
+application as `bucket=...`; do not copy it from untrusted JSON.
+
+`fetch_snapshot_artifact(lock, slug, role="canonical", locale=None)` uses ADC
+by default (`access="gcs"`). It downloads the captured object generation directly
+without reading the current catalog or release index. Roles also include
+`tiles`, `metadata`, and `schema`; `locale` selects the **resolved** metadata
+locale (`None` for canonical metadata). Pass `cache_dir`, `force`, `timeout`,
+or an injected GCS `client` as for ordinary fetches.
+
+The result exposes `cache_path`, the original `DatasetRef` as `ref`, and
+`lineage()`. Lineage distinguishes `published_sha256` / `published_size`
+expectations from `verified_sha256` / `verified_size` evidence. Unknown
+published values stay `None`. The existing cache is keyed by URI/generation,
+rehashes bytes on reuse, and can preserve already downloaded bytes after
+upstream retention ends. `force=True` requires a fresh remote read.
+
+Unavailable generations and checksum/size mismatches raise `FetchError`;
+malformed lockfiles raise `SnapshotError`. No latest substitution occurs.
+A lockfile references data; it does not archive bytes or guarantee retention.
+V1 supports single-object FGB, CSV, GeoJSON, NDGeoJSON, COG, and PMTiles plus
+matching metadata/schema companions. Zarr collections need a future contract.
+
+Install the reviewed source revision emitted by the catalog action using the
+package's GitHub archive distribution. Unreleased local builds instead show
+the editable installation instruction; they do not claim an older published
+revision contains these APIs.

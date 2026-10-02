@@ -55,6 +55,9 @@ index.html
 styles.css
 app.js
 map-preview.js
+release-reference.js
+workspace.js
+workspace-contract.js
 catalog.json
 docs/assets/*.md
 ```
@@ -415,3 +418,36 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 Resolve visible hygiene issues before announcing the catalog, especially stray
 desktop files, missing asset READMEs, stale bucket-side catalog objects, and
 README sections required by `docs/standards/asset-layout-and-formats.md`.
+
+## Dataset integration and portable workspaces
+
+The **Use this dataset**, **Save workspace**, and **Open workspace** controls
+use the [v1 portable contract](standards/workspace-snapshot-v1.md). Latest is
+captured once into existing release-reference objects; snippets and exports
+reuse those references. Imports are bounded, validated, checked against the
+authorized catalog root/tier, and preflighted before rendering. Existing
+`/api/pmtiles/signed-url` and `/api/download-url` routes reacquire restricted
+access. The latter supports bounded canonical CSV, GeoJSON, NDGeoJSON, and COG
+formats in addition to FGB, metadata, and schema. It never signs arbitrary
+imported paths, and requires the expected indexed generation.
+
+Presentation includes selection order, all selected layers visible, viewport,
+basemap, locale, and the product's single-dataset source-layer/color controls.
+Unsupported state is rejected. No server-side workspace store is introduced.
+Exact legacy generation documents can be consumed by Python; viewer restore
+requires a dated indexed release. The UI explains missing identity and remote
+retention limitations.
+
+Builds include `sdk_revision` when `SHARED_DATASETS_SDK_REVISION` or `GITHUB_SHA`
+names the reviewed 40-character source commit containing these APIs. This
+produces a pinned GitHub archive Python install and a matching repository
+checkout instruction for the TypeScript package. Local builds without a revision
+show editable/development installs and their unreleased status. Do not supply
+an old base commit which lacks the APIs.
+
+The browser smoke suite executes the generated TypeScript with the real
+browser-safe SDK entrypoint, MapLibre, PMTiles, and synthetic archives. It also
+checks clipboard actions, exact exports, single/multiple workspace round-trips,
+map controls, restricted reacquisition, and atomic failure states. Python tests
+execute generated code through the real package entrypoint using a synthetic
+GCS client. These do not prove live IAP/CDN/GCS retention configuration.

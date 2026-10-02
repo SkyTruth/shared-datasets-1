@@ -1,0 +1,797 @@
+{
+  "snapshot": {
+    "kind": "skytruth-workspace",
+    "schema_version": 1,
+    "bucket": "example-bucket",
+    "datasets": [
+      {
+        "asset_slug": "example-layer",
+        "release": "2026-01-01",
+        "canonical_format": "csv",
+        "access_tier": "public",
+        "artifacts": [
+          {
+            "format": "csv",
+            "role": "canonical",
+            "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+            "generation": "9007199254740993",
+            "size": 34,
+            "sha256": "fe8abd24cc8562f19147f01276e1bbc43ec03e65182e1d549e1426a0de7dfe59",
+            "requested_locale": null,
+            "resolved_locale": null
+          },
+          {
+            "format": "pmtiles",
+            "role": "tiles",
+            "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+            "generation": "101",
+            "size": 1268,
+            "sha256": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
+            "requested_locale": null,
+            "resolved_locale": null
+          },
+          {
+            "format": "metadata",
+            "role": "metadata",
+            "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+            "generation": "102",
+            "size": 122,
+            "sha256": "cdd413df802799ac324f34b8bef68807244d1e2a8cf6b02cd9ab797c5b241334",
+            "requested_locale": null,
+            "resolved_locale": null
+          }
+        ],
+        "provenance": {
+          "title": "Title \"quoted\"\n雪 🐢",
+          "citation": "Publication \"quoted\"\n2026",
+          "source": "Synthetic fixtures",
+          "source_url": null,
+          "license": "Terms remain verbatim",
+          "notes": "A caveat\nwith newlines",
+          "status": "active",
+          "lifecycle_reason": null,
+          "lifecycle_date": null,
+          "successor_asset_slug": null,
+          "consumer_guidance": null,
+          "release_index_uri": "gs://example-bucket/_catalog/releases/example-layer.json",
+          "release_index_generation": null,
+          "release_index_updated_at": null,
+          "identity_contract": {
+            "strategy": "source_field",
+            "source_fields": [
+              "feature_id"
+            ]
+          },
+          "source_version": "Fixture source edition 1"
+        }
+      }
+    ],
+    "presentation": {
+      "basemap": "satellite",
+      "viewport": {
+        "center": [
+          1.2,
+          3.4
+        ],
+        "zoom": 5.2,
+        "bearing": 23,
+        "pitch": 18
+      },
+      "locale": null,
+      "layers": [
+        {
+          "asset_slug": "example-layer",
+          "visible": true,
+          "source_layer": null,
+          "color_field": null
+        }
+      ]
+    }
+  },
+  "canonical_base64": "ZmVhdHVyZV9pZCxuYW1lCjEsIkEgcXVvdGVkIG5hbWUiCg==",
+  "metadata_base64": "H4sIAAAAAAAC/x3KMQqAMBBE0d5ThK0V1ELQW9gHZCGjCFHDbgKKeHeNMNV/c9MMjkkwrY4GQw2VhlgVcVKflpxw8hY8Ks8XJLPAgxXZ2rrtqrr5liHIESBxhX52087bfxrTEeGM/YMlu9vUd2B6nuIFDmCCqn8AAAA=",
+  "invalid_mutations": [
+    {
+      "name": "unknown version",
+      "path": [
+        "schema_version"
+      ],
+      "value": 2
+    },
+    {
+      "name": "unknown field",
+      "path": [
+        "signed_url"
+      ],
+      "value": "https://example.test/?token=secret"
+    },
+    {
+      "name": "foreign bucket",
+      "path": [
+        "bucket"
+      ],
+      "value": "evil-bucket"
+    },
+    {
+      "name": "bad generation 1",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": 1
+    },
+    {
+      "name": "bad generation 9007199254740992",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": 9007199254740992
+    },
+    {
+      "name": "bad generation 0",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": "0"
+    },
+    {
+      "name": "bad generation 01",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": "01"
+    },
+    {
+      "name": "bad generation -1",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": "-1"
+    },
+    {
+      "name": "bad generation 18446744073709551616",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": "18446744073709551616"
+    },
+    {
+      "name": "bad generation None",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": null
+    },
+    {
+      "name": "bad size -1",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "size"
+      ],
+      "value": -1
+    },
+    {
+      "name": "bad size 1.5",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "size"
+      ],
+      "value": 1.5
+    },
+    {
+      "name": "bad size 9007199254740992",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "size"
+      ],
+      "value": 9007199254740992
+    },
+    {
+      "name": "bad size True",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "size"
+      ],
+      "value": true
+    },
+    {
+      "name": "bad size 1",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "size"
+      ],
+      "value": "1"
+    },
+    {
+      "name": "bad checksum aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "sha256"
+      ],
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "bad checksum ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "sha256"
+      ],
+      "value": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+    },
+    {
+      "name": "bad checksum 12",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "sha256"
+      ],
+      "value": 12
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/../secret.csv",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/../secret.csv"
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/other/releases/2026-01-01/example-layer.csv",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/other/releases/2026-01-01/example-layer.csv"
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv?generation=2",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv?generation=2"
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/%2e%2e.csv",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/%2e%2e.csv"
+    },
+    {
+      "name": "unsafe path gs://evil-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://evil-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv"
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/example-layer/releases/2026-02-01/example-layer.csv",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/example-layer/releases/2026-02-01/example-layer.csv"
+    },
+    {
+      "name": "unsafe path gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "gs_uri"
+      ],
+      "value": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles"
+    },
+    {
+      "name": "unknown format",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "format"
+      ],
+      "value": "sqlite"
+    },
+    {
+      "name": "invalid date",
+      "path": [
+        "datasets",
+        0,
+        "release"
+      ],
+      "value": "2026-02-30"
+    },
+    {
+      "name": "latest alias",
+      "path": [
+        "datasets",
+        0,
+        "release"
+      ],
+      "value": "latest"
+    },
+    {
+      "name": "unknown role",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "role"
+      ],
+      "value": "download"
+    },
+    {
+      "name": "unknown access tier",
+      "path": [
+        "datasets",
+        0,
+        "access_tier"
+      ],
+      "value": "everyone"
+    },
+    {
+      "name": "duplicate dataset",
+      "path": [
+        "datasets"
+      ],
+      "value": [
+        {
+          "asset_slug": "example-layer",
+          "release": "2026-01-01",
+          "canonical_format": "csv",
+          "access_tier": "public",
+          "artifacts": [
+            {
+              "format": "csv",
+              "role": "canonical",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+              "generation": "9007199254740993",
+              "size": 34,
+              "sha256": "fe8abd24cc8562f19147f01276e1bbc43ec03e65182e1d549e1426a0de7dfe59",
+              "requested_locale": null,
+              "resolved_locale": null
+            },
+            {
+              "format": "pmtiles",
+              "role": "tiles",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+              "generation": "101",
+              "size": 1268,
+              "sha256": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
+              "requested_locale": null,
+              "resolved_locale": null
+            },
+            {
+              "format": "metadata",
+              "role": "metadata",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+              "generation": "102",
+              "size": 122,
+              "sha256": "cdd413df802799ac324f34b8bef68807244d1e2a8cf6b02cd9ab797c5b241334",
+              "requested_locale": null,
+              "resolved_locale": null
+            }
+          ],
+          "provenance": {
+            "title": "Title \"quoted\"\n雪 🐢",
+            "citation": "Publication \"quoted\"\n2026",
+            "source": "Synthetic fixtures",
+            "source_url": null,
+            "license": "Terms remain verbatim",
+            "notes": "A caveat\nwith newlines",
+            "status": "active",
+            "lifecycle_reason": null,
+            "lifecycle_date": null,
+            "successor_asset_slug": null,
+            "consumer_guidance": null,
+            "release_index_uri": "gs://example-bucket/_catalog/releases/example-layer.json",
+            "release_index_generation": null,
+            "release_index_updated_at": null,
+            "identity_contract": {
+              "strategy": "source_field",
+              "source_fields": [
+                "feature_id"
+              ]
+            },
+            "source_version": "Fixture source edition 1"
+          }
+        },
+        {
+          "asset_slug": "example-layer",
+          "release": "2026-01-01",
+          "canonical_format": "csv",
+          "access_tier": "public",
+          "artifacts": [
+            {
+              "format": "csv",
+              "role": "canonical",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+              "generation": "9007199254740993",
+              "size": 34,
+              "sha256": "fe8abd24cc8562f19147f01276e1bbc43ec03e65182e1d549e1426a0de7dfe59",
+              "requested_locale": null,
+              "resolved_locale": null
+            },
+            {
+              "format": "pmtiles",
+              "role": "tiles",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+              "generation": "101",
+              "size": 1268,
+              "sha256": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
+              "requested_locale": null,
+              "resolved_locale": null
+            },
+            {
+              "format": "metadata",
+              "role": "metadata",
+              "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+              "generation": "102",
+              "size": 122,
+              "sha256": "cdd413df802799ac324f34b8bef68807244d1e2a8cf6b02cd9ab797c5b241334",
+              "requested_locale": null,
+              "resolved_locale": null
+            }
+          ],
+          "provenance": {
+            "title": "Title \"quoted\"\n雪 🐢",
+            "citation": "Publication \"quoted\"\n2026",
+            "source": "Synthetic fixtures",
+            "source_url": null,
+            "license": "Terms remain verbatim",
+            "notes": "A caveat\nwith newlines",
+            "status": "active",
+            "lifecycle_reason": null,
+            "lifecycle_date": null,
+            "successor_asset_slug": null,
+            "consumer_guidance": null,
+            "release_index_uri": "gs://example-bucket/_catalog/releases/example-layer.json",
+            "release_index_generation": null,
+            "release_index_updated_at": null,
+            "identity_contract": {
+              "strategy": "source_field",
+              "source_fields": [
+                "feature_id"
+              ]
+            },
+            "source_version": "Fixture source edition 1"
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate artifact",
+      "path": [
+        "datasets",
+        0,
+        "artifacts"
+      ],
+      "value": [
+        {
+          "format": "csv",
+          "role": "canonical",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+          "generation": "9007199254740993",
+          "size": 34,
+          "sha256": "fe8abd24cc8562f19147f01276e1bbc43ec03e65182e1d549e1426a0de7dfe59",
+          "requested_locale": null,
+          "resolved_locale": null
+        },
+        {
+          "format": "pmtiles",
+          "role": "tiles",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+          "generation": "101",
+          "size": 1268,
+          "sha256": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
+          "requested_locale": null,
+          "resolved_locale": null
+        },
+        {
+          "format": "metadata",
+          "role": "metadata",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+          "generation": "102",
+          "size": 122,
+          "sha256": "cdd413df802799ac324f34b8bef68807244d1e2a8cf6b02cd9ab797c5b241334",
+          "requested_locale": null,
+          "resolved_locale": null
+        },
+        {
+          "format": "csv",
+          "role": "canonical",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.csv",
+          "generation": "9007199254740993",
+          "size": 34,
+          "sha256": "fe8abd24cc8562f19147f01276e1bbc43ec03e65182e1d549e1426a0de7dfe59",
+          "requested_locale": null,
+          "resolved_locale": null
+        },
+        {
+          "format": "pmtiles",
+          "role": "tiles",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.pmtiles",
+          "generation": "101",
+          "size": 1268,
+          "sha256": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
+          "requested_locale": null,
+          "resolved_locale": null
+        },
+        {
+          "format": "metadata",
+          "role": "metadata",
+          "gs_uri": "gs://example-bucket/category/subcategory/example-layer/releases/2026-01-01/example-layer.metadata.ndjson.gz",
+          "generation": "102",
+          "size": 122,
+          "sha256": "cdd413df802799ac324f34b8bef68807244d1e2a8cf6b02cd9ab797c5b241334",
+          "requested_locale": null,
+          "resolved_locale": null
+        }
+      ]
+    },
+    {
+      "name": "unsafe signer provenance",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "source_url"
+      ],
+      "value": "https://source.test/?X-Goog-Signature=secret"
+    },
+    {
+      "name": "arbitrary index",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "release_index_uri"
+      ],
+      "value": "gs://example-bucket/secrets/key.json"
+    },
+    {
+      "name": "unknown identity",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "identity_contract"
+      ],
+      "value": {
+        "cache_path": "/private/tmp/cache"
+      }
+    },
+    {
+      "name": "unsupported hidden layer",
+      "path": [
+        "presentation",
+        "layers",
+        0,
+        "visible"
+      ],
+      "value": false
+    },
+    {
+      "name": "invalid map viewport",
+      "path": [
+        "presentation",
+        "viewport",
+        "zoom"
+      ],
+      "value": 23
+    },
+    {
+      "name": "invalid map center",
+      "path": [
+        "presentation",
+        "viewport",
+        "center"
+      ],
+      "value": [
+        200,
+        0
+      ]
+    },
+    {
+      "name": "unknown locale",
+      "path": [
+        "presentation",
+        "locale"
+      ],
+      "value": "../../secret"
+    },
+    {
+      "name": "unknown map setting",
+      "path": [
+        "presentation",
+        "opacity"
+      ],
+      "value": 0.5
+    },
+    {
+      "name": "duplicate map layer",
+      "path": [
+        "presentation",
+        "layers"
+      ],
+      "value": [
+        {
+          "asset_slug": "example-layer",
+          "visible": true,
+          "source_layer": null,
+          "color_field": null
+        },
+        {
+          "asset_slug": "example-layer",
+          "visible": true,
+          "source_layer": null,
+          "color_field": null
+        }
+      ]
+    },
+    {
+      "name": "metadata locale mismatch",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        2,
+        "resolved_locale"
+      ],
+      "value": "es"
+    },
+    {
+      "name": "generation with trailing newline",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "generation"
+      ],
+      "value": "1\n"
+    },
+    {
+      "name": "checksum with trailing newline",
+      "path": [
+        "datasets",
+        0,
+        "artifacts",
+        0,
+        "sha256"
+      ],
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+    },
+    {
+      "name": "locale with trailing newline",
+      "path": [
+        "presentation",
+        "locale"
+      ],
+      "value": "es\n"
+    },
+    {
+      "name": "slug with trailing newline",
+      "path": [
+        "datasets",
+        0,
+        "asset_slug"
+      ],
+      "value": "example-layer\n"
+    },
+    {
+      "name": "AWS signed source URL",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "source_url"
+      ],
+      "value": "https://source.test/data?X-Amz-Signature=secret"
+    },
+    {
+      "name": "encoded access token in source URL",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "source_url"
+      ],
+      "value": "https://source.test/data?access%5Ftoken=secret"
+    },
+    {
+      "name": "credentialed source URL",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "source_url"
+      ],
+      "value": "https://user:secret@source.test/data"
+    },
+    {
+      "name": "unpaired Unicode surrogate",
+      "path": [
+        "datasets",
+        0,
+        "provenance",
+        "title"
+      ],
+      "value": "\ud800"
+    }
+  ]
+}
