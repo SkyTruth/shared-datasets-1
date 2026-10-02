@@ -58,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal thirteen-scenario count gate cannot supply a misleading failure.
+so the normal fifteen-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 

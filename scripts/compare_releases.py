@@ -161,6 +161,11 @@ def snapshot(raw: Mapping) -> dict:
 def identity_compatibility(
     before: dict, after: dict, old_fields: dict, new_fields: dict
 ) -> dict:
+    if any(x.get("release_feature_model_schema_version") != 2 for x in (before, after)):
+        return {
+            "compatible": False,
+            "reason": "Historical feature identity cannot be joined across releases.",
+        }
     a, b = before.get("identity"), after.get("identity")
     try:
         model.validate_identity_metadata(a)
@@ -465,7 +470,14 @@ class Comparison:
             )
         if legacy:
             self.load_legacy_geometry(
-                db, side, ref, paths, fields, count, open_geometry
+                db,
+                side,
+                ref,
+                paths,
+                fields,
+                count,
+                open_geometry,
+                artifacts.get("fgb", {}),
             )
         self.progress(side, count)
         declared_fields = {
@@ -551,7 +563,7 @@ class Comparison:
                 )
 
     def load_legacy_geometry(
-        self, db, side, ref, paths, fields, expected_count, open_geometry
+        self, db, side, ref, paths, fields, expected_count, open_geometry, declared_fgb
     ):
         """Recover separate hashes from canonical v1 geometry, never display tiles."""
         from flatgeobuf.FlatGeobuf.Feature import Feature
@@ -564,6 +576,7 @@ class Comparison:
         fgb = ref["files"].get("fgb")
         if fgb is None or (open_geometry is None and "fgb" not in paths):
             raise ComparisonError("Historical comparison needs the exact canonical FGB")
+        fgb = {**artifact(declared_fgb), **fgb}
         if fgb.get("size", 0) > self.limits.max_geometry_bytes:
             raise ComparisonLimit(
                 "Historical FGB exceeds the streaming geometry budget"
@@ -988,7 +1001,7 @@ def main(argv=None):
             {
                 role: Path(raw["local_paths"][role])
                 for role in ("metadata", "schema", "manifest", "fgb")
-                if role in raw["files"]
+                if role != "fgb" or role in raw["local_paths"]
             }
             for raw in inputs
         ]

@@ -67,6 +67,13 @@ const test = base.extend({
         }
         return route.fulfill({response});
       }
+      if (url.origin === baseURL && url.pathname.endsWith('.js') && !url.pathname.startsWith('/sdk/')) {
+        const existing = new Set(['/app.js', '/map-preview.js', '/release-reference.js', '/compare-releases.js', '/workspace.js', '/workspace-contract.js']);
+        if (!existing.has(url.pathname)) {
+          forbidden.push(`Module unavailable in the previously deployed viewer: ${url.href}`);
+          return route.fulfill({status:404, contentType:'text/plain', body:'Not found'});
+        }
+      }
       if (url.origin === baseURL && ['/api/pmtiles/signed-url', '/api/download-url'].includes(url.pathname)) {
         const slug = url.searchParams.get('slug'), date = url.searchParams.get('version');
         const format = url.pathname.includes('/pmtiles/') ? 'pmtiles' : url.searchParams.get('format');
@@ -246,6 +253,12 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('#compare-details')).toHaveAttribute('aria-expanded', 'false');
+  const controls = await Promise.all(['#compare-before', '#compare-after', '#compare-open', '#compare-details'].map(id => page.locator(id).boundingBox()));
+  expect(Math.max(...controls.map(b => b.y + b.height)) - Math.min(...controls.map(b => b.y + b.height))).toBeLessThan(2);
+  expect(controls[3].x).toBeGreaterThan(controls[2].x + controls[2].width);
+  expect(await page.locator('.compare-before-label').evaluate(n => getComputedStyle(n).color)).toBe('rgb(195, 59, 59)');
+  expect(await page.locator('.compare-after-label').evaluate(n => getComputedStyle(n).color)).toBe('rgb(22, 129, 83)');
+
   await expect(page.locator('#compare-page')).toHaveText('1–50 of 106');
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas');
@@ -382,12 +395,6 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
 });
 
-async function downloadedJson(page, button) {
-  const waiting = page.waitForEvent('download');
-  await button.click();
-  const download = await waiting;
-  return JSON.parse(await readFile(await download.path(), 'utf8'));
-}
 async function openSnapshot(page, snapshot) {
   await page.locator('#open-workspace-file').setInputFiles({name: 'fixture.workspace.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(snapshot))});
 }

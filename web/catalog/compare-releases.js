@@ -68,7 +68,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
     ui.details.textContent = expanded ? "▾ Details" : "▸ Details";
   }
   function mapNote(session) {
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.summary ? "Comparing geometry… Colors appear after all records are checked." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
   }
   async function cancelJob(id) {
     if (!id) return;
@@ -210,7 +210,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
       session.summary = response.summary; renderSummary(response.summary);
-      status(""); session.map?.refreshGeometry();
+      status(""); mapNote(session); session.map?.refreshGeometry();
       if (response.summary.identity.compatible) await loadPage(session);
     } catch (error) { if (current(session)) status(error.message); }
   }

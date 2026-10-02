@@ -129,12 +129,13 @@ comparison evidence or retiring this explicitly supported reader capability.
 
 Read-only checks on October 2 against pinned published inputs established:
 
-| Asset / Before → After | Rows Before / After | Local comparison | Index size | Unique geometry changes |
+| Asset / Before → After | Rows Before / After | Local viewer job | Workspace size | Unique geometry changes |
 | --- | ---: | ---: | ---: | --- |
-| Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 42.24 s | 85.3 MiB | 14 new, 14 removed, 18,409 unchanged |
-| WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 2.51 s | 84.2 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
+| Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 45.39 s | 89.9 MiB | 14 new, 14 removed, 18,409 unchanged |
+| WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 4.08 s | 90.2 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
 
-These timings use already downloaded canonical inputs. Coral's historical FGB is
+These timings run the real viewer job code with already downloaded, pinned
+canonical inputs. Workspace sizes include its downloaded sidecars and contracts. Coral's historical FGB is
 329,582,712 bytes; local downloading took about 294 seconds, outside this cached
 comparison measurement. Cloud Run/GCS transport and CPU timings remain unverified.
 WDPA uses sidecars only. Its original index exceeded the 128-MiB workspace budget

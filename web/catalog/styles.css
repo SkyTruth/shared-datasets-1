@@ -692,7 +692,7 @@ dt {
   .version-control { flex: 1; }
   .compare-release-controls { gap: 6px; flex: 1; }
   .compare-release-controls label { width: 50%; }
-  .version-row.comparing select { padding-left: 3px; padding-right: 0; font-size: 11px; }
+  .version-row.comparing select { padding-left: 3px; padding-right: 0; font-size: 10px; }
   .version-row.comparing #compare-open { padding: 0 5px; font-size: 11px; white-space: nowrap; }
   .compare-details { font-size: 11px; }
 }
