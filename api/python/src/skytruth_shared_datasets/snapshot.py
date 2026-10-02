@@ -448,3 +448,59 @@ def fetch_snapshot_artifact(
         timeout=timeout,
     )
     return FetchedSnapshotArtifact(fetched, artifact["sha256"], artifact["size"])
+
+
+def fetch_artifact(
+    reference: str,
+    *,
+    bucket: str = DEFAULT_BUCKET,
+    client=None,
+    cache_dir=None,
+    force: bool = False,
+    timeout: float = 60.0,
+) -> Path:
+    """Fetch ``gs://…/asset/releases/date/file#generation`` using ADC and the cache.
+
+    No catalog lookup or release substitution occurs. A missing generation fails.
+    """
+    match = re.fullmatch(
+        r"(gs://[^#]+/([^/]+)/releases/(\d{4}-\d{2}-\d{2})/[^/]+)#([1-9][0-9]*)",
+        reference,
+    )
+    if not match:
+        raise SnapshotError("Artifact reference must be a dated gs:// URI with #generation")
+    uri, slug, release, generation = match.groups()
+    fmt = next(
+        (key for key, pattern in FORMATS.items()
+         if key not in {"metadata", "schema"} and re.search(pattern, uri)),
+        None,
+    )
+    if fmt is None:
+        raise SnapshotError("Unsupported canonical artifact format")
+    snapshot = {
+        "kind": "skytruth-workspace",
+        "schema_version": 1,
+        "bucket": bucket,
+        "presentation": None,
+        "datasets": [{
+            "asset_slug": slug,
+            "release": release,
+            "canonical_format": fmt,
+            "access_tier": "private",
+            "provenance": dict.fromkeys(PROVENANCE_KEYS),
+            "artifacts": [{
+                "format": fmt,
+                "role": "canonical",
+                "gs_uri": uri,
+                "generation": generation,
+                "size": None,
+                "sha256": None,
+                "requested_locale": None,
+                "resolved_locale": None,
+            }],
+        }],
+    }
+    return fetch_snapshot_artifact(
+        snapshot, slug, bucket=bucket, client=client, cache_dir=cache_dir,
+        force=force, timeout=timeout,
+    ).cache_path

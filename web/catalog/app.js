@@ -1,13 +1,12 @@
 import {createComparisonController} from "./compare-releases.js";
 import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
-import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, installationInstructions, SNAPSHOT_MAX_BYTES} from "./workspace.js";
+import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, SNAPSHOT_MAX_BYTES} from "./workspace.js";
 
 const state = {
   catalog: null,
   referenceCache: new Map(),
   pinnedReferenceBySlug: new Map(),
-  useSnapshot: null,
   restoring: false,
   assets: [],
   filtered: [],
@@ -387,6 +386,7 @@ function wireEvents() {
   });
   elements.metadataLanguage.addEventListener("change", () => {
     state.metadataLocale = normalizeMetadataLocale(elements.metadataLanguage.value);
+    if (selectedAssets().length === 1) renderUseSection(selectedReference(selectedAssets()[0]));
     renderMetadataSidecarPath(selectedMetadataLanguageAsset());
     state.mapModule?.refreshColorizeMetadata?.();
     refreshFeatureInspectorMetadata();
@@ -625,7 +625,7 @@ function markSelected() {
 
 function renderSelection() {
   const assets = selectedAssets();
-  document.querySelector("#use-dataset").hidden = assets.length !== 1;
+  document.querySelector("#use-section").hidden = assets.length !== 1;
   if (!assets.length) {
     clearDetail();
     return;
@@ -677,7 +677,9 @@ function renderDetail(asset) {
   elements.url.textContent = reference.public_url;
   renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
-  return renderPmtiles([reference]);
+  const rendering = renderPmtiles([reference]);
+  renderUseSection(reference);
+  return rendering;
 }
 
 function renderDocsLink(asset) {
@@ -2879,55 +2881,53 @@ function workspacePresentation() {
       source_layer: references.length === 1 ? (state.layerByReference[mapReferenceKey(reference)] || null) : null,
       color_field: references.length === 1 ? (state.colorFieldByReference[colorReferenceKey(reference)] || null) : null}))};
 }
-function captureSelection(presentation = null) {
-  return captureWorkspace(selectedReferences(), {bucket: state.catalog.bucket, presentation, locale: state.metadataLocale || null});
-}
-function downloadSnapshot(snapshot, filename) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot, null, 2) + '\n'], {type: 'application/json'}));
-  triggerBrowserDownload(url, filename);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 function workspaceStatus(message) { document.querySelector('#workspace-status').textContent = message; }
-function wireWorkspaceEvents() {
-  const dialog = document.querySelector('#use-dataset-dialog');
-  document.querySelector('#use-dataset').addEventListener('click', () => {
-    state.useSnapshot = null;
-    document.querySelector('#use-export').disabled = true;
-    document.querySelector('#use-copy-python').disabled = true;
-    document.querySelector('#use-copy-typescript').disabled = true;
+function useLanguage(language) {
+  for (const name of ['python', 'typescript']) {
+    const active = name === language, tab = document.querySelector(`#use-tab-${name}`);
+    tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1;
+    document.querySelector(`#use-${name}`).hidden = !active;
+  }
+}
+function renderUseSection(reference) {
+  const section = document.querySelector('#use-section'), error = document.querySelector('#use-error');
+  section.hidden = false; error.hidden = true;
+  document.querySelector('#use-copy-code').disabled = false;
+  try {
+    const snapshot = captureWorkspace([reference], {bucket: state.catalog.bucket, locale: state.metadataLocale || null});
+    document.querySelector('#use-python').textContent = pythonSnippet(snapshot);
+    const typescript = typescriptSnippet(snapshot);
+    document.querySelector('#use-typescript').textContent = typescript || '';
+    document.querySelector('#use-tab-typescript').hidden = !typescript;
+    const active = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' && typescript ? 'typescript' : 'python';
+    useLanguage(active);
+    const credit = document.querySelector('#use-attribution');
+    credit.textContent = attribution(snapshot);
+    credit.href = reference.source_url || reference.docs_url || 'https://skytruth.org';
+  } catch (failure) {
     document.querySelector('#use-python').textContent = '';
     document.querySelector('#use-typescript').textContent = '';
-    try {
-      if (selectedAssets().length !== 1) throw new Error('Select one dataset for integration code. Save workspace captures all selected datasets and releases.');
-      const snapshot = captureSelection();
-      state.useSnapshot = snapshot;
-      document.querySelector('#use-summary').textContent = snapshot.datasets.map(d => `${d.asset_slug} · release ${d.release} · ${d.access_tier} access\n${d.artifacts.map(a => `${a.format}: generation ${a.generation}, size ${a.size ?? 'unknown'}, published SHA-256 ${a.sha256 ?? 'unknown'}`).join('\n')}`).join('\n');
-      document.querySelector('#use-install').textContent = installationInstructions(state.catalog.sdk_revision);
-      document.querySelector('#use-python').textContent = pythonSnippet(snapshot);
-      document.querySelector('#use-typescript').textContent = typescriptSnippet(snapshot);
-      document.querySelector('#use-attribution').textContent = attribution(snapshot);
-      document.querySelector('#use-provenance').textContent = JSON.stringify(snapshot.datasets.map(d => d.provenance), null, 2);
-      document.querySelector('#use-export').disabled = false;
-      document.querySelector('#use-copy-python').disabled = false;
-      document.querySelector('#use-copy-typescript').disabled = !snapshot.datasets[0].artifacts.some(a => a.format === 'pmtiles');
-    } catch (error) {
-      document.querySelector('#use-summary').textContent = error.message;
-      document.querySelector('#use-install').textContent = '';
-      document.querySelector('#use-attribution').textContent = selectedAssets().map(a => [a.citation, a.source, a.license, a.notes, a.consumer_guidance].filter(Boolean).join('\n')).join('\n\n');
-      document.querySelector('#use-provenance').textContent = '';
-    }
-    dialog.showModal();
+    document.querySelector('#use-attribution').textContent = '';
+    error.textContent = 'Code is unavailable for this version. Please choose another version.';
+    error.hidden = false; document.querySelector('#use-copy-code').disabled = true;
+  }
+}
+function wireWorkspaceEvents() {
+  for (const language of ['python', 'typescript']) {
+    const tab = document.querySelector(`#use-tab-${language}`);
+    tab.addEventListener('click', () => useLanguage(language));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      const next = event.key === 'Home' ? 'python' : event.key === 'End' ? 'typescript' : language === 'python' ? 'typescript' : 'python';
+      const target = document.querySelector(`#use-tab-${next}`);
+      if (!target.hidden) { event.preventDefault(); target.click(); target.focus(); }
+    });
+  }
+  document.querySelector('#use-copy-code').addEventListener('click', event => {
+    const language = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' ? 'typescript' : 'python';
+    copyValue(document.querySelector(`#use-${language}`).textContent, event.currentTarget);
   });
-  document.querySelector('#use-close').addEventListener('click', () => dialog.close());
-  for (const id of ['python', 'typescript', 'attribution', 'provenance']) document.querySelector(`#use-copy-${id}`).addEventListener('click', event => copyValue(document.querySelector(`#use-${id}`).textContent, event.currentTarget));
-  document.querySelector('#use-export').addEventListener('click', () => downloadSnapshot(state.useSnapshot, `${state.useSnapshot.datasets[0].asset_slug}.lock.json`));
-  document.querySelector('#save-workspace').addEventListener('click', () => {
-    try {
-      const snapshot = captureSelection(workspacePresentation());
-      downloadSnapshot(snapshot, 'shared-datasets.workspace.json');
-      workspaceStatus('Workspace saved: exact references to data, selected release per dataset, layer order, basemap, viewport, locale, and single-dataset layer/color controls. All selected layers are visible.');
-    } catch (error) { workspaceStatus(error.message); }
-  });
+  document.querySelector('#use-copy-attribution').addEventListener('click', event => copyValue(document.querySelector('#use-attribution').textContent, event.currentTarget));
   const fileInput = document.querySelector('#open-workspace-file');
   document.querySelector('#open-workspace').addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', async () => {
@@ -2964,7 +2964,7 @@ function wireWorkspaceEvents() {
       renderList();
       await renderSelection();
       if (p) await state.mapModule?.restorePresentation?.(p);
-      workspaceStatus('Workspace restored with captured generations. This file references remote data; it does not archive bytes or guarantee retention.');
+      workspaceStatus('Workspace opened.');
     } catch (error) {
       if (prior) {
         const {viewport, ...selection} = prior;

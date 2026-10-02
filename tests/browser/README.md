@@ -83,7 +83,7 @@ Historical comparison-map denial stays visible while the table is searched and
 inspected; retrying map inspection can recover without replacing pinned inputs.
 
 The suite has twelve required scenarios, including generated TypeScript
-execution and workspace export/import. The SDK build in the setup above is
+execution, inline copying/layout, and workspace imports. The SDK build in the setup above is
 required for the generated integration test.
 
 The fixture builder copies compiled browser SDK modules into the disposable
