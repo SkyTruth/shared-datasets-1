@@ -426,7 +426,10 @@ sidecars, schemas and manifests through `scripts/compare_releases.py` and the
 same-origin `/api/comparisons` job routes. The catalog offers release selection,
 complete change counts, a searchable table, source property inspection, a union
 map (green novel geometry, red removed geometry, yellow identical geometry with
-altered metadata), before/after maps and complete report export. Localization
+altered metadata, faint unchanged geometry) in the primary map and complete
+report export. Before/After selections rerun automatically; Close comparison
+restores ordinary browsing. Summaries use compact tables. Geometry colors remain
+available when feature-ID contracts differ. Localization
 is excluded from source changes. Identity incompatibility withholds authoritative
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).

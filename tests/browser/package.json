@@ -8,6 +8,7 @@
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "maplibre-gl": "5.9.0",
-    "pmtiles": "4.3.0"
+    "pmtiles": "4.3.0",
+    "pngjs": "7.0.0"
   }
 }

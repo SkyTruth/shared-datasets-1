@@ -23,6 +23,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 def build(work: Path) -> None:
     for name, digest in {
+        "union-polygons-before": "0c372994eb305e3e52e88f1ba138cc5c38d463c9d70ef125bd687c5990ea24b2",
+        "union-polygons-after": "8c4603fb7bb5db14ee051d00ab48c4d04f9ff2ecc30545aea343fa6d91dd1d40",
         "old": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
         "new": "1d0d868fb77f04bbe0c00704a84896db380347d8186e2d33c088374947497871",
         "union-before": "d3f55632463ab954c1eb611fb58ddde25f2ba0926899db351588d5aa36c7ac99",
@@ -45,7 +47,7 @@ def build(work: Path) -> None:
         (REPO / "tests/fixtures/historical-consumers.json").read_text()
     )
     rows = []
-    for tier in ("public", "private", "internal", "comparison"):
+    for tier in ("public", "private", "internal", "comparison", "polygons"):
         slug = f"smoke-{tier}"
         root = f"gs://example-bucket/category/subcategory/{slug}"
         row = dict(
@@ -54,7 +56,7 @@ def build(work: Path) -> None:
             category="category",
             subcategory="subcategory",
             status="active",
-            access_tier="public" if tier == "comparison" else tier,
+            access_tier="public" if tier in {"comparison", "polygons"} else tier,
             owner="SkyTruth",
             update_cadence="manual",
             canonical_path=f"{root}/latest/{slug}.fgb",
@@ -71,12 +73,17 @@ def build(work: Path) -> None:
             canonical_file=f"latest/{slug}.fgb",
             available_formats=["fgb", "pmtiles"],
             metadata_paths=["README.md"],
-            geometry_type="Point",
-            row_count=2,
-            feature_identity={
-                "strategy": "source_field",
-                "source_fields": ["feature_id"],
-            },
+            geometry_type="Polygon" if tier == "polygons" else "Point",
+            row_count=4 if tier == "polygons" else 2,
+            feature_identity=(
+                {
+                    "strategy": "generated_sequence_content_hash",
+                    "generated_id_type": "monotonic_integer_string",
+                    "assignment_key": ["geometry_hash", "properties_hash"],
+                }
+                if tier == "polygons"
+                else {"strategy": "source_field", "source_fields": ["feature_id"]}
+            ),
             feature_metadata={
                 "storage": "metadata_sidecar_v1",
                 "feature_id_column": "feature_id",
@@ -89,7 +96,7 @@ def build(work: Path) -> None:
             },
         )
         (docs / f"{slug}.md").write_text(
-            f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release points.\n"
+            f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release {'polygons' if tier == 'polygons' else 'points'}.\n"
         )
         index = json.loads(json.dumps(contract["index"]))
         index["asset_slug"] = slug
@@ -117,11 +124,12 @@ def build(work: Path) -> None:
                 }
                 for i in (1, 2)
             ]
-            if tier == "comparison":
+            if tier in {"comparison", "polygons"}:
+                fixture_prefix = "union-polygons" if tier == "polygons" else "union"
                 geometry = json.loads(
                     (
                         FIXTURES
-                        / ("union-before.geojson" if old else "union-after.geojson")
+                        / f"{fixture_prefix}-{'before' if old else 'after'}.geojson"
                     ).read_text()
                 )["features"]
                 records = []
@@ -132,10 +140,10 @@ def build(work: Path) -> None:
                             "feature_id": id,
                             "name": "Shared before" if old else "Shared after",
                         }
-                        if id == "common"
+                        if id in {"common", "2"}
                         else {"feature_id": id, "name": id}
                     )
-                    if id == "common" and not old:
+                    if id in {"common", "2"} and not old:
                         props["optional"] = None
                     records.append(
                         {
@@ -183,8 +191,12 @@ def build(work: Path) -> None:
                 file["path"] = file["path"].replace("example-layer", slug)
                 if file["format"] == "pmtiles":
                     archive_name = (
-                        ("union-before" if old else "union-after")
-                        if tier == "comparison"
+                        (
+                            f"union-polygons-{'before' if old else 'after'}"
+                            if tier == "polygons"
+                            else ("union-before" if old else "union-after")
+                        )
+                        if tier in {"comparison", "polygons"}
                         else ("old" if old else "new")
                     )
                     data = (FIXTURES / f"{archive_name}.pmtiles").read_bytes()
@@ -218,8 +230,17 @@ def build(work: Path) -> None:
                 source_inputs=[{"source": "Synthetic"}],
                 artifacts=artifacts,
                 schema=schema,
-                identity=model.build_identity_metadata(
-                    strategy="source_field", source_fields=["feature_id"]
+                identity=(
+                    model.build_identity_metadata(
+                        strategy="generated_sequence_content_hash",
+                        contract_id="before-polygons" if old else "after-polygons",
+                        next_generated_feature_id_before_release=1,
+                        next_generated_feature_id_after_release=5,
+                    )
+                    if tier == "polygons"
+                    else model.build_identity_metadata(
+                        strategy="source_field", source_fields=["feature_id"]
+                    )
                 ),
                 validation={"feature_count": len(records)},
             )

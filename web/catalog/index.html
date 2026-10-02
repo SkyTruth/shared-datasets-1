@@ -81,6 +81,16 @@
           </header>
 
           <p id="workspace-status" class="workspace-status" role="status" aria-live="polite"></p>
+          <div id="version-path-row" class="path-row version-row" hidden>
+            <label id="version-control" class="version-control" for="version-select">
+              <span>Version</span><select id="version-select"></select>
+            </label>
+            <div id="compare-release-controls" class="compare-controls" hidden>
+              <label for="compare-before">Before <select id="compare-before"></select></label>
+              <label for="compare-after">After <select id="compare-after"></select></label>
+            </div>
+            <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-panel">Compare releases</button>
+          </div>
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
               <div class="map-actions map-actions-left">
@@ -118,9 +128,38 @@
             <div id="map-preview" class="map-preview">
               <div id="map-status" class="map-status">Preview loads when PMTiles is selected.</div>
             </div>
+            <div id="compare-legend" class="compare-legend" aria-label="Change map legend" hidden>
+              <span style="--change-color:#168153">New geometry</span><span style="--change-color:#c33b3b">Removed geometry</span>
+              <span style="--change-color:#e3bd20">Metadata changed</span><span class="compare-unchanged" style="--change-color:#949d97">Unchanged</span>
+            </div>
+            <p id="compare-map-note" class="compare-map-note" role="status" hidden></p>
             <div id="color-legend" class="color-legend" hidden></div>
             <div id="feature-inspector" class="feature-inspector" hidden></div>
           </section>
+
+            <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
+              <p id="compare-status" role="status" aria-live="polite"></p>
+              <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
+                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 120 seconds. Larger inputs require an explicit local budget. No sampling is used.</p>
+                <pre>uv run python scripts/compare_releases.py --baseline baseline.json --target target.json --output report.json</pre>
+                <a href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/compare-releases.md" target="_blank" rel="noopener">Pinned bundle preparation and CLI guide</a>
+              </details>
+              <div class="compare-overview"><div id="compare-summary"></div><div id="compare-schema"></div></div>
+              <button id="compare-report" class="icon-button" type="button" disabled>Export complete report</button>
+              <div id="compare-table" hidden>
+                <div class="compare-controls">
+                  <label>Search IDs and source properties <input id="compare-search" type="search" maxlength="200"></label>
+                  <label>Change <select id="compare-filter">
+                    <option value="">All features</option><option value="added">Added</option><option value="removed">Removed</option>
+                    <option value="geometry_only">Geometry only</option><option value="properties_only">Properties only</option>
+                    <option value="both">Geometry and properties</option><option value="unchanged">Unchanged</option>
+                  </select></label>
+                </div>
+                <div class="compare-table-scroll"><table><thead><tr><th>Feature ID</th><th>Change</th></tr></thead><tbody id="compare-rows"></tbody></table></div>
+                <div class="compare-controls"><button id="compare-previous" class="icon-button" type="button" disabled>Previous</button><span id="compare-page"></span><button id="compare-next" class="icon-button" type="button" disabled>Next</button></div>
+              </div>
+              <div id="compare-inspector" class="compare-inspector"></div>
+            </section>
 
           <section class="meta-grid" aria-label="Dataset metadata">
             <div>
@@ -190,50 +229,6 @@
           </section>
 
           <section class="path-section" aria-label="Dataset paths">
-            <div id="version-path-row" class="path-row version-row" hidden>
-              <label class="version-control" for="version-select">
-                <span>Version</span>
-                <select id="version-select"></select>
-              </label>
-              <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-panel">Compare releases</button>
-            </div>
-            <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
-              <div class="compare-controls">
-                <label>Baseline <select id="compare-baseline"></select></label>
-                <label>Target <select id="compare-target"></select></label>
-                <button id="compare-run" class="icon-button" type="button">Compare</button>
-                <button id="compare-close" class="icon-button" type="button">Close comparison</button>
-              </div>
-              <p id="compare-status" role="status" aria-live="polite"></p>
-              <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
-                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 120 seconds. Larger inputs require an explicit local budget. No sampling is used.</p>
-                <pre>uv run python scripts/compare_releases.py --baseline baseline.json --target target.json --output report.json</pre>
-                <a href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/compare-releases.md" target="_blank" rel="noopener">Pinned bundle preparation and CLI guide</a>
-              </details>
-              <div id="compare-summary"></div>
-              <div id="compare-schema"></div>
-              <button id="compare-report" class="icon-button" type="button" disabled>Export complete report</button>
-              <div id="compare-table" hidden>
-                <div class="compare-controls">
-                  <label>Search IDs and source properties <input id="compare-search" type="search" maxlength="200"></label>
-                  <label>Change <select id="compare-filter">
-                    <option value="">All features</option><option value="added">Added</option><option value="removed">Removed</option>
-                    <option value="geometry_only">Geometry only</option><option value="properties_only">Properties only</option>
-                    <option value="both">Geometry and properties</option><option value="unchanged">Unchanged</option>
-                  </select></label>
-                </div>
-                <div class="compare-table-scroll"><table><thead><tr><th>Feature ID</th><th>Change</th></tr></thead><tbody id="compare-rows"></tbody></table></div>
-                <div class="compare-controls"><button id="compare-previous" class="icon-button" type="button" disabled>Previous</button><span id="compare-page"></span><button id="compare-next" class="icon-button" type="button" disabled>Next</button></div>
-              </div>
-              <div id="compare-inspector" class="compare-inspector"></div>
-              <p id="compare-map-note">Before and after show display tiles; tile visibility varies by zoom.</p>
-              <label>Map inspection <select id="compare-mode"><option value="union">Union of both releases</option><option value="before-after">Before / after</option></select></label>
-              <div class="compare-legend" aria-label="Change map legend">
-                <span style="--change-color:#168153">Novel geometry</span><span style="--change-color:#c33b3b">Removed geometry</span>
-                <span style="--change-color:#e3bd20">Identical geometry, altered metadata</span><span style="--change-color:#949d97">Unchanged or outside page</span>
-              </div>
-              <div id="compare-maps" class="compare-maps"></div>
-            </section>
             <div class="path-row">
               <div>
                 <span>Canonical GCS path</span>
