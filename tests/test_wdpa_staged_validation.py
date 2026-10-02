@@ -27,7 +27,8 @@ DEPLOYER = "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com"
 
 
 def staged_evidence():
-    marine = accepted_evidence()["runs"][0]
+    complete = accepted_evidence()
+    marine = complete["runs"][0]
     marine["assets"].pop("wdpa-terrestrial")
     small = {
         key: marine[key]
@@ -42,11 +43,12 @@ def staged_evidence():
         scope="small-sea-ice-fixture", state="succeeded", contracts_verified=True
     )
     return dict(
-        schema_version=1,
+        schema_version=2,
         source_tree_sha256=gate.source_digest(),
         disk_quota_approved=True,
         small_fixture=small,
         marine=marine,
+        compatibility_sample=complete["compatibility_sample"],
     )
 
 
@@ -122,7 +124,7 @@ def test_isolated_cloud_workflow_is_protected_and_cannot_target_worker_or_bucket
     names = list(steps)
     assert names.index(
         "Require small and marine validation plus disk quota"
-    ) < names.index("Build and push the immutable validation image")
+    ) < names.index("Publish the tested immutable validation image")
     assert (
         "--pre-cloud"
         in steps["Require small and marine validation plus disk quota"]["run"]
@@ -132,6 +134,49 @@ def test_isolated_cloud_workflow_is_protected_and_cannot_target_worker_or_bucket
     ) < names.index("Apply the saved protected plan")
     tf = (ROOT / "terraform/envs/prod/wdpa_processing_validation.tf").read_text()
     assert "google_storage_bucket_iam" not in tf and "scheduler" not in tf
+
+
+def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
+    workflow = load_workflow(ROOT / ".github/workflows/wdpa-processing-validation-deploy.yml")
+    steps = workflow_steps_by_name(workflow, "deploy")
+    download = steps["Download the tested deployment image"]
+    assert download["with"]["name"] == "wdpa-benchmark-image"
+    assert "run-id" in download["with"] and "github-token" in download["with"]
+    publish = steps["Publish the tested immutable validation image"]["run"]
+    assert "docker load" in publish and "docker tag" in publish
+    assert "config_digest" in publish and "--print-source-digest" in publish
+    assert "docker build" not in publish.replace("docker buildx imagetools", "inspect")
+    names = list(steps)
+    assert names.index("Refuse to replace an active validation execution") < names.index("Publish the tested immutable validation image")
+    assert "completionTime" in steps["Refuse to replace an active validation execution"]["run"]
+
+
+def test_sample_comparison_precedes_full_marine_and_is_not_resource_evidence():
+    workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
+    steps = workflow_steps_by_name(workflow, "wdpa-full-benchmark")
+    names = list(steps)
+    sample = "Compare deterministic October sample with the old processing path"
+    assert names.index(sample) < names.index("Run marine WDPA with 4 CPU and 8 GiB")
+    command = steps[sample]["run"]
+    assert "--fraction 0.001 --seed 7919 --compare-legacy" in command
+    assert "--asset wdpa-marine" not in command
+    assert "compatibility/benchmark.json" in command and "compatibility.json" in command
+
+
+@pytest.mark.parametrize("cpu,memory,peak,reason", [
+    (None, 8 * 1024**3, 1, "kernel CPU"),
+    (8, 8 * 1024**3, 1, "kernel CPU"),
+    (3.72, 16 * 1024**3, 1, "8 GiB"),
+    (3.72, 8 * 1024**3, None, "peak-memory"),
+])
+def test_cloud_preflight_stops_before_download_for_invalid_or_unmeasured_limits(monkeypatch, cpu, memory, peak, reason):
+    monkeypatch.delenv("WDPA_FAIL_BEFORE_DATASET_WRITES", raising=False)
+    monkeypatch.setattr(cloud, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(cloud, "cgroup_limits", lambda: (cpu, memory))
+    monkeypatch.setattr(cloud, "cgroup_memory", lambda: (1, peak))
+    monkeypatch.setattr(cloud.subprocess, "run", lambda *_a, **_k: pytest.fail("preflight downloaded inputs"))
+    with pytest.raises(RuntimeError, match=reason):
+        cloud.main()
 
 
 def plan():

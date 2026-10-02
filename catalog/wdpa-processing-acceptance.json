@@ -1,7 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source_tree_sha256": null,
-  "disk_quota_approved": false,
+  "disk_quota_approved": true,
+  "compatibility_sample": null,
   "runs": [],
-  "blocked_reason": "Complete October benchmarks on a 4 CPU / 8 GiB host and the Preview disk quota are pending. Do not increase resources to bypass acceptance."
+  "blocked_reason": "100 GiB disk quota is approved. Fresh sea-ice, deterministic old/new compatibility and marine spill evidence must match the corrected runtime reader, followed by two complete cloud builds. No complete October acceptance or terrestrial publication is claimed."
 }

@@ -18,7 +18,7 @@ from ingestion.common.identity_index import DiskIdentityRecords
 from ingestion.common import feature_metadata
 from ingestion.common.process_stream import feature_stream
 from ingestion.wdpa_monthly import run as wdpa, translations
-from ingestion.wdpa_monthly.resources import PhaseProfiler, prepare_scratch
+from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
 from scripts import release_feature_model as model
 from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
 from scripts.wdpa_processing_gate import source_digest
@@ -97,16 +97,6 @@ def semantic_summary(path):
         "india_sites": len(india_sites),
         "semantic_sha256": digest.hexdigest(),
     }
-
-
-def cgroup_limit(name):
-    path = Path("/sys/fs/cgroup") / name
-    if not path.exists():
-        return None
-    values = path.read_text().split()
-    if values[0] == "max":
-        return None
-    return int(values[0]) / int(values[1]) if name == "cpu.max" else int(values[0])
 
 
 def source_count_features(layer, where):
@@ -343,6 +333,7 @@ def main():
         args.workdir, versions=wdpa.native_versions(), scratch_root=scratch_root,
         input_cache_roots=(args.source.parent,),
     )
+    cpu_limit, memory_limit = cgroup_limits()
     report = {
         "schema_version": 1,
         "source_tree_sha256": source_digest(),
@@ -358,8 +349,8 @@ def main():
         "baseline_snapshot_sha256": wdpa.sha256_file(args.baselines / "pins.json")
         if args.baselines
         else None,
-        "cpu_limit": cgroup_limit("cpu.max"),
-        "memory_limit_bytes": cgroup_limit("memory.max"),
+        "cpu_limit": cpu_limit,
+        "memory_limit_bytes": memory_limit,
         "sample_fraction": args.fraction,
         "sample_seed": args.seed,
         "genesis": args.genesis,

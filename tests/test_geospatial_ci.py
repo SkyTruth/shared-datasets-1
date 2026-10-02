@@ -61,7 +61,8 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertNotIn("SNAPSHOT_READ_TOKEN", run)
         self.assertNotIn("--genesis", run)
         upload = steps["Upload measurements only"]["with"]
-        self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/*.json")
+        self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/")
+        self.assertIn("compatibility.log", steps["Retain report if a replay failed"]["run"])
         self.assertIn("wdpa-marine-benchmark-reports", upload["name"])
         image_steps = workflow_steps_by_name(self.workflow, "wdpa-benchmark-image")
         self.assertIn("docker save", image_steps["Build the deployment image once"]["run"])

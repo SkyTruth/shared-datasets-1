@@ -13,9 +13,8 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.sea_ice_daily import run as sea_ice
 from ingestion.wdpa_monthly import run as wdpa
-from ingestion.wdpa_monthly.resources import PhaseProfiler, prepare_scratch
+from ingestion.wdpa_monthly.resources import PhaseProfiler, cgroup_limits, prepare_scratch
 from scripts import release_feature_model as model
-from scripts.local_wdpa_sample import cgroup_limit
 from scripts.wdpa_processing_gate import source_digest
 
 
@@ -28,14 +27,15 @@ def main():
     args.workdir.mkdir(parents=True, exist_ok=False)
     profiler = PhaseProfiler(args.workdir, versions=wdpa.native_versions())
     started = time.monotonic()
+    cpu_limit, memory_limit = cgroup_limits()
     report = {
         "schema_version": 1,
         "scope": "small-sea-ice-fixture",
         "source_tree_sha256": source_digest(),
         "state": "failed",
         "source": "synthetic IMS classes, 4 by 4 cells",
-        "cpu_limit": cgroup_limit("cpu.max"),
-        "memory_limit_bytes": cgroup_limit("memory.max"),
+        "cpu_limit": cpu_limit,
+        "memory_limit_bytes": memory_limit,
         "native_versions": profiler.versions,
     }
     try:
