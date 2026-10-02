@@ -9,8 +9,9 @@ The previous hosted complete runs were stopped to enforce this ordering.
 
 ## Completed checks
 
-- After integrating catalog PRs #169 and #170, the local Python suite passed
-  1,196 tests and 1,171 subtests; all 13 Chromium scenarios passed. The earlier
+- After integrating catalog PRs #169 and #170 and the staged-validation workflow,
+  the local Python suite passed 1,218 tests and 1,171 subtests; all 13 Chromium
+  scenarios passed. The earlier
   processing CI Python suite passed 1,093 tests; five host-native checks skipped and exercised
   separately in the deployment toolchain. Local validation also passed
   1,171 subtests.
@@ -114,6 +115,16 @@ Each GitHub hosted job has a six-hour ceiling, stricter than the production
 A 330-minute processing watchdog leaves time to retain container diagnostics
 before the six-hour job limit.
 
+The first staged run
+([37016755333](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37016755333))
+passed image construction, lint, the Python suite and native integration, then
+failed the deployment-image sea-ice smoke test. GDAL's `gdal_calc.py` could not
+import NumPy: it was previously present only in the native CI dependencies.
+Marine processing was correctly skipped. NumPy is now part of the locked native
+runtime dependency set, and image construction verifies GDAL's array ABI.
+This failed smoke test provides no resource acceptance evidence; the corrected
+image must pass sea ice before marine processing starts.
+
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
 sizes and hashes. `download_public_wdpa_benchmark.py` reconstructs the same frozen
@@ -194,6 +205,11 @@ Its image uses public hash/generation-verified frozen inputs and the production
 processing path at 4 CPU / 8 GiB with a 100 GiB disk and 24-hour timeout.
 `wdpa_cloud_validation_report` is emitted to Cloud Logging; no dataset or status
 objects are uploaded. Downloading frozen inputs is also profiled.
+
+A separate read-only production-state plan for these isolated resources contains
+**three creations, zero updates, zero deletions**. The saved plan passed the exact
+resource/configuration allowlist, including the provider's nullable mount
+subdirectory field. No apply was run.
 
 After review, merge and quota/bootstrap verification, deploy this validation
 job. Run the controlled pre-write failure, verify actual alert delivery, then

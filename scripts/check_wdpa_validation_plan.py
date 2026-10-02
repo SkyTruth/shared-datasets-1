@@ -68,8 +68,11 @@ def check(plan, *, image, deployer):
                 != ["python", "scripts/cloud_wdpa_validation.py"]
                 or container["resources"][0]["limits"] != {"cpu": "4", "memory": "8Gi"}
                 or volume["empty_dir"][0] != {"medium": "DISK", "size_limit": "100Gi"}
-                or container["volume_mounts"]
-                != [{"name": "work", "mount_path": "/work"}]
+                or [
+                    (m["name"], m["mount_path"], m.get("sub_path"))
+                    for m in container["volume_mounts"]
+                ]
+                != [("work", "/work", None)]
                 or {e["name"]: e.get("value") for e in container["env"]}
                 != {
                     "TMPDIR": "/work/tmp",

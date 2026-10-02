@@ -98,11 +98,12 @@ jobs:
           expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' "$RUNNER_TEMP/wdpa-image/image.json")"
           [[ "$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')" == "$expected" ]]
           mkdir -p "$RUNNER_TEMP/wdpa-small"
+          mkdir -p "$RUNNER_TEMP/wdpa-small/shared-datasets-1"
+          cp "$RUNNER_TEMP/wdpa-image/image.json" "$RUNNER_TEMP/wdpa-small/shared-datasets-1/image.json"
           docker run --name wdpa-small --cpus=4 --memory=8g --memory-swap=8g \
             -e CLOUD_RUN_EXECUTION=wdpa-small \
             -v "$RUNNER_TEMP/wdpa-small:/work" wdpa-processing-benchmark:local \
             python scripts/local_ingestion_smoke.py --workdir /work/shared-datasets-1/small
-          cp "$RUNNER_TEMP/wdpa-image/image.json" "$RUNNER_TEMP/wdpa-small/shared-datasets-1/small/image.json"
       - name: Upload small-fixture measurements
         if: always()
         uses: actions/upload-artifact@v4
@@ -110,7 +111,7 @@ jobs:
           name: wdpa-small-smoke-report
           path: |
             ${{ runner.temp }}/wdpa-small/shared-datasets-1/small/benchmark.json
-            ${{ runner.temp }}/wdpa-small/shared-datasets-1/small/image.json
+            ${{ runner.temp }}/wdpa-small/shared-datasets-1/image.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -447,7 +448,7 @@ jobs:
             -e UV_PROJECT_ENVIRONMENT=/tmp/shared-datasets-geospatial-venv \
             -e RUN_GDAL_INTEGRATION_TESTS=1 \
             shared-datasets-geospatial-ci \
-            bash -lc 'uv sync --locked --all-groups --extra wdpa-native --extra geospatial-ci && uv run pytest tests/test_feature_metadata_localization.py tests/test_translation_local_io.py tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_wdpa_disk_processing.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py -o xfail_strict=true --junitxml=test-results/geospatial-pytest.xml && uv run python scripts/check_geospatial_test_results.py test-results/geospatial-pytest.xml'
+            bash -lc 'uv sync --locked --all-groups --extra wdpa-native && uv run pytest tests/test_feature_metadata_localization.py tests/test_translation_local_io.py tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_wdpa_disk_processing.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py -o xfail_strict=true --junitxml=test-results/geospatial-pytest.xml && uv run python scripts/check_geospatial_test_results.py test-results/geospatial-pytest.xml'
 
       - name: Upload geospatial test results
         if: failure()

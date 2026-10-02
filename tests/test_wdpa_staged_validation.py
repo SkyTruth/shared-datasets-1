@@ -192,6 +192,8 @@ def plan():
     "defect",
     [
         None,
+        "null_subpath",
+        "subdirectory",
         "worker",
         "bucket_iam",
         "delete",
@@ -221,7 +223,11 @@ def test_validation_plan_rejects_publication_and_resource_escalation(defect):
         resource["change"]["after"]["template"][0]["template"][0]["containers"].append(
             copy.deepcopy(container)
         )
-    if defect is None:
+    if defect == "null_subpath":
+        container["volume_mounts"][0]["sub_path"] = None
+    if defect == "subdirectory":
+        container["volume_mounts"][0]["sub_path"] = "other"
+    if defect in (None, "null_subpath"):
         policy.check(document, image=IMAGE, deployer=DEPLOYER)
     else:
         with pytest.raises(ValueError):

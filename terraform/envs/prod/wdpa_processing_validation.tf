@@ -22,6 +22,7 @@ resource "google_service_account_iam_member" "wdpa_validation_deployer" {
   service_account_id = "projects/${var.project_id}/serviceAccounts/${local.wdpa_validation_account_email}"
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+  depends_on         = [module.wdpa_validation_service_account]
 }
 
 module "wdpa_processing_validation_job" {
