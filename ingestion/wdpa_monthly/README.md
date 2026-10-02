@@ -237,7 +237,14 @@ in provenance; compare semantic values and identities, not those paths.
 
 Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
 time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
-and native tool versions. Missing peak telemetry is not passing evidence.
+and native tool versions, plus the memory breakdown at the sampled peak.
+At 4 GiB cgroup usage, the sampler
+uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
+cache. It skips symlinks and special files, never changes file bytes and never
+resets or excludes cache from the measured cgroup peak. Frozen local replays also
+release cache from their read-only input directory. Cache advice failures fail
+measurement; the 6.4 GiB acceptance limit remains unchanged.
+Missing peak telemetry is not passing evidence.
 Scratch measurements cover the entire `/work` filesystem, including native
 temporary files outside the build directory and open files that were unlinked.
 

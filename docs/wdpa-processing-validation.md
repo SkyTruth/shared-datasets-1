@@ -120,6 +120,20 @@ cannot satisfy acceptance; the complete-build step is skipped in that mode.
 The report also records parent/child RSS and the cgroup memory breakdown so
 filesystem caching can be distinguished from process allocation.
 
+The first input-only probe on `37585d9`
+([run 36995705697](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36995705697))
+completed in 48.136 seconds with **7,855,362,048 bytes (7.32 GiB)** total cgroup
+peak, exceeding the 6.4 GiB target. Scratch peaked at 9,561,575,424 bytes;
+parent RSS was 172,761,088 bytes and child RSS 96,567,296 bytes. At phase end,
+`memory.stat` showed 4,928,614,400 bytes of file cache, no mapped files or shmem,
+and 111,677,440 bytes of anonymous memory. This diagnostic blocks readiness.
+
+The processing sampler now requests release of regular-file cache under memory
+pressure using Linux cache advice. It retains total cgroup peak measurement,
+preserves every file's bytes and fails on cache-advice errors. Production source
+preparation is also measured. Fresh diagnostic and complete runs are required;
+earlier processing digests cannot satisfy the updated gate.
+
 ## Infrastructure and failure visibility
 
 The read-only worker/observer plan contains **eight creations, one update, zero

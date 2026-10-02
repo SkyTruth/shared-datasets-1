@@ -335,7 +335,8 @@ def main():
         Path("/work") if args.workdir.is_relative_to(Path("/work")) else args.workdir
     )
     profiler = PhaseProfiler(
-        args.workdir, versions=wdpa.native_versions(), scratch_root=scratch_root
+        args.workdir, versions=wdpa.native_versions(), scratch_root=scratch_root,
+        input_cache_roots=(args.source.parent,),
     )
     report = {
         "schema_version": 1,

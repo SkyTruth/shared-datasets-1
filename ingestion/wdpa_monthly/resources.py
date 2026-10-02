@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import resource
+import stat
 import sys
 import threading
 import time
@@ -63,13 +64,46 @@ def scratch_bytes(path):
     return total
 
 
+def release_file_cache(path):
+    """Ask Linux to release unused regular-file cache without changing bytes.
+
+    DONTNEED keeps dirty and mapped pages intact and schedules their writeback.
+    Only the explicitly tracked scratch and frozen-input trees are eligible.
+    """
+    if not hasattr(os, "posix_fadvise"):
+        return
+    for root, _directories, files in os.walk(path):
+        for name in files:
+            file_path = Path(root) / name
+            try:
+                if not stat.S_ISREG(file_path.lstat().st_mode):
+                    continue
+                descriptor = os.open(
+                    file_path,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                )
+            except FileNotFoundError:
+                continue
+            try:
+                if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(descriptor)
+
+
 class PhaseProfiler:
-    def __init__(self, workdir: Path, *, versions=None, interval=5, scratch_root=None):
+    def __init__(
+        self, workdir: Path, *, versions=None, interval=0.5, scratch_root=None,
+        input_cache_roots=(),
+    ):
         self.workdir, self.versions, self.interval = workdir, versions or {}, interval
         self.scratch_root = scratch_root or workdir
         disk = os.statvfs(self.scratch_root)
         self.initial_free_bytes = disk.f_bfree * disk.f_frsize
         self.records = []
+        self.cache_pressure_bytes = 4 * 1024**3
+        # Replay inputs are read-only frozen files outside production scratch.
+        self.cache_roots = (self.scratch_root, *input_cache_roots)
 
     @contextmanager
     def phase(self, name):
@@ -85,13 +119,27 @@ class PhaseProfiler:
             ),
         )
         peak_memory, peak_scratch = 0, 0
+        cache_releases = 0
+        peak_breakdown = {}
         done = threading.Event()
         sampling_errors = []
 
         def sample():
-            nonlocal peak_memory, peak_scratch
+            nonlocal peak_memory, peak_scratch, cache_releases, peak_breakdown
             current, _peak = cgroup_memory()
+            if current and current > peak_memory:
+                memory_stat = Path("/sys/fs/cgroup/memory.stat")
+                if memory_stat.exists():
+                    peak_breakdown = {
+                        key: int(value) for key, value in
+                        (line.split() for line in memory_stat.read_text().splitlines())
+                        if key in {"anon", "file", "file_dirty", "file_mapped", "kernel", "shmem"}
+                    }
             peak_memory = max(peak_memory, current or 0)
+            if current and current > self.cache_pressure_bytes:
+                for root in self.cache_roots:
+                    release_file_cache(root)
+                cache_releases += 1
             disk = os.statvfs(self.scratch_root)
             # Native tools can unlink temporary files while keeping them open.
             # Directory sizes alone would miss their live disk consumption.
@@ -126,6 +174,8 @@ class PhaseProfiler:
                 "state": state,
                 "elapsed_seconds": round(time.monotonic() - started, 3),
                 "phase_memory_peak_bytes": peak_memory or None,
+                "memory_breakdown_at_sampled_peak": peak_breakdown,
+                "scratch_cache_releases": cache_releases,
                 "cgroup_memory_peak_bytes": job_peak,
                 "process_rss_peak_bytes": rss
                 if sys.platform == "darwin"

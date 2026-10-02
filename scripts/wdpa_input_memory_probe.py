@@ -24,7 +24,10 @@ def main():
     wdpa.configure_logging()
     prepare_scratch()
     args.workdir.mkdir(parents=True, exist_ok=False)
-    profiler = PhaseProfiler(args.workdir, versions=wdpa.native_versions(), scratch_root=Path("/work"))
+    profiler = PhaseProfiler(
+        args.workdir, versions=wdpa.native_versions(), scratch_root=Path("/work"),
+        input_cache_roots=(args.source.parent,),
+    )
     source_sha256 = wdpa.sha256_file(args.source)
     with profiler.phase("frozen-inputs"):
         source_copy = args.workdir / args.source.name

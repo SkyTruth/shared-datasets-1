@@ -3,6 +3,7 @@
 from contextlib import closing
 import errno
 import json
+import os
 import sqlite3
 import sys
 
@@ -12,6 +13,7 @@ from ingestion.common import feature_metadata as metadata
 from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecords
 from ingestion.common.process_stream import feature_stream, pipe_commands
 from ingestion.wdpa_monthly.resources import prepare_scratch
+from ingestion.wdpa_monthly import resources
 from scripts import release_feature_model as model
 
 
@@ -199,6 +201,75 @@ def test_cloud_run_requires_disk_before_work(monkeypatch, tmp_path):
     monkeypatch.setenv("TMPDIR", "/tmp")
     with pytest.raises(RuntimeError, match="TMPDIR"):
         prepare_scratch(mountinfo=mountinfo)
+
+
+def test_cache_release_preserves_bytes_and_skips_links_and_special_files(monkeypatch, tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    artifact = scratch / "artifact.bin"
+    artifact.write_bytes(b"normalized geometry and identity hashes")
+    outside = tmp_path / "baseline.bin"
+    outside.write_bytes(b"verified frozen baseline")
+    (scratch / "link").symlink_to(outside)
+    os.mkfifo(scratch / "pipe")
+    calls = []
+
+    def advise(fd, offset, length, advice):
+        calls.append((os.read(fd, 1024), offset, length, advice))
+
+    monkeypatch.setattr(os, "posix_fadvise", advise, raising=False)
+    monkeypatch.setattr(os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    resources.release_file_cache(scratch)
+    assert calls == [(artifact.read_bytes(), 0, 0, 4)]
+    assert artifact.read_bytes() == b"normalized geometry and identity hashes"
+    assert outside.read_bytes() == b"verified frozen baseline"
+
+
+def test_cache_release_allows_completed_intermediate_removal(monkeypatch, tmp_path):
+    artifact = tmp_path / "completed.bin"
+    artifact.write_bytes(b"finished")
+    real_open = os.open
+
+    def disappearing(path, flags):
+        artifact.unlink()
+        return real_open(path, flags)
+
+    monkeypatch.setattr(os, "open", disappearing)
+    monkeypatch.setattr(os, "posix_fadvise", lambda *_: None, raising=False)
+    resources.release_file_cache(tmp_path)
+
+
+def test_pressure_release_keeps_total_cgroup_peak_and_original_artifacts(monkeypatch, tmp_path):
+    work = tmp_path / "work"
+    inputs = tmp_path / "inputs"
+    work.mkdir()
+    inputs.mkdir()
+    artifact = work / "normalized.gpkg"
+    artifact.write_bytes(b"publishable bytes unchanged")
+    calls = []
+    monkeypatch.setattr(resources, "cgroup_memory", lambda: (6 * 1024**3, 7 * 1024**3))
+    monkeypatch.setattr(resources, "release_file_cache", calls.append)
+    profiler = resources.PhaseProfiler(work, interval=60, input_cache_roots=(inputs,))
+    with profiler.phase("normalization"):
+        pass
+    assert calls == [work, inputs, work, inputs]
+    assert profiler.records[0]["scratch_cache_releases"] == 2
+    assert profiler.records[0]["cgroup_memory_peak_bytes"] == 7 * 1024**3
+    assert profiler.records[0]["phase_memory_peak_bytes"] == 6 * 1024**3
+    assert artifact.read_bytes() == b"publishable bytes unchanged"
+
+
+def test_cache_advice_failure_fails_measurement(monkeypatch, tmp_path):
+    monkeypatch.setattr(resources, "cgroup_memory", lambda: (5 * 1024**3, 5 * 1024**3))
+
+    def denied(_):
+        raise PermissionError("cannot release owned scratch pages")
+
+    monkeypatch.setattr(resources, "release_file_cache", denied)
+    profiler = resources.PhaseProfiler(tmp_path)
+    with pytest.raises(PermissionError, match="owned scratch"):
+        with profiler.phase("normalization"):
+            pytest.fail("processing must not start after sampler failure")
 
 
 def test_replay_source_counts_deduplicate_across_layers(monkeypatch, tmp_path):

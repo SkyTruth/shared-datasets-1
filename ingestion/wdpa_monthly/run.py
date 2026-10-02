@@ -1243,12 +1243,13 @@ def run() -> list[dict[str, Any]]:
                 )
                 records.append(record)
             return records
-        source_datasets = prepare_source_datasets(source_zip, workdir)
-        source = source_datasets[0]
-        source_layers, split_field, source_fields = discover_source_layers(
-            source_datasets
-        )
-        assert_sample_field_available(source_layers, sample_spec)
+        with profiler.phase("source-prepare"):
+            source_datasets = prepare_source_datasets(source_zip, workdir)
+            source = source_datasets[0]
+            source_layers, split_field, source_fields = discover_source_layers(
+                source_datasets
+            )
+            assert_sample_field_available(source_layers, sample_spec)
         with profiler.phase("translation-index"):
             translation_memory = stack.enter_context(
                 translations.prepare_memory(publisher, ASSETS, workdir)
