@@ -58,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal fifteen-scenario count gate cannot supply a misleading failure.
+so the normal sixteen-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -73,8 +73,12 @@ new geometry, red removed geometry, yellow metadata changes, and faint unchanged
 geometry. The polygon scenario reuses numeric IDs across generated-contract resets
 and checks actual screenshot interior pixels, with no map instances mocked. The Before polygon bundle uses a real canonical historical v1 FGB and combined
 hash sidecar, covering the coral failure. Tests cover collapsed details, pagination, property absence/null, keyboard
-operation, narrow layout, cancellation and a delayed start. `comparison_server.py`
+operation, narrow layout, cancellation and a delayed start. Polygon clicks inspect
+both pinned releases across ID resets, preserve identical overlapping hits, and
+discard delayed metadata after a selection change. `comparison_server.py`
 uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
+Each scenario has its own real comparison job store, retaining the production
+job limits without accumulating retained jobs from earlier scenarios.
 Set `CATALOG_BROWSER_PORT` to use another loopback port for a concurrent local run.
 
 The static-catalog scenario removes the comparison endpoint, checks the visible
@@ -84,7 +88,7 @@ browsing/inspection still work.
 Historical comparison-map denial stays visible while the table is searched and
 inspected; changing Before/After selections automatically retries using their pinned inputs.
 
-The suite has fourteen required scenarios, including generated TypeScript
+The suite has sixteen required scenarios, including generated TypeScript
 execution, inline copying/layout, workspace imports and WDPA execution status. The WDPA scenario
 preserves each realm's published release alongside overall execution failures,
 newer running executions, cancellation and stale observations. The SDK build in the setup above is
