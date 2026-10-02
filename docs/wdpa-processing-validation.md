@@ -122,8 +122,16 @@ failed the deployment-image sea-ice smoke test. GDAL's `gdal_calc.py` could not
 import NumPy: it was previously present only in the native CI dependencies.
 Marine processing was correctly skipped. NumPy is now part of the locked native
 runtime dependency set, and image construction verifies GDAL's array ABI.
-This failed smoke test provides no resource acceptance evidence; the corrected
-image must pass sea ice before marine processing starts.
+This failed smoke test provides no resource acceptance evidence.
+
+The corrected deployment image on `3febe15` passed sea ice in
+[run 37019403196](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37019403196).
+The real sea-ice production path generated one polygon and verified metadata,
+FGB and PMTiles contracts in 1.023 seconds. Cgroup peak was 104,140,800 bytes;
+scratch peaked at 823,296 bytes under the exact 4 CPU / 8 GiB limits.
+The image digest and scalar report are retained in
+`catalog/wdpa-staged-validation.json`. The same-image complete marine stage is
+now running; this small fixture provides no complete-WDPA resource acceptance.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
@@ -239,11 +247,15 @@ the observer's job/scheduler/custom-role creation permissions. A reviewed
 protected bootstrap is a rollout prerequisite. No broader project permissions
 have been granted by this PR.
 
-The current disk quota could not be verified: the read-only Cloud Quotas command
-failed because the local GCP session requires interactive reauthentication.
-Before rollout, verify both `run.googleapis.com/max_per_instance_ephemeral_disk`
-(100 GiB per worker instance) and `run.googleapis.com/ephemeral_disk_allocation`
-(at least 100 GiB available in `us-central1` for one concurrent worker). Google's
+An authenticated read through the Service Usage API on October 2 verified the
+current per-instance disk quota in `us-central1`: **10 GiB**, below the required
+100 GiB. The Cloud Quotas API itself is disabled; no API was enabled.
+[Quota observation](wdpa-processing-disk-quota.json) retains the returned values.
+The regional allocation buckets omit effective/default values, so sufficient
+regional capacity remains unverified. Before rollout, obtain
+`run.googleapis.com/max_per_instance_ephemeral_disk` of 100 GiB and verify
+`run.googleapis.com/ephemeral_disk_allocation` of at least 100 GiB available
+in `us-central1` for one concurrent worker. Google's
 [disk documentation](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
 describes the separate limits. No quota change or authentication change was made.
 

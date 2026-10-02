@@ -1,8 +1,110 @@
 {
   "schema_version": 1,
-  "source_tree_sha256": null,
+  "source_tree_sha256": "cc3bffc3dd91255ac1d73d55cad948bc23acb968fc2eed65dd49cf85fda4e944",
   "disk_quota_approved": false,
-  "small_fixture": null,
+  "small_fixture": {
+    "schema_version": 1,
+    "scope": "small-sea-ice-fixture",
+    "source_tree_sha256": "cc3bffc3dd91255ac1d73d55cad948bc23acb968fc2eed65dd49cf85fda4e944",
+    "state": "succeeded",
+    "source": "synthetic IMS classes, 4 by 4 cells",
+    "cpu_limit": 4.0,
+    "memory_limit_bytes": 8589934592,
+    "native_versions": {
+      "gdal_python": "3.6.2",
+      "pmtiles_build_version": "v1.30.1",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "tippecanoe_path": "/usr/bin/tippecanoe",
+      "pmtiles_path": "/usr/local/bin/pmtiles",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "tippecanoe": "tippecanoe v2.52.0",
+      "pmtiles": "pmtiles dev, commit none, built at unknown"
+    },
+    "rows": 1,
+    "artifact_sha256": {
+      "fgb": "e6adc05c8a6c584b2b79873994bf708cd2a704fa500374ff00d419880638285b",
+      "pmtiles": "5031faf765df1f5715d85eea0420c71cdcf92bc88a9073daad523e9f1a20e6f0",
+      "metadata": "30edb50616289fa6ecf60d105f2bf3cb047009016443336cf644854394c58bef",
+      "schema": "996d00f80b6a6b5e7510e0000d6a9c126522593b9e5832daab04501460570d8a"
+    },
+    "contracts_verified": true,
+    "elapsed_seconds": 1.0231767289999993,
+    "phases": [
+      {
+        "event": "wdpa_phase_resources",
+        "phase": "sea-ice:synthetic-source",
+        "state": "succeeded",
+        "elapsed_seconds": 0.037,
+        "phase_memory_peak_bytes": 54038528,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 42389504,
+          "file": 6873088,
+          "kernel": 4055040,
+          "shmem": 0,
+          "file_mapped": 0,
+          "file_dirty": 6737920
+        },
+        "scratch_cache_releases": 0,
+        "cgroup_memory_peak_bytes": 67305472,
+        "process_rss_peak_bytes": 94973952,
+        "scratch_peak_bytes": 8192,
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "artifact_sizes": {
+          "source.tif": 379
+        }
+      },
+      {
+        "event": "wdpa_phase_resources",
+        "phase": "sea-ice:production-build",
+        "state": "succeeded",
+        "elapsed_seconds": 0.979,
+        "phase_memory_peak_bytes": 60833792,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 47681536,
+          "file": 7639040,
+          "kernel": 4915200,
+          "shmem": 0,
+          "file_mapped": 0,
+          "file_dirty": 7499776
+        },
+        "scratch_cache_releases": 0,
+        "cgroup_memory_peak_bytes": 104140800,
+        "process_rss_peak_bytes": 94973952,
+        "scratch_peak_bytes": 823296,
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "artifact_sizes": {
+          "ims-sea-ice-extent.schema.json": 332,
+          "ims-sea-ice-extent.pmtiles": 2952,
+          "source.tif": 379,
+          "ims-sea-ice-extent.metadata.ndjson.gz": 333,
+          "ims-sea-ice-extent.fgb": 2480
+        }
+      }
+    ],
+    "image_digest": "sha256:42694e2cda2efed76de67bef85c83544673f1aa2b40758b075d3897b079a5b9a",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37019403196",
+    "head_sha": "3febe15febc0edab31b257705d4d999d7c61cb30",
+    "report_sha256": "656c39ff5742af7d9690f6b4bdc36cadc8eeb6865272212cd80ca43af17abc15",
+    "image_metadata_sha256": "f1c39cfd7215af36df3753c3a86448d92b49faf8c91e57769d8b3f88bfc2c50f"
+  },
   "marine": null,
-  "blocked_reason": "Run small sea-ice smoke, then complete marine WDPA with measured disk spill. Verify disk quota before deploying isolated cloud validation. Terrestrial runs belong in Cloud Run after these checks."
+  "blocked_reason": "Sea-ice smoke passed. Complete marine WDPA is running. The current per-instance Cloud Run disk limit is 10 GiB; 100 GiB quota and protected bootstrap remain prerequisites for isolated cloud validation."
 }
