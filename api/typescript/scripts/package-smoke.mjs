@@ -52,8 +52,8 @@ export function checkConsumer(consumer, expectedVersion) {
 import assert from 'node:assert/strict';
 import { realpathSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { getPmtilesFetchCredentials } from '${packageName}';
-import { getExpiredPmtilesCookies } from '${packageName}/server';
+import { getPmtilesFetchCredentials, validateWorkspaceSnapshot, resolveSnapshotLayer } from '${packageName}';
+import { getExpiredPmtilesCookies, authorizeSnapshotArtifact } from '${packageName}/server';
 const root = realpathSync('./node_modules/${packageName}') + '/';
 for (const name of ['${packageName}', '${packageName}/server']) {
   assert(realpathSync(fileURLToPath(import.meta.resolve(name))).startsWith(root));
@@ -61,6 +61,9 @@ for (const name of ['${packageName}', '${packageName}/server']) {
 assert.equal(JSON.parse(readFileSync(root + 'package.json')).version, ${JSON.stringify(expectedVersion)});
 assert.equal(getPmtilesFetchCredentials('https://tiles.skytruth.org/pmtiles/private/example.pmtiles'), 'include');
 assert.equal(getExpiredPmtilesCookies().length, 2);
+assert.equal(typeof resolveSnapshotLayer, "function");
+assert.equal(typeof authorizeSnapshotArtifact, "function");
+assert.throws(() => validateWorkspaceSnapshot({schema_version: 999}));
 `);
   run(process.execPath, ['runtime.mjs'], consumer);
   writeFileSync(join(consumer, 'types.mts'), `

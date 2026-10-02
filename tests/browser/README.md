@@ -11,6 +11,8 @@ instructions:
 
 ```sh
 uv sync --locked
+npm ci --ignore-scripts --prefix api/typescript
+npm run build --prefix api/typescript
 npm ci --ignore-scripts --prefix tests/browser
 cd tests/browser
 npx --no-install playwright install --with-deps chromium
@@ -56,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal four-scenario count gate cannot supply a misleading failure.
+so the normal eight-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -64,3 +66,12 @@ This coverage does not prove live IAP, CDN/CORS or GCS retention configuration;
 it does not cover Firefox/Safari or replace the broader unit-test matrix.
 FlatGeobuf download controls are URL-checked only; their fixture bytes are not a
 valid FGB. See [fixture provenance](fixtures/README.md) for the real PMTiles.
+
+The suite has eight required scenarios, including generated TypeScript
+execution and workspace export/import. The SDK build in the setup above is
+required for the generated integration test.
+
+The fixture builder copies compiled browser SDK modules into the disposable
+site solely for integration-code execution. The production catalog shell and
+modules remain unchanged. Tests preserve synthetic captured artifact storage
+independently from mutable index pointers to exercise replacement/retention.

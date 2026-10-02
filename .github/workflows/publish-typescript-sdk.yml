@@ -10,6 +10,8 @@ on:
       - "api/typescript/package.json"
       - "api/typescript/package-lock.json"
       - "api/typescript/tsconfig.json"
+      - "api/typescript/scripts/copy-snapshot-contract.mjs"
+      - "web/catalog/workspace-contract.js"
       - ".github/workflows/publish-typescript-sdk.yml"
   workflow_dispatch:
 

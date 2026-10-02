@@ -591,3 +591,81 @@ and include both `package.json` and `package-lock.json` in review. Merging the
 reviewed version to `main` publishes the validated tarball. The workflow does
 not make version commits or bypass branch protection. See the repository README
 for registry comparison, retry, and trusted-publisher configuration.
+
+## Exact portable snapshots
+
+These additive APIs consume the catalog's v1 dataset lockfiles and workspace
+JSON. See the [authoritative portable contract](../../docs/standards/workspace-snapshot-v1.md).
+The browser validator is compiled from the same module used by the viewer.
+
+```ts
+import {
+  validateWorkspaceSnapshot, resolveSnapshotLayers, fetchSnapshotMetadata
+} from "@skytruth/shared-datasets";
+
+const response = await fetch("/dataset.lock.json");
+const lock = validateWorkspaceSnapshot(await response.text());
+// Validate and preflight all required artifacts before mounting any layers.
+const layers = await resolveSnapshotLayers(lock);
+const records = await fetchSnapshotMetadata(layers[0]);
+const attributes = records.get("1")?.properties;
+```
+
+`resolveSnapshotLayer(lock, slug, options)` prepares one PMTiles layer;
+`resolveSnapshotLayers` prepares all datasets as one successful result. These
+helpers use the captured URIs/generations rather than resolving latest or a
+current index. They return `tileUrl`, exact metadata selection, required
+artifact URLs, and captured dataset provenance. Canonical and localized
+metadata stay with their captured tiles. `fetchSnapshotMetadata` verifies
+published size/SHA-256 and record identity, then joins records by `feature_id`.
+Range-rendering PMTiles does not verify an entire archive checksum.
+
+Use `options.bucket` only for an explicitly trusted alternative bucket; never
+copy this option from untrusted JSON. Public layers use generation-qualified
+artifact URLs. Restricted layers require `authorizeArtifact(dataset, artifact)`
+which calls an application-owned authenticated route and returns exactly:
+
+```ts
+{ gs_uri, generation, resolved_release, url }
+```
+
+The client rejects responses that disagree with the captured identity.
+`probeArtifact(url, artifact)` can be supplied for a consumer-owned transport;
+the default HEAD probe checks availability and exposed generation/size.
+Access URLs are ephemeral runtime values and must not be included in exports.
+
+On the **server-only** entrypoint, `authorizeSnapshotArtifact(snapshot, slug,
+role, resolvedLocale, options)` is the route primitive. Authenticate the request
+using your app's existing session and reject bodies over 1 MiB before parsing.
+Pass a trusted bucket, the verified viewer, your existing policy, `getAsset`,
+`getReleaseIndex`, `getSigningKey`, and optional `signingConfig`. The helper
+rechecks the **current** catalog tier/root and the indexed URI/generation,
+uses the existing artifact signing helper, and clamps credentials to grant
+expiry. Imported access tiers never grant entitlement. Replaced older
+generations which the index no longer authorizes fail without signing them.
+The application owns HTTP status translation and session implementation.
+
+```ts
+import {authorizeSnapshotArtifact} from "@skytruth/shared-datasets/server";
+
+// Inside an authenticated application route, with bounded validated request data:
+const access = await authorizeSnapshotArtifact(
+  body.snapshot, body.asset_slug, body.role, body.locale,
+  {viewer, getAsset, getReleaseIndex, getSigningKey}
+);
+// Return access as JSON to the authenticated caller.
+```
+
+The catalog action generates a complete public MapLibre/PMTiles example with
+matching metadata, citations, and access tier. Restricted examples explicitly
+require the route above. Install from the same reviewed repository revision
+shown by the catalog for these new APIs until their npm release is available.
+No browser credentials or signing keys belong in generated code.
+
+A snapshot is a reference, not an archive. Missing generations, denied access,
+and integrity failures reject the restore; callers must not substitute latest.
+The dataset API also supports non-PMTiles canonical artifacts through Python.
+
+Because `web/catalog/workspace-contract.js` is compiled into the package, its
+changes and changes to `scripts/copy-snapshot-contract.mjs` participate in the
+same reviewed version-increase check and publish trigger as package sources.
