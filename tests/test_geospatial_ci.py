@@ -43,6 +43,7 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIs(inputs["wdpa_full_benchmark"]["default"], False)
         self.assertEqual(inputs["wdpa_benchmark_fraction"]["default"], "1")
         self.assertEqual(inputs["wdpa_benchmark_fraction"]["options"], ["1", "0.001"])
+        self.assertIs(inputs["wdpa_inputs_probe"]["default"], False)
         job = self.workflow["jobs"]["wdpa-full-benchmark"]
         self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
         self.assertIn("inputs.wdpa_full_benchmark", job["if"])
@@ -61,15 +62,14 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/*.json")
         self.assertIn("fallocate -l 100G", steps["Provision a 100 GiB disk scratch filesystem"]["run"])
 
-    def test_benchmark_snapshot_download_is_generation_and_hash_pinned(self):
+    def test_benchmark_uses_public_frozen_inputs_without_credentials(self):
         steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
-        run = steps["Download the generation-pinned private snapshot"]["run"]
-        self.assertIn("_scratch/wdpa-processing-benchmarks/", run)
-        self.assertIn("'?alt=media&generation=' + generation", run)
-        self.assertIn("digest.hexdigest() != expected", run)
-        self.assertIn("extractall(root, filter='data')", run)
-        script = run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-        compile(script, "benchmark-snapshot-download", "exec")
+        run = steps["Download reviewed public frozen inputs without credentials"]["run"]
+        self.assertIn("scripts/download_public_wdpa_benchmark.py", run)
+        self.assertIn("docs/wdpa-processing-public-inputs.json", run)
+        self.assertNotIn("secrets.", str(self.workflow["jobs"]["wdpa-full-benchmark"]))
+        self.assertIn("!inputs.wdpa_inputs_probe", steps["Run two frozen builds with 4 CPU and 8 GiB"]["if"])
+        self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", steps["Measure input preparation only"]["run"])
 
     def test_geospatial_job_runs_all_native_tool_integration_tests(self):
         run = workflow_steps_by_name(self.workflow, "geospatial-integration")[

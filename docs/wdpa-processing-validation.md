@@ -105,23 +105,20 @@ fraction `1`, which is also required by the rollout gate.
 GitHub hosted jobs have a six-hour ceiling, stricter than the production
 24-hour target; a hosted timeout cannot establish the production timeout target.
 
-`wdpa_snapshot_uri`, `wdpa_snapshot_generation` and `wdpa_snapshot_sha256` must
-identify one private, generation-pinned diagnostic archive under
-`_scratch/wdpa-processing-benchmarks/`. Package only the frozen upstream ZIP,
-baseline pins/manifests/sidecars and the files referenced by
-`translation-sources.json`; omit the prebuilt translation SQLite cache. Use
-no-clobber staging. The workflow checks the archive hash before extraction,
-then the sandbox validates each baseline and translation snapshot.
+[Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
+upstream ZIP hash and the exact published baseline/translation object generations,
+sizes and hashes. `download_public_wdpa_benchmark.py` reconstructs the same frozen
+inputs anonymously, checking raw and compressed hashes. It neither exports
+credentials nor makes private objects public. Only scalar measurement reports
+are uploaded as Actions artifacts. Unused preinstalled tooling is removed only
+on the disposable job VM to make room for the disk; provisioning failure is fatal.
 
-Provide `WDPA_BENCHMARK_READ_TOKEN` as a short-lived encrypted Actions secret,
-downscoped through a Cloud Storage credential access boundary to object-reader
-permissions on exactly the staged object. Do not provide publisher credentials
-or a broad local access token. Remove the temporary secret after download. The
-token is used only by the host download step and is absent from the processing
-containers. No dataset bytes are uploaded to public Actions artifacts. Retained
-artifacts contain only measurements, counts, digests and container outcomes.
-Unused preinstalled tooling is removed only on this disposable job VM to make
-room for the disk; the job fails if the disk cannot be provisioned.
+Set `wdpa_inputs_probe=true` for an input-preparation-only memory measurement.
+It uses the deployment image and the same source preparation and verified
+baseline loader as the full replay. Its report is explicitly diagnostic and
+cannot satisfy acceptance; the complete-build step is skipped in that mode.
+The report also records parent/child RSS and the cgroup memory breakdown so
+filesystem caching can be distinguished from process allocation.
 
 ## Infrastructure and failure visibility
 

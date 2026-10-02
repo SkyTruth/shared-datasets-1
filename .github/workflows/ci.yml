@@ -16,15 +16,10 @@ on:
         type: choice
         options: ["1", "0.001"]
         default: "1"
-      wdpa_snapshot_uri:
-        description: Private benchmark snapshot under _scratch/wdpa-processing-benchmarks/
-        type: string
-      wdpa_snapshot_generation:
-        description: Immutable snapshot generation
-        type: string
-      wdpa_snapshot_sha256:
-        description: Snapshot archive SHA-256
-        type: string
+      wdpa_inputs_probe:
+        description: Measure input preparation only; cannot satisfy acceptance
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -76,45 +71,12 @@ jobs:
             if [[ -e "$path" ]]; then sudo du -sh "$path"; sudo rm -rf "$path"; fi
           done
           df -h /
-          mkdir -p "$RUNNER_TEMP/wdpa-inputs" "$RUNNER_TEMP/wdpa-reports"
-      - name: Download the generation-pinned private snapshot
-        env:
-          SNAPSHOT_URI: ${{ inputs.wdpa_snapshot_uri }}
-          SNAPSHOT_GENERATION: ${{ inputs.wdpa_snapshot_generation }}
-          SNAPSHOT_SHA256: ${{ inputs.wdpa_snapshot_sha256 }}
-          SNAPSHOT_READ_TOKEN: ${{ secrets.WDPA_BENCHMARK_READ_TOKEN }}
+          mkdir -p "$RUNNER_TEMP/wdpa-reports"
+      - name: Download reviewed public frozen inputs without credentials
         run: |
-          python3 - <<'PY'
-          import hashlib, os, re, tarfile, urllib.parse, urllib.request
-          from pathlib import Path
-          uri, generation, expected = (os.environ[key] for key in ('SNAPSHOT_URI', 'SNAPSHOT_GENERATION', 'SNAPSHOT_SHA256'))
-          prefix = 'gs://skytruth-shared-datasets-1/_scratch/wdpa-processing-benchmarks/'
-          if not uri.startswith(prefix) or not re.fullmatch(r'[0-9]+', generation) or not re.fullmatch(r'[0-9a-f]{64}', expected):
-              raise SystemExit('A generation-pinned private WDPA benchmark snapshot is required')
-          token = os.environ['SNAPSHOT_READ_TOKEN']
-          if not token:
-              raise SystemExit('The short-lived snapshot reader token is missing')
-          name = uri.split('/', 3)[3]
-          url = 'https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/' + urllib.parse.quote(name, safe='') + '?alt=media&generation=' + generation
-          root = Path(os.environ['RUNNER_TEMP']) / 'wdpa-inputs'
-          archive = root / 'snapshot.tar'
-          digest = hashlib.sha256()
-          size = 0
-          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
-          with urllib.request.urlopen(request, timeout=120) as response, archive.open('xb') as target:
-              while chunk := response.read(1024 * 1024):
-                  size += len(chunk)
-                  if size > 7 * 1024**3:
-                      raise RuntimeError('Snapshot exceeds the reviewed benchmark bundle size')
-                  digest.update(chunk)
-                  target.write(chunk)
-          if digest.hexdigest() != expected:
-              raise SystemExit('Frozen snapshot SHA-256 mismatch')
-          with tarfile.open(archive) as bundle:
-              bundle.extractall(root, filter='data')
-          archive.unlink()
-          print({'snapshot_generation': generation, 'snapshot_sha256': expected, 'snapshot_bytes': size})
-          PY
+          python3 scripts/download_public_wdpa_benchmark.py \
+            --recipe docs/wdpa-processing-public-inputs.json \
+            --out "$RUNNER_TEMP/wdpa-inputs"
       - name: Build the deployment image once
         id: image
         run: |
@@ -145,6 +107,7 @@ jobs:
           sudo chmod 0777 /work
           df -h /work
       - name: Run two frozen builds with 4 CPU and 8 GiB
+        if: ${{ !inputs.wdpa_inputs_probe }}
         env:
           WDPA_BENCHMARK_FRACTION: ${{ inputs.wdpa_benchmark_fraction || '1' }}
         run: |
@@ -170,6 +133,18 @@ jobs:
             # This disk contains only this job's completed disposable processing scratch.
             sudo rm -rf /work/shared-datasets-1 /work/tmp
           done
+      - name: Measure input preparation only
+        if: ${{ inputs.wdpa_inputs_probe }}
+        run: |
+          docker run --name wdpa-replay-1 --cpus=4 --memory=8g --memory-swap=8g \
+            -e CLOUD_RUN_EXECUTION=wdpa-benchmark -v /work:/work \
+            -v "$RUNNER_TEMP/wdpa-inputs:/inputs:ro" wdpa-processing-benchmark:local \
+            python scripts/wdpa_input_memory_probe.py \
+              --source /inputs/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
+              --baselines /inputs/frozen-inputs --workdir /work/shared-datasets-1/replay
+          cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/input-probe.json"
+          docker inspect wdpa-replay-1 --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-probe.json"
+          docker rm wdpa-replay-1
       - name: Retain report if a replay failed
         if: failure()
         run: |
@@ -185,7 +160,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.wdpa_benchmark_fraction == '0.001' && 'wdpa-debug-benchmark-reports' || 'wdpa-complete-benchmark-reports' }}
+          name: ${{ (inputs.wdpa_inputs_probe || inputs.wdpa_benchmark_fraction == '0.001') && 'wdpa-debug-benchmark-reports' || 'wdpa-complete-benchmark-reports' }}
           path: ${{ runner.temp }}/wdpa-reports/*.json
           if-no-files-found: ignore
           retention-days: 30
