@@ -1,0 +1,144 @@
+name: WDPA isolated processing validation deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_validation:
+        description: Start a frozen complete October replay after deployment and alert verification
+        type: boolean
+        default: false
+      failure_alert_verified_execution:
+        description: Failed validation probe whose actual alert delivery has been verified
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  JOB_NAME: wdpa-processing-validation
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/wdpa-processing-validation-deploy.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --all-groups
+      - name: Require small and marine validation plus disk quota
+        run: uv run --no-sync python scripts/wdpa_processing_gate.py --pre-cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and push the immutable validation image
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/shared-datasets-jobs/wdpa-validation:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          docker build --platform linux/amd64 --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
+            -f ingestion/wdpa_monthly/Dockerfile -t "$tag" .
+          docker run --rm --platform linux/amd64 "$tag" python -c 'import scripts.cloud_wdpa_validation; from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"'
+          docker push "$tag"
+          digest="$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          echo "VALIDATION_IMAGE=${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/shared-datasets-jobs/wdpa-validation@${digest}" >> "$GITHUB_ENV"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+          terraform_wrapper: false
+      - name: Plan only isolated validation resources
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/envs/prod init -input=false
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false \
+            -out="$RUNNER_TEMP/wdpa-validation.tfplan" \
+            -target=module.wdpa_validation_service_account.google_service_account.this \
+            -target=google_service_account_iam_member.wdpa_validation_deployer \
+            -target=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            -var="wdpa_validation_image=${VALIDATION_IMAGE}" \
+            -var="wdpa_monthly_image=unused-by-isolated-validation" \
+            -var="sea_ice_daily_image=unused-by-isolated-validation" \
+            -var="eamlis_monthly_image=unused-by-isolated-validation"
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/wdpa-validation.tfplan" > "$RUNNER_TEMP/wdpa-validation-plan.json"
+      - name: Enforce isolated resource and permission allowlist
+        env:
+          allowed_exact: |
+            module.wdpa_validation_service_account.google_service_account.this
+            google_service_account_iam_member.wdpa_validation_deployer
+            module.wdpa_processing_validation_job.google_cloud_run_v2_job.this
+        run: |
+          uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/wdpa-validation-plan.json" \
+            --allowed-exact="$allowed_exact" --block-deletes --refusal-prefix="Refusing isolated WDPA validation deploy"
+          uv run --no-sync python scripts/check_wdpa_validation_plan.py \
+            "$RUNNER_TEMP/wdpa-validation-plan.json" --image "$VALIDATION_IMAGE" \
+            --deployer "$TERRAFORM_SERVICE_ACCOUNT"
+      - name: Apply the saved protected plan
+        run: bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/wdpa-validation.tfplan"
+      - name: Confirm deployed digest
+        run: |
+          set -euo pipefail
+          actual="$(gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          [[ "$actual" == "$VALIDATION_IMAGE" ]]
+      - name: Start validation only after controlled alert verification
+        if: inputs.run_validation
+        env:
+          VERIFIED_EXECUTION: ${{ inputs.failure_alert_verified_execution }}
+        run: |
+          set -euo pipefail
+          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/wdpa-validation-executions.json"
+          python - "$RUNNER_TEMP/wdpa-validation-executions.json" <<'PY'
+          import json, sys
+          for execution in json.load(open(sys.argv[1])):
+              if not execution.get('status', {}).get('completionTime'):
+                  raise SystemExit('A validation execution is already pending or running; wait for terminal status')
+          PY
+          if [[ -z "$VERIFIED_EXECUTION" ]]; then
+            probe="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+              --update-env-vars=WDPA_FAIL_BEFORE_DATASET_WRITES=1 --async --format='value(metadata.name)')"
+            echo "Verify actual alert delivery for controlled probe ${probe}; dispatch again with its execution ID. No source replay started."
+            exit 1
+          fi
+          [[ "$VERIFIED_EXECUTION" =~ ^wdpa-processing-validation-[a-z0-9-]+$ ]] || exit 1
+          gcloud run jobs executions describe "$VERIFIED_EXECUTION" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/wdpa-validation-probe.json"
+          python - "$RUNNER_TEMP/wdpa-validation-probe.json" <<'PY'
+          import json, sys
+          execution = json.load(open(sys.argv[1]))
+          env = {e['name']: e.get('value') for e in execution['spec']['template']['spec']['containers'][0].get('env', [])}
+          if env.get('WDPA_FAIL_BEFORE_DATASET_WRITES') != '1' or int(execution['status'].get('failedCount', 0)) != 1:
+              raise SystemExit('Expected a terminal controlled failure before any dataset writes')
+          PY
+          execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --async --format='value(metadata.name)')"
+          echo "Frozen processing validation: ${execution}; follow it to terminal status and collect wdpa_cloud_validation_report from Cloud Logging."

@@ -1,3 +1,4 @@
+import {executionStatusText} from "./execution-status.js";
 import {createComparisonController} from "./compare-releases.js";
 import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
@@ -76,6 +77,8 @@ const elements = {
   updated: document.querySelector("#detail-updated"),
   lastRunCard: document.querySelector("#detail-last-run-card"),
   lastRun: document.querySelector("#detail-last-run"),
+  executionCard: document.querySelector("#detail-execution-card"),
+  executionStatus: document.querySelector("#detail-execution-status"),
   cadenceValue: document.querySelector("#detail-cadence"),
   owner: document.querySelector("#detail-owner"),
   statusValue: document.querySelector("#detail-status"),
@@ -670,6 +673,7 @@ function renderDetail(asset) {
   renderDocsLink(asset);
   elements.updated.textContent = asset.latest_release?.date || asset.last_updated || "Unknown";
   renderLastRun(asset);
+  refreshExecutionStatus(asset);
   elements.cadenceValue.textContent = asset.update_cadence || "Unknown";
   elements.owner.textContent = asset.owner || "Unknown";
   elements.statusValue.textContent = asset.status || "Unknown";
@@ -731,6 +735,36 @@ function renderLastRun(asset) {
   elements.lastRunCard.hidden = !value;
   elements.lastRun.textContent = value || "";
 }
+
+let executionRequest = 0;
+let executionObservation = null;
+
+async function refreshExecutionStatus(asset) {
+  const request = ++executionRequest;
+  const wdpa = ["wdpa-marine", "wdpa-terrestrial"].includes(asset?.slug);
+  elements.executionCard.hidden = !wdpa;
+  if (!wdpa) return;
+  elements.executionStatus.textContent = executionObservation
+    ? executionStatusText(executionObservation) : "Loading execution status…";
+  try {
+    const response = await fetch(new URL("../wdpa-monthly-execution.json", window.location.href), {cache: "no-cache"});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const observation = await response.json();
+    const text = executionStatusText(observation);
+    if (request !== executionRequest) return;
+    executionObservation = observation;
+    elements.executionStatus.textContent = text;
+  } catch (_error) {
+    if (request !== executionRequest) return;
+    elements.executionStatus.textContent = executionObservation
+      ? `${executionStatusText(executionObservation)}. Status refresh unavailable.` : "Execution status unavailable";
+  }
+}
+
+setInterval(() => {
+  if (document.hidden || elements.detail.hidden || state.selectedSlugs.length > 1) return;
+  refreshExecutionStatus(state.assets.find(asset => asset.slug === state.selectedSlug));
+}, 60_000);
 
 function renderLifecycle(asset) {
   const isActive = (asset.status || "") === "active";

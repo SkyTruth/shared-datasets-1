@@ -12,6 +12,14 @@ dependencies = [
   "flatgeobuf==0.3.1",
 ]
 
+[project.optional-dependencies]
+# Match Debian Bookworm's native GDAL in the WDPA deployment image.
+wdpa-native = ["GDAL==3.6.2", "numpy==1.26.4"]
+
+[tool.uv.extra-build-dependencies]
+# Build the GDAL array extension too; native CI also exercises sea-ice CLIs.
+gdal = ["numpy==1.26.4"]
+
 [dependency-groups]
 dev = [
   "geopandas==1.1.1",

@@ -632,9 +632,12 @@ def raise_unresolved_identity_ambiguities(
     # One log line per ambiguity: a single entry holding all evidence can
     # exceed the Cloud Logging entry size limit and get truncated, which
     # leaves maintainers without the evidence the resolutions file needs.
-    payloads = release_feature_model.identity_ambiguities_to_dicts(ambiguities)
-    total = len(payloads)
-    for index, payload in enumerate(payloads, start=1):
+    total = len(ambiguities)
+    visible = []
+    for index, ambiguity in enumerate(ambiguities, start=1):
+        payload = release_feature_model.identity_ambiguity_to_dict(ambiguity)
+        if len(visible) < IDENTITY_AMBIGUITY_MESSAGE_LIMIT:
+            visible.append(payload)
         LOGGER.error(
             "identity ambiguity evidence %s %s %d/%d: %s",
             asset_slug,
@@ -643,7 +646,6 @@ def raise_unresolved_identity_ambiguities(
             total,
             json.dumps(payload, sort_keys=True),
         )
-    visible = payloads[:IDENTITY_AMBIGUITY_MESSAGE_LIMIT]
     suffix = (
         ""
         if total <= len(visible)
@@ -687,7 +689,7 @@ def sidecar_record(
     }
 
 
-def write_sidecar(records: Iterable[Mapping[str, Any]], path: Path) -> int:
+def write_sidecar(records: Iterable[Mapping[str, Any]], path: Path, *, identity_index=None) -> int:
     """Write a metadata sidecar, validating records as they stream past.
 
     Validation and writing share one pass so callers never need the whole
@@ -711,7 +713,7 @@ def write_sidecar(records: Iterable[Mapping[str, Any]], path: Path) -> int:
     with path.open("wb") as raw_file:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw_file, mtime=0) as gzip_file:
             with io.TextIOWrapper(gzip_file, encoding="utf-8", newline="\n") as file_obj:
-                validation = release_feature_model.validate_sidecar_records(_write_through(records, file_obj))
+                validation = release_feature_model.validate_sidecar_records(_write_through(records, file_obj), identity_index=identity_index)
     if not validation.valid:
         raise RuntimeError("metadata sidecar validation failed: " + "; ".join(validation.errors))
     return written

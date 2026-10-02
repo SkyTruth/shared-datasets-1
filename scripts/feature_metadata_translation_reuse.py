@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +49,21 @@ def source_key(properties: dict[str, Any], fields: Sequence[str]) -> str:
 
 
 def validate_sidecar(path: Path, slug: str, release: str) -> int:
-    result = model.validate_sidecar_records(model.read_metadata_sidecar(path), expected_asset_slug=slug, expected_release=release)
+    from ingestion.common.identity_index import DiskIdentityRecords
+
+    with tempfile.TemporaryDirectory(
+        prefix="translation-validation-", dir=path.parent
+    ) as tmp:
+        index = DiskIdentityRecords(Path(tmp) / "identities.sqlite")
+        try:
+            result = model.validate_sidecar_records(
+                model.read_metadata_sidecar(path),
+                expected_asset_slug=slug,
+                expected_release=release,
+                identity_index=index,
+            )
+        finally:
+            index.close()
     require(result.valid, "invalid canonical sidecar: " + "; ".join(result.errors))
     return result.feature_count
 
@@ -74,6 +89,8 @@ def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: S
                 PRAGMA journal_mode=OFF;
                 PRAGMA synchronous=OFF;
                 PRAGMA cache_size=-65536;
+                PRAGMA temp_store=FILE;
+                PRAGMA mmap_size=0;
                 CREATE TABLE config (value TEXT NOT NULL);
                 CREATE TABLE source (id INTEGER PRIMARY KEY, asset TEXT UNIQUE NOT NULL, release TEXT NOT NULL);
                 CREATE TABLE feature (id INTEGER PRIMARY KEY, source INTEGER NOT NULL, fid TEXT NOT NULL, source_key TEXT NOT NULL, properties TEXT NOT NULL,
@@ -182,6 +199,9 @@ class TranslationMemory:
     def __init__(self, database: Path, *, supplement: Path | None = None):
         self.database = database
         self.db = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+        self.db.execute("PRAGMA cache_size=-65536")
+        self.db.execute("PRAGMA temp_store=FILE")
+        self.db.execute("PRAGMA mmap_size=0")
         self.config = json.loads(self.db.execute("SELECT value FROM config").fetchone()[0])
         self.source_report = json.loads(self.db.execute("SELECT value FROM report").fetchone()[0])  # finalized builds only
         self.fields, self.locales = self.config["fields"], self.config["locales"]
@@ -216,8 +236,8 @@ class TranslationMemory:
         snapshots = local_io.snapshots(protected)
         output_dir.mkdir(parents=True)
         pending_db = sqlite3.connect(output_dir / "pending.sqlite")
+        pending_db.executescript("PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; CREATE TABLE target_sources (source_key TEXT PRIMARY KEY) WITHOUT ROWID;")
         pending_db.execute("CREATE TABLE pending (slot INTEGER, hash TEXT, source TEXT, reason TEXT, affected INTEGER, PRIMARY KEY(slot,hash,reason)) WITHOUT ROWID")
-        source_keys = set()
         counts = {locale: Counter() for locale in self.locales}
         translations_path = output_dir / f"{asset_slug}.metadata-translations.csv"
         locale_paths = {locale: output_dir / f"{asset_slug}.metadata.{locale}.ndjson.gz" for locale in self.locales}
@@ -234,8 +254,10 @@ class TranslationMemory:
                 for number, record in enumerate(model.read_metadata_sidecar(canonical_sidecar), 1):
                     properties = record["properties"]
                     key = source_key(properties, self.config["source_key_fields"])
-                    require(key not in source_keys, "target source identity is ambiguous")
-                    source_keys.add(key)
+                    try:
+                        pending_db.execute("INSERT INTO target_sources VALUES (?)", (key,))
+                    except sqlite3.IntegrityError as exc:
+                        raise TranslationReuseError("target source identity is ambiguous") from exc
                     direct = self.direct(asset_slug, key)
                     hashes = {field: localization.source_value_hash(properties[field]) for field in self.fields if field in properties}
                     localized = {locale: dict(properties) for locale in self.locales}

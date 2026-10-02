@@ -48,8 +48,9 @@ module "wdpa_monthly_job" {
   name                  = "wdpa-monthly"
   image                 = var.wdpa_monthly_image
   service_account_email = module.wdpa_job_service_account.email
-  cpu                   = "8"
-  memory                = "32Gi"
+  cpu                   = "4"
+  memory                = "8Gi"
+  ephemeral_disk_size   = "100Gi"
   timeout               = "86400s"
   max_retries           = 0
 
@@ -57,6 +58,8 @@ module "wdpa_monthly_job" {
     GOOGLE_CLOUD_PROJECT     = var.project_id
     SHARED_DATASETS_BUCKET   = var.bucket_name
     WDPA_SOURCE_URL_TEMPLATE = var.wdpa_source_url_template
+    TMPDIR                   = "/work/tmp"
+    SHARED_DATASETS_WORKDIR  = "/work/shared-datasets-1"
   }
 
   depends_on = [

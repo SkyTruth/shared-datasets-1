@@ -46,8 +46,7 @@ def download_source(bucket, version: p.ObjectVersion, destination: Path, *, comp
     p.require(size == version.size and digest.hexdigest() == version.sha256, "translation source generation/hash differs from reviewed evidence")
 
 
-@contextmanager
-def prepare_memory(publisher, assets, workdir: Path):
+def download_inputs(publisher, assets, workdir: Path):
     committed = {asset.slug: publisher.committed_artifacts(asset, suffixes=SUFFIXES) for asset in assets}
     supplement = None
     for asset in assets:
@@ -77,8 +76,18 @@ def prepare_memory(publisher, assets, workdir: Path):
             local_paths[suffix] = str(path)
         sources.append({"asset_slug": asset.slug, "release": release, "canonical_sidecar": local_paths[SUFFIXES[0]], "translation_source": local_paths[SUFFIXES[1]],
                         "provenance": {suffix: version.identity() for suffix, version in versions.items()}})
+    return sources, supplement
+
+
+@contextmanager
+def prepare_memory(publisher, assets, workdir: Path):
+    sources, supplement = download_inputs(publisher, assets, workdir)
     database = workdir / "translation-memory.sqlite"
     build_memory(database=database, sources=sources, fields=FIELDS, locales=LOCALES, source_key_fields=("SITE_PID",))
+    # Rebuilds consume only the verified reusable SQLite index from here.
+    for source in sources:
+        for key in ("canonical_sidecar", "translation_source"):
+            Path(source[key]).unlink()
     supplement_path = None
     if supplement is not None:
         supplement_path = workdir / "translation-inputs" / "approved-supplement.ndjson"

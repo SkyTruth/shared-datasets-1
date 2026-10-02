@@ -133,7 +133,12 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
                 ):
                     continue
                 with self.subTest(file_name=path.name):
-                    self.assertIn("local.shared_bucket_folder_resource_prefix", block)
+                    if "_catalog/wdpa-monthly-execution.json" in block:
+                        self.assertIn("resource.name ==", block)
+                        self.assertNotIn("startsWith", block)
+                        self.assertNotIn("local.shared_bucket_folder_resource_prefix", block)
+                    else:
+                        self.assertIn("local.shared_bucket_folder_resource_prefix", block)
 
     def test_scheduled_ingestion_log_alerts_autoclose_after_quiet_hour(self):
         monitoring_tf = (PROD_TF_DIR / "monitoring.tf").read_text()

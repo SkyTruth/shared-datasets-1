@@ -1,0 +1,67 @@
+{
+  "assets": {
+    "wdpa-marine": {
+      "india_rows": 304,
+      "india_sites": 304,
+      "raw_rows": 17938,
+      "rows": 17938
+    },
+    "wdpa-terrestrial": {
+      "india_rows": 193174,
+      "india_sites": 193174,
+      "raw_rows": 497914,
+      "rows": 497914
+    }
+  },
+  "baseline_counts": {
+    "wdpa-marine": {
+      "india_rows": 304,
+      "india_sites": 304,
+      "rows": 17938,
+      "semantic_sha256": "abc81213f8db78942ba71d0027356816c932b7e53c530686f8b9acae1290218b"
+    },
+    "wdpa-terrestrial": {
+      "india_rows": 80,
+      "india_sites": 80,
+      "rows": 304817,
+      "semantic_sha256": "279dea36e1273b9d57fd5bc0bb5b23bd5ba3640a0b311fd55fa451ab384bf192"
+    }
+  },
+  "baseline_pins": {
+    "wdpa-marine": {
+      "manifest_generation": 1790866753009809,
+      "manifest_sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616",
+      "manifest_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+      "metadata": {
+        "format": "metadata",
+        "generation": 1790866699087905,
+        "latest_generation": 1790866737083959,
+        "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.ndjson.gz",
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.ndjson.gz",
+        "role": "metadata",
+        "sha256": "0d8263e527b1bcecc0835c894397677d8bc6e834631508d3b1cce16c898c5383",
+        "size": 3167832
+      }
+    },
+    "wdpa-terrestrial": {
+      "manifest_generation": 1790815952362262,
+      "manifest_sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88",
+      "manifest_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+      "metadata": {
+        "format": "metadata",
+        "generation": 1790815623057097,
+        "latest_generation": 1790815838968015,
+        "latest_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.ndjson.gz",
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-30/wdpa-terrestrial.metadata.ndjson.gz",
+        "role": "metadata",
+        "sha256": "0680dfa193ef30382fe6e113da4cc0f37fe4b7c19e722cbd783d9a864dfc3b76",
+        "size": 44561735
+      }
+    }
+  },
+  "method": "Independent attribute-only GDAL source stream, SQLite identity/site counts; baseline sidecars streamed separately",
+  "native_gdal_version": "3.6.2",
+  "resource_acceptance": false,
+  "schema_version": 1,
+  "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9"
+}

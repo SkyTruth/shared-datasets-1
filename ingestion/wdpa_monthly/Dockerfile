@@ -19,19 +19,26 @@ RUN set -eux; \
 
 FROM python:3.12-slim-bookworm
 
+ARG PMTILES_VERSION=v1.30.1
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
+
 ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PMTILES_BUILD_VERSION=${PMTILES_VERSION} \
     SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        gdal-bin \
+        gdal-bin=3.6.2+dfsg-1+b2 \
+        libgdal-dev=3.6.2+dfsg-1+b2 \
+        build-essential \
     && echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends -t bookworm-backports \
-        tippecanoe \
+        tippecanoe=2.52.0-1~bpo12+1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
@@ -39,7 +46,17 @@ COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir google-cloud-storage
+RUN uv sync --frozen --no-dev --extra wdpa-native \
+    && .venv/bin/python -c 'import numpy; from osgeo import gdal, gdal_array; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; assert numpy.__version__ == "1.26.4"; assert gdal_array.NumericTypeCodeToGDALTypeCode(numpy.dtype("uint8")) == gdal.GDT_Byte'
+ENV PATH="/app/.venv/bin:${PATH}" \
+    TMPDIR=/work/tmp \
+    SHARED_DATASETS_WORKDIR=/work/shared-datasets-1 \
+    CPL_TMPDIR=/work/tmp \
+    SQLITE_TMPDIR=/work/tmp \
+    TIPPECANOE_MAX_THREADS=4 \
+    OGR_SQLITE_CACHE=64 \
+    OGR_SQLITE_JOURNAL=OFF \
+    OGR_SQLITE_SYNCHRONOUS=OFF
 
 COPY ingestion ./ingestion
 COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
@@ -50,5 +67,11 @@ COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
 COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
+COPY scripts/local_wdpa_sample.py ./scripts/local_wdpa_sample.py
+COPY scripts/local_ingestion_smoke.py ./scripts/local_ingestion_smoke.py
+COPY scripts/cloud_wdpa_validation.py ./scripts/cloud_wdpa_validation.py
+COPY scripts/download_public_wdpa_benchmark.py ./scripts/download_public_wdpa_benchmark.py
+COPY docs/wdpa-processing-public-inputs.json ./docs/wdpa-processing-public-inputs.json
+COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

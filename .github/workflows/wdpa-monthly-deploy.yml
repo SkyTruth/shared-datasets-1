@@ -19,6 +19,9 @@ on:
       - "scripts/vector_asset.py"
       - "terraform/envs/prod/main.tf"
       - "terraform/envs/prod/wdpa_monthly.tf"
+      - "terraform/envs/prod/wdpa_execution_observer.tf"
+      - "catalog/wdpa-processing-acceptance.json"
+      - "scripts/wdpa_processing_gate.py"
       - "terraform/envs/prod/wdpa_monthly_variables.tf"
       - "terraform/envs/prod/variables.tf"
       - "terraform/envs/prod/versions.tf"
@@ -31,6 +34,11 @@ on:
         required: false
         type: boolean
         default: false
+      failure_alert_verified_execution:
+        description: "Controlled failure execution whose actual alert delivery you verified. Required before a canary may write datasets."
+        required: false
+        type: string
+        default: ""
       canary_run_date:
         description: "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish."
         required: false
@@ -116,6 +124,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --all-groups
 
+      - name: Require WDPA processing acceptance and disk quota
+        run: uv run --no-sync python scripts/wdpa_processing_gate.py
+
       - name: Verify feature-ID publication state
         run: uv run --no-sync python scripts/publication_rollout_gate.py --job wdpa-monthly
 
@@ -147,7 +158,7 @@ jobs:
           set -euo pipefail
 
           docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" python -c \
-            'import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
+            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.execution_observer; import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
 
       - name: Push wdpa-monthly image
         run: |
@@ -181,6 +192,15 @@ jobs:
             -input=false \
             -out="${RUNNER_TEMP}/wdpa-monthly.tfplan" \
             -target=module.wdpa_monthly_job.google_cloud_run_v2_job.this \
+            -target="module.wdpa_observer_service_account.google_service_account.this" \
+            -target="google_project_iam_custom_role.wdpa_execution_reader" \
+            -target="google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader" \
+            -target="google_storage_bucket_iam_member.wdpa_observer_status_writer" \
+            -target="google_service_account_iam_member.wdpa_observer_deployer" \
+            -target="module.wdpa_execution_observer_job.google_cloud_run_v2_job.this" \
+            -target="google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker" \
+            -target="module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this" \
+            -target="google_iam_deny_policy.canonical_destructive_actions[0]" \
             -var="wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}" \
             -var="eamlis_monthly_image=unused-by-wdpa-monthly-deploy" \
             -var="sea_ice_daily_image=unused-by-wdpa-monthly-deploy"
@@ -200,6 +220,15 @@ jobs:
           expected_image = sys.argv[2]
           allowed_exact = {
               "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+              "module.wdpa_observer_service_account.google_service_account.this",
+              "google_project_iam_custom_role.wdpa_execution_reader",
+              "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+              "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+              "google_service_account_iam_member.wdpa_observer_deployer",
+              "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+              "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+              "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+              "google_iam_deny_policy.canonical_destructive_actions[0]",
           }
 
           blocked = []
@@ -211,8 +240,15 @@ jobs:
               if address not in allowed_exact:
                   blocked.append(f"{'/'.join(actions)} {address}")
                   continue
-              if actions != ["update"]:
+              permitted = (["update"],) if address in {
+                  "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+                  "google_iam_deny_policy.canonical_destructive_actions[0]",
+              } else (["create"], ["update"])
+              if actions not in permitted:
                   blocked.append(f"{'/'.join(actions)} {address}")
+                  continue
+              if address not in {"module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+                                  "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this"}:
                   continue
               after = resource.get("change", {}).get("after", {})
               containers = (
@@ -223,6 +259,21 @@ jobs:
               image = containers[0].get("image") if containers else None
               if image != expected_image:
                   blocked.append(f"unexpected image for {address}: {image!r}")
+              task = after.get("template", [{}])[0].get("template", [{}])[0]
+              limits = containers[0].get("resources", [{}])[0].get("limits", {}) if containers else {}
+              worker = address == "module.wdpa_monthly_job.google_cloud_run_v2_job.this"
+              expected_limits = {"cpu": "4", "memory": "8Gi"} if worker else {"cpu": "1", "memory": "512Mi"}
+              if limits != expected_limits or task.get("timeout") != ("86400s" if worker else "120s"):
+                  blocked.append(f"unexpected processing limits for {address}")
+              if worker:
+                  volume = next((v for v in task.get("volumes", []) if v.get("name") == "work"), {})
+                  disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
+                  mounts = containers[0].get("volume_mounts", [])
+                  env = {e.get("name"): e.get("value") for e in containers[0].get("env", [])}
+                  if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(m.get("name") == "work" and m.get("mount_path") == "/work" for m in mounts):
+                      blocked.append("WDPA requires the 100 GiB disk at /work")
+                  if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":
+                      blocked.append("WDPA scratch paths must use /work")
 
           if blocked:
               print("Refusing wdpa-monthly deploy because the Terraform plan changes non-allowlisted resources:")
@@ -286,6 +337,41 @@ jobs:
 
           echo "run_canary=false" >> "${GITHUB_OUTPUT}"
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
+
+      - name: Verify failure visibility before dataset writes
+        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        env:
+          VERIFIED_EXECUTION: ${{ inputs.failure_alert_verified_execution }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERIFIED_EXECUTION}" ]]; then
+            probe="$(gcloud run jobs execute "${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
+              --update-env-vars=WDPA_FAIL_BEFORE_WRITES=true --async --format='value(metadata.name)')"
+            echo "Controlled failure probe: ${probe}"
+            for _ in $(seq 1 20); do
+              failed="$(gcloud run jobs executions describe "${probe}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(status.failedCount)')"
+              if [[ "${failed}" == 1 ]]; then
+                echo "::error::Verify actual alert delivery for ${probe}, then dispatch with failure_alert_verified_execution=${probe}. No dataset canary has started."
+                exit 1
+              fi
+              sleep 15
+            done
+            echo "Controlled failure did not reach terminal failure within five minutes." >&2
+            exit 1
+          fi
+          if [[ ! "${VERIFIED_EXECUTION}" =~ ^wdpa-monthly-[a-z0-9-]+$ ]]; then
+            echo "Expected a WDPA execution ID" >&2
+            exit 1
+          fi
+          gcloud run jobs executions describe "${VERIFIED_EXECUTION}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
+            --format=json > "${RUNNER_TEMP}/wdpa-verified-failure.json"
+          python - "${RUNNER_TEMP}/wdpa-verified-failure.json" <<'PY'
+          import json, sys
+          execution = json.load(open(sys.argv[1]))
+          flags = {item["name"]: item.get("value") for item in execution["spec"]["template"]["spec"]["containers"][0].get("env", [])}
+          if flags.get("WDPA_FAIL_BEFORE_WRITES") != "true" or int(execution["status"].get("failedCount", 0)) != 1:
+              raise SystemExit("Alert-delivery evidence must name a failed controlled probe before dataset writes")
+          PY
 
       - name: Execute wdpa-monthly canary
         if: ${{ steps.inflight.outputs.run_canary == 'true' }}

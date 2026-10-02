@@ -189,7 +189,7 @@ class AlertPolicyTests(unittest.TestCase):
         self.assertIn('severity     = "ERROR"', policy)
         self.assertIn("does **not** reach this policy", policy)
         # The failure policy must keep matching only real execution failures.
-        self.assertIn("protoPayload.status.code=10", policy)
+        self.assertIn("protoPayload.status.code>0", policy)
         self.assertNotIn(feature_metadata.RELEASE_BLOCKED_MARKER, policy)
 
     def test_alert_policies_have_a_protected_apply_path(self):
