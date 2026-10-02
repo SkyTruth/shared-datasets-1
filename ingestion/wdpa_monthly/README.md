@@ -285,6 +285,12 @@ check-in and published release. A successful marine publication does not imply
 a successful overall job. Visible details revalidate every minute; observations
 older than 15 minutes are marked stale. A status-document failure does not alter
 any release or allocation state.
+The protected viewer serves `execution-status.js` and maps
+`/wdpa-monthly-execution.json` to the same observer object under `_catalog/`;
+it reads that observation afresh on each request. After merge, deploy the web
+bundle through `catalog-web-deploy.yml` and the viewer image through
+`catalog-viewer-deploy.yml`, both protected workflows, before verifying status
+on the static and protected catalog pages.
 
 Before the normal rollout canary, execute a controlled failure with the
 `WDPA_FAIL_BEFORE_WRITES=true` execution override, after checking existing

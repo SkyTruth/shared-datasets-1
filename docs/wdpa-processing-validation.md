@@ -17,6 +17,9 @@ not yet passed resource acceptance.
   The WDPA scenario preserves October marine and September terrestrial release
   dates alongside a failed overall execution, a newer running execution, later
   cancellation, minute refresh and stale observations.
+- Protected viewer checks: 48 passed, including serving the new module and
+  mapping the status route to the observer's exact `_catalog/` object. Successive
+  reads use fresh observations and preserve the revalidation headers.
 - Identity tests cover identical/conflicting duplicates, changed source keys,
   reviewed reuse/new-ID decisions, the 64-digit ID boundary and exhaustion.
   Native pipeline tests cover producer failure, broken pipes, disk exhaustion,
@@ -152,7 +155,8 @@ have been granted by this PR.
 4. Obtain the 100 GiB per-instance Preview disk quota and review/provision the
    observer bootstrap permissions through protected workflows.
 5. After review and merge, apply monitoring and deploy through protected
-   workflows. Verify actual controlled-failure alert delivery before permitting
+   workflows, including both catalog web and viewer deployments. Verify actual
+   controlled-failure alert delivery before permitting
    the normal dataset canary. Follow the canary to terminal status and inspect
    publication ownership, release indexes, generations and artifact metadata.
 
@@ -161,7 +165,8 @@ have been granted by this PR.
 The observer writes only
 `gs://skytruth-shared-datasets-1/_catalog/wdpa-monthly-execution.json`.
 The catalog deployment includes `_catalog/web/app.js`, `index.html` and the new
-`execution-status.js`. Normal WDPA publication paths remain
+`execution-status.js`; the protected catalog viewer image serves the module and
+the same status document through its existing static route. Normal WDPA publication paths remain
 `100-geographic-reference/130-protected-areas/{wdpa-marine,wdpa-terrestrial}/`
 with the existing `releases/`, `latest/`, run records and release indexes.
 Existing allocation, claim and receipt ownership is unchanged. No canonical
