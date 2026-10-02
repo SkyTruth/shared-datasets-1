@@ -65,6 +65,20 @@ verifies its processing digest across the run, requires complete replays to
 rebuild the production translation index from `translation-sources.json`, and
 the gate refuses cached-index runs.
 
+An independent GDAL attribute-only scan of the **complete** frozen October
+source also passed. Geometry reads are disabled for this check, and identities
+and site counts use SQLite. [Source-count evidence](wdpa-processing-source-counts.json)
+pins the upstream hash and published baseline generations.
+
+| Realm | Complete October records | October India records/sites | Published baseline records | Baseline India records/sites |
+| --- | --- | --- | --- | --- |
+| Marine | 17,938 | 304 | 17,938 | 304 |
+| Terrestrial | 497,914 | 193,174 | 304,817 | 80 |
+
+Raw rows and distinct source identities agree in both realms. These are source
+record/site counts; they do not establish that the October terrestrial release
+has been published, complete artifact compatibility, or resource acceptance.
+
 ## Infrastructure and failure visibility
 
 The read-only worker/observer plan contains **eight creations, one update, zero

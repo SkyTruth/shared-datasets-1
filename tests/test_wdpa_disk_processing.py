@@ -202,16 +202,14 @@ def test_cloud_run_requires_disk_before_work(monkeypatch, tmp_path):
 
 
 def test_replay_source_counts_deduplicate_across_layers(monkeypatch, tmp_path):
-    from contextlib import contextmanager
     from ingestion.wdpa_monthly.run import SourceLayer
     from scripts import local_wdpa_sample as replay
 
     rows = [feature("a", SITE_ID=1, ISO3="IND;NPL"), feature("a", SITE_ID=1, ISO3="IND;NPL"),
             feature("b", SITE_ID=1, ISO3="IND"), feature("c", SITE_ID=2, ISO3=None)]
-    @contextmanager
-    def stream(command, **kwargs):
-        yield iter(rows[:2] if command[-1] == "one" else rows[2:])
-    monkeypatch.setattr(replay, "feature_stream", stream)
+    def stream(layer, where):
+        return (row["properties"] for row in (rows[:2] if layer.name == "one" else rows[2:]))
+    monkeypatch.setattr(replay, "source_count_features", stream)
     counts = replay.source_count_summary(
         [SourceLayer(name, (), "GEOMETRY", "fixture") for name in ("one", "two")], "1=1", tmp_path
     )

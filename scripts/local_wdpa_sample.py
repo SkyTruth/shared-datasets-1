@@ -109,6 +109,26 @@ def cgroup_limit(name):
     return int(values[0]) / int(values[1]) if name == "cpu.max" else int(values[0])
 
 
+def source_count_features(layer, where):
+    from osgeo import ogr
+
+    dataset = ogr.Open(layer.source, 0)
+    if dataset is None:
+        raise RuntimeError(f"Cannot open frozen source: {layer.source}")
+    try:
+        source_layer = dataset.GetLayerByName(layer.name)
+        if source_layer is None or source_layer.SetAttributeFilter(where) != 0:
+            raise RuntimeError(f"Cannot filter frozen source layer: {layer.name}")
+        # -nlt NONE on ogr2ogr still reads the source geometry. Shapefiles in
+        # compressed archives can otherwise decompress gigabytes for this check.
+        if source_layer.SetIgnoredFields(["OGR_GEOMETRY", "OGR_STYLE"]) != 0:
+            raise RuntimeError("Source driver cannot disable geometry for counts")
+        for feature in source_layer:
+            yield {field: feature.GetField(field) for field in ("SITE_PID", "SITE_ID", "ISO3")}
+    finally:
+        dataset = None
+
+
 def source_count_summary(layers, where, workdir):
     """Count source identities independently of normalization and allocation."""
     database = workdir / "source-counts.sqlite"
@@ -119,26 +139,17 @@ def source_count_summary(layers, where, workdir):
                 "PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; "
                 "CREATE TABLE sources (identity TEXT PRIMARY KEY, india INTEGER, site TEXT) WITHOUT ROWID;"
             )
-            for number, layer in enumerate(layers):
-                with feature_stream(
-                    [
-                        "ogr2ogr", "-f", "GeoJSONSeq", "-lco", "RS=NO",
-                        "-select", "SITE_PID,SITE_ID,ISO3", "-nlt", "NONE",
-                        "-where", where, "/vsistdout/", layer.source, layer.name,
-                    ],
-                    log_path=workdir / f"source-counts-{number}.log",
-                ) as features:
-                    for row in features:
-                        properties = row["properties"]
-                        identity = model.canonical_json(
-                            model.source_fields_identity_key(properties, ("SITE_PID",))
-                        )
-                        india = int("IND" in str(properties.get("ISO3", "")).split(";"))
-                        index.execute(
-                            "INSERT OR IGNORE INTO sources VALUES (?,?,?)",
-                            (identity, india, str(properties.get("SITE_ID"))),
-                        )
-                        raw_rows += 1
+            for layer in layers:
+                for properties in source_count_features(layer, where):
+                    identity = model.canonical_json(
+                        model.source_fields_identity_key(properties, ("SITE_PID",))
+                    )
+                    india = int("IND" in str(properties.get("ISO3", "")).split(";"))
+                    index.execute(
+                        "INSERT OR IGNORE INTO sources VALUES (?,?,?)",
+                        (identity, india, str(properties.get("SITE_ID"))),
+                    )
+                    raw_rows += 1
             rows, india_rows, india_sites = index.execute(
                 "SELECT COUNT(*), COALESCE(SUM(india),0), "
                 "COUNT(DISTINCT CASE WHEN india=1 THEN site END) FROM sources"
