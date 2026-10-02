@@ -229,7 +229,7 @@ class MutationIntentRoutingTests(unittest.TestCase):
 
     def test_identity_changes_and_api_failures_never_output_no_mutation(self):
         for target in ("pr", "current"):
-            for path, value in (("number", 8), ("state", "closed"), ("draft", True),
+            for path, value in (("number", 8), ("state", "unknown"), ("draft", True),
                                 ("head.sha", "c" * 40), ("head.repo.id", 101),
                                 ("base.repo.full_name", "other/repository"), ("base.ref", "other"),
                                 ("base.sha", "d" * 40), ("body", {})):
@@ -250,3 +250,28 @@ class MutationIntentRoutingTests(unittest.TestCase):
                 fixture = self.fixture()
                 fixture["api_error"] = method
                 self.assert_refused(fixture)
+
+    def test_closed_pr_needs_no_preview_before_or_during_routing(self):
+        for target in ("pr", "current"):
+            with self.subTest(target=target):
+                fixture = self.fixture(body="```shared-datasets-publish-plan")
+                fixture[target]["state"] = "closed"
+                # Merging can also advance the base SHA before this event runs.
+                fixture[target]["base"]["sha"] = "d" * 40
+                result = self.route(fixture)
+                self.assertNotIn("error", result)
+                self.assertEqual(result["outputs"], {"potential_mutation": False})
+                self.assertEqual([call[0] for call in result["calls"]],
+                                 ["get"] if target == "pr" else ["get", "paginate", "get"])
+
+    def test_closed_pr_with_wrong_identity_is_still_refused(self):
+        for target in ("pr", "current"):
+            for key, value in (("number", 8), ("repo", {"id": 101, "full_name": "other/repository"})):
+                with self.subTest(target=target, key=key):
+                    fixture = self.fixture()
+                    fixture[target]["state"] = "closed"
+                    if key == "repo":
+                        fixture[target]["head"]["repo"] = value
+                    else:
+                        fixture[target][key] = value
+                    self.assert_refused(fixture)

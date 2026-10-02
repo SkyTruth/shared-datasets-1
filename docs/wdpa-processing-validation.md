@@ -17,6 +17,10 @@ The previous hosted complete runs were stopped to enforce this ordering.
   1,171 subtests.
   [Processing code CI](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36997692555)
   passed on `7584a5d`, including lint/Terraform and native integration.
+- PR #171 merged as `f0668db` after integrating #172/#173. Current-head CI,
+  native integration, 14 Chromium scenarios, SDK validation, catalog drift and
+  Terraform readiness all passed. The local suite passed 1,221 tests and
+  1,171 subtests; five native checks ran separately in the deployment image.
 - Current native geospatial CI: 107 passed, no skips. The earlier broader
   deployment-toolchain suite passed 120 tests and 17 subtests. All five
   mandatory native fixtures passed, including old/new normalized metadata,
@@ -154,8 +158,8 @@ comparison; `compatibility_verified` remains false rather than claiming that
 comparison from artifact checks alone. Earlier fixture/sample compatibility
 evidence is separate.
 
-Sea ice and marine now satisfy their staged checks. The isolated cloud gate
-still rejects the unapproved disk quota. No dataset bytes were published; the
+Sea ice and marine now satisfy their staged checks. The 100 GiB per-instance
+disk quota is approved and verified, so the isolated cloud gate passes. No dataset bytes were published; the
 complete terrestrial builds and final worker acceptance remain pending.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
@@ -267,22 +271,27 @@ Identity pauses still exit successfully and retain their separate decision alert
 This query verifies matching, **not notification delivery**. Monitoring changes
 must run through `cron-alert-policy-sync.yml` after review and merge.
 
-The protected Terraform identity currently has job-update permissions but lacks
-the observer's job/scheduler/custom-role creation permissions. A reviewed
-protected bootstrap is a rollout prerequisite. No broader project permissions
-have been granted by this PR.
+The protected Terraform identity already has service-account/custom-role creation
+permissions. The deployment follow-up adds only `run.jobs.create` to its existing
+scheduled-ingestion custom role through `scheduled-ingestion-deploy-iam-sync.yml`.
+Google checks job creation on the parent project/location, so this permission is
+project-wide; the isolated deploy still validates its exact three-resource plan,
+empty runtime identity and absence of dataset permissions. Job IAM, scheduler
+creation and deletion permissions are not added by this bootstrap. The observer's
+job IAM and scheduler bootstrap remains a prerequisite for the final worker
+rollout after full processing acceptance.
 
-An authenticated read through the Service Usage API on October 2 verified the
-current per-instance disk quota in `us-central1`: **10 GiB**, below the required
-100 GiB. The Cloud Quotas API itself is disabled; no API was enabled.
-[Quota observation](wdpa-processing-disk-quota.json) retains the returned values.
-The regional allocation buckets omit effective/default values, so sufficient
-regional capacity remains unverified. Before rollout, obtain
-`run.googleapis.com/max_per_instance_ephemeral_disk` of 100 GiB and verify
-`run.googleapis.com/ephemeral_disk_allocation` of at least 100 GiB available
-in `us-central1` for one concurrent worker. Google's
+Google approved case `9d926638-b024-4866-8b94-898801ecdf6c` on October 2.
+An authenticated Service Usage API read verifies **107,374,182,400 bytes
+(100 GiB)** effective per-instance quota in `us-central1`.
+[Quota observation](wdpa-processing-disk-quota.json) retains the returned values;
+`catalog/wdpa-staged-validation.json` records approval. No API was enabled.
+The regional allocation initially remains zero. Google automatically grants
+100 GiB regional allocation on the first disk-backed resource deployment;
+verify that grant and available capacity after creating the validation job.
+Run disk-backed WDPA executions sequentially. Google's
 [disk documentation](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
-describes the separate limits. No quota change or authentication change was made.
+describes the separate limits and initial regional grant.
 
 ## Remaining acceptance and rollout
 
@@ -297,8 +306,9 @@ describes the separate limits. No quota change or authentication change was made
 3. Record complete reports, immutable image digest and processing digest in the
    reviewed acceptance document. Sample/genesis runs, missing peak telemetry,
    mismatched inputs and larger worker sizes cannot satisfy the gate.
-4. Obtain the 100 GiB per-instance Preview disk quota and review/provision the
-   observer bootstrap permissions through protected workflows.
+4. The 100 GiB per-instance Preview disk quota is approved. Verify the initial
+   regional grant and review/provision the observer bootstrap permissions
+   through protected workflows.
 5. After review and merge, apply monitoring and deploy through protected
    workflows, including both catalog web and viewer deployments. Verify actual
    controlled-failure alert delivery before permitting

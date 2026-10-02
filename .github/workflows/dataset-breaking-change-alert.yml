@@ -49,8 +49,20 @@ jobs:
                 throw new Error('PR identity/state changed or is invalid; rerun against the current PR.');
               }
             };
-            const { data: pr } = await github.rest.pulls.get(request);
-            validate(pr);
+            const readOpenPr = async () => {
+              const { data: pr } = await github.rest.pulls.get(request);
+              // An edited/ready event can reach the runner after merge or
+              // closure. No proposed-mutation preview remains to authorize.
+              if (pr.number === expected.number && sameRepo(pr.head?.repo) &&
+                  sameRepo(pr.base?.repo) && pr.state === 'closed') {
+                core.setOutput('potential_mutation', false);
+                return null;
+              }
+              validate(pr);
+              return pr;
+            };
+            const pr = await readOpenPr();
+            if (pr === null) return;
             const files = await github.paginate(github.rest.pulls.listFiles, { ...request, per_page: 100 });
             if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 0 || pr.changed_files >= 3000 ||
                 !Array.isArray(files) || files.length !== pr.changed_files ||
@@ -60,8 +72,8 @@ jobs:
                 new Set(files.map(file => file.filename)).size !== files.length) {
               throw new Error('PR file enumeration is invalid or incomplete; mutation intent is unknown.');
             }
-            const { data: current } = await github.rest.pulls.get(request);
-            validate(current);
+            const current = await readOpenPr();
+            if (current === null) return;
             if (current.body !== pr.body || current.changed_files !== pr.changed_files) {
               throw new Error('PR changed during mutation routing; rerun against the current PR.');
             }

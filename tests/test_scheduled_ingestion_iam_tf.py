@@ -245,6 +245,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             "cloudscheduler.jobs.pause",
             "run.executions.get",
             "run.executions.list",
+            "run.jobs.create",
             "run.jobs.get",
             "run.jobs.run",
             "run.jobs.runWithOverrides",
@@ -256,7 +257,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         ):
             with self.subTest(permission=permission):
                 self.assertIn(f'"{permission}"', role_block)
-        self.assertNotIn("run.jobs.create", role_block)
+        self.assertNotIn("run.jobs.setIamPolicy", role_block)
         self.assertNotIn("run.jobs.delete", role_block)
         self.assertNotIn("cloudscheduler.jobs.create", role_block)
         self.assertNotIn("cloudscheduler.jobs.delete", role_block)
