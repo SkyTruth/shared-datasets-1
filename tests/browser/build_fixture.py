@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -149,7 +150,7 @@ def build(work: Path) -> None:
                         }
                     )
             # Complete-input counts include records absent from display tiles.
-            for i in range(101):
+            for i in range(101 if tier in {"private", "comparison"} else 0):
                 props = {"feature_id": f"z{i:03}", "name": f"Stable record {i}"}
                 if i == 0 and tier != "comparison":
                     props["name"] = "Shared before" if old else "Shared after"
@@ -265,6 +266,8 @@ def build(work: Path) -> None:
         cwd=REPO,
         check=True,
     )
+
+    shutil.copytree(REPO / "api/typescript/dist", work / "site/sdk", dirs_exist_ok=True)
 
     if os.environ.get("CATALOG_BROWSER_NEGATIVE_CONTROL") == "stale-inspector":
         app_path = work / "site/app.js"

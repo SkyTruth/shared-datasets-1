@@ -46,7 +46,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
-ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "catalog.json"}
+ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "workspace.js", "workspace-contract.js", "catalog.json"}
 
 
 @dataclass(frozen=True)
@@ -439,10 +439,10 @@ def request_parameter(path: str, key: str, default: str = "") -> str:
 
 
 def resolve_artifact(asset, format_name, version, *, locale, object_store) -> SelectedArtifact:
-    if format_name not in {"pmtiles", "fgb", "metadata", "schema", "manifest"}:
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb, metadata, or schema")
-    if format_name == "fgb" and asset.get("canonical_format") != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
+    if format_name not in {"pmtiles", "fgb", "csv", "geojson", "ndgeojson", "cog", "metadata", "schema", "manifest"}:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "unsupported artifact format")
+    if format_name in {"fgb", "csv", "geojson", "ndgeojson", "cog"} and asset.get("canonical_format") != format_name:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish this canonical format")
     if format_name == "pmtiles" and not asset_has_pmtiles(asset):
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish PMTiles")
     if version != "latest":
@@ -509,7 +509,7 @@ def resolve_artifact(asset, format_name, version, *, locale, object_store) -> Se
     expected_prefix = f"{root}/releases/{date}/"
     if not uri.startswith(expected_prefix) or "/" in uri[len(expected_prefix):] or any(p in {".", "..", ""} for p in uri[5:].split("/")):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact is outside the catalog asset release")
-    suffixes = {"fgb": ".fgb", "pmtiles": ".pmtiles", "schema": ".schema.json", "metadata": ".ndjson.gz", "manifest": ".manifest.json"}
+    suffixes = {"fgb": ".fgb", "csv": ".csv", "geojson": ".geojson", "ndgeojson": (".ndgeojson", ".geojsonl"), "cog": (".tif", ".tiff"), "pmtiles": ".pmtiles", "schema": ".schema.json", "metadata": ".ndjson.gz", "manifest": ".manifest.json"}
     if not uri.endswith(suffixes[format_name]):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact format/path mismatch")
     generation = artifact_generation(file.get("generation"))

@@ -1,8 +1,14 @@
 import {createComparisonController} from "./compare-releases.js";
 import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
+import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, installationInstructions, SNAPSHOT_MAX_BYTES} from "./workspace.js";
+
 const state = {
   catalog: null,
+  referenceCache: new Map(),
+  pinnedReferenceBySlug: new Map(),
+  useSnapshot: null,
+  restoring: false,
   assets: [],
   filtered: [],
   selectedSlug: null,
@@ -201,6 +207,8 @@ async function hydrateReleaseIndex(asset) {
     if (!response.ok) {
       throw new Error(`release index returned HTTP ${response.status}`);
     }
+    const rawGeneration = response.headers.get("x-goog-generation");
+    if (rawGeneration !== null) asset.release_index_generation = artifactGeneration(rawGeneration);
     return applyReleaseIndex(asset, await response.json());
   } catch (error) {
     asset.release_error = `Release history unavailable. ${error.message}`;
@@ -334,6 +342,7 @@ function gsToHttps(path) {
 }
 
 function wireEvents() {
+  wireWorkspaceEvents();
   elements.search.addEventListener("input", applyFilters);
   for (const select of [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier]) {
     select.addEventListener("change", applyFilters);
@@ -368,6 +377,7 @@ function wireEvents() {
   elements.versionSelect.addEventListener("change", () => {
     const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
     if (!asset) return;
+    state.pinnedReferenceBySlug.delete(asset.slug);
     state.versionBySlug[asset.slug] = elements.versionSelect.value;
     renderSelection();
   });
@@ -615,14 +625,15 @@ function markSelected() {
 
 function renderSelection() {
   const assets = selectedAssets();
+  document.querySelector("#use-dataset").hidden = assets.length !== 1;
   if (!assets.length) {
     clearDetail();
     return;
   }
   if (assets.length === 1) {
-    renderDetail(assets[0]);
+    return renderDetail(assets[0]);
   } else {
-    renderMultiDetail(assets);
+    return renderMultiDetail(assets);
   }
 }
 
@@ -666,7 +677,7 @@ function renderDetail(asset) {
   elements.url.textContent = reference.public_url;
   renderFgbDownload(asset, reference);
   renderLicenseNote(asset);
-  renderPmtiles([reference]);
+  return renderPmtiles([reference]);
 }
 
 function renderDocsLink(asset) {
@@ -701,7 +712,7 @@ function renderMultiDetail(assets) {
       : `Rendering ${mapAssets.length} of ${assets.length} selected datasets with PMTiles previews. Cmd-click rows to add or remove datasets.`;
   renderVersionSelector({ versions: [] });
   renderSelectionLegend(assets);
-  renderPmtiles(references);
+  return renderPmtiles(references);
 }
 
 function renderLastRun(asset) {
@@ -764,8 +775,11 @@ function selectedVersionValue(asset) {
 }
 
 function selectedReference(asset) {
+  if (state.pinnedReferenceBySlug.has(asset.slug)) return state.pinnedReferenceBySlug.get(asset.slug);
+  const key = `${asset.slug}\n${selectedVersionValue(asset)}`;
   try {
-    return selectReleaseReference(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
+    if (!state.referenceCache.has(key)) state.referenceCache.set(key, selectReleaseReference(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET}));
+    return state.referenceCache.get(key);
   } catch (error) {
     return {...asset, files: [], pmtiles_url: null, public_url: "", canonical_path: "", release_error: error.message};
   }
@@ -1240,6 +1254,7 @@ async function renderPmtiles(assets) {
   }
   const mapAssets = rawMapAssets.map(withPmtilesCacheBust);
   const layerAsset = selectedLayerAsset(rawMapAssets);
+  const capturedLayer = layerAsset && state.restoring ? state.layerByReference[mapReferenceKey(layerAsset)] || "" : null;
   const selectedLayer = prepareLayerControl(layerAsset);
   const colorizeAsset = selectedColorizeAsset(rawMapAssets);
   const colorField = prepareColorizeControl(colorizeAsset);
@@ -1260,7 +1275,7 @@ async function renderPmtiles(assets) {
       assets: mapAssets,
       basemap: state.basemap,
       colorField,
-      selectedLayer,
+      selectedLayer: capturedLayer ?? selectedLayer,
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
       onColorFieldUnavailable: (field, reason) => clearUnavailableColorField(colorizeAsset, field, reason),
@@ -1274,6 +1289,7 @@ async function renderPmtiles(assets) {
     if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
+    if (state.restoring) throw error;
   }
 }
 
@@ -1387,7 +1403,7 @@ function showToast(message) {
 
 function featureLookupGroups(features) {
   const groups = new Map();
-  const locale = state.metadataLocale || activeMetadataLocale();
+  const locale = state.metadataLocale;
   for (const feature of features) {
     const featureId = featureIdFor(feature);
     const assetSlug = String(feature?.assetSlug || "").trim();
@@ -1670,7 +1686,7 @@ function featureMetadataItem(record, featureId) {
 async function loadFeatureMetadataColorValues(asset, field) {
   const assetSlug = String(asset?.slug || "").trim();
   const release = featureMetadataRelease(asset);
-  const locale = state.metadataLocale || activeMetadataLocale();
+  const locale = state.metadataLocale;
   const selectedField = String(field || "").trim();
   if (!assetSlug || !release) {
     return { fields: [], valuesByFeatureId: new Map() };
@@ -1977,7 +1993,7 @@ function prepareMetadataLanguageControl(asset) {
   const locales = availableMetadataLocales(asset);
   if (!locales.length) {
     resetMetadataLanguageControl();
-    state.metadataLocale = "";
+    if (!state.pinnedReferenceBySlug.has(asset.slug)) state.metadataLocale = "";
     return "";
   }
   const selected = selectedMetadataLocale(asset, locales);
@@ -1988,7 +2004,7 @@ function prepareMetadataLanguageControl(asset) {
   }
   elements.metadataLanguage.disabled = false;
   elements.metadataLanguage.value = selected;
-  state.metadataLocale = selected;
+  if (!state.pinnedReferenceBySlug.has(asset.slug)) state.metadataLocale = selected;
   return selected;
 }
 
@@ -2000,7 +2016,7 @@ function resetMetadataLanguageControl() {
 }
 
 function selectedMetadataLocale(asset, locales = availableMetadataLocales(asset)) {
-  for (const candidate of metadataLocaleCandidates(state.metadataLocale || activeMetadataLocale())) {
+  for (const candidate of metadataLocaleCandidates(state.metadataLocale)) {
     if (locales.includes(candidate)) {
       return candidate;
     }
@@ -2853,3 +2869,111 @@ function renderFatalError(error) {
 }
 
 init();
+
+
+function workspacePresentation() {
+  const references = selectedReferences();
+  return {basemap: state.basemap, viewport: state.mapModule?.captureViewport?.() || null,
+    locale: state.metadataLocale || null,
+    layers: references.map(reference => ({asset_slug: reference.slug, visible: true,
+      source_layer: references.length === 1 ? (state.layerByReference[mapReferenceKey(reference)] || null) : null,
+      color_field: references.length === 1 ? (state.colorFieldByReference[colorReferenceKey(reference)] || null) : null}))};
+}
+function captureSelection(presentation = null) {
+  return captureWorkspace(selectedReferences(), {bucket: state.catalog.bucket, presentation, locale: state.metadataLocale || null});
+}
+function downloadSnapshot(snapshot, filename) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(snapshot, null, 2) + '\n'], {type: 'application/json'}));
+  triggerBrowserDownload(url, filename);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function workspaceStatus(message) { document.querySelector('#workspace-status').textContent = message; }
+function wireWorkspaceEvents() {
+  const dialog = document.querySelector('#use-dataset-dialog');
+  document.querySelector('#use-dataset').addEventListener('click', () => {
+    state.useSnapshot = null;
+    document.querySelector('#use-export').disabled = true;
+    document.querySelector('#use-copy-python').disabled = true;
+    document.querySelector('#use-copy-typescript').disabled = true;
+    document.querySelector('#use-python').textContent = '';
+    document.querySelector('#use-typescript').textContent = '';
+    try {
+      if (selectedAssets().length !== 1) throw new Error('Select one dataset for integration code. Save workspace captures all selected datasets and releases.');
+      const snapshot = captureSelection();
+      state.useSnapshot = snapshot;
+      document.querySelector('#use-summary').textContent = snapshot.datasets.map(d => `${d.asset_slug} · release ${d.release} · ${d.access_tier} access\n${d.artifacts.map(a => `${a.format}: generation ${a.generation}, size ${a.size ?? 'unknown'}, published SHA-256 ${a.sha256 ?? 'unknown'}`).join('\n')}`).join('\n');
+      document.querySelector('#use-install').textContent = installationInstructions(state.catalog.sdk_revision);
+      document.querySelector('#use-python').textContent = pythonSnippet(snapshot);
+      document.querySelector('#use-typescript').textContent = typescriptSnippet(snapshot);
+      document.querySelector('#use-attribution').textContent = attribution(snapshot);
+      document.querySelector('#use-provenance').textContent = JSON.stringify(snapshot.datasets.map(d => d.provenance), null, 2);
+      document.querySelector('#use-export').disabled = false;
+      document.querySelector('#use-copy-python').disabled = false;
+      document.querySelector('#use-copy-typescript').disabled = !snapshot.datasets[0].artifacts.some(a => a.format === 'pmtiles');
+    } catch (error) {
+      document.querySelector('#use-summary').textContent = error.message;
+      document.querySelector('#use-install').textContent = '';
+      document.querySelector('#use-attribution').textContent = selectedAssets().map(a => [a.citation, a.source, a.license, a.notes, a.consumer_guidance].filter(Boolean).join('\n')).join('\n\n');
+      document.querySelector('#use-provenance').textContent = '';
+    }
+    dialog.showModal();
+  });
+  document.querySelector('#use-close').addEventListener('click', () => dialog.close());
+  for (const id of ['python', 'typescript', 'attribution', 'provenance']) document.querySelector(`#use-copy-${id}`).addEventListener('click', event => copyValue(document.querySelector(`#use-${id}`).textContent, event.currentTarget));
+  document.querySelector('#use-export').addEventListener('click', () => downloadSnapshot(state.useSnapshot, `${state.useSnapshot.datasets[0].asset_slug}.lock.json`));
+  document.querySelector('#save-workspace').addEventListener('click', () => {
+    try {
+      const snapshot = captureSelection(workspacePresentation());
+      downloadSnapshot(snapshot, 'shared-datasets.workspace.json');
+      workspaceStatus('Workspace saved: exact references to data, selected release per dataset, layer order, basemap, viewport, locale, and single-dataset layer/color controls. All selected layers are visible.');
+    } catch (error) { workspaceStatus(error.message); }
+  });
+  const fileInput = document.querySelector('#open-workspace-file');
+  document.querySelector('#open-workspace').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0]; fileInput.value = '';
+    if (!file) return;
+    const open = document.querySelector('#open-workspace'); open.disabled = true;
+    let prior = null;
+    elements.detail.inert = true; document.querySelector('.catalog-panel').inert = true;
+    try {
+      if (file.size > SNAPSHOT_MAX_BYTES) throw new Error('Workspace exceeds 1 MiB.');
+      const snapshot = parseSnapshotJson(await file.text(), {bucket: state.catalog.bucket});
+      workspaceStatus('Checking access and availability for every captured artifact…');
+      const prepared = await prepareWorkspace(snapshot, state.assets, {bucket: state.catalog.bucket});
+      const p = prepared.snapshot.presentation;
+      // Commit the selection only after the complete document has passed preflight.
+      prior = {selectedSlugs: [...state.selectedSlugs], selectedSlug: state.selectedSlug,
+        pinnedReferenceBySlug: state.pinnedReferenceBySlug, versionBySlug: {...state.versionBySlug},
+        layerByReference: {...state.layerByReference}, colorFieldByReference: {...state.colorFieldByReference},
+        basemap: state.basemap, metadataLocale: state.metadataLocale, viewport: state.mapModule?.captureViewport?.() || null};
+      state.restoring = true;
+      state.pinnedReferenceBySlug = new Map(prepared.references.map(r => [r.slug, r]));
+      state.selectedSlugs = p ? p.layers.map(l => l.asset_slug) : prepared.references.map(r => r.slug);
+      state.selectedSlug = state.selectedSlugs.at(-1);
+      for (const reference of prepared.references) state.versionBySlug[reference.slug] = reference.date;
+      state.basemap = p?.basemap || 'map'; elements.basemap.value = state.basemap;
+      const capturedLocale = prepared.snapshot.datasets.flatMap(d => d.artifacts).find(a => a.role === 'metadata' && a.requested_locale !== null)?.requested_locale;
+      state.metadataLocale = p ? (p.locale || '') : (capturedLocale || '');
+      state.layerByReference = {}; state.colorFieldByReference = {};
+      for (const layer of p?.layers || []) {
+        const reference = state.pinnedReferenceBySlug.get(layer.asset_slug);
+        state.layerByReference[mapReferenceKey(reference)] = layer.source_layer || '';
+        state.colorFieldByReference[colorReferenceKey(reference)] = layer.color_field || '';
+      }
+      renderList();
+      await renderSelection();
+      if (p) await state.mapModule?.restorePresentation?.(p);
+      workspaceStatus('Workspace restored with captured generations. This file references remote data; it does not archive bytes or guarantee retention.');
+    } catch (error) {
+      if (prior) {
+        const {viewport, ...selection} = prior;
+        Object.assign(state, selection);
+        state.restoring = false; elements.basemap.value = state.basemap;
+        renderList(); await renderSelection();
+        if (viewport) await state.mapModule?.restorePresentation?.({...workspacePresentation(), viewport});
+      }
+      workspaceStatus(`Workspace not restored: ${error.message}`);
+    } finally { state.restoring = false; open.disabled = false; elements.detail.inert = false; document.querySelector('.catalog-panel').inert = false; }
+  });
+}

@@ -232,3 +232,10 @@ viewer with synthetic pinned bytes, real MapLibre/PMTiles rendering, union and
 before/after maps, controls, property inspection, pagination, complete export,
 keyboard operation, narrow layout and a delayed response. They do not establish
 live IAP, CDN, generation retention, affinity or billing behavior.
+
+Comparison and portable workspaces reuse the selected-release references and
+artifact descriptor constructor in `release-reference.js`. Comparisons capture
+source-language metadata, schema, and display tiles using the same exact path
+and decimal generation semantics. The comparison input contract additionally
+pins the release manifest, which workspace v1 does not include. A comparison
+report is not a portable workspace lockfile.

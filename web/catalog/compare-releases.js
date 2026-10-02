@@ -1,4 +1,4 @@
-import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration} from "./release-reference.js";
+import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
 
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
 
@@ -6,8 +6,8 @@ export function comparisonFiles(reference) {
   const files = {metadata: metadataFile(reference.files), schema: releaseFile(reference.files, "schema"), manifest: releaseFile(reference.files, "manifest")};
   if (reference.pmtiles_file) files.pmtiles = reference.pmtiles_file;
   return Object.fromEntries(Object.entries(files).map(([role, file]) => {
-    if (!file) throw new Error(`Selected release lacks a ${role} artifact; exact comparison is unavailable.`);
-    return [role, {path: file.path, generation: artifactGeneration(file.generation)}];
+    const artifact = captureArtifact(file, role === "pmtiles" ? "tiles" : role);
+    return [role, {path: artifact.gs_uri, generation: artifact.generation}];
   }));
 }
 

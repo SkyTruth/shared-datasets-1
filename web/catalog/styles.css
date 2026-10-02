@@ -1332,3 +1332,10 @@ h3 {
 
 .compare-table-scroll { max-height: 320px; overflow: auto; }
 .compare-table-scroll thead { position: sticky; top: 0; background: #f5f8f5; }
+
+.use-dataset-dialog { width: min(920px, 94vw); max-height: 90vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; padding: 24px; color: var(--ink); }
+.use-dataset-dialog::backdrop { background: rgba(23, 33, 27, .45); }
+.use-dataset-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.use-dataset-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--code); border-radius: 6px; font-size: 12px; }
+.workspace-status { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.detail-actions { flex-wrap: wrap; }

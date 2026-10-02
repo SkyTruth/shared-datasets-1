@@ -14,6 +14,8 @@
             <p class="eyebrow">SkyTruth data plane</p>
             <h1>Shared datasets</h1>
           </div>
+          <button id="open-workspace" class="icon-button" type="button">Open workspace</button>
+          <input id="open-workspace-file" type="file" accept="application/json,.json" hidden />
           <p id="catalog-count" class="result-count" aria-live="polite">Loading catalog</p>
         </header>
 
@@ -72,10 +74,13 @@
             </div>
             <div class="detail-actions">
               <a id="detail-docs" class="quiet-link" href="#" aria-haspopup="dialog">Open docs</a>
+              <button id="use-dataset" class="icon-button" type="button">Use this dataset</button>
+              <button id="save-workspace" class="icon-button" type="button">Save workspace</button>
               <a id="download-fgb" class="icon-button download-button" href="#" download hidden>Download FGB</a>
             </div>
           </header>
 
+          <p id="workspace-status" class="workspace-status" role="status" aria-live="polite"></p>
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
               <div class="map-actions map-actions-left">
@@ -319,6 +324,18 @@
         <div id="docs-body" class="docs-body" tabindex="0"></div>
       </article>
     </div>
+
+    <dialog id="use-dataset-dialog" class="use-dataset-dialog" aria-labelledby="use-title">
+      <header><h2 id="use-title">Use this dataset</h2><button id="use-close" class="icon-button" type="button">Close</button></header>
+      <p>Exact references to remote data. A lockfile does not archive bytes or guarantee indefinite retention. Reacquire authorized access when reopening it.</p>
+      <pre id="use-summary"></pre>
+      <button id="use-export" class="icon-button" type="button">Download exact lockfile</button>
+      <h3>Installation and access</h3><pre id="use-install"></pre>
+      <h3>Python</h3><button id="use-copy-python" class="icon-button" type="button">Copy Python</button><pre id="use-python"></pre>
+      <h3>TypeScript / MapLibre</h3><button id="use-copy-typescript" class="icon-button" type="button">Copy TypeScript</button><pre id="use-typescript"></pre>
+      <h3>Citation, source, and terms</h3><button id="use-copy-attribution" class="icon-button" type="button">Copy attribution</button><pre id="use-attribution"></pre>
+      <h3>Captured provenance</h3><button id="use-copy-provenance" class="icon-button" type="button">Copy provenance JSON</button><pre id="use-provenance"></pre>
+    </dialog>
 
     <template id="asset-card-template">
       <button class="asset-card" type="button">

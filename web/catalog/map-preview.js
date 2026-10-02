@@ -484,15 +484,15 @@ async function mapSourceForAsset(asset, index, basemap, selectedLayer = "", prot
   const sourceLayers = requestedLayer
     ? allSourceLayers.filter((layer) => layer.sourceLayer === requestedLayer)
     : allSourceLayers;
-  const effectiveSourceLayers = sourceLayers.length ? sourceLayers : allSourceLayers;
+  if (requestedLayer && !sourceLayers.length) throw new Error("Captured source layer is unavailable.");
   return {
     asset,
     index,
     color,
     sourceId: `dataset-${index}-${safeId(asset.slug)}`,
     allSourceLayers,
-    sourceLayers: effectiveSourceLayers,
-    selectedLayer: requestedLayer && sourceLayers.length ? requestedLayer : "",
+    sourceLayers,
+    selectedLayer: requestedLayer,
     bounds: boundsFromHeader(header),
   };
 }
@@ -1923,4 +1923,35 @@ export async function renderComparisonMaps({container, baseline, target, signal,
       }));
     }};
   } catch (error) { dispose(); throw error; }
+}
+
+export function captureViewport() {
+  if (!activeMap) return null;
+  const center = activeMap.getCenter();
+  return {center: [((center.lng + 180) % 360 + 360) % 360 - 180, Math.max(-85.051129, Math.min(85.051129, center.lat))],
+    zoom: activeMap.getZoom(), bearing: activeMap.getBearing(), pitch: activeMap.getPitch()};
+}
+export async function restorePresentation(presentation) {
+  if (!activeMap || !activeColorContext) {
+    if (presentation.viewport !== null) throw new Error('Captured viewport requires a ready map');
+    return;
+  }
+  const context = activeColorContext;
+  if (presentation.layers.length === 1) {
+    const layer = presentation.layers[0];
+    if (layer.source_layer && context.mapSources[0].selectedLayer !== layer.source_layer) throw new Error('Captured source layer is unavailable');
+    await context.metadataColorFieldsPromise;
+    if (layer.color_field) {
+      if (!context.availableFields.includes(layer.color_field)) throw new Error('Captured color field is unavailable');
+      if (colorFieldValueSource(context, layer.color_field) === 'metadata') {
+        const values = await context.metadataColorValueSource(context.mapSources[0].asset, layer.color_field);
+        if (values.unavailable) throw new Error(values.unavailableReason || 'Captured color field cannot be loaded');
+        context.metadataColorField = layer.color_field;
+        context.metadataColorValuesByFeatureId = values.valuesByFeatureId;
+        context.metadataColorValuesLoaded = true;
+      }
+      setColorizeField(layer.color_field);
+    }
+  }
+  if (presentation.viewport) activeMap.jumpTo(presentation.viewport);
 }

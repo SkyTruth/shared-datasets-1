@@ -7,6 +7,13 @@ export function artifactGeneration(value) {
   return text;
 }
 
+export function captureArtifact(file, role, requestedLocale = null) {
+  if (!file) throw new Error(`Exact ${role} identity is missing from the release index.`);
+  const resolvedLocale = role === 'metadata' ? (/\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/.exec(file.path)?.[1] || null) : null;
+  return {format: file.format, role, gs_uri: file.path, generation: artifactGeneration(file.generation),
+    size: file.size ?? null, sha256: file.sha256?.toLowerCase() ?? null,
+    requested_locale: requestedLocale, resolved_locale: resolvedLocale};
+}
 export function releaseFile(files, format, preferredPath = "") {
   const candidates = files.filter((file) => file.format === format);
   const name = preferredPath.split("/").pop();

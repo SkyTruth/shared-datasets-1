@@ -21,7 +21,7 @@ from scripts import gcs_asset
 DEFAULT_DESTINATION = "gs://skytruth-shared-datasets-1/_catalog/web"
 DEFAULT_CACHE_CONTROL = "no-cache, max-age=0, must-revalidate"
 DEFAULT_CATALOG_DESTINATION = "gs://skytruth-shared-datasets-1/_catalog/shared-datasets-catalog.csv"
-ROOT_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "catalog.json"}
+ROOT_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "workspace.js", "workspace-contract.js", "catalog.json"}
 
 
 class CatalogWebPublishError(RuntimeError):
