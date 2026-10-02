@@ -83,8 +83,10 @@ browsing/inspection still work.
 Historical comparison-map denial stays visible while the table is searched and
 inspected; changing Before/After selections automatically retries using their pinned inputs.
 
-The suite has thirteen required scenarios, including generated TypeScript
-execution, inline copying/layout, and workspace imports. The SDK build in the setup above is
+The suite has fourteen required scenarios, including generated TypeScript
+execution, inline copying/layout, workspace imports and WDPA execution status. The WDPA scenario
+preserves each realm's published release alongside overall execution failures,
+newer running executions, cancellation and stale observations. The SDK build in the setup above is
 required for the generated integration test.
 
 The fixture builder copies compiled browser SDK modules into the disposable

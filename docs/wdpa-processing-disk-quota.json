@@ -1,0 +1,53 @@
+{
+  "observed_at": "2026-10-02T14:27:32.457877+00:00",
+  "source": "serviceusage.consumerQuotaMetrics",
+  "quotas": [
+    {
+      "displayName": "Total Ephemeral Disk allocation",
+      "consumerQuotaLimits": [
+        {
+          "unit": "1/min/{project}/{region}",
+          "metric": "run.googleapis.com/ephemeral_disk_allocation",
+          "quotaBuckets": [
+            {},
+            {
+              "dimensions": {
+                "region": "us-central1"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "run.googleapis.com/ephemeral_disk_allocation",
+      "unit": "By"
+    },
+    {
+      "displayName": "Maximum per-instance Ephemeral Disk allocation",
+      "consumerQuotaLimits": [
+        {
+          "unit": "1/min/{project}/{region}",
+          "metric": "run.googleapis.com/max_per_instance_ephemeral_disk",
+          "quotaBuckets": [
+            {
+              "effectiveLimit": "10737418240",
+              "defaultLimit": "10737418240"
+            },
+            {
+              "effectiveLimit": "10737418240",
+              "defaultLimit": "10737418240",
+              "dimensions": {
+                "region": "us-central1"
+              }
+            }
+          ]
+        }
+      ],
+      "metric": "run.googleapis.com/max_per_instance_ephemeral_disk",
+      "unit": "By"
+    }
+  ],
+  "project_id": "shared-datasets-1",
+  "region": "us-central1",
+  "required_disk_bytes": 107374182400,
+  "note": "Read-only observation. Per-instance quota is 10 GiB. Regional allocation buckets omit effective/default limits; sufficient regional allocation has not been verified. No quota or authentication change was made."
+}

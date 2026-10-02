@@ -2,6 +2,15 @@
 
 This directory contains small operational scripts for maintainers and AI agents.
 
+WDPA processing validation uses `local_ingestion_smoke.py` for the small sea-ice
+fixture, then `local_wdpa_sample.py --asset wdpa-marine` for a complete marine
+build with measured disk spill. `cloud_wdpa_validation.py` runs the complete
+frozen October source in an isolated Cloud Run job without publishing.
+`wdpa_processing_gate.py --pre-cloud` gates that deployment on reviewed staged
+evidence and disk quota; its default gate still requires complete resource
+acceptance before production-worker deployment. `check_wdpa_validation_plan.py`
+enforces the isolated job's resource, entrypoint and permission contracts.
+
 The most important script is:
 
 ```text

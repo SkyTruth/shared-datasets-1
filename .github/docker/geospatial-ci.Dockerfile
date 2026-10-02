@@ -31,6 +31,8 @@ RUN apt-get update \
         ca-certificates \
         gdal-bin="${GDAL_APT_VERSION}" \
         python3-gdal="${GDAL_APT_VERSION}" \
+        libgdal-dev="${GDAL_APT_VERSION}" \
+        build-essential \
     && echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends -t bookworm-backports \

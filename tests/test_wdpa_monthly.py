@@ -270,6 +270,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         with (
             mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
             mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa, "native_versions", return_value={}),
             mock.patch.object(wdpa.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
             mock.patch.object(
@@ -306,6 +307,7 @@ class WdpaMonthlyTests(unittest.TestCase):
         with (
             mock.patch.dict(wdpa.os.environ, {"RUN_DATE": "2026-05-01"}, clear=True),
             mock.patch.object(wdpa, "require_binary", lambda _binary: None),
+            mock.patch.object(wdpa, "native_versions", return_value={}),
             mock.patch.object(wdpa.GcsPublisher, "from_runtime", side_effect=source_lookup_publisher),
             mock.patch.object(wdpa.storage, "Client", lambda project: FakeClient(bucket)),
             mock.patch.object(wdpa, "download_file") as download_file,
@@ -586,14 +588,14 @@ class WdpaMonthlyIntegrationTests(unittest.TestCase):
             build_memory(database=tmp_path / "memory.sqlite", sources=[bundle], fields=["NAME_ENG"], locales=wdpa.translations.LOCALES, source_key_fields=["SITE_PID"])
             memory = TranslationMemory(tmp_path / "memory.sqlite")
             self.addCleanup(memory.close)
-            build_pmtiles = wdpa.build_pmtiles
+            build_pmtiles = wdpa.build_streamed_pmtiles
 
-            def build_without_raw_geometry(geojsonseq, asset, output):
+            def build_without_raw_geometry(geojsonseq, sql, asset, output):
                 self.assertFalse((tmp_path / f"{asset.slug}.geojsonseq").exists())
                 self.assertTrue(geojsonseq.exists())
-                return build_pmtiles(geojsonseq, asset, output)
+                return build_pmtiles(geojsonseq, sql, asset, output)
 
-            with mock.patch.object(wdpa, "build_pmtiles", side_effect=build_without_raw_geometry):
+            with mock.patch.object(wdpa, "build_streamed_pmtiles", side_effect=build_without_raw_geometry):
                 outputs = wdpa.build_asset_outputs(
                     source=source,
                     source_layers=layers,

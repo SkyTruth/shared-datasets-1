@@ -52,6 +52,11 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Dataset object promotion/deletion:
   `.github/workflows/publish-dataset.yml` after approved PR plans or restricted
   dispatch.
+- Isolated WDPA processing validation:
+  `.github/workflows/wdpa-processing-validation-deploy.yml` after reviewed small
+  and marine evidence, merge and disk quota approval. Its three-resource
+  allowlist excludes production workers and bucket IAM; its runtime identity has
+  no dataset permissions.
 
 For any Terraform resource not covered by an existing protected workflow, add or
 extend a constrained workflow in the same PR as the infrastructure change.

@@ -419,6 +419,28 @@ Resolve visible hygiene issues before announcing the catalog, especially stray
 desktop files, missing asset READMEs, stale bucket-side catalog objects, and
 README sections required by `docs/standards/asset-layout-and-formats.md`.
 
+## WDPA execution status
+
+Both WDPA detail pages show the independent observer's
+`_catalog/wdpa-monthly-execution.json` beside the asset check-in and published
+release. Execution status describes the whole job; a marine release may have
+published successfully before a terrestrial failure. A newer running execution
+also displays the last completed execution. Status is revalidated every minute
+while details are visible, and observations older than 15 minutes are stale.
+Missing or malformed observations display unavailable status without concealing
+the published release. Raw execution messages and configuration are excluded.
+The protected viewer serves the `execution-status.js` module and maps its root
+`/wdpa-monthly-execution.json` route to the observer object under `_catalog/`,
+preserving revalidation headers and reading each observation afresh. For the
+first rollout, approve the protected `catalog-viewer-deploy.yml` deployment
+before `catalog-web-deploy.yml` publishes the updated web bundle. Verify status
+on both static and protected WDPA pages after deployment.
+
+The observer is deployed with the worker through protected Terraform and has
+read-only WDPA execution access plus an exact-object generation-preconditioned
+status writer. See [WDPA operations](../ingestion/wdpa_monthly/README.md) for
+resource profiling, rollout gates, failure probes and publication recovery.
+
 ## Compare releases
 
 The authenticated catalog viewer compares generation-pinned canonical release

@@ -122,6 +122,7 @@ class RepoGuardrailsTests(unittest.TestCase):
         self.assertEqual(found, {
             ('prod-terraform-target-apply.yml', 'sync'),
             ('wdpa-monthly-deploy.yml', 'deploy'),
+            ('wdpa-processing-validation-deploy.yml', 'deploy'),
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
             ('metadata-stack-retire.yml', 'retire'),

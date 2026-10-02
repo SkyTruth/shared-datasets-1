@@ -111,7 +111,7 @@ resource.labels.location="${var.region}"
 severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
-protoPayload.status.code=10
+protoPayload.status.code>0
 EOT
     }
   }

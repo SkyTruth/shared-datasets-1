@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import urllib.request
 import zipfile
@@ -24,10 +25,14 @@ from typing import Any, Mapping, Sequence
 from google.cloud import storage
 
 from ingestion.common import feature_metadata, vector_pipeline
+from ingestion.common.identity_index import DiskIdentityPlan, DiskIdentityRecords
+from ingestion.common.process_stream import feature_stream, pipe_commands
 from ingestion.common.owned_publication import OwnedGeneratedPublisher as GcsPublisher
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.common.publication_gcs import work_root
 from ingestion.wdpa_monthly import translations
+from ingestion.wdpa_monthly.geometry_store import NormalizedGeometryStore
+from ingestion.wdpa_monthly.resources import PhaseProfiler, prepare_scratch
 from ingestion.common.runtime import (
     SourceNotAvailableError as SourceNotAvailableError,
     bind_run_command,
@@ -177,6 +182,29 @@ def source_version_for(run_date: dt.date) -> str:
 run_command = bind_run_command(LOGGER)
 
 
+def native_versions() -> dict[str, str]:
+    from osgeo import gdal
+
+    return {
+        "gdal_python": gdal.VersionInfo("RELEASE_NAME"),
+        "pmtiles_build_version": os.environ.get("PMTILES_BUILD_VERSION", "unknown"),
+        **{
+            f"{binary}_path": shutil.which(binary)
+            for binary in ("ogr2ogr", "tippecanoe", "pmtiles")
+        },
+        **{
+            binary: subprocess.check_output(
+                [binary, flag], stderr=subprocess.STDOUT, text=True
+            ).strip()
+            for binary, flag in (
+                ("ogr2ogr", "--version"),
+                ("tippecanoe", "--version"),
+                ("pmtiles", "version"),
+            )
+        },
+    }
+
+
 def download_file(url: str, dest: Path) -> None:
     common_download_file(
         url,
@@ -227,9 +255,14 @@ def prepare_source_datasets(path: Path, workdir: Path) -> list[str]:
                 for member in nested_zips:
                     dest = nested_dir / Path(member).name
                     if dest.exists():
-                        raise RuntimeError(f"Duplicate nested source ZIP name: {dest.name}")
+                        raise RuntimeError(
+                            f"Duplicate nested source ZIP name: {dest.name}"
+                        )
                     LOGGER.info("extracting nested source zip: %s", member)
-                    with archive.open(member) as source_obj, dest.open("wb") as dest_obj:
+                    with (
+                        archive.open(member) as source_obj,
+                        dest.open("wb") as dest_obj,
+                    ):
                         shutil.copyfileobj(source_obj, dest_obj)
                     inner_zip_path = source_dataset_path(dest)
                     with zipfile.ZipFile(dest) as inner_archive:
@@ -245,9 +278,13 @@ def prepare_source_datasets(path: Path, workdir: Path) -> list[str]:
                 LOGGER.info("prepared %s source dataset path(s)", len(sources))
                 return sources
     except zipfile.BadZipFile as exc:
-        raise RuntimeError(f"Downloaded source is not a valid ZIP file: {path}") from exc
+        raise RuntimeError(
+            f"Downloaded source is not a valid ZIP file: {path}"
+        ) from exc
 
-    raise RuntimeError(f"No shapefiles or nested ZIP files found in source archive: {path}")
+    raise RuntimeError(
+        f"No shapefiles or nested ZIP files found in source archive: {path}"
+    )
 
 
 def parse_field(raw: dict[str, Any]) -> FieldSpec:
@@ -380,8 +417,13 @@ def choose_split_field(layers: list[SourceLayer]) -> str:
         if all(field_name in layer_field_lookup(layer) for layer in layers):
             return layer_field_lookup(layers[0])[field_name].name
 
-    LOGGER.error("discovered source layers without supported split field: %s", json.dumps(source_layer_summary(layers)))
-    raise RuntimeError("No geometry layers with MARINE or REALM field found in WDPA source")
+    LOGGER.error(
+        "discovered source layers without supported split field: %s",
+        json.dumps(source_layer_summary(layers)),
+    )
+    raise RuntimeError(
+        "No geometry layers with MARINE or REALM field found in WDPA source"
+    )
 
 
 def source_field_union(layers: list[SourceLayer]) -> tuple[FieldSpec, ...]:
@@ -415,7 +457,9 @@ def asset_where_clause(asset: AssetSpec, split_field: str) -> str:
             return f"{split_field} IN ('Marine', 'Coastal')"
         if asset.split_group == "terrestrial":
             return f"{split_field} = 'Terrestrial'"
-    raise RuntimeError(f"Unsupported WDPA split field/group: {split_field}/{asset.split_group}")
+    raise RuntimeError(
+        f"Unsupported WDPA split field/group: {split_field}/{asset.split_group}"
+    )
 
 
 def sampled_where_clause(base_where: str, sample: SampleSpec | None) -> str:
@@ -428,7 +472,9 @@ def sampled_where_clause(base_where: str, sample: SampleSpec | None) -> str:
     return f"({base_where}) AND {sample_predicate}"
 
 
-def assert_sample_field_available(layers: list[SourceLayer], sample: SampleSpec | None) -> None:
+def assert_sample_field_available(
+    layers: list[SourceLayer], sample: SampleSpec | None
+) -> None:
     if sample is None:
         return
     missing = [
@@ -443,7 +489,9 @@ def assert_sample_field_available(layers: list[SourceLayer], sample: SampleSpec 
         )
 
 
-def discover_source_layers(sources: str | list[str]) -> tuple[list[SourceLayer], str, tuple[FieldSpec, ...]]:
+def discover_source_layers(
+    sources: str | list[str],
+) -> tuple[list[SourceLayer], str, tuple[FieldSpec, ...]]:
     source_list = [sources] if isinstance(sources, str) else sources
     layers = []
     for source in source_list:
@@ -451,7 +499,9 @@ def discover_source_layers(sources: str | list[str]) -> tuple[list[SourceLayer],
             payload = run_command(["ogrinfo", "-json", source], capture_json=True)
             source_layers = parse_layers(payload)
         except RuntimeError:
-            source_layers = parse_ogrinfo_text_layers(ogrinfo_text(source, all_layers=True))
+            source_layers = parse_ogrinfo_text_layers(
+                ogrinfo_text(source, all_layers=True)
+            )
         layers.extend(set_layer_source(source_layers, source))
 
     if not layers:
@@ -487,7 +537,9 @@ def feature_count(
         layers = payload.get("layers", [])
         if not layers or layers[0].get("featureCount") is None:
             detail = f" layer {layer_name}" if layer_name else ""
-            raise RuntimeError(f"Unable to determine feature count for{detail}: {source}")
+            raise RuntimeError(
+                f"Unable to determine feature count for{detail}: {source}"
+            )
         return int(layers[0]["featureCount"])
     except RuntimeError:
         return parse_text_feature_count(
@@ -503,7 +555,9 @@ def feature_count(
 
 
 def expected_feature_count(source: str, layers: list[SourceLayer], where: str) -> int:
-    return sum(feature_count(layer.source or source, layer.name, where) for layer in layers)
+    return sum(
+        feature_count(layer.source or source, layer.name, where) for layer in layers
+    )
 
 
 def build_filtered_gpkg(
@@ -614,6 +668,49 @@ def build_pmtiles(geojsonseq: Path, asset: AssetSpec, output: Path) -> None:
     remove_if_exists(mbtiles)
 
 
+def build_streamed_pmtiles(
+    gpkg: Path, sql: str, asset: AssetSpec, output: Path
+) -> None:
+    """Feed only geometry and feature_id to Tippecanoe; never spool GeoJSON."""
+    mbtiles = output.with_suffix(".mbtiles")
+    pipe_commands(
+        [
+            "ogr2ogr",
+            "-f",
+            "GeoJSONSeq",
+            "-lco",
+            "RS=NO",
+            "/vsistdout/",
+            str(gpkg),
+            "-sql",
+            sql,
+        ],
+        [
+            "tippecanoe",
+            "-o",
+            str(mbtiles),
+            "-l",
+            asset.tile_layer,
+            "-Z",
+            str(PMTILES_MINZOOM),
+            "-z",
+            str(PMTILES_MAXZOOM),
+            "--force",
+            "--drop-densest-as-needed",
+            "--extend-zooms-if-still-dropping",
+            "--drop-rate=1",
+            "--temporary-directory=" + os.environ.get("TMPDIR", tempfile.gettempdir()),
+            f"--name={asset.title}",
+            f"--description={asset.title} metadata lookup vector tiles",
+            "-y",
+            feature_metadata.FEATURE_ID_COLUMN,
+        ],
+        log_dir=output.parent / f"{asset.slug}-tiling-logs",
+    )
+    run_command(["pmtiles", "convert", str(mbtiles), str(output)])
+    remove_if_exists(mbtiles)
+
+
 def layer_fields(path: Path, layer_name: str | None = None) -> tuple[FieldSpec, ...]:
     args = ["ogrinfo", "-json", "-so", str(path)]
     if layer_name:
@@ -623,7 +720,9 @@ def layer_fields(path: Path, layer_name: str | None = None) -> tuple[FieldSpec, 
         layers = parse_layers(payload)
     except RuntimeError:
         layers = parse_ogrinfo_text_layers(
-            ogrinfo_text(str(path), layer_name=layer_name, all_layers=layer_name is None)
+            ogrinfo_text(
+                str(path), layer_name=layer_name, all_layers=layer_name is None
+            )
         )
     if not layers:
         raise RuntimeError(f"No layers found in output: {path}")
@@ -668,14 +767,20 @@ def assert_identity_decisions_allowed(
             problem = release_feature_model.identity_decision_legality(
                 action=action,
                 identity_key=identity_key,
-                reuse_feature_id=None if reuse_feature_id is None else str(reuse_feature_id).strip(),
+                reuse_feature_id=None
+                if reuse_feature_id is None
+                else str(reuse_feature_id).strip(),
                 ambiguity=release_feature_model.IdentityAmbiguity(
                     ambiguity_type=release_feature_model.IDENTITY_AMBIGUITY_TYPE_UNKNOWN,
                     identity_key=identity_key,
                     geometry_hash=str(decision.get("new_geometry_hash") or ""),
                     properties_hash=str(decision.get("new_properties_hash") or ""),
-                    matching_geometry_feature_ids=tuple(decision.get("matching_geometry_feature_ids") or ()),
-                    matching_properties_feature_ids=tuple(decision.get("matching_properties_feature_ids") or ()),
+                    matching_geometry_feature_ids=tuple(
+                        decision.get("matching_geometry_feature_ids") or ()
+                    ),
+                    matching_properties_feature_ids=tuple(
+                        decision.get("matching_properties_feature_ids") or ()
+                    ),
                 ),
                 previous_feature_ids=previous_feature_ids,
             )
@@ -701,114 +806,217 @@ def build_asset_outputs(
     baseline: release_feature_model.GeneratedIdentityBaseline,
     translation_memory: TranslationMemory,
     identity_resolution_decisions: Sequence[Mapping[str, Any]] = (),
+    profiler: PhaseProfiler | None = None,
 ) -> AssetOutputs:
-    expected_rows = expected_feature_count(source, source_layers, where)
-    if expected_rows <= 0:
-        raise RuntimeError(f"{asset.slug} filter produced no rows")
-
-    gpkg = workdir / f"{asset.slug}.gpkg"
+    profiler = profiler or PhaseProfiler(workdir)
+    with profiler.phase(f"{asset.slug}:source-count"):
+        expected_rows = expected_feature_count(source, source_layers, where)
+        if expected_rows <= 0:
+            raise RuntimeError(f"{asset.slug} filter produced no rows")
+    gpkg = workdir / f"{asset.slug}.filtered.gpkg"
+    normalized = workdir / f"{asset.slug}.normalized.gpkg"
+    plan_path = workdir / f"{asset.slug}.identity.sqlite"
     fgb = workdir / f"{asset.slug}.fgb"
-    geojsonseq = workdir / f"{asset.slug}.geojsonseq"
-    enriched_geojsonseq = workdir / f"{asset.slug}.metadata.geojsonseq"
     pmtiles = workdir / f"{asset.slug}.pmtiles"
     metadata = workdir / f"{asset.slug}.metadata.ndjson.gz"
     schema = workdir / f"{asset.slug}.schema.json"
     manifest = workdir / f"{asset.slug}.manifest.json"
 
-    build_filtered_gpkg(
-        source=source,
-        source_layers=source_layers,
-        asset=asset,
-        where=where,
-        output=gpkg,
-    )
-    for path in cleanup_after_gpkg:
-        LOGGER.info("removing source intermediate after filtered copy: %s", path)
-        remove_if_exists(path)
-
-    convert_gpkg_to_geojsonseq(gpkg, asset, geojsonseq)
-    # The GPKG is dead weight once the GeoJSONSeq exists. On Cloud Run the
-    # writable filesystem is charged against container memory, so holding it
-    # until after the FGB build costs the release its own size in RAM.
-    remove_if_exists(gpkg)
-
-    release_outputs = feature_metadata.write_generated_id_release(
-        open_features=lambda: feature_metadata.iter_geojsonseq(geojsonseq),
-        asset_slug=asset.slug,
-        release=run_date.isoformat(),
-        source_fields=["SITE_PID"],
-        provenance={"source": source, "where": where, "identity_strategy": "generated_sequence_source_fields"},
-        enriched_features_path=enriched_geojsonseq,
-        sidecar_path=metadata,
-        baseline=baseline,
-        identity_resolution_decisions=identity_resolution_decisions,
-    )
-    # Both source passes are complete. Release the raw geometry copy before
-    # translations and tiling compete for Cloud Run's memory-backed storage.
-    remove_if_exists(geojsonseq)
-    schema_payload = release_outputs.schema_payload
-    feature_metadata.write_schema(schema_payload, schema)
-    localized_dir = workdir / f"{asset.slug}-localized"
-    localization_report = translation_memory.rebuild(canonical_sidecar=metadata, schema=schema, asset_slug=asset.slug,
-                                                      release=run_date.isoformat(), output_dir=localized_dir)
-    localized_metadata = {locale: localized_dir / f"{asset.slug}.metadata.{locale}.ndjson.gz" for locale in translation_memory.locales}
-    metadata_translations = localized_dir / f"{asset.slug}.metadata-translations.csv"
-    if not localization_report["requested_rows_complete"]:
-        LOGGER.warning("%s has %s unique unresolved translation tasks; canonical values retained", asset.slug, localization_report["unique_pending_tasks"])
-    build_pmtiles(enriched_geojsonseq, asset, pmtiles)
-
-    convert_geojsonseq_to_fgb(enriched_geojsonseq, asset, fgb)
-    remove_if_exists(enriched_geojsonseq)
-
-    actual_rows = feature_count(str(fgb))
-    if actual_rows != expected_rows:
-        raise RuntimeError(
-            f"{asset.slug} row count mismatch: expected {expected_rows}, got {actual_rows}"
+    with profiler.phase(f"{asset.slug}:filter"):
+        build_filtered_gpkg(
+            source=source,
+            source_layers=source_layers,
+            asset=asset,
+            where=where,
+            output=gpkg,
         )
-    output_fields = layer_fields(fgb)
-    output_field_names = {field.name for field in output_fields}
-    required_field_names = {field.name for field in source_fields} | {
-        feature_metadata.FEATURE_ID_COLUMN,
-        feature_metadata.GEOMETRY_HASH_COLUMN,
-        feature_metadata.PROPERTIES_HASH_COLUMN,
-    }
-    if not required_field_names.issubset(output_field_names):
-        missing = sorted(required_field_names - output_field_names)
-        raise RuntimeError(f"{asset.slug} FGB schema is missing required fields: {', '.join(missing)}")
-    validate_pmtiles(pmtiles)
-    feature_metadata.validate_release_vector_contract(
-        fgb_path=fgb,
-        pmtiles_path=pmtiles,
-        decode_zoom=PMTILES_MINZOOM,
-    )
+        for path in cleanup_after_gpkg:
+            remove_if_exists(path)
 
-    return AssetOutputs(
-        fgb=fgb,
-        pmtiles=pmtiles,
-        metadata=metadata,
-        localized_metadata=localized_metadata,
-        metadata_translations=metadata_translations,
-        schema=schema,
-        manifest=manifest,
-        row_count=actual_rows,
-        sha256={
-            "fgb": sha256_file(fgb),
-            "pmtiles": sha256_file(pmtiles),
-            "metadata": sha256_file(metadata),
-            **{f"metadata_{locale}": sha256_file(path) for locale, path in localized_metadata.items()},
-            "csv": sha256_file(metadata_translations),
-            "metadata_translations": sha256_file(metadata_translations),
-            "schema": sha256_file(schema),
-        },
-        schema_payload=schema_payload,
-        next_generated_feature_id=release_outputs.next_generated_feature_id,
-        previous_generated_feature_id=baseline.next_feature_id,
-        previous_release=baseline.release,
-        identity_baseline_snapshot=baseline.snapshot,
-        identity_contract=baseline.contract_id,
-        identity_decisions=release_outputs.identity_decisions,
-        localization_report=localization_report,
-    )
+    with contextlib.ExitStack() as stack:
+        plan = DiskIdentityPlan(plan_path)
+        stack.callback(plan.close)
+        store = NormalizedGeometryStore(normalized, layer_name=asset.tile_layer)
+        stack.callback(store.close)
+        with profiler.phase(f"{asset.slug}:normalize"):
+            # Exactly the legacy GDAL GeoJSONSeq export, including its default
+            # precision and null handling, but with a pipe instead of a file.
+            with feature_stream(
+                [
+                    "ogr2ogr",
+                    "-f",
+                    "GeoJSONSeq",
+                    "-lco",
+                    "RS=NO",
+                    "/vsistdout/",
+                    str(gpkg),
+                    asset.tile_layer,
+                ],
+                log_path=workdir / f"{asset.slug}-normalization.log",
+            ) as features:
+                received = 0
+                for received, feature in enumerate(features, 1):
+                    if plan.add(received, feature, source_fields=("SITE_PID",)):
+                        store.add(feature, received)
+            if received != expected_rows:
+                raise RuntimeError(
+                    f"{asset.slug} normalized {received} of {expected_rows} source rows"
+                )
+            remove_if_exists(gpkg)
+        with profiler.phase(f"{asset.slug}:allocate"):
+            next_feature_id, identity_decisions = plan.resolve(
+                baseline=baseline,
+                asset_slug=asset.slug,
+                release=run_date.isoformat(),
+                decisions=identity_resolution_decisions,
+            )
+        with profiler.phase(f"{asset.slug}:metadata"):
+            store.prepare_fields()
+            accumulator = feature_metadata.SchemaAccumulator()
+            validation_index = DiskIdentityRecords(
+                workdir / f"{asset.slug}.validation.sqlite"
+            )
+            try:
+
+                def sidecars():
+                    for record in store.sidecar_records(
+                        plan=plan,
+                        asset_slug=asset.slug,
+                        release=run_date.isoformat(),
+                        provenance={
+                            "source": source,
+                            "where": where,
+                            "identity_strategy": "generated_sequence_source_fields",
+                        },
+                    ):
+                        accumulator.observe(record)
+                        yield record
+
+                count = feature_metadata.write_sidecar(
+                    sidecars(), metadata, identity_index=validation_index
+                )
+                if count != len(plan):
+                    raise RuntimeError(
+                        "metadata count differs from completed allocation"
+                    )
+                validation_index.seal().validate_baseline(next_feature_id)
+            finally:
+                validation_index.close()
+                remove_if_exists(validation_index.path)
+            schema_payload = accumulator.payload(
+                asset_slug=asset.slug, release=run_date.isoformat()
+            )
+            feature_metadata.write_schema(schema_payload, schema)
+            sql = store.projection_sql()
+            store.close()
+        with profiler.phase(f"{asset.slug}:flatgeobuf"):
+            run_command(
+                [
+                    "ogr2ogr",
+                    "-f",
+                    "FlatGeobuf",
+                    str(fgb),
+                    str(normalized),
+                    "-sql",
+                    sql,
+                    "-nln",
+                    asset.tile_layer,
+                    "-nlt",
+                    "GEOMETRY",
+                    "-lco",
+                    "SPATIAL_INDEX=YES",
+                ]
+            )
+        with profiler.phase(f"{asset.slug}:pmtiles"):
+            build_streamed_pmtiles(
+                normalized,
+                f'SELECT "feature_id", "_sd_geometry" FROM "{asset.tile_layer}" ORDER BY "_sd_ordinal"',
+                asset,
+                pmtiles,
+            )
+        expected_output_rows = len(plan)
+    remove_if_exists(normalized)
+    remove_if_exists(plan_path)
+    remove_if_exists(plan_path.with_suffix(".baseline.sqlite"))
+
+    with profiler.phase(f"{asset.slug}:translations"):
+        localized_dir = workdir / f"{asset.slug}-localized"
+        localization_report = translation_memory.rebuild(
+            canonical_sidecar=metadata,
+            schema=schema,
+            asset_slug=asset.slug,
+            release=run_date.isoformat(),
+            output_dir=localized_dir,
+        )
+        localized_metadata = {
+            locale: localized_dir / f"{asset.slug}.metadata.{locale}.ndjson.gz"
+            for locale in translation_memory.locales
+        }
+        metadata_translations = (
+            localized_dir / f"{asset.slug}.metadata-translations.csv"
+        )
+        if not localization_report["requested_rows_complete"]:
+            LOGGER.warning(
+                "%s has %s unique unresolved translation tasks; canonical values retained",
+                asset.slug,
+                localization_report["unique_pending_tasks"],
+            )
+
+    with profiler.phase(f"{asset.slug}:validate"):
+        actual_rows = feature_count(str(fgb))
+        if actual_rows != expected_output_rows:
+            raise RuntimeError(
+                f"{asset.slug} row count mismatch: expected {expected_output_rows}, got {actual_rows}"
+            )
+        output_fields = layer_fields(fgb)
+        output_field_names = {field.name for field in output_fields}
+        required_field_names = {field.name for field in source_fields} | {
+            feature_metadata.FEATURE_ID_COLUMN,
+            feature_metadata.GEOMETRY_HASH_COLUMN,
+            feature_metadata.PROPERTIES_HASH_COLUMN,
+        }
+        if not required_field_names.issubset(output_field_names):
+            missing = sorted(required_field_names - output_field_names)
+            raise RuntimeError(
+                f"{asset.slug} FGB schema is missing required fields: {', '.join(missing)}"
+            )
+        validate_pmtiles(pmtiles)
+        feature_metadata.validate_release_vector_contract(
+            fgb_path=fgb,
+            pmtiles_path=pmtiles,
+            decode_zoom=PMTILES_MINZOOM,
+        )
+
+        return AssetOutputs(
+            fgb=fgb,
+            pmtiles=pmtiles,
+            metadata=metadata,
+            localized_metadata=localized_metadata,
+            metadata_translations=metadata_translations,
+            schema=schema,
+            manifest=manifest,
+            row_count=actual_rows,
+            sha256={
+                "fgb": sha256_file(fgb),
+                "pmtiles": sha256_file(pmtiles),
+                "metadata": sha256_file(metadata),
+                **{
+                    f"metadata_{locale}": sha256_file(path)
+                    for locale, path in localized_metadata.items()
+                },
+                "csv": sha256_file(metadata_translations),
+                "metadata_translations": sha256_file(metadata_translations),
+                "schema": sha256_file(schema),
+            },
+            schema_payload=schema_payload,
+            next_generated_feature_id=next_feature_id,
+            previous_generated_feature_id=baseline.next_feature_id,
+            previous_release=baseline.release,
+            identity_baseline_snapshot=baseline.snapshot,
+            identity_contract=baseline.contract_id,
+            identity_decisions=identity_decisions,
+            localization_report=localization_report,
+        )
 
 
 def publish_asset(
@@ -827,7 +1035,9 @@ def publish_asset(
         source_version=source_version,
     )
     if set(outputs.localized_metadata) != set(translations.LOCALES):
-        raise RuntimeError("WDPA publication requires every supported locale to be rebuilt")
+        raise RuntimeError(
+            "WDPA publication requires every supported locale to be rebuilt"
+        )
     record = {
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
@@ -864,11 +1074,13 @@ def publish_asset(
             decisions=outputs.identity_decisions,
         ),
         extra_suffix_paths=(
-            *((f".metadata.{locale}.ndjson.gz", outputs.localized_metadata[locale]) for locale in translations.LOCALES),
+            *(
+                (f".metadata.{locale}.ndjson.gz", outputs.localized_metadata[locale])
+                for locale in translations.LOCALES
+            ),
             (".metadata-translations.csv", outputs.metadata_translations),
         ),
     )
-
 
 
 def metadata_for_asset(
@@ -886,6 +1098,11 @@ def metadata_for_asset(
 
 def run() -> list[dict[str, Any]]:
     configure_logging()
+    prepare_scratch()
+    if os.environ.get("WDPA_FAIL_BEFORE_WRITES") == "true":
+        raise RuntimeError(
+            "Controlled WDPA execution failure before any dataset writes"
+        )
     for binary in ("ogrinfo", "ogr2ogr", "tippecanoe", "pmtiles"):
         require_binary(binary)
 
@@ -894,7 +1111,9 @@ def run() -> list[dict[str, Any]]:
     raw_run_date = os.environ.get("RUN_DATE")
     run_date = parse_run_date(raw_run_date)
     attempt_date = run_date if raw_run_date else dt.datetime.now(dt.UTC).date()
-    source_template = os.environ.get("WDPA_SOURCE_URL_TEMPLATE", DEFAULT_SOURCE_URL_TEMPLATE)
+    source_template = os.environ.get(
+        "WDPA_SOURCE_URL_TEMPLATE", DEFAULT_SOURCE_URL_TEMPLATE
+    )
     source_url = build_source_url(source_template, run_date)
     source_version = source_version_for(run_date)
     sample_spec = parse_sample_spec()
@@ -904,7 +1123,9 @@ def run() -> list[dict[str, Any]]:
             "Set ALLOW_SAMPLED_PUBLISH=true only if you intentionally want sampled GCS outputs."
         )
 
-    publisher = GcsPublisher.from_runtime(storage.Client(project=project_id), bucket_name, logger=LOGGER)
+    publisher = GcsPublisher.from_runtime(
+        storage.Client(project=project_id), bucket_name, logger=LOGGER
+    )
 
     resumed = {asset.slug: publisher.resume(asset) for asset in ASSETS}
     if all(value is not None for value in resumed.values()):
@@ -913,10 +1134,13 @@ def run() -> list[dict[str, Any]]:
     publish_specs = [
         asset
         for asset in ASSETS
-        if resumed[asset.slug] is None and not publisher.successful_run_record(asset, run_date)
+        if resumed[asset.slug] is None
+        and not publisher.successful_run_record(asset, run_date)
     ]
     if not publish_specs:
-        LOGGER.info("all WDPA assets already have successful run records for %s", run_date)
+        LOGGER.info(
+            "all WDPA assets already have successful run records for %s", run_date
+        )
         records = []
         for asset in ASSETS:
             if resumed[asset.slug] is not None:
@@ -949,33 +1173,55 @@ def run() -> list[dict[str, Any]]:
     for asset in publish_specs:
         publisher.assert_no_partial_release(asset, run_date)
 
-    # Load each baseline once and check reviewed decisions against it before
-    # downloading or building anything. Whether an action is legal depends only
-    # on the decisions and the previous release, so a wrong one is a rule
-    # violation catchable in minutes rather than a conflict discovered after an
-    # hour of conversion work.
-    baselines_by_slug = {
-        asset.slug: publisher.load_generated_identity_baseline(asset, contract_id=CONTRACT_ID) for asset in publish_specs
-    }
-    decisions_by_slug = {
-        asset.slug: release_feature_model.load_identity_resolution_decisions(
-            asset_slug=asset.slug,
-            release=run_date.isoformat(),
-        )
-        for asset in publish_specs
-    }
-    assert_identity_decisions_allowed(
-        publish_specs,
-        previous_records_by_slug={slug: baseline.records for slug, baseline in baselines_by_slug.items()},
-        decisions_by_slug=decisions_by_slug,
-        run_date=run_date,
-    )
-
-    with tempfile.TemporaryDirectory(prefix="wdpa-monthly-", dir=work_root()) as tmp, contextlib.ExitStack() as stack:
+    with (
+        tempfile.TemporaryDirectory(prefix="wdpa-monthly-", dir=work_root()) as tmp,
+        contextlib.ExitStack() as stack,
+    ):
         workdir = Path(tmp)
+        profiler = PhaseProfiler(
+            workdir,
+            versions=native_versions(),
+            scratch_root=Path("/work")
+            if os.environ.get("CLOUD_RUN_EXECUTION")
+            else workdir,
+        )
+        with profiler.phase("baselines"):
+            # Load each baseline once and check reviewed decisions against it before
+            # downloading or building anything. Whether an action is legal depends only
+            # on the decisions and the previous release, so a wrong one is a rule
+            # violation catchable in minutes rather than a conflict discovered after an
+            # hour of conversion work.
+            baselines_by_slug = {}
+            for asset in publish_specs:
+                baseline = publisher.load_generated_identity_baseline(
+                    asset,
+                    contract_id=CONTRACT_ID,
+                    identity_index_path=workdir / f"{asset.slug}.baseline.sqlite",
+                )
+                baselines_by_slug[asset.slug] = baseline
+                if isinstance(baseline.records, DiskIdentityRecords):
+                    stack.callback(baseline.records.close)
+            decisions_by_slug = {
+                asset.slug: release_feature_model.load_identity_resolution_decisions(
+                    asset_slug=asset.slug,
+                    release=run_date.isoformat(),
+                )
+                for asset in publish_specs
+            }
+            assert_identity_decisions_allowed(
+                publish_specs,
+                previous_records_by_slug={
+                    slug: baseline.records
+                    for slug, baseline in baselines_by_slug.items()
+                },
+                decisions_by_slug=decisions_by_slug,
+                run_date=run_date,
+            )
+
         source_zip = workdir / "wdpa.zip"
         try:
-            download_file(source_url, source_zip)
+            with profiler.phase("download"):
+                download_file(source_url, source_zip)
         except SourceNotAvailableError as exc:
             LOGGER.info("%s", exc)
             records = []
@@ -997,11 +1243,17 @@ def run() -> list[dict[str, Any]]:
                 )
                 records.append(record)
             return records
-        source_datasets = prepare_source_datasets(source_zip, workdir)
-        source = source_datasets[0]
-        source_layers, split_field, source_fields = discover_source_layers(source_datasets)
-        assert_sample_field_available(source_layers, sample_spec)
-        translation_memory = stack.enter_context(translations.prepare_memory(publisher, ASSETS, workdir))
+        with profiler.phase("source-prepare"):
+            source_datasets = prepare_source_datasets(source_zip, workdir)
+            source = source_datasets[0]
+            source_layers, split_field, source_fields = discover_source_layers(
+                source_datasets
+            )
+            assert_sample_field_available(source_layers, sample_spec)
+        with profiler.phase("translation-index"):
+            translation_memory = stack.enter_context(
+                translations.prepare_memory(publisher, ASSETS, workdir)
+            )
 
         records = []
         final_publish_asset = publish_specs[-1]
@@ -1025,7 +1277,9 @@ def run() -> list[dict[str, Any]]:
                     record["release_index"] = release_index_info
                 records.append(record)
                 continue
-            where = sampled_where_clause(asset_where_clause(asset, split_field), sample_spec)
+            where = sampled_where_clause(
+                asset_where_clause(asset, split_field), sample_spec
+            )
             outputs = build_asset_outputs(
                 source=source,
                 source_layers=source_layers,
@@ -1040,18 +1294,20 @@ def run() -> list[dict[str, Any]]:
                 baseline=baselines_by_slug[asset.slug],
                 translation_memory=translation_memory,
                 identity_resolution_decisions=decisions_by_slug[asset.slug],
+                profiler=profiler,
             )
-            records.append(
-                publish_asset(
-                    publisher=publisher,
-                    asset=asset,
-                    outputs=outputs,
-                    run_date=run_date,
-                    source_url=source_url,
-                    source_version=source_version,
-                    source_fields=source_fields,
+            with profiler.phase(f"{asset.slug}:publish"):
+                records.append(
+                    publish_asset(
+                        publisher=publisher,
+                        asset=asset,
+                        outputs=outputs,
+                        run_date=run_date,
+                        source_url=source_url,
+                        source_version=source_version,
+                        source_fields=source_fields,
+                    )
                 )
-            )
             remove_if_exists(outputs.fgb)
             remove_if_exists(outputs.pmtiles)
             remove_if_exists(outputs.metadata)

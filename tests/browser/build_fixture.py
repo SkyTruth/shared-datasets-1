@@ -47,8 +47,7 @@ def build(work: Path) -> None:
         (REPO / "tests/fixtures/historical-consumers.json").read_text()
     )
     rows = []
-    for tier in ("public", "private", "internal", "comparison", "polygons"):
-        slug = f"smoke-{tier}"
+    for tier, slug in [(tier, f"smoke-{tier}") for tier in ("public", "private", "internal", "comparison", "polygons")] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
         root = f"gs://example-bucket/category/subcategory/{slug}"
         row = dict(
             asset_slug=slug,
@@ -99,6 +98,11 @@ def build(work: Path) -> None:
             f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release {'polygons' if tier == 'polygons' else 'points'}.\n"
         )
         index = json.loads(json.dumps(contract["index"]))
+        if slug.startswith("wdpa-"):
+            # One execution can publish marine successfully, then fail before
+            # terrestrial publishes. The UI must keep both facts visible.
+            latest = "2026-10-01" if slug == "wdpa-marine" else "2026-09-30"
+            index = json.loads(json.dumps(index).replace("2026-09-22", latest))
         index["asset_slug"] = slug
         for release in index["releases"]:
             old = release["date"] == "2026-01-01"

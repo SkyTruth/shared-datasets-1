@@ -102,15 +102,28 @@ will finish within a short default timeout. Measure at least one representative
 local fractional run, then treat full-source conversion as a multi-hour batch
 job unless there is direct evidence otherwise.
 
-Cloud Run writable filesystem usage counts against container memory. Prefer a
+Cloud Run writable filesystem usage counts against container memory unless
+a disk-backed volume is configured. WDPA requires its 100 GiB Preview DISK
+volume at `/work`, and validates that mount before downloads. Prefer a
 conversion order that deletes large intermediates as soon as they are no longer
 needed, and avoid keeping source archives, GPKG, GeoJSONSeq, FGB, and MBTiles
 alive at the same time.
 
-Use these defaults for the simplified WDPA monthly job unless the code has been
-made materially faster:
+Use the reviewed WDPA resource target, and never increase it to bypass acceptance:
 
-- Cloud Run Job task resources: `8` CPU and `32Gi` memory.
+- Cloud Run Job task resources: `4` CPU and `8Gi` memory, with peak ≤6.4 GiB.
+- Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
+  Obtain the additional per-instance disk quota before rollout.
+- Require the two complete October benchmark reports and matching processing
+  source digest in `catalog/wdpa-processing-acceptance.json` before deploying
+  the production worker. Test small sea-ice fixtures first, then complete marine
+  WDPA on the hosted runner with measured disk spill above RAM. Reviewed evidence
+  in `catalog/wdpa-staged-validation.json` permits the isolated
+  `wdpa-processing-validation-deploy.yml` protected workflow after quota approval;
+  that job has no dataset permissions and tests terrestrial WDPA in Cloud Run
+  before the final publication gate opens.
+- Observe terminal status through the independent execution observer and verify
+  actual alert delivery from a controlled failure before a dataset canary.
 - Cloud Run Job task timeout: at least `86400s` (24 hours).
 - Retries: `0` while first validating idempotency and partial-release behavior;
   add retries only after failures are known to be safe to replay.

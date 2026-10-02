@@ -987,3 +987,40 @@ def test_signed_generation_is_inside_gcs_and_cdn_signature():
     unsigned, signature = signed.rsplit("&Signature=", 1)
     assert "?generation=102&Expires=" in unsigned
     assert signature == base64.urlsafe_b64encode(hmac.new(b"0123456789abcdef", unsigned.encode(), hashlib.sha1).digest()).decode()
+
+
+def test_protected_catalog_serves_execution_module_and_revalidated_status():
+    from types import SimpleNamespace
+    from services.catalog_viewer import run
+
+    root = Path(__file__).resolve().parents[1] / "web/catalog"
+    store = LocalCatalogWebStore(root)
+    cache = CatalogJsonCache(loader=lambda: {"assets": []})
+    module = handle_request(
+        "GET", "/execution-status.js", {},
+        catalog_cache=cache, object_store=store, signer=FakeSigner(),
+    )
+    assert module.status == 200
+    assert b"export function executionStatusText" in module.body
+
+    names = []
+    observations = iter([b'{"observed_at":"2026-10-01T12:00:00Z"}', b'{"observed_at":"2026-10-01T12:05:00Z"}'])
+    blob = SimpleNamespace(
+        reload=lambda: None, download_as_bytes=lambda: next(observations),
+        content_type="application/json", cache_control="public, max-age=0, must-revalidate",
+    )
+    client = SimpleNamespace(bucket=lambda _: SimpleNamespace(blob=lambda name: names.append(name) or blob))
+    gcs = run.GcsCatalogWebStore(bucket_name="test-bucket", site_prefix="_catalog/web", client=client)
+    responses = [
+        handle_request("GET", "/wdpa-monthly-execution.json", {},
+                       catalog_cache=cache, object_store=gcs, signer=FakeSigner())
+        for _ in range(2)
+    ]
+    assert names == ["_catalog/wdpa-monthly-execution.json"] * 2
+    assert all(response.status == 200 for response in responses)
+    assert all(response.headers["Cache-Control"] == "public, max-age=0, must-revalidate" for response in responses)
+    assert responses[0].body != responses[1].body
+    for path in ["/other-execution.json", "/_catalog/claims/private.json"]:
+        response = handle_request("GET", path, {}, catalog_cache=cache, object_store=gcs, signer=FakeSigner())
+        assert response.status == 404
+    assert len(names) == 2

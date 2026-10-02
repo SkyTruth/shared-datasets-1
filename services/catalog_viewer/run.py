@@ -46,7 +46,12 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-z0-9]{2,8})*))?\.ndjson\.gz$")
-ROOT_STATIC_FILES = {"index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "workspace.js", "workspace-contract.js", "catalog.json"}
+EXECUTION_STATUS_FILE = "wdpa-monthly-execution.json"
+ROOT_STATIC_FILES = {
+    "index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js",
+    "execution-status.js", "compare-releases.js", "workspace.js",
+    "workspace-contract.js", "catalog.json", EXECUTION_STATUS_FILE,
+}
 
 
 @dataclass(frozen=True)
@@ -137,7 +142,11 @@ class GcsCatalogWebStore:
         return self.client.bucket(self._bucket_name)
 
     def read_static(self, object_name: str) -> StaticObject:
-        blob_name = f"_catalog/{object_name}" if object_name.startswith("releases/") else f"{self._site_prefix}/{object_name}"
+        blob_name = (
+            f"_catalog/{object_name}"
+            if object_name.startswith("releases/") or object_name == EXECUTION_STATUS_FILE
+            else f"{self._site_prefix}/{object_name}"
+        )
         blob = self.bucket.blob(blob_name)
         try:
             blob.reload()
