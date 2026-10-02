@@ -145,15 +145,22 @@ Read-only checks on October 2 against pinned published inputs established:
 
 | Asset / Before → After | Rows Before / After | Local viewer job | Workspace size | Unique geometry changes |
 | --- | ---: | ---: | ---: | --- |
-| Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 45.39 s | 89.9 MiB | 14 new, 14 removed, 18,409 unchanged |
-| WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 4.08 s | 90.2 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
+| Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 47.44 s | 19.6 MiB | 14 new, 14 removed, 18,409 unchanged |
+| WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 4.24 s | 15.1 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
+| EAMLIS / 2026-10-01 → 2026-10-02 | 64,386 / 64,400 | 17.02 s | 45.8 MiB | 4 new, 2 removed, 22,272 metadata, 1,226 unchanged |
 
 These timings run the real viewer job code with already downloaded, pinned
 canonical inputs. Workspace sizes include its downloaded sidecars and contracts. Coral's historical FGB is
 329,582,712 bytes; local downloading took about 294 seconds, outside this cached
 comparison measurement. Cloud Run/GCS transport and CPU timings remain unverified.
-WDPA uses sidecars only. Its original index exceeded the 128-MiB workspace budget
-because of duplicate property storage, which this representation removes.
+WDPA and EAMLIS use sidecars only. Their classifications depend on IDs and hashes,
+not expanded property payloads. The previous full-record SQLite representation
+made EAMLIS exceed the 128-MiB budget: its two approximately 8.3-MiB compressed
+sidecars each expand to about 100 MiB. The compact index removes that expanded
+copy without raising any limits. WDPA and coral classifications are unchanged.
+EAMLIS paired inspection took 0.035 seconds; a complete source-property search
+for `KEDAS MINE` took 12.33 seconds and found five IDs. Search scans source
+properties on demand rather than storing them in the comparison index.
 
 ## Viewer API and budgets
 
@@ -209,12 +216,24 @@ a 15-second transport timeout with retries disabled.
 | Retained jobs per instance | 8 |
 | Job retention | 15 minutes from start |
 
-The ID set comparison is inexpensive. These budgets bound validating complete
-source metadata and retaining properties for search/inspection on a 2-GiB Cloud
-Run instance. Source properties are stored once per release record; search reads
-that JSON directly instead of retaining three copies. Current releases use their
-stored hashes and never read canonical geometry. Historical v1 releases need
-the separate geometry pass described below. No row sampling or truncation is used.
+The set comparison is inexpensive. The task-scoped SQLite index stores IDs,
+identity keys, binary 32-byte geometry/property hashes, and offsets into the
+uncompressed metadata stream. It does not store complete JSON records or source
+properties. The verified compressed sidecars remain the source for inspection
+and search. Inspection seeks to an indexed offset and parses just that row;
+gzip may decompress earlier bytes but does not parse their JSON. Search streams
+both complete sidecars and temporarily retains only matching IDs in memory,
+preserving property search, exact totals, classification filters and pagination.
+Detail reads recheck the pinned byte evidence before using retained inputs.
+Each page/inspection request has its own computation deadline, so completed jobs
+remain usable for their full retention period; cancellation still applies.
+
+These budgets bound complete input validation, compressed inputs and the compact
+index on a 2-GiB Cloud Run instance. Current releases use their stored hashes and
+never read canonical geometry. Historical v1 releases need the separate geometry
+pass described above; temporary hashes verify the FGB's full projected properties
+and combined feature hash without retaining expanded metadata. No row sampling or
+truncation is used.
 
 Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never
@@ -286,7 +305,9 @@ uv run python scripts/compare_releases.py \
   --work-dir "$WORK_ROOT/comparisons/example/index"
 ```
 
-Use a fresh index directory for each run. For a larger local comparison, explicitly
+Use a fresh index directory for each run. Keep the pinned local sidecars available
+and unchanged while using the comparison's search/inspection methods.
+For a larger local comparison, explicitly
 raise appropriate `--max-rows`, `--max-input-bytes`, `--max-expanded-bytes`,
 `--max-disk-bytes`, `--max-geometry-bytes`, and `--max-seconds` budgets after checking local capacity.
 The 4-MiB schema/manifest and 900-KiB row bounds remain fixed. Reports are streamed
@@ -299,7 +320,9 @@ printed; local bytes and indexes remain available for review and exact cleanup.
 Unit tests cover all primary classifications, absent/null values, schema-only and
 value changes, reordered rows, duplicate IDs/identity keys, invalid hashes,
 source/generated compatibility, legacy evidence, localization exclusion,
-checksums, correction generations, missing historical files, authorization,
+checksums, correction generations, missing historical files, large property
+payloads under a small workspace budget, changed local detail bytes, retained-job
+detail deadlines, authorization,
 resource limits, cancellation and export. Browser tests use the real engine and
 viewer with synthetic pinned bytes, real MapLibre/PMTiles rendering in
 the primary union map, automatic Before/After controls, actual polygon fill
