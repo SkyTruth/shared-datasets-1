@@ -1,18 +1,20 @@
 # WDPA processing validation and rollout evidence
 
 Readiness is **pending**. The implementation has compatibility and integration
-evidence; two complete October runs at 4 CPU / 8 GiB are in progress and have
-not yet passed resource acceptance.
+evidence. The revised input-only probe meets the memory target; two fresh
+complete October runs at 4 CPU / 8 GiB are in progress and have not yet passed
+resource acceptance.
 `catalog/wdpa-processing-acceptance.json` intentionally blocks production deployment.
 
 ## Completed checks
 
-- Full CI Python suite: 1,079 passed; five host-native checks skipped and exercised
-  separately in the deployment toolchain. Earlier local validation also passed
+- Full CI Python suite: 1,093 passed; five host-native checks skipped and exercised
+  separately in the deployment toolchain. Local validation also passed
   1,171 subtests.
-  [Final code CI](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36988900690)
-  passed on `faf90b5`, including lint/Terraform and native integration.
-- Native geospatial suite: 120 passed, 17 subtests passed, no skips. All five
+  [Processing code CI](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36997692555)
+  passed on `7584a5d`, including lint/Terraform and native integration.
+- Current native geospatial CI: 107 passed, no skips. The earlier broader
+  deployment-toolchain suite passed 120 tests and 17 subtests. All five
   mandatory native fixtures passed, including old/new normalized metadata,
   field types and geometry, WDPA PMTiles, sea ice, EAMLIS and COG validation.
 - Browser checks: three execution-status unit tests and five Chromium scenarios.
@@ -129,13 +131,32 @@ completed in 48.136 seconds with **7,855,362,048 bytes (7.32 GiB)** total cgroup
 peak, exceeding the 6.4 GiB target. Scratch peaked at 9,561,575,424 bytes;
 parent RSS was 172,761,088 bytes and child RSS 96,567,296 bytes. At phase end,
 `memory.stat` showed 4,928,614,400 bytes of file cache, no mapped files or shmem,
-and 111,677,440 bytes of anonymous memory. This diagnostic blocks readiness.
+and 111,677,440 bytes of anonymous memory. This diagnostic misses the headroom
+target and cannot pass acceptance.
 
 The processing sampler now requests release of regular-file cache under memory
 pressure using Linux cache advice. It retains total cgroup peak measurement,
 preserves every file's bytes and fails on cache-advice errors. Production source
 preparation is also measured. Fresh diagnostic and complete runs are required;
 earlier processing digests cannot satisfy the updated gate.
+
+The fresh input-only probe on `7584a5d`
+([run 36997692555](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36997692555))
+peaked at **6,584,279,040 bytes (6.13 GiB)** total cgroup memory, below 6.4 GiB.
+Scratch peaked at 9,462,734,848 bytes (8.81 GiB), and preparation took 66.077
+seconds. The sampler requested two cache releases; parent RSS was 172,552,192
+bytes and child RSS 96,714,752 bytes. Both probes used the identical frozen
+source and verified baselines at 4 CPU / 8 GiB with no swap and a 100 GiB disk.
+[Diagnostic reports](wdpa-processing-input-probes.json) include the native tool
+versions and image/processing digests. This improvement is not complete-build
+acceptance; both complete runs remain required.
+
+[Fresh complete-build run 36998409031](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36998409031)
+uses the updated processing digest
+`78387be4a53dfb00b28307ad73409c34afcc3071fcd0681c89d11a2c22bff310`
+on `b5be93c`, with separate replay jobs loading the identical image. The earlier
+complete-build attempt on `bbfe68b` predates the cache-pressure fix and cannot
+be used as acceptance evidence for this processing digest.
 
 ## Infrastructure and failure visibility
 
