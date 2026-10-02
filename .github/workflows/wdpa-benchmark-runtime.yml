@@ -1,0 +1,30 @@
+name: WDPA benchmark runtime capacity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capacity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Measure host capacity
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+          disks = {}
+          for path in ('/', '/mnt', os.environ['RUNNER_TEMP']):
+              stat = os.statvfs(path)
+              disks[path] = {'total_bytes': stat.f_blocks * stat.f_frsize, 'free_bytes': stat.f_bavail * stat.f_frsize}
+          print(json.dumps({'cpu_count': os.cpu_count(), 'memory_bytes': int(memory['MemTotal'].split()[0]) * 1024, 'disks': disks}, sort_keys=True))
+          PY
+      - name: Check constrained-container telemetry
+        run: |
+          docker run --rm --cpus=4 --memory=8g --memory-swap=8g \
+            python:3.12-slim-bookworm python -c \
+            'import json; from pathlib import Path; root=Path("/sys/fs/cgroup"); print(json.dumps({name:(root/name).read_text().strip() if (root/name).exists() else None for name in ("cpu.max","memory.max","memory.peak")},sort_keys=True))'
