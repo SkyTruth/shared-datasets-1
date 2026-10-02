@@ -7,7 +7,7 @@ import pytest
 
 from services.catalog_viewer import comparisons, run as viewer
 from scripts import compare_releases as engine
-from tests.comparison_fixtures import bundle, record
+from tests.comparison_fixtures import bundle, record, generated
 
 A, B = "2026-01-01", "2026-02-01"
 HEADERS = {"X-Goog-Authenticated-User-Email": "accounts.google.com:person@skytruth.org"}
@@ -206,3 +206,69 @@ def test_expired_jobs_and_resource_limit_produce_no_partial_counts(context):
     assert "summary" not in result
     context[1].jobs[start["job_id"]].created -= comparisons.JOB_TTL_SECONDS + 1
     assert call(context, "GET", f"/api/comparisons/{start['job_id']}")[0] == 404
+
+
+def test_map_endpoint_is_release_scoped_even_without_compatible_feature_ids(tmp_path):
+    a = bundle(tmp_path / "a", A, [record(1, A)], identity=generated("before"))
+    b = bundle(
+        tmp_path / "b",
+        B,
+        [record(1, B, geometry={"type": "Point", "coordinates": [9, 0]})],
+        identity=generated("after"),
+    )
+    store = Store(a, b)
+    jobs = comparisons.ComparisonJobs(root=tmp_path / "jobs", reader=store.reader)
+    request = {
+        "slug": "example",
+        "baseline": A,
+        "target": B,
+        "expected": {
+            side: {
+                role: {"path": f["path"], "generation": f["generation"]}
+                for role, f in ref["files"].items()
+            }
+            for side, ref in [("baseline", a[0]), ("target", b[0])]
+        },
+    }
+    context = (store, jobs, request)
+    try:
+        _, started = call(context)
+        assert complete(context, started["job_id"])["summary"]["counts"] is None
+        path = f"/api/comparisons/{started['job_id']}/map"
+        for side, color in [("baseline", "removed"), ("target", "novel")]:
+            status, result = call(
+                context, path=path, payload={"side": side, "feature_ids": ["1"]}
+            )
+            assert status == 200
+            assert result["map_features"] == [{"feature_id": "1", "change": color}]
+        assert call(context, path=path, headers={})[0] == 401
+        assert (
+            call(
+                context,
+                path=path,
+                headers={"X-Goog-Authenticated-User-Email": "other@skytruth.org"},
+            )[0]
+            == 404
+        )
+        assert (
+            call(
+                context,
+                path=path,
+                payload={"side": "target", "feature_ids": ["1"] * 201},
+            )[0]
+            == 400
+        )
+        assert (
+            call(
+                context,
+                path=path,
+                payload={
+                    "side": "target",
+                    "feature_ids": ["1"],
+                    "padding": "x" * 16384,
+                },
+            )[0]
+            == 413
+        )
+    finally:
+        jobs.pool.shutdown(wait=True)

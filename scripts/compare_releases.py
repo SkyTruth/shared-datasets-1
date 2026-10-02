@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import release_feature_model as model
 
 POLICY = "feature-id-hashes-v1"
-RESULT_VERSION = 1
+RESULT_VERSION = 2
 
 
 def reject_json_constant(value):
@@ -544,6 +544,16 @@ class Comparison:
                 "CREATE UNIQUE INDEX geometry_display_hash ON geometry_display(geometry)"
             )
             compatibility = identity_compatibility(a, b, af, bf)
+            geometry_counts = dict.fromkeys(
+                ("novel", "removed", "metadata_changed", "unchanged"), 0
+            )
+            geometry_counts.update(
+                dict(
+                    db.execute(
+                        "SELECT color, count(*) FROM geometry_display GROUP BY color"
+                    )
+                )
+            )
             counts = None
             if compatibility["compatible"]:
                 self.progress("classifying", ac + bc)
@@ -577,11 +587,12 @@ class Comparison:
             ).hexdigest(),
             "identity": compatibility,
             "counts": counts,
+            "geometry_counts": geometry_counts,
             "feature_counts": {"baseline": ac, "target": bc},
             "schema_changes": schema_changes(af, bf),
             "limits": asdict(self.limits),
             "method": "Complete canonical sidecars; match feature_id; compare geometry_hash/properties_hash. No spatial matching or tile-derived counts. Provenance and localization excluded.",
-            "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is separate from feature identity. Highlighting is bounded to page/selection.",
+            "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. All loaded map features are colored through bounded per-release lookups, independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
                 | set(a["identity"].get("properties_hash_excluded_properties", []))
@@ -594,6 +605,36 @@ class Comparison:
             },
         }
         return self.summary
+
+    def map_features(self, side: str, feature_ids: list[str]) -> list[dict]:
+        """Resolve geometry colors within one release; never join IDs across releases."""
+        if self.summary is None:
+            raise ComparisonError("Comparison is incomplete")
+        if (
+            not isinstance(side, str)
+            or side not in {"baseline", "target"}
+            or not isinstance(feature_ids, list)
+            or not 1 <= len(feature_ids) <= 200
+        ):
+            raise ComparisonError("Select one release and 1–200 map feature IDs")
+        for feature_id in feature_ids:
+            if not isinstance(feature_id, str):
+                raise ComparisonError("Map feature IDs must be strings")
+            model.validate_feature_id(feature_id)
+        if len(set(feature_ids)) != len(feature_ids):
+            raise ComparisonError("Map feature IDs must be unique")
+        with sqlite3.connect(self.db_path) as db:
+            rows = db.execute(
+                f"SELECT r.id, g.color FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry WHERE r.id IN ({','.join('?' for _ in feature_ids)}) ORDER BY r.id COLLATE BINARY",
+                feature_ids,
+            ).fetchall()
+        if len(rows) != len(feature_ids):
+            raise ComparisonError(
+                "Display feature is absent from the complete selected release input"
+            )
+        return [
+            {"feature_id": feature_id, "change": change} for feature_id, change in rows
+        ]
 
     def page(
         self,

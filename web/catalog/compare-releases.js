@@ -1,6 +1,7 @@
 import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
 
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
+const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Metadata changed", unchanged: "Unchanged geometry"};
 
 export function comparisonFiles(reference) {
   const files = {metadata: metadataFile(reference.files), schema: releaseFile(reference.files, "schema"), manifest: releaseFile(reference.files, "manifest")};
@@ -29,7 +30,21 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
-
+function table(headers, rows, caption) {
+  const node = element("table"), head = element("thead"), tr = element("tr"), body = element("tbody");
+  if (caption) node.append(element("caption", caption));
+  headers.forEach(text => tr.append(element("th", text))); head.append(tr);
+  rows.forEach(values => {
+    const row = element("tr");
+    values.forEach((value, index) => {
+      const cell = element(index === 0 ? "th" : "td");
+      if (value instanceof Node) cell.append(value); else cell.textContent = value;
+      row.append(cell);
+    });
+    body.append(row);
+  });
+  node.append(head, body); return node;
+}
 function delay(ms, signal) {
   return new Promise((resolve, reject) => {
     const done = () => { signal.removeEventListener("abort", abort); resolve(); };
@@ -39,37 +54,48 @@ function delay(ms, signal) {
   });
 }
 
-export function createComparisonController({loadMapModule = () => import("./map-preview.js")} = {}) {
-  const ids = ["open", "panel", "baseline", "target", "run", "close", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "report", "maps", "map-note", "table", "mode"];
+export function createComparisonController({loadMapModule = () => import("./map-preview.js"), onModeChange = () => {}, getBasemap = () => "map"} = {}) {
+  const ids = ["open", "panel", "before", "after", "release-controls", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "report", "map-note", "table", "legend"];
   const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(`compare-${id}`)]));
-  let asset = null, version = "latest", options = {}, active = null, pageSerial = 0, inspectSerial = 0;
-  const current = (session) => active === session && !session.abort.signal.aborted;
-  const status = (text) => { ui.status.textContent = text; };
-  function mapNote(session, text = session.mapNote || "Before and after use distinct pinned releases; tile visibility varies by zoom.") {
-    session.mapNote = text;
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError} ${text}` : text;
+  const versionControl = document.getElementById("version-control"), mapContainer = document.getElementById("map-preview"), mapStatus = document.getElementById("map-status");
+  let asset = null, version = "latest", options = {}, active = null, opened = false, viewport = null, pageSerial = 0, inspectSerial = 0, rerunTimer = null;
+  const current = session => active === session && !session.abort.signal.aborted;
+  const status = text => { ui.status.textContent = text; };
+  function mapNote(session) {
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
   }
-  const cancelJob = async (id) => {
+  async function cancelJob(id) {
     if (!id) return;
     try { await fetch(`/api/comparisons/${id}/cancel`, {method: "POST", credentials: "include"}); }
-    catch { /* Closing a disconnected browser cannot acknowledge server cancellation; server TTL/budget still applies. */ }
-  };
+    catch { /* A disconnected browser cannot acknowledge cancellation; server TTL/budget still applies. */ }
+  }
   function stop() {
+    window.clearTimeout(rerunTimer); rerunTimer = null;
     pageSerial++; inspectSerial++;
     if (active) {
+      viewport = active.map?.viewport() || viewport;
       active.abort.abort(); active.mapAbort?.abort(); active.map?.dispose();
-      void cancelJob(active.job);
-      active = null;
+      void cancelJob(active.job); active = null;
     }
   }
   function clearResults() {
-    for (const key of ["summary", "schema", "rows", "inspector", "maps"]) ui[key].replaceChildren();
-    ui.table.hidden = true;
-    ui.report.disabled = true;
-    ui.previous.disabled = ui.next.disabled = true;
+    for (const key of ["summary", "schema", "rows", "inspector"]) ui[key].replaceChildren();
+    ui.table.hidden = true; ui.report.disabled = true; ui.previous.disabled = ui.next.disabled = true;
+  }
+  function setMode(enabled, restore = false) {
+    opened = enabled;
+    ui.panel.hidden = ui["release-controls"].hidden = ui.legend.hidden = ui["map-note"].hidden = !enabled;
+    versionControl.hidden = enabled;
+    ui.open.textContent = enabled ? "Close comparison" : "Compare releases";
+    ui.open.setAttribute("aria-expanded", String(enabled));
+    onModeChange(enabled, {restore});
+  }
+  function close(restore = true) {
+    stop(); clearResults(); viewport = null; setMode(false, restore);
+    ui.open.focus();
   }
   function refs() {
-    return Object.fromEntries(["baseline", "target"].map(side => [side, selectReleaseReference(asset, ui[side].value, options)]));
+    return {baseline: selectReleaseReference(asset, ui.before.value, options), target: selectReleaseReference(asset, ui.after.value, options)};
   }
   async function request(url, session, init = {}) {
     const response = await fetch(url, {credentials: "include", cache: "no-store", signal: session.abort.signal, ...init});
@@ -81,50 +107,45 @@ export function createComparisonController({loadMapModule = () => import("./map-
     return payload;
   }
   function renderSummary(summary) {
-    ui.summary.replaceChildren();
-    for (const side of ["baseline", "target"]) {
-      const input = summary.inputs[side];
-      const details = element("details");
-      details.append(element("summary", `${side === "baseline" ? "Baseline" : "Target"}: ${input.release} · ${summary.feature_counts[side].toLocaleString()} features`));
-      details.append(element("pre", JSON.stringify(input.files, null, 2)));
-      ui.summary.append(details);
-    }
-    ui.summary.append(element("p", summary.identity.reason));
-    if (summary.counts) {
-      const grid = element("dl", undefined, "compare-counts");
-      for (const [key, label] of Object.entries(CHANGE_LABELS)) {
-        const group = element("div"); group.append(element("dt", label), element("dd", summary.counts[key].toLocaleString())); grid.append(group);
-      }
-      ui.summary.append(grid);
-    } else ui.summary.append(element("p", "Feature classifications withheld. Inspect the maps visually; numeric IDs are not joined across these releases."));
-    ui.schema.replaceChildren(element("h4", "Schema changes"));
-    for (const [key, label] of Object.entries({added: "Added fields", removed: "Removed fields", datatype_changes: "Datatype changes", field_semantics_changes: "Field semantics changes"})) {
-      ui.schema.append(element("p", `${label}: ${summary.schema_changes[key].length}`));
-      if (summary.schema_changes[key].length) ui.schema.append(element("pre", JSON.stringify(summary.schema_changes[key], null, 2)));
-    }
-    ui.schema.append(element("p", "Source-language properties are compared. Publication provenance and localized display values are separate from source changes."));
+    const rows = [["Release", summary.inputs.baseline.release, summary.inputs.target.release], ["Features", summary.feature_counts.baseline.toLocaleString(), summary.feature_counts.target.toLocaleString()]];
+    ui.summary.replaceChildren(table(["Selection", "Before", "After"], rows, "Releases"));
+    const matching = element("details", undefined, "compare-method");
+    matching.append(element("summary", summary.identity.compatible ? "Feature IDs are comparable" : "Feature IDs cannot be matched"), element("p", summary.identity.reason));
+    ui.summary.append(matching);
+    const counts = summary.counts ? Object.entries(CHANGE_LABELS).map(([key, label]) => [label, summary.counts[key].toLocaleString()]) : Object.entries(GEOMETRY_LABELS).map(([key, label]) => [label, summary.geometry_counts[key].toLocaleString()]);
+    ui.summary.append(table(["Change", summary.counts ? "Features" : "Unique geometries"], counts, summary.counts ? "Feature changes" : "Geometry changes"));
+    const pins = element("details", undefined, "compare-inputs"); pins.append(element("summary", "Exact inputs"));
+    const artifactRows = Object.keys(summary.inputs.baseline.files).map(role => [role, ...["baseline", "target"].map(side => {
+      const file = summary.inputs[side].files[role], cell = element("div");
+      if (!file) { cell.textContent = "Absent"; return cell; }
+      cell.append(element("code", file.path), element("small", `Generation ${file.generation} · ${file.size ?? "unknown"} bytes`));
+      if (file.sha256) cell.append(element("small", `SHA-256 ${file.sha256}`));
+      return cell;
+    })]);
+    pins.append(table(["Input", "Before", "After"], artifactRows)); ui.summary.append(pins);
+    const schemaRows = Object.entries({added: "Added fields", removed: "Removed fields", datatype_changes: "Datatype changes", field_semantics_changes: "Field semantics"}).map(([key, label]) => {
+      const changes = summary.schema_changes[key];
+      if (!changes.length) return [label, "0"];
+      const detail = element("details"); detail.append(element("summary", String(changes.length)));
+      detail.append(table(["Field", "Change"], changes.map(change => [typeof change === "string" ? change : change.field || change.name, typeof change === "string" ? key : JSON.stringify(change)])));
+      return [label, detail];
+    });
+    ui.schema.replaceChildren(table(["Schema change", "Fields"], schemaRows, "Schema"));
   }
   async function loadPage(session, offset = 0) {
-    const token = ++pageSerial;
-    inspectSerial++;
-    ui.inspector.replaceChildren();
+    const token = ++pageSerial; inspectSerial++; ui.inspector.replaceChildren(); session.map?.selectFeature(null);
     const params = new URLSearchParams({offset, limit: 50, query: ui.search.value, classification: ui.filter.value});
     try {
       const result = await request(`/api/comparisons/${session.job}?${params}`, session);
       if (!current(session) || token !== pageSerial) return;
-      const page = result.page;
-      ui.table.hidden = false;
-      session.page = page;
-      ui.rows.replaceChildren();
+      const page = result.page; session.page = page; ui.table.hidden = false; ui.rows.replaceChildren();
       for (const row of page.rows) {
-        const tr = element("tr"), td = element("td"), button = element("button", row.feature_id, "icon-button");
-        button.type = "button"; button.addEventListener("click", () => inspect(session, row.feature_id));
-        td.append(button); tr.append(td, element("td", CHANGE_LABELS[row.classification])); ui.rows.append(tr);
+        const tr = element("tr"), cell = element("td"), button = element("button", row.feature_id);
+        button.type = "button"; button.addEventListener("click", () => void inspect(session, row.feature_id)); cell.append(button);
+        tr.append(cell, element("td", CHANGE_LABELS[row.classification])); ui.rows.append(tr);
       }
-      ui.page.textContent = page.total ? `${page.offset + 1}–${Math.min(page.offset + page.limit, page.total)} of ${page.total}` : "No matching features";
+      ui.page.textContent = page.total ? `${page.offset + 1}–${Math.min(page.total, page.offset + page.limit)} of ${page.total}` : "No matching features";
       ui.previous.disabled = page.offset === 0; ui.next.disabled = page.offset + page.limit >= page.total;
-      session.highlightRows = page.rows; session.map?.highlight(page.rows);
-      mapNote(session, "Union of both releases: novel geometry green, removed geometry red, identical geometry with changed source metadata yellow. Highlights cover this page only; other geometry is gray. Counts use complete sidecars.");
     } catch (error) { if (current(session) && token === pageSerial) status(error.message); }
   }
   async function inspect(session, id) {
@@ -132,94 +153,73 @@ export function createComparisonController({loadMapModule = () => import("./map-
     try {
       const result = await request(`/api/comparisons/${session.job}?feature_id=${encodeURIComponent(id)}`, session);
       if (!current(session) || token !== inspectSerial) return;
-      const feature = result.feature;
-      ui.inspector.replaceChildren(element("h4", `${id} · ${CHANGE_LABELS[feature.classification]}`));
-      const table = element("table"), head = element("tr");
-      ["Property", "Before", "After"].forEach(text => head.append(element("th", text))); table.append(head);
-      const a = feature.before?.properties || {}, b = feature.after?.properties || {};
-      for (const field of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) {
-        const tr = element("tr");
-        const value = props => Object.hasOwn(props, field) ? JSON.stringify(props[field]) : "Absent";
-        tr.append(element("th", field), element("td", value(a)), element("td", value(b))); table.append(tr);
-      }
-      ui.inspector.append(table);
+      const feature = result.feature, a = feature.before?.properties || {}, b = feature.after?.properties || {};
+      const values = props => field => Object.hasOwn(props, field) ? JSON.stringify(props[field]) : "Absent";
+      const rows = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort().map(field => [field, values(a)(field), values(b)(field)]);
+      ui.inspector.replaceChildren(table(["Property", "Before", "After"], rows, `${id} · ${CHANGE_LABELS[feature.classification]}`));
       const provenance = element("details");
       provenance.append(element("summary", "Publication provenance"), element("pre", JSON.stringify({before: feature.before?.provenance ?? null, after: feature.after?.provenance ?? null}, null, 2)));
-      ui.inspector.append(provenance);
-      session.highlightRows = [feature]; session.map?.highlight([feature]);
-      mapNote(session, `Only selected feature ${id} is highlighted. Before and after use distinct pinned releases; tile visibility varies by zoom.`);
+      ui.inspector.append(provenance); session.map?.selectFeature(id);
     } catch (error) { if (current(session) && token === inspectSerial) status(error.message); }
   }
-  async function showMaps(session) {
+  async function showMap(session) {
+    viewport = session.map?.viewport() || viewport;
     session.mapAbort?.abort(); session.map?.dispose();
     const mapAbort = new AbortController(); session.mapAbort = mapAbort;
-    const abort = () => mapAbort.abort();
-    session.abort.signal.addEventListener("abort", abort, {once: true});
+    const abort = () => mapAbort.abort(); session.abort.signal.addEventListener("abort", abort, {once: true});
     const isCurrent = () => current(session) && session.mapAbort === mapAbort && !mapAbort.signal.aborted;
     try {
-      const module = await loadMapModule();
-      if (!isCurrent()) return;
-      const map = await module.renderComparisonMaps({container: ui.maps, baseline: session.refs.baseline, target: session.refs.target,
-        signal: mapAbort.signal, mode: ui.mode.value, onSelect: id => { if (session.summary?.identity.compatible) void inspect(session, id); }});
-      if (!isCurrent()) { map?.dispose(); return; }
-      session.map = map;
-      session.mapError = null; mapNote(session);
-      session.map.highlight(session.highlightRows || []);
+      const module = await loadMapModule(); if (!isCurrent()) return;
+      const map = await module.renderComparisonMap({container: mapContainer, status: mapStatus, baseline: session.refs.baseline, target: session.refs.target,
+        signal: mapAbort.signal, basemap: getBasemap(), viewport,
+        onSelect: id => { if (current(session) && session.summary?.identity.compatible) void inspect(session, id); },
+        lookupGeometry: async (side, ids) => (await request(`/api/comparisons/${session.job}/map`, session, {method: "POST", signal: mapAbort.signal, headers: {"Content-Type": "application/json"}, body: JSON.stringify({side, feature_ids: ids})})).map_features,
+        onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
+      });
+      if (!isCurrent()) { map.dispose(); return; }
+      session.map = map; session.mapError = null; mapNote(session);
+      if (session.summary) map.refreshGeometry();
     } catch (error) { if (isCurrent()) { session.mapError = error.message; mapNote(session); } }
     finally { session.abort.signal.removeEventListener("abort", abort); }
   }
   async function run() {
     stop(); clearResults();
     const session = {abort: new AbortController(), job: null, refs: null, summary: null}; active = session;
-    ui.run.textContent = "Cancel comparison";
     try {
-      session.refs = refs();
+      session.refs = refs(); void showMap(session);
       const expected = Object.fromEntries(["baseline", "target"].map(side => [side, comparisonFiles(session.refs[side])]));
-      status("Starting comparison…");
-      // Keep the start response observable so a superseded start can cancel its server job.
+      status("Comparing releases…");
+      // Observe superseded start responses so their server jobs can be cancelled.
       const result = await request("/api/comparisons", session, {method: "POST", signal: undefined, headers: {"Content-Type": "application/json"}, body: JSON.stringify({slug: asset.slug, baseline: session.refs.baseline.date, target: session.refs.target.date, expected})});
       if (!current(session)) { void cancelJob(result.job_id); return; }
       session.job = result.job_id;
-      void showMaps(session);
       let response = result;
       while (response.state === "running") {
         status(`${response.progress.phase}: ${response.progress.rows.toLocaleString()} validated rows…`);
-        await delay(600, session.abort.signal);
-        response = await request(`/api/comparisons/${session.job}`, session);
+        await delay(600, session.abort.signal); response = await request(`/api/comparisons/${session.job}`, session);
         if (!current(session)) return;
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
-      session.summary = response.summary;
-      renderSummary(response.summary);
-      ui.report.disabled = false;
-      status("Comparison complete. Exact input paths and generations are listed below.");
+      session.summary = response.summary; renderSummary(response.summary); ui.report.disabled = false;
+      status("Comparison complete"); session.map?.refreshGeometry();
       if (response.summary.identity.compatible) await loadPage(session);
-    } catch (error) {
-      if (!current(session)) return;
-      status(error.message);
-      if (session.refs && !session.map && !session.job) void showMaps(session);
-    } finally { if (current(session)) ui.run.textContent = "Compare"; }
+    } catch (error) { if (current(session)) status(error.message); }
   }
   ui.open.addEventListener("click", () => {
-    ui.panel.hidden = false; ui.open.setAttribute("aria-expanded", "true"); ui.baseline.focus();
-    status("Choose published releases. Comparison requires the authenticated viewer; visual inspection and the local CLI remain available.");
+    if (opened) close();
+    else { setMode(true); ui.before.focus(); void run(); }
   });
-  ui.close.addEventListener("click", () => { stop(); ui.panel.hidden = true; ui.open.setAttribute("aria-expanded", "false"); ui.open.focus(); });
-  ui.run.addEventListener("click", () => {
-    if (ui.run.textContent === "Cancel comparison") { stop(); clearResults(); status("Comparison cancelled."); ui.run.textContent = "Compare"; }
-    else void run();
-  });
-  for (const side of ["baseline", "target"]) ui[side].addEventListener("change", () => { stop(); clearResults(); ui.run.textContent = "Compare"; status("Release selection changed. Run comparison for these releases."); });
-  ui.mode.addEventListener("change", () => {
-    if (active?.refs) { active.map?.dispose(); active.map = null; void showMaps(active); }
+  for (const side of ["before", "after"]) ui[side].addEventListener("change", () => {
+    if (!opened || !ui.before.value || !ui.after.value) return;
+    stop(); clearResults(); status("Comparing releases…");
+    rerunTimer = window.setTimeout(() => { rerunTimer = null; void run(); }, 120);
   });
   ui.search.addEventListener("input", () => { if (active?.summary?.identity.compatible) void loadPage(active); });
   ui.filter.addEventListener("change", () => { if (active?.summary?.identity.compatible) void loadPage(active); });
   ui.previous.addEventListener("click", () => { if (active?.page) void loadPage(active, Math.max(0, active.page.offset - 50)); });
   ui.next.addEventListener("click", () => { if (active?.page) void loadPage(active, active.page.offset + 50); });
   ui.report.addEventListener("click", async () => {
-    const session = active;
-    if (!session?.job) return;
+    const session = active; if (!session?.job) return;
     try {
       const response = await fetch(`/api/comparisons/${session.job}/report`, {credentials: "include", signal: session.abort.signal, cache: "no-store"});
       if (!response.ok) throw new Error((await response.json()).error || "Report unavailable");
@@ -229,21 +229,24 @@ export function createComparisonController({loadMapModule = () => import("./map-
       const link = element("a"); link.href = url; link.download = `${asset.slug}-comparison.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { if (current(session)) status(error.message); }
   });
-  document.addEventListener("keydown", event => { if (event.key === "Escape" && !ui.panel.hidden && ui.panel.contains(document.activeElement)) ui.close.click(); });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && opened && (ui.panel.contains(document.activeElement) || ui["release-controls"].contains(document.activeElement) || document.activeElement === ui.open)) close();
+  });
   return {
+    isOpen: () => opened,
+    refreshMap: () => { if (active?.refs) void showMap(active); },
     setAsset(next, selectedVersion = "latest", opts = {}) {
       if (asset === next && version === selectedVersion) return;
-      stop(); clearResults(); asset = next; version = selectedVersion; options = opts;
-      ui.panel.hidden = true; ui.open.setAttribute("aria-expanded", "false");
+      stop(); clearResults(); viewport = null; if (opened) setMode(false);
+      asset = next; version = selectedVersion; options = opts;
       ui.open.disabled = !asset || (asset.versions || []).length < 2;
-      ui.open.title = ui.open.disabled ? "Two published releases are required" : "Compare published release features";
+      ui.open.title = ui.open.disabled ? "Two published releases are required" : "Compare published releases";
       if (ui.open.disabled) return;
       const dates = [...asset.versions].map(v => v.date).sort().reverse();
-      for (const side of ["baseline", "target"]) { ui[side].replaceChildren(); dates.forEach(date => ui[side].append(new Option(date, date))); }
-      const target = selectedVersion === "latest" ? asset.latest_release.date : selectedVersion;
-      const index = dates.indexOf(target);
-      ui.target.value = target; ui.baseline.value = dates[index + 1] || target;
-      ui.search.value = ""; ui.filter.value = ""; ui.run.textContent = "Compare";
+      for (const side of ["before", "after"]) { ui[side].replaceChildren(); dates.forEach(date => ui[side].append(new Option(date, date))); }
+      const after = selectedVersion === "latest" ? asset.latest_release.date : selectedVersion;
+      ui.after.value = after; ui.before.value = dates[dates.indexOf(after) + 1] || after;
+      ui.search.value = ""; ui.filter.value = "";
     },
   };
 }

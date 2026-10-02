@@ -1,13 +1,18 @@
 # Compare releases
 
-The catalog's **Compare releases** control sits beside the Version selector.
-Select a baseline and target published release. Defaults use the selected release
-and its immediate predecessor; the oldest release has no predecessor, so its
-baseline defaults to itself. The authenticated catalog viewer performs complete
-comparisons. A static catalog without the endpoint explains availability, keeps
-browsing/downloads intact, and supports visual release inspection and the local
-CLI route. Missing canonical metadata, schema, or manifest artifacts prevent an
-exact comparison; they do not trigger a latest fallback.
+Click **Compare releases** beside Version to enter comparison mode. The single
+Version dropdown becomes **Before** and **After**, with the selected release and
+its immediate predecessor as defaults. Comparison starts automatically and
+reruns when either selection changes. The same button becomes **Close comparison**;
+closing restores ordinary browsing. There is no second run button or map-mode
+selector. The union occupies the primary map at the top of the detail view,
+retaining its viewport. Release, change, and schema summaries use compact tables.
+
+The authenticated catalog viewer performs complete comparisons. A static catalog
+without the endpoint explains availability, keeps browsing/downloads intact, and
+supports visual release inspection and the local CLI route. Missing canonical
+metadata, schema, or manifest artifacts prevent an exact comparison; they do not
+trigger a latest fallback.
 
 The result contains six mutually exclusive feature counts, separate schema
 changes, a searchable table with 50 rows per page, before/after source properties,
@@ -47,7 +52,7 @@ supported versioned sequence state. Source-field identities require compatible
 source-field schema semantics, including datatype, nullability and projection;
 they legitimately have no generated contract field. Legacy/missing identity
 evidence, contract resets and incompatible semantics withhold feature counts,
-matching and inspection. They allow visual maps and schema/publication comparison.
+matching and inspection. They still allow geometry colors and schema/publication comparison; geometry lookups never join feature IDs across releases.
 There is no inferred identity continuity from similar geometry or numeric IDs.
 Generated IDs must be below the declared next allocation. Each record must match
 its declared assignment-key strategy. The publisher owns reviewed identity
@@ -75,11 +80,11 @@ source-property changes. No feature counts come from PMTiles.
 
 ## Union map
 
-The default map displays the union of baseline and target geometry. Novel
-geometry is green, removed geometry red, and identical geometry with altered
-source metadata yellow. Unchanged geometry is gray. A moved feature therefore
-has a red old footprint and green new footprint. **Before / after** switches to
-two synchronized maps using distinct pinned sources.
+The primary map displays the union of Before and After geometry. New geometry
+is green, removed geometry red, and identical geometry with altered source
+metadata yellow. Unchanged geometry is gray with faint fill and outline opacity.
+A moved feature has a red old footprint and green new footprint. Exact shared
+geometry renders once from the After source to avoid doubling its opacity.
 
 Geometry membership uses exact canonical `geometry_hash` sets, independently of
 feature identity. For a shared geometry, differing sets of canonical
@@ -89,20 +94,25 @@ geometric membership is not an invented feature match. Duplicate records on the
 same geometry contribute a set of distinct source-property hashes. These display
 annotations are computed from complete sidecars, never tile geometry.
 
-Color highlights are bounded to the current table page or selected feature.
-Other features from both tile archives remain gray; the note explicitly states
-this scope. Tiles simplify geometry and visibility varies with zoom. Shared tile
-footprints can render from both sources; display overlap is not another counted
-feature. Incompatible identity contracts leave maps unclassified. Missing or
-unauthorized historical tile generations produce visible errors. Map signer and
-comparison responses must match the selected paths/generations before use.
+Every loaded map feature receives a release-scoped geometry color, independently
+of the table page, search, or feature-ID compatibility. The viewer looks up at
+most 200 IDs per request in the complete comparison index and applies the results
+as map feature states. IDs remain scoped to their own release: an ID reused after
+a reset can correctly be red in Before and green in After. Paging or inspecting
+records does not replace these colors. Geometry summary counts describe unique
+geometry hashes; they are not feature-ID classifications.
+
+Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
+historical tile generations produce visible errors. Map signer and comparison
+responses must match the selected paths/generations before use. Comparison report
+schema version 2 adds geometry counts and the complete map-color scope.
 
 ## Viewer API and budgets
 
 All comparison routes are same-origin and require the viewer's IAP authorization.
 Private/internal assets also require an allowed identity when local public-only
 API testing disables the global IAP check. Every start, poll, page, inspection,
-cancellation and export rechecks the current catalog and user. Jobs are bound to
+map lookups, cancellation and export rechecks the current catalog and user. Jobs are bound to
 the requesting email. Callers select catalog-owned slugs and concrete dates;
 caller-provided object URIs cannot choose server download targets. Client expected
 paths/generations are equality checks, not download authority.
@@ -111,6 +121,7 @@ paths/generations are equality checks, not download authority.
 POST /api/comparisons
 GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=
 GET /api/comparisons/{job_id}?feature_id=1
+POST /api/comparisons/{job_id}/map
 POST /api/comparisons/{job_id}/cancel
 GET /api/comparisons/{job_id}/report
 ```
@@ -119,7 +130,11 @@ GET /api/comparisons/{job_id}/report
 `baseline`, `target`, and `expected`, with baseline/target role dictionaries of
 `{path, generation}` for metadata/schema/manifest and available PMTiles. Start
 returns `202` with a job ID and pinned inputs. Polls return state/progress and,
-on completion, summary plus a bounded page. Invalid selectors/options return
+on completion, summary plus a bounded page when feature identity is comparable.
+`POST /api/comparisons/{job_id}/map` takes `side` (`baseline` or `target`) and
+1–200 unique `feature_ids`, with a 16-KiB request cap. It returns geometry colors
+within that release even when cross-release feature identity is incompatible.
+Unknown IDs fail visibly rather than being treated as unchanged. Invalid selectors/options return
 400; missing authentication 401; denied domains 403; expired/unavailable jobs 404;
 changed selected snapshots 409; oversized requests/responses/reports 413; job
 capacity 429; unavailable catalog/backend authorization 503. Input-validation,
@@ -228,8 +243,9 @@ value changes, reordered rows, duplicate IDs/identity keys, invalid hashes,
 source/generated compatibility, legacy evidence, localization exclusion,
 checksums, correction generations, missing historical files, authorization,
 resource limits, cancellation and export. Browser tests use the real engine and
-viewer with synthetic pinned bytes, real MapLibre/PMTiles rendering, union and
-before/after maps, controls, property inspection, pagination, complete export,
+viewer with synthetic pinned bytes, real MapLibre/PMTiles rendering in
+the primary union map, automatic Before/After controls, actual polygon fill
+colors across identity resets, property inspection, pagination, complete export,
 keyboard operation, narrow layout and a delayed response. They do not establish
 live IAP, CDN, generation retention, affinity or billing behavior.
 

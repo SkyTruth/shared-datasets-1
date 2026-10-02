@@ -1,3 +1,4 @@
+import { PNG } from 'pngjs';
 import ts from '../../api/typescript/node_modules/typescript/lib/typescript.js';
 import { test as base, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
@@ -208,125 +209,161 @@ test('late historical metadata cannot replace the current inspector', async ({ p
 });
 
 
-test('comparison uses complete inputs, union maps, real controls and keyboard inspection', async ({page, transport}, testInfo) => {
+test('comparison automatically takes over the primary map with compact tables and keyboard inspection', async ({page, transport}, testInfo) => {
   await select(page, 'comparison');
-  await page.locator('#compare-open').focus();
-  await page.keyboard.press('Enter');
-  await expect(page.locator('#compare-baseline')).toBeFocused();
-  await expect(page.locator('#compare-baseline')).toHaveValue('2026-01-01');
-  await expect(page.locator('#compare-target')).toHaveValue('2026-09-22');
-  await page.locator('#compare-run').click();
-  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
+  await expect(page.locator('#use-section')).toBeVisible();
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#compare-before')).toBeFocused();
+  await expect(page.locator('#compare-before')).toHaveValue('2026-01-01');
+  await expect(page.locator('#compare-after')).toHaveValue('2026-09-22');
+  await expect(page.locator('#version-select')).toBeHidden();
+  await expect(page.locator('#compare-open')).toHaveText('Close comparison');
+  await expect(page.locator('#compare-run, #compare-close, #compare-mode, #compare-maps')).toHaveCount(0);
+  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
   await expect(page.locator('#compare-page')).toHaveText('1–50 of 106');
-  await expect(page.locator('#compare-summary')).toContainText('Properties only');
-  const canvas = page.locator('#compare-maps canvas');
-  await expect(canvas).toHaveCount(1);
-  await expect(canvas).toBeVisible();
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  const canvas = page.locator('#map-preview canvas');
+  await expect(page.locator('canvas')).toHaveCount(1); await expect(canvas).toBeVisible();
+  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map') && r.method === 'POST').length).toBeGreaterThanOrEqual(2);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-01-01/') && r.url.includes('.pmtiles'))).toBe(true);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-09-22/') && r.url.includes('.pmtiles'))).toBe(true);
-  await page.locator('#compare-maps').scrollIntoViewIfNeeded();
-  await testInfo.attach('comparison-union.png', {body:await page.locator('#compare-maps').screenshot(), contentType:'image/png'});
-  // Click the real shared [1, 1] point within combined [-2, -1, 4, 1] bounds.
-  // The pixel is derived from independent fixture geometry, without a map test hook.
+  // The primary map preserves the previous viewport, fitted to the after archive.
   const box = await canvas.boundingBox();
   const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
-  const scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (mercatorY(-1) - mercatorY(1)), 512 * 2 ** 8);
-  await canvas.click({position:{x:box.width / 2, y:box.height / 2 - (0.5 - mercatorY(1)) * scale}});
+  const scale = Math.min((box.width - 68) / (3 / 360), (box.height - 68) / (mercatorY(-1) - mercatorY(1)), 512 * 2 ** 8);
+  await canvas.click({position:{x:box.width / 2 - 1.5 / 360 * scale, y:box.height / 2 - (0.5 - mercatorY(1)) * scale}});
   await expect(page.locator('#compare-inspector')).toContainText('Shared before');
   await expect(page.locator('#compare-inspector')).toContainText('Shared after');
   await page.locator('#compare-search').fill('Shared');
   await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
   await page.locator('#compare-rows button').focus(); await page.keyboard.press('Enter');
-  await expect(page.locator('#compare-inspector')).toContainText('Shared before');
-  await expect(page.locator('#compare-inspector')).toContainText('Shared after');
   await expect(page.locator('#compare-inspector')).toContainText('Absent');
   await expect(page.locator('#compare-inspector')).toContainText('null');
-  await page.locator('#compare-search').fill('');
-  await page.locator('#compare-next').click();
+  await page.locator('#compare-search').fill(''); await page.locator('#compare-next').click();
   await expect(page.locator('#compare-page')).toHaveText('51–100 of 106');
-  await page.locator('#compare-mode').selectOption('before-after');
-  await expect(page.locator('#compare-maps canvas')).toHaveCount(2);
-  const download = page.waitForEvent('download'); await page.locator('#compare-report').click();
-  const file = await (await download).path();
-  const report = await readJSON(file);
+  const report = await downloadedJson(page, page.locator('#compare-report'));
   expect(report.features).toHaveLength(106);
   expect(report.summary.counts).toEqual({added:1,removed:1,geometry_only:1,properties_only:1,both:0,unchanged:102});
   await page.locator('#compare-open').scrollIntoViewIfNeeded();
   await testInfo.attach('comparison-desktop.png', {body:await page.screenshot(), contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});
-  await expect(page.locator('#compare-baseline')).toBeVisible();
+  await expect(page.locator('#compare-before')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.locator('#compare-open').scrollIntoViewIfNeeded();
   await testInfo.attach('comparison-narrow.png', {body:await page.screenshot(), contentType:'image/png'});
-  await page.locator('#compare-maps').scrollIntoViewIfNeeded();
-  await testInfo.attach('comparison-narrow-maps.png', {body:await page.locator('#compare-maps').screenshot(), contentType:'image/png'});
+  await page.locator('#compare-before').focus(); await page.keyboard.press('Escape');
+  await expect(page.locator('#compare-panel')).toBeHidden();
+  await expect(page.locator('#compare-open')).toHaveText('Compare releases');
+  await expect(page.locator('#version-select')).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(1);
 });
 
-test('static catalog explains comparison availability and keeps browsing functional', async ({page, transport}, testInfo) => {
+test('static catalog explains comparison availability and restores ordinary browsing', async ({page, transport}, testInfo) => {
   transport.comparisonUnavailable = true;
-  await select(page, 'public');
-  await page.locator('#compare-open').click();
-  await page.locator('#compare-run').click();
+  await select(page, 'public'); await page.locator('#compare-open').click();
   await expect(page.locator('#compare-status')).toContainText('authenticated catalog viewer');
-  await expect(page.locator('#compare-maps canvas')).toHaveCount(1);
+  await expect(page.locator('#map-preview canvas')).toHaveCount(1);
   await expect(page.locator('#compare-table')).toBeHidden();
   await expect(page.locator('#compare-report')).toBeDisabled();
   await page.locator('.compare-local-guide summary').click();
   await expect(page.locator('.compare-local-guide')).toContainText('scripts/compare_releases.py');
-  await page.locator('#compare-close').focus(); await page.keyboard.press('Escape');
+  await page.locator('#compare-open').focus(); await page.keyboard.press('Escape');
   await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('#compare-open')).toBeFocused();
   await page.locator('#version-select').selectOption('2026-01-01');
   await clickPoint(page, true, testInfo); await expectMetadata(page, true);
 });
 
-test('comparison table updates preserve a denied historical map error and allow retry', async ({page, transport}) => {
-  await select(page, 'private');
-  transport.deny = 403;
-  await page.locator('#compare-open').click(); await page.locator('#compare-run').click();
-  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
+test('comparison table updates preserve a denied historical map error and selection changes retry', async ({page, transport}) => {
+  await select(page, 'private'); transport.deny = 403;
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
   await expect(page.locator('#compare-page')).toHaveText('1–50 of 105');
   await expect(page.locator('#compare-map-note')).toContainText('Map inspection unavailable');
-  await expect(page.locator('#compare-maps canvas')).toHaveCount(0);
+  await expect(page.locator('#map-preview canvas')).toHaveCount(0);
   await page.locator('#compare-search').fill('Old');
   await expect(page.locator('#compare-page')).toHaveText('1–2 of 2');
   await page.locator('#compare-rows button').first().click();
   await expect(page.locator('#compare-inspector')).toContainText('Old footprint');
   await expect(page.locator('#compare-map-note')).toContainText('Map inspection unavailable');
   transport.deny = 0;
-  await page.locator('#compare-mode').selectOption('before-after');
-  await expect(page.locator('#compare-maps canvas')).toHaveCount(2);
+  await page.locator('#compare-before').selectOption('2026-09-22');
+  await page.locator('#compare-after').selectOption('2026-01-01');
+  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#map-preview canvas')).toHaveCount(1);
   await expect(page.locator('#compare-map-note')).not.toContainText('Map inspection unavailable');
 });
 
-test('delayed comparison start cannot overwrite a newer release selection and cancellation', async ({page, transport}) => {
-  await select(page, 'public'); await page.locator('#compare-open').click();
-  transport.holdComparison = true;
-  await page.locator('#compare-run').click();
+test('automatic comparison rejects delayed starts and closing cancels pending work', async ({page, transport}) => {
+  await select(page, 'public'); transport.holdComparison = true;
+  await page.locator('#compare-open').click();
   await expect.poll(() => transport.comparisonHeld).toBe(true);
-  await page.locator('#compare-baseline').selectOption('2026-09-22');
-  await page.locator('#compare-target').selectOption('2026-01-01');
-  await page.locator('#compare-run').click();
-  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
-  await expect(page.locator('#compare-summary')).toContainText('Baseline: 2026-09-22');
+  await page.locator('#compare-before').selectOption('2026-09-22');
+  await page.locator('#compare-after').selectOption('2026-01-01');
+  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  const releaseRow = page.locator('#compare-summary tbody tr').first();
+  await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
   const firstReleased = page.waitForResponse(response => response.url().endsWith('/api/comparisons') && response.request().method() === 'POST');
   const firstCancelled = page.waitForResponse(response => response.url().endsWith('/cancel'));
   transport.release();
   await (await firstReleased).finished(); expect((await firstCancelled).status()).toBe(200);
-  await expect(page.locator('#compare-summary')).toContainText('Baseline: 2026-09-22');
-  await expect(page.locator('#compare-summary')).toContainText('Target: 2026-01-01');
+  await expect(releaseRow.locator('td').last()).toHaveText('2026-01-01');
   transport.comparisonHeld = false; transport.holdComparison = true;
-  await page.locator('#compare-run').click();
+  await page.locator('#compare-after').selectOption('2026-09-22');
   await expect.poll(() => transport.comparisonHeld).toBe(true);
-  await page.locator('#compare-run').click();
   const released = page.waitForResponse(response => response.url().endsWith('/api/comparisons') && response.request().method() === 'POST');
   const cancelled = page.waitForResponse(response => response.url().endsWith('/cancel'));
-  transport.release();
+  await page.locator('#compare-open').click(); transport.release();
   await (await released).finished(); expect((await cancelled).status()).toBe(200);
-  await expect(page.locator('#compare-status')).toHaveText('Comparison cancelled.');
+  await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('#compare-summary')).toBeEmpty();
+  await expect(page.locator('#version-select')).toBeVisible();
+  await expect(page.locator('canvas')).toHaveCount(1);
 });
 
+test('polygons render red green yellow and faint gray across a generated ID reset', async ({page, transport}, testInfo) => {
+  await select(page, 'polygons'); await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary')).toContainText('Feature IDs cannot be matched');
+  await expect(page.locator('#compare-summary')).toContainText('Unique geometries');
+  await expect(page.locator('#compare-table')).toBeHidden();
+  await expect(page.locator('canvas')).toHaveCount(1);
+  const canvas = page.locator('#map-preview canvas');
+  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(2);
+  const box = await canvas.boundingBox();
+  const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
+  const low = mercatorY(-1.5), high = mercatorY(3), scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (low - high), 512 * 2 ** 8);
+  const pixel = (image, lon, lat) => {
+    const x = Math.round(box.width / 2 + lon / 360 * scale), y = Math.round(box.height / 2 + (mercatorY(lat) - (low + high) / 2) * scale);
+    return [...image.data.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 3)];
+  };
+  const sample = async () => {
+    const image = PNG.sync.read(await canvas.screenshot());
+    return {red:pixel(image,-1.5,-1),green:pixel(image,2.5,-1),yellow:pixel(image,.5,.5),gray:pixel(image,-2.5,2.5),background:pixel(image,-1.5,2.5)};
+  };
+  // Inspect actual polygon interior pixels. This fails if ID compatibility or
+  // pagination gates map colors, or if fill paint remains ordinary gray.
+  await expect.poll(async () => {
+    const c = await sample();
+    return c.red[0] - c.red[1] > 30 && c.green[1] - c.green[0] > 30 && c.yellow[0] - c.yellow[2] > 50;
+  }).toBe(true);
+  const c = await sample(), distance = (a,b) => Math.hypot(...a.map((v,i) => v-b[i]));
+  expect(distance(c.gray,c.background)).toBeLessThan(distance(c.red,c.background) / 2);
+  await testInfo.attach('comparison-polygons.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
+  await testInfo.attach('comparison-polygon-summary.png', {body:await page.locator('#compare-panel').screenshot(), contentType:'image/png'});
+  const report = await downloadedJson(page, page.locator('#compare-report'));
+  expect(report.summary.counts).toBeNull();
+  expect(report.summary.geometry_counts).toEqual({novel:2,removed:2,metadata_changed:1,unchanged:1});
+});
+
+async function downloadedJson(page, button) {
+  const waiting = page.waitForEvent('download');
+  await button.click();
+  const download = await waiting;
+  return JSON.parse(await readFile(await download.path(), 'utf8'));
+}
 async function openSnapshot(page, snapshot) {
   await page.locator('#open-workspace-file').setInputFiles({name: 'fixture.workspace.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(snapshot))});
 }
