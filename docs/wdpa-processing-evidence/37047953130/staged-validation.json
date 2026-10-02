@@ -1,11 +1,11 @@
 {
   "schema_version": 2,
-  "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+  "source_tree_sha256": "ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040",
   "disk_quota_approved": true,
   "small_fixture": {
     "schema_version": 1,
     "scope": "small-sea-ice-fixture",
-    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "source_tree_sha256": "ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040",
     "state": "succeeded",
     "source": "synthetic IMS classes, 4 by 4 cells",
     "cpu_limit": 4.0,
@@ -21,25 +21,25 @@
       "pmtiles": "pmtiles dev, commit none, built at unknown"
     },
     "rows": 1,
+    "contracts_verified": true,
+    "elapsed_seconds": 1.5804628680000405,
+    "image_digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130",
+    "head_sha": "51077ee5965d97086bb4b60e43aeb7a15e455ec1",
+    "artifact_id": 11245362568,
+    "report_path": "docs/wdpa-processing-evidence/37047953130/small.json",
+    "report_sha256": "befa9cefef8fbf28b069cc8971a4396190156411b36dad89c5e85dadcb434165",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37047953130/image.json",
+    "image_metadata_sha256": "2353e912f591e32d37f4d9fb1f0623462f625340f1fcc9e262d01df83a4f9fec",
+    "phase_cgroup_memory_peak_bytes": 104988672,
+    "phase_scratch_peak_bytes": 876544,
+    "github_artifact_sha256": "sha256:1814905d5058d5af602a71671fbc4b607c89565e2f6a6f36d85fe7877f9d837a",
     "artifact_sha256": {
       "fgb": "e6adc05c8a6c584b2b79873994bf708cd2a704fa500374ff00d419880638285b",
       "pmtiles": "5031faf765df1f5715d85eea0420c71cdcf92bc88a9073daad523e9f1a20e6f0",
       "metadata": "30edb50616289fa6ecf60d105f2bf3cb047009016443336cf644854394c58bef",
       "schema": "996d00f80b6a6b5e7510e0000d6a9c126522593b9e5832daab04501460570d8a"
-    },
-    "contracts_verified": true,
-    "elapsed_seconds": 1.5449491849999504,
-    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
-    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
-    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
-    "artifact_id": 11251571922,
-    "github_artifact_sha256": "sha256:de5604c7ff7d6b68695f3e873ceb768c997a516d48aeb4ab20431911df22d786",
-    "report_path": "docs/wdpa-processing-evidence/37062181850/small.json",
-    "report_sha256": "33ba7377d7740a91bb983a6f84e1edacef54caf6ef29d0366b15dcbf65a3dacd",
-    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
-    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f",
-    "phase_cgroup_memory_peak_bytes": 103837696,
-    "phase_scratch_peak_bytes": 876544
+    }
   },
   "compatibility_sample": {
     "asset_scope": [
@@ -118,10 +118,10 @@
     "compatibility_verified": true,
     "contracts_verified": true,
     "cpu_limit": 4.0,
-    "elapsed_seconds": 812.620878526,
+    "elapsed_seconds": 793.807338804,
     "genesis": false,
     "memory_limit_bytes": 8589934592,
-    "memory_peak_bytes": 6449491968,
+    "memory_peak_bytes": 6545010688,
     "native_versions": {
       "gdal_python": "3.6.2",
       "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
@@ -136,23 +136,23 @@
     "sample_fraction": 0.001,
     "sample_seed": 7919,
     "schema_version": 1,
-    "scratch_peak_bytes": 9419808768,
+    "scratch_peak_bytes": 9485545472,
     "source_counts_verified": true,
     "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
-    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "source_tree_sha256": "ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040",
     "state": "succeeded",
     "translation_index_built": true,
     "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
     "translation_memory_sha256": "07c363536c65e577f54d1d1eb146192387f1dd22fcf1ef1a26aeb3c1e2ad0eb9",
-    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
-    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
-    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
-    "artifact_id": 11254325391,
-    "github_artifact_sha256": "sha256:0e322dea26a679283cf96bcf0827a1ca4b4c63488b5e62fcca1163c7fd91fcc2",
-    "report_path": "docs/wdpa-processing-evidence/37062181850/compatibility.json",
-    "report_sha256": "a7594ad571425e8c023475d3044e46c79799a37a09a7a96de182ec9932f06d8a",
-    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
-    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f"
+    "image_digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130",
+    "head_sha": "51077ee5965d97086bb4b60e43aeb7a15e455ec1",
+    "artifact_id": 11248612386,
+    "report_path": "docs/wdpa-processing-evidence/37047953130/compatibility.json",
+    "report_sha256": "b35ccaa7cc6e43297bbc2fc59a11fdd6238e6b95e1a3fc0549b3130a9e932eaa",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37047953130/image.json",
+    "image_metadata_sha256": "2353e912f591e32d37f4d9fb1f0623462f625340f1fcc9e262d01df83a4f9fec",
+    "github_artifact_sha256": "sha256:c2af4575ef75739e8cc9d8e03487e9b550430e02b4f18398f10a057647c57712"
   },
   "marine": {
     "asset_scope": [
@@ -197,10 +197,10 @@
     "compatibility_verified": false,
     "contracts_verified": true,
     "cpu_limit": 4.0,
-    "elapsed_seconds": 3059.5260084680003,
+    "elapsed_seconds": 3027.4720469229997,
     "genesis": false,
     "memory_limit_bytes": 8589934592,
-    "memory_peak_bytes": 4744769536,
+    "memory_peak_bytes": 4842131456,
     "native_versions": {
       "gdal_python": "3.6.2",
       "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
@@ -215,30 +215,30 @@
     "sample_fraction": 1.0,
     "sample_seed": 7919,
     "schema_version": 1,
-    "scratch_peak_bytes": 9379639296,
+    "scratch_peak_bytes": 9561579520,
     "source_counts_verified": true,
     "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
-    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "source_tree_sha256": "ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040",
     "state": "succeeded",
     "translation_index_built": true,
     "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
     "translation_memory_sha256": "8bcbe0dbcfe453fca9ad9ec5a41d099c7fcfde2ca3d2fcab872a4c3fcf7bfc1c",
-    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
-    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
-    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
-    "artifact_id": 11254325391,
-    "github_artifact_sha256": "sha256:0e322dea26a679283cf96bcf0827a1ca4b4c63488b5e62fcca1163c7fd91fcc2",
-    "report_path": "docs/wdpa-processing-evidence/37062181850/marine.json",
-    "report_sha256": "5a5d0bdc7e0276d5fbb99c888786c276c304b47cfb06c72dfaa560d8e2699465",
-    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
-    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f"
+    "image_digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130",
+    "head_sha": "51077ee5965d97086bb4b60e43aeb7a15e455ec1",
+    "artifact_id": 11248612386,
+    "report_path": "docs/wdpa-processing-evidence/37047953130/marine.json",
+    "report_sha256": "a2b11e96abdac3c4926b745947103a6f7d4c975a81a3f8edfdbf28e54afefc22",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37047953130/image.json",
+    "image_metadata_sha256": "2353e912f591e32d37f4d9fb1f0623462f625340f1fcc9e262d01df83a4f9fec",
+    "github_artifact_sha256": "sha256:c2af4575ef75739e8cc9d8e03487e9b550430e02b4f18398f10a057647c57712"
   },
   "tested_image_artifact": {
-    "artifact_id": 11251406946,
-    "artifact_sha256": "sha256:4d8c310d0f51a56443e8c5244a6c8f1f1f7762b0763f94c30264f6a5610017c4",
-    "configuration_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
-    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
-    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9"
+    "artifact_id": 11244704386,
+    "artifact_sha256": "sha256:bad4eb729c1918b6a3d5adcf457830148a8c388b7de6e7806389f80388af9244",
+    "configuration_digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130",
+    "head_sha": "51077ee5965d97086bb4b60e43aeb7a15e455ec1"
   },
   "marine_container": {
     "state": {
@@ -251,15 +251,15 @@
       "Pid": 0,
       "ExitCode": 0,
       "Error": "",
-      "StartedAt": "2026-10-02T21:02:26.418930409Z",
-      "FinishedAt": "2026-10-02T21:53:27.146027655Z"
+      "StartedAt": "2026-10-02T18:52:04.560665662Z",
+      "FinishedAt": "2026-10-02T19:42:44.463623665Z"
     },
-    "report_path": "docs/wdpa-processing-evidence/37062181850/container.json",
-    "report_sha256": "28ed5bd85a72b66bfbc56e1d17d2eb3b80aaf6166e76ebc6a3aabbbdf4df1bbe"
+    "report_path": "docs/wdpa-processing-evidence/37047953130/container.json",
+    "report_sha256": "374776e2c7b75d47ec27feabfb5bbee1760dcd0e2adab75f9c8dadfd79eb05eb"
   },
   "historical_evidence": {
-    "path": "docs/wdpa-processing-evidence/37047953130/staged-validation.json",
-    "sha256": "2dfc5ce2650bb93bc23a20417fde626848f95c78e352ed51b57147fcb0fe173a"
+    "path": "docs/wdpa-processing-evidence/37019403196/staged-validation.json",
+    "sha256": "f0fa441ff71dca9db91421e26d9a385bb38366a7b40eed2522e3daf11f274533"
   },
   "readiness": "isolated-cloud-validation-only"
 }

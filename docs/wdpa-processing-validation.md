@@ -164,8 +164,8 @@ their processing digest predates the current code and dependencies. They cannot
 open the current isolated cloud gate. No dataset bytes were published; complete
 terrestrial builds and final worker acceptance remain pending.
 
-Fresh [run 37047953130](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130)
-passed all three stages on the current processing digest and one image. Sea ice
+Earlier [run 37047953130](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130)
+passed all three stages on the preceding processing digest and one image. Sea ice
 passed in 1.580 seconds, with a 104,988,672-byte kernel phase peak and 876,544-byte
 scratch peak. The deterministic October old/new sample then agreed on all 20
 marine and 499 terrestrial records, including 193 terrestrial India records,
@@ -176,7 +176,7 @@ metadata, six locale sidecars and the canonical translation CSV.
 Complete marine finished at `2026-10-02T19:42:44Z` with exit code zero and
 `OOMKilled=false`:
 
-| Measurement | Fresh marine result | Required target |
+| Measurement | Earlier marine result | Required target |
 | --- | --- | --- |
 | Processing duration | 3,027.472 seconds (50.5 minutes) | ≤24 hours |
 | Kernel cgroup memory peak | 4,842,131,456 bytes (4.51 GiB) | ≤6.4 GiB |
@@ -192,8 +192,8 @@ also match the historical complete marine replay. Its raw
 `compatibility_verified` remains false: the separate sample supplies old/new
 comparison proof, and artifact validation does not impersonate that comparison.
 
-[Version 2 staged evidence](../catalog/wdpa-staged-validation.json) now opens only
-the isolated cloud validation gate. It records processing fingerprint
+[Its archived version 2 staged evidence](wdpa-processing-evidence/37047953130/staged-validation.json)
+opened only the isolated cloud validation gate. It recorded processing fingerprint
 `ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040`,
 configuration digest
 `sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489`,
@@ -203,6 +203,43 @@ the previous staged document remains intact in the historical directory. The
 production acceptance gate still requires two complete cloud builds, including
 terrestrial, with the same image and frozen inputs. No dataset bytes were
 published by these stages.
+
+Corrected [run 37062181850](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850)
+passed all three stages after input fingerprint verification moved inside the
+measured `frozen-inputs` phase. Sea ice passed in 1.545 seconds with a
+103,837,696-byte kernel phase peak and 876,544-byte scratch peak. The fresh
+deterministic old/new comparison verified the same 20 marine and 499 terrestrial
+records, including 193 India records, all field types and every translation
+output. Complete marine finished at `2026-10-02T21:53:27Z`, exit code zero and
+`OOMKilled=false`:
+
+| Measurement | Corrected marine result | Required target |
+| --- | --- | --- |
+| Processing duration | 3,059.526 seconds (51.0 minutes) | ≤24 hours |
+| Kernel cgroup memory peak | 4,744,769,536 bytes (4.42 GiB) | ≤6.4 GiB |
+| Memory headroom | 44.8% | ≥20% |
+| Scratch peak | 9,379,639,296 bytes (8.74 GiB) | >8 GiB and <80 GiB |
+| Marine records | 17,938 | Frozen source: 17,938 |
+| India records/sites | 304 / 304 | Frozen source: 304 / 304 |
+
+Both corrected reports have identical artifact hashes, semantic results,
+allocation counters and baseline identities to their respective preceding
+reports. The same frozen source, baseline and translation inputs and native
+versions were used. The complete report still has `compatibility_verified=false`;
+the separate sampled comparison supplies that proof.
+
+The current [version 2 staged evidence](../catalog/wdpa-staged-validation.json)
+records processing fingerprint
+`b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337`
+and configuration digest
+`sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e`.
+Unmodified raw reports, image metadata and container state are retained under
+`docs/wdpa-processing-evidence/37062181850/`. GitHub report ZIP hashes were
+verified before extracting the original bytes. This permits only isolated
+validation after review and merge, and after the existing cloud execution is
+terminal. Two complete passing cloud builds of the corrected immutable image
+remain required before production deployment; the earlier execution's 7.00 GiB
+lifetime peak cannot be reset, subtracted or counted toward acceptance.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
