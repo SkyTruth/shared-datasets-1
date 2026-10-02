@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "command": [
+    "python",
+    "-c",
+    "import json, os, resource\nfrom pathlib import Path\nfrom scripts.wdpa_processing_gate import source_digest\nroot = Path('/sys/fs/cgroup')\nfiles = [Path('/proc/self/cgroup')]\nfor directory in (root, root / 'cpu', root / 'cpu,cpuacct', root / 'memory'):\n    files.extend(directory / name for name in (\n        'cpu.max', 'cpu.cfs_quota_us', 'cpu.cfs_period_us',\n        'memory.current', 'memory.max', 'memory.peak',\n        'memory.usage_in_bytes', 'memory.limit_in_bytes', 'memory.max_usage_in_bytes',\n    ))\nprint(json.dumps({\n    'event': 'wdpa_runtime_inspection',\n    'scope': 'runtime-inspection-not-acceptance',\n    'source_tree_sha256': source_digest(),\n    'kernel': os.uname().release,\n    'cpu_affinity_count': len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else None,\n    'cgroup_root_entries': sorted(p.name for p in root.iterdir()) if root.exists() else [],\n    'files': {str(p): p.read_text()[:8192] if p.is_file() else None for p in files},\n    'cgroup_mounts': [line for line in Path('/proc/self/mountinfo').read_text().splitlines() if ' /sys/fs/cgroup' in line] if Path('/proc/self/mountinfo').exists() else [],\n    'process_rss_peak_bytes': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,\n}, sort_keys=True), flush=True)\n"
+  ]
+}
