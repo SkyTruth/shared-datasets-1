@@ -1,13 +1,15 @@
 # WDPA processing validation and rollout evidence
 
 Readiness is **pending**. The implementation has compatibility and integration
-evidence, but the two complete October runs at 4 CPU / 8 GiB have not been run.
+evidence; two complete October runs at 4 CPU / 8 GiB are in progress and have
+not yet passed resource acceptance.
 `catalog/wdpa-processing-acceptance.json` intentionally blocks production deployment.
 
 ## Completed checks
 
-- Full Python suite: 1,075 passed, 1,171 subtests passed; five native checks skipped
-  on the host and exercised separately in the deployment toolchain.
+- Full CI Python suite: 1,078 passed; five host-native checks skipped and exercised
+  separately in the deployment toolchain. Earlier local validation also passed
+  1,171 subtests.
 - Native geospatial suite: 120 passed, 17 subtests passed, no skips. All five
   mandatory native fixtures passed, including old/new normalized metadata,
   field types and geometry, WDPA PMTiles, sea ice, EAMLIS and COG validation.
@@ -23,6 +25,11 @@ evidence, but the two complete October runs at 4 CPU / 8 GiB have not been run.
 - Terraform 1.8.5 formatting and validation passed. The saved production-state
   plan passed the deployment workflow's exact resource and processing-limit
   allowlists. No apply was run.
+- A disposable GDAL 3.6.2 cursor check read and updated all 10,002 records
+  across the 10,000-row transaction boundary without rewinding.
+- Observer image startup/classification passed under 1 CPU / 512 MiB with
+  synthetic execution statuses: peak process RSS 93.4 MiB on the emulated
+  development VM. This is a startup smoke check, not live API/IAM verification.
 - Ruff and repository static guardrails passed.
 - Pinned Gitleaks 8.24.3 full-history scanning passed. CI initially flagged a
   historical `allow_empty=generated != "approved"` Python argument expression
