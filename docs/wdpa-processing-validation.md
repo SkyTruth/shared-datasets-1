@@ -1,14 +1,17 @@
 # WDPA processing validation and rollout evidence
 
 Readiness is **pending**. The implementation has compatibility and integration
-evidence. The revised input-only probe meets the memory target; two fresh
-complete October runs at 4 CPU / 8 GiB are in progress and have not yet passed
-resource acceptance.
+evidence. Validation now follows the requested sequence: a small sea-ice smoke
+test, complete marine WDPA with measured disk spill, then isolated Cloud Run
+validation of the complete October source including terrestrial WDPA.
+The previous hosted complete runs were stopped to enforce this ordering.
 `catalog/wdpa-processing-acceptance.json` intentionally blocks production deployment.
 
 ## Completed checks
 
-- Full CI Python suite: 1,093 passed; five host-native checks skipped and exercised
+- After integrating catalog PRs #169 and #170, the local Python suite passed
+  1,196 tests and 1,171 subtests; all 13 Chromium scenarios passed. The earlier
+  processing CI Python suite passed 1,093 tests; five host-native checks skipped and exercised
   separately in the deployment toolchain. Local validation also passed
   1,171 subtests.
   [Processing code CI](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36997692555)
@@ -96,17 +99,20 @@ has been published, complete artifact compatibility, or resource acceptance.
 ## Hosted complete-build runner
 
 The existing `CI` workflow has an opt-in `wdpa_full_benchmark` input. It builds
-one deployment image and shares that exact image with two fresh job VMs. Each
-replay verifies the loaded image's configuration digest and runs a fresh
+one deployment image, runs the tiny synthetic sea-ice production path, and only
+then runs the **marine** WDPA processing path on a fresh VM. Both jobs verify
+the loaded image's configuration digest. The marine replay runs a fresh
 container at exactly 4 CPU / 8 GiB, with no swap and a 100 GiB ext4 disk at
-`/work`. Both replays start with empty scratch. This is the production processing path, including rebuilding
+`/work`. It starts with empty scratch. This is the production processing path, including rebuilding
 the translation index, with frozen baseline inputs and no publication.
 The optional `wdpa_benchmark_fraction=0.001` uses the same full input preparation
 and translation indexing for a shorter diagnostic probe, with separately named
 debug reports. It cannot satisfy acceptance. Complete builds use the default
-fraction `1`, which is also required by the rollout gate.
+fraction `1`. A marine-only run cannot open the final publication gate.
 Each GitHub hosted job has a six-hour ceiling, stricter than the production
 24-hour target; a hosted timeout cannot establish the production timeout target.
+A 330-minute processing watchdog leaves time to retain container diagnostics
+before the six-hour job limit.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
@@ -151,10 +157,11 @@ source and verified baselines at 4 CPU / 8 GiB with no swap and a 100 GiB disk.
 versions and image/processing digests. This improvement is not complete-build
 acceptance; both complete runs remain required.
 
-[Fresh complete-build run 36998409031](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36998409031)
-uses the updated processing digest
+[Superseded complete-build run 36998409031](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36998409031)
+used processing digest
 `78387be4a53dfb00b28307ad73409c34afcc3071fcd0681c89d11a2c22bff310`
-on `b5be93c`, with separate replay jobs loading the identical image. The earlier
+on `b5be93c`, with separate replay jobs loading the identical image. It was
+cancelled at the user's request before obtaining acceptance reports. The earlier
 complete-build attempt on `bbfe68b` predates the cache-pressure fix and cannot
 be used as acceptance evidence for this processing digest. That attempt
 ([run 36976690829](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36976690829))
@@ -163,7 +170,37 @@ GitHub's termination annotation explicitly reports the six-hour limit. No
 benchmark reports were retained, and the downloadable run archive contains no
 processing-job log. This establishes a hosted-runner limitation; it provides
 neither resource acceptance nor evidence of exceeding the production 24-hour
-limit. The newer replays each have their own six-hour job budget.
+limit.
+
+Local Docker now provides 4 CPU and an 8 GiB container limit with swap disabled.
+Its VM has only 14.3 GiB free and Linux 5.15 lacks `memory.peak`; it cannot provide
+the disk and telemetry needed for acceptance. The hosted staged tests do not
+require increasing local Docker resources.
+
+## Isolated cloud validation
+
+`wdpa-processing-validation-deploy.yml` is a manual protected-main workflow in
+the existing production Terraform queue. It gates deployment on reviewed small
+and marine reports in `catalog/wdpa-staged-validation.json`, including the same
+image/processing digest, complete marine counts/contracts, ≤6.4 GiB peak memory,
+scratch greater than 8 GiB and below 80 GiB, and approved disk quota. Disk use
+above the RAM limit demonstrates why the workload needs disk storage.
+
+The workflow can change only three validation resources: the empty runtime
+service account, its exact deployer binding, and a Cloud Run job. It cannot target
+the production worker, bucket IAM, claims, receipts or allocation state. The
+validation identity receives **no dataset permissions** and has no scheduler.
+Its image uses public hash/generation-verified frozen inputs and the production
+processing path at 4 CPU / 8 GiB with a 100 GiB disk and 24-hour timeout.
+`wdpa_cloud_validation_report` is emitted to Cloud Logging; no dataset or status
+objects are uploaded. Downloading frozen inputs is also profiled.
+
+After review, merge and quota/bootstrap verification, deploy this validation
+job. Run the controlled pre-write failure, verify actual alert delivery, then
+start complete October replays asynchronously and follow each to terminal status.
+Two passing reports open the existing final acceptance gate for the production
+worker. Publication ownership checks remain unchanged. A failed validation run
+cannot authorize publication or a resource increase.
 
 ## Infrastructure and failure visibility
 
@@ -196,11 +233,10 @@ describes the separate limits. No quota change or authentication change was made
 
 ## Remaining acceptance and rollout
 
-1. Use the manual `CI` workflow complete-benchmark input on its disposable Linux
-   runner, or provide a Linux Docker runtime with 4 CPU, 8 GiB, cgroup peak
-   telemetry and enough disk for 100 GiB scratch. The local VM cannot meet this
-   target without interrupting an unrelated running database.
-2. Run the deployment image twice on the complete frozen October inputs and
+1. Run the manual `CI` workflow: require small sea-ice smoke first, then complete
+   marine WDPA with verified counts/contracts and measured disk spill above RAM.
+2. After review, merge and quota/bootstrap verification, deploy only the isolated
+   cloud validation job. Run the deployment image twice on the complete frozen October inputs and
    identical verified baseline/translation snapshots. Require peak memory
    ≤6.4 GiB, scratch <80 GiB, duration ≤24 hours, verified source-derived
    realm/India counts and valid FGB/metadata/PMTiles contracts. Any ambiguity

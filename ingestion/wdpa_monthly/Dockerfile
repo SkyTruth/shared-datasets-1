@@ -68,6 +68,10 @@ COPY scripts/slack_notify.py ./scripts/slack_notify.py
 COPY scripts/vector_asset.py ./scripts/vector_asset.py
 COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
 COPY scripts/local_wdpa_sample.py ./scripts/local_wdpa_sample.py
+COPY scripts/local_ingestion_smoke.py ./scripts/local_ingestion_smoke.py
+COPY scripts/cloud_wdpa_validation.py ./scripts/cloud_wdpa_validation.py
+COPY scripts/download_public_wdpa_benchmark.py ./scripts/download_public_wdpa_benchmark.py
+COPY docs/wdpa-processing-public-inputs.json ./docs/wdpa-processing-public-inputs.json
 COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

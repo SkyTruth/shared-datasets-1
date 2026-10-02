@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       wdpa_full_benchmark:
-        description: Run two frozen October builds without publication
+        description: Run small sea-ice smoke first, then marine WDPA without publication
         type: boolean
         default: false
       wdpa_benchmark_fraction:
@@ -71,7 +71,7 @@ jobs:
             --metadata-file "$RUNNER_TEMP/wdpa-image/image.json" \
             -f ingestion/wdpa_monthly/Dockerfile -t wdpa-processing-benchmark:local .
           docker save wdpa-processing-benchmark:local | gzip -1 > "$RUNNER_TEMP/wdpa-image/image.tar.gz"
-      - name: Share the identical deployment image with both replays
+      - name: Share the deployment image with staged checks
         uses: actions/upload-artifact@v4
         with:
           name: wdpa-benchmark-image
@@ -80,17 +80,47 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  wdpa-full-benchmark:
+  wdpa-small-smoke:
     needs: wdpa-benchmark-image
     if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download the shared deployment image
+        uses: actions/download-artifact@v4
+        with:
+          name: wdpa-benchmark-image
+          path: ${{ runner.temp }}/wdpa-image
+      - name: Verify image and run the small sea-ice production path
+        run: |
+          set -euo pipefail
+          gzip -dc "$RUNNER_TEMP/wdpa-image/image.tar.gz" | docker load
+          expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' "$RUNNER_TEMP/wdpa-image/image.json")"
+          [[ "$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')" == "$expected" ]]
+          mkdir -p "$RUNNER_TEMP/wdpa-small"
+          docker run --name wdpa-small --cpus=4 --memory=8g --memory-swap=8g \
+            -e CLOUD_RUN_EXECUTION=wdpa-small \
+            -v "$RUNNER_TEMP/wdpa-small:/work" wdpa-processing-benchmark:local \
+            python scripts/local_ingestion_smoke.py --workdir /work/shared-datasets-1/small
+          cp "$RUNNER_TEMP/wdpa-image/image.json" "$RUNNER_TEMP/wdpa-small/shared-datasets-1/small/image.json"
+      - name: Upload small-fixture measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdpa-small-smoke-report
+          path: |
+            ${{ runner.temp }}/wdpa-small/shared-datasets-1/small/benchmark.json
+            ${{ runner.temp }}/wdpa-small/shared-datasets-1/small/image.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  wdpa-full-benchmark:
+    needs: [wdpa-benchmark-image, wdpa-small-smoke]
+    if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
+    runs-on: ubuntu-latest
     timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        replay: ${{ fromJSON(inputs.wdpa_inputs_probe && '[1]' || '[1,2]') }}
     env:
-      WDPA_BENCHMARK_REPLAY: ${{ matrix.replay }}
+      WDPA_BENCHMARK_REPLAY: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -142,7 +172,7 @@ jobs:
           sudo mount "$device" /work
           sudo chmod 0777 /work
           df -h /work
-      - name: Run one frozen build with 4 CPU and 8 GiB
+      - name: Run marine WDPA with 4 CPU and 8 GiB
         if: ${{ !inputs.wdpa_inputs_probe }}
         env:
           WDPA_BENCHMARK_FRACTION: ${{ inputs.wdpa_benchmark_fraction || '1' }}
@@ -150,7 +180,8 @@ jobs:
           set -euo pipefail
           echo "Starting October replay $WDPA_BENCHMARK_REPLAY (fraction $WDPA_BENCHMARK_FRACTION)"
           # Each replay gets a fresh VM, disk and cgroup, with the identical image.
-          docker run --name wdpa-replay \
+          # Leave time to retain diagnostics before the hosted job's six-hour limit.
+          timeout --signal=TERM --kill-after=120s 330m docker run --name wdpa-replay \
             --cpus=4 --memory=8g --memory-swap=8g \
             -e CLOUD_RUN_EXECUTION=wdpa-benchmark \
             -v /work:/work \
@@ -161,6 +192,7 @@ jobs:
               --baselines /inputs/frozen-inputs \
               --translation-sources /inputs/frozen-inputs/translation-sources.json \
               --workdir /work/shared-datasets-1/replay --run-date 2026-10-01 \
+              --asset wdpa-marine \
               --fraction "$WDPA_BENCHMARK_FRACTION"
           cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/replay-$WDPA_BENCHMARK_REPLAY.json"
           docker inspect wdpa-replay --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-$WDPA_BENCHMARK_REPLAY.json"
@@ -179,10 +211,28 @@ jobs:
           docker inspect wdpa-replay --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-probe.json"
           docker rm wdpa-replay
       - name: Retain report if a replay failed
-        if: failure()
+        if: failure() || cancelled()
         run: |
           if docker inspect wdpa-replay >/dev/null 2>&1; then
+            docker stop --time=120 wdpa-replay || true
             docker inspect wdpa-replay --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-$WDPA_BENCHMARK_REPLAY.json"
+            python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          phases = []
+          with subprocess.Popen(['docker', 'logs', 'wdpa-replay'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) as process:
+              for line in process.stdout:
+                  try:
+                      record = json.loads(line[line.index('{'):])
+                  except ValueError:
+                      continue
+                  if isinstance(record, dict) and record.get('event') in {'wdpa_phase_started', 'wdpa_phase_resources'}:
+                      phases.append(record)
+              if process.wait() != 0:
+                  raise SystemExit('Could not retain benchmark phase diagnostics')
+          target = Path(os.environ['RUNNER_TEMP']) / 'wdpa-reports/partial-phases.json'
+          target.write_text(json.dumps({'scope':'partial-not-acceptance', 'phases':phases}, indent=2)+'\n')
+          PY
           fi
           if [[ -f /work/shared-datasets-1/replay/benchmark.json ]]; then
             cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/failed-replay.json"
@@ -191,7 +241,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ (inputs.wdpa_inputs_probe || inputs.wdpa_benchmark_fraction == '0.001') && 'wdpa-debug-benchmark-reports' || 'wdpa-complete-benchmark-reports' }}-${{ matrix.replay }}
+          name: ${{ (inputs.wdpa_inputs_probe || inputs.wdpa_benchmark_fraction == '0.001') && 'wdpa-debug-benchmark-reports' || 'wdpa-marine-benchmark-reports' }}
           path: ${{ runner.temp }}/wdpa-reports/*.json
           if-no-files-found: ignore
           retention-days: 30

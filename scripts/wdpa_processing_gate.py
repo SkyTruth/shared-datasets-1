@@ -25,6 +25,11 @@ def source_digest():
             ROOT / "scripts/feature_metadata_translation_reuse.py",
             ROOT / "scripts/feature_metadata_localization.py",
             ROOT / "scripts/local_wdpa_sample.py",
+            ROOT / "scripts/local_ingestion_smoke.py",
+            ROOT / "scripts/cloud_wdpa_validation.py",
+            ROOT / "scripts/download_public_wdpa_benchmark.py",
+            ROOT / "docs/wdpa-processing-public-inputs.json",
+            ROOT / "ingestion/sea_ice_daily/run.py",
             ROOT / "scripts/translation_local_io.py",
             ROOT / "scripts/pmtiles_zoom.py",
             ROOT / "scripts/vector_asset.py",
@@ -112,14 +117,50 @@ def check(evidence):
     return errors
 
 
+def check_precloud(evidence):
+    """Authorize the isolated validation job; never authorize dataset publication."""
+    errors = []
+    if evidence.get("schema_version") != 1 or evidence.get("source_tree_sha256") != source_digest():
+        errors.append("staged validation does not match the processing source tree")
+    if evidence.get("disk_quota_approved") is not True:
+        errors.append("100 GiB ephemeral disk quota has not been approved")
+    small, marine = evidence.get("small_fixture") or {}, evidence.get("marine") or {}
+    if small.get("scope") != "small-sea-ice-fixture" or small.get("state") != "succeeded" or small.get("contracts_verified") is not True:
+        errors.append("the small sea-ice production-path smoke test must pass first")
+    if (marine.get("state") != "succeeded" or marine.get("sample_fraction") != 1
+            or marine.get("genesis") is not False or marine.get("translation_index_built") is not True
+            or marine.get("run_date") != "2026-10-01" or set(marine.get("assets", {})) != {"wdpa-marine"}
+            or marine.get("source_counts_verified") is not True or marine.get("contracts_verified") is not True):
+        errors.append("a complete verified marine WDPA build is required before cloud validation")
+    for run in (small, marine):
+        if run.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
+            errors.append("a staged test uses different processing code")
+        if (run.get("cpu_limit"), run.get("memory_limit_bytes")) != (4, 8 * 1024**3):
+            errors.append("a staged test did not use 4 CPU / 8 GiB")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(run.get("image_digest", ""))):
+            errors.append("a staged test is missing its immutable image digest")
+    if not small.get("image_digest") or small.get("image_digest") != marine.get("image_digest"):
+        errors.append("small and marine tests must use the same deployment image")
+    peak, scratch, elapsed = (marine.get(k) for k in ("memory_peak_bytes", "scratch_peak_bytes", "elapsed_seconds"))
+    if not isinstance(peak, int) or not 0 < peak <= 6.4 * 1024**3:
+        errors.append("marine WDPA missed the memory/headroom target")
+    if not isinstance(scratch, int) or not 8 * 1024**3 < scratch < 80 * 1024**3:
+        errors.append("marine WDPA must demonstrate disk spill beyond RAM while meeting the scratch target")
+    if not isinstance(elapsed, (float, int)) or not 0 < elapsed <= 86400:
+        errors.append("marine WDPA missed the timeout target")
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--print-source-digest", action="store_true")
+    parser.add_argument("--pre-cloud", action="store_true", help="Gate isolated cloud validation, without permitting publication")
     args = parser.parse_args()
     if args.print_source_digest:
         print(source_digest())
         return
-    errors = check(json.loads(EVIDENCE.read_text()))
+    evidence = ROOT / "catalog/wdpa-staged-validation.json" if args.pre_cloud else EVIDENCE
+    errors = (check_precloud if args.pre_cloud else check)(json.loads(evidence.read_text()))
     if errors:
         raise SystemExit("WDPA rollout blocked:\n" + "\n".join(errors))
 

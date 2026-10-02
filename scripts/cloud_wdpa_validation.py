@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Run frozen WDPA processing in Cloud Run; emit measurements without GCS writes."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ingestion.wdpa_monthly import run as wdpa
+from ingestion.wdpa_monthly.resources import (
+    PhaseProfiler,
+    cgroup_memory,
+    prepare_scratch,
+)
+from scripts.local_wdpa_sample import cgroup_limit
+from scripts.wdpa_processing_gate import source_digest
+
+
+def main():
+    wdpa.configure_logging()
+    if os.environ.get("WDPA_FAIL_BEFORE_DATASET_WRITES") == "1":
+        raise RuntimeError(
+            "Controlled WDPA validation failure before any dataset writes"
+        )
+    prepare_scratch()
+    if (cgroup_limit("cpu.max"), cgroup_limit("memory.max")) != (4, 8 * 1024**3):
+        raise RuntimeError("Cloud validation requires exactly 4 CPU / 8 GiB")
+    if cgroup_memory()[1] is None:
+        raise RuntimeError("Cloud validation requires cgroup memory.peak telemetry")
+    root = Path(os.environ["SHARED_DATASETS_WORKDIR"]) / "cloud-validation"
+    root.mkdir(parents=True, exist_ok=False)
+    inputs, replay = root / "inputs", root / "replay"
+    profiler = PhaseProfiler(
+        root, versions=wdpa.native_versions(), scratch_root=Path("/work")
+    )
+    report = {
+        "state": "failed",
+        "source_tree_sha256": source_digest(),
+        "cloud_execution": os.environ.get("CLOUD_RUN_EXECUTION"),
+    }
+    try:
+        with profiler.phase("cloud-input-download"):
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/download_public_wdpa_benchmark.py",
+                    "--recipe",
+                    "docs/wdpa-processing-public-inputs.json",
+                    "--out",
+                    str(inputs),
+                ],
+                check=True,
+            )
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/local_wdpa_sample.py",
+                "--source",
+                str(inputs / "WDPA_WDOECM_Oct2026_Public_all_shp.zip"),
+                "--baselines",
+                str(inputs / "frozen-inputs"),
+                "--translation-sources",
+                str(inputs / "frozen-inputs/translation-sources.json"),
+                "--workdir",
+                str(replay),
+                "--run-date",
+                "2026-10-01",
+            ],
+            check=True,
+        )
+        report = json.loads((replay / "benchmark.json").read_text())
+    except BaseException:
+        if (replay / "benchmark.json").exists():
+            report = json.loads((replay / "benchmark.json").read_text())
+        report["state"] = "failed"
+        raise
+    finally:
+        report["cloud_execution"] = os.environ.get("CLOUD_RUN_EXECUTION")
+        report["phases"] = profiler.records + report.get("phases", [])
+        report["memory_peak_bytes"] = cgroup_memory()[1]
+        report["scratch_peak_bytes"] = max(
+            (p["scratch_peak_bytes"] for p in report["phases"]),
+            default=None,
+        )
+        report["elapsed_seconds"] = sum(
+            p["elapsed_seconds"] for p in profiler.records
+        ) + report.get("elapsed_seconds", 0)
+        (root / "benchmark.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(
+            json.dumps(
+                {"event": "wdpa_cloud_validation_report", "report": report},
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+
+if __name__ == "__main__":
+    main()

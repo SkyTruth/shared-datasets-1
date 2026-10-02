@@ -309,6 +309,10 @@ def main():
     )
     parser.add_argument("--supplement", type=Path)
     parser.add_argument("--run-date", default="2026-10-01")
+    parser.add_argument(
+        "--asset", choices=[a.slug for a in wdpa.ASSETS] + ["all"], default="all",
+        help="Select a realm for staged validation; a single realm cannot satisfy full acceptance",
+    )
     parser.add_argument("--fraction", type=float, default=1)
     parser.add_argument("--seed", type=int, default=7919)
     parser.add_argument(
@@ -328,6 +332,7 @@ def main():
     if args.translation_sources and args.supplement:
         parser.error("approved supplements must be frozen in translation-sources.json")
     wdpa.configure_logging()
+    selected_assets = [a for a in wdpa.ASSETS if args.asset in {"all", a.slug}]
     prepare_scratch()
     args.workdir.mkdir(parents=True, exist_ok=False)
     run_date = wdpa.parse_run_date(args.run_date)
@@ -359,6 +364,7 @@ def main():
         "sample_seed": args.seed,
         "genesis": args.genesis,
         "run_date": args.run_date,
+        "asset_scope": [a.slug for a in selected_assets],
         "assets": {},
         "state": "failed",
     }
@@ -371,7 +377,7 @@ def main():
                 sources = wdpa.prepare_source_datasets(source_copy, args.workdir)
                 layers, split, fields = wdpa.discover_source_layers(sources)
                 baselines = {}
-                for asset in wdpa.ASSETS:
+                for asset in selected_assets:
                     baselines[asset.slug] = (
                         model.GeneratedIdentityBaseline.genesis(
                             contract_id=wdpa.CONTRACT_ID
@@ -398,7 +404,7 @@ def main():
                 else wdpa.SampleSpec(args.fraction, args.seed)
             )
             wdpa.assert_sample_field_available(layers, sample)
-            for asset in wdpa.ASSETS:
+            for asset in selected_assets:
                 where = wdpa.sampled_where_clause(
                     wdpa.asset_where_clause(asset, split), sample
                 )
@@ -433,7 +439,7 @@ def main():
                     translation_memory=memory,
                     identity_resolution_decisions=decisions,
                     cleanup_after_gpkg=(args.workdir / "source-zips", source_copy)
-                    if asset == wdpa.ASSETS[-1]
+                    if asset == selected_assets[-1]
                     else (),
                     profiler=profiler,
                 )

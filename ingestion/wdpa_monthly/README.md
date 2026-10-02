@@ -252,7 +252,7 @@ Missing peak telemetry is not passing evidence.
 Scratch measurements cover the entire `/work` filesystem, including native
 temporary files outside the build directory and open files that were unlinked.
 
-`scripts/wdpa_processing_gate.py` blocks protected deployment until the reviewed
+`scripts/wdpa_processing_gate.py` blocks production-worker deployment until the reviewed
 `catalog/wdpa-processing-acceptance.json` matches the processing source digest,
 records two complete October builds on 4 CPU / 8 GiB with matching frozen inputs,
 peak memory ≤6.4 GiB, scratch <80 GiB and completion within 24 hours, verifies
@@ -268,6 +268,29 @@ compatibility evidence. Full resource replays do not also run the old pipeline;
 `compatibility_verified` in acceptance records attests to that separately
 reviewed comparison, while `source_counts_verified` and `contracts_verified`
 come from the replay itself.
+
+Validation proceeds from small to large. The opt-in CI benchmark first runs
+`scripts/local_ingestion_smoke.py` against a tiny synthetic sea-ice raster in the
+deployment image. Only after it passes does the hosted runner process complete
+marine WDPA (`local_wdpa_sample.py --asset wdpa-marine`). Require ≤6.4 GiB peak
+memory and measured scratch greater than the 8 GiB RAM limit and below 80 GiB.
+The hosted runner's six-hour cap is not the production timeout target.
+
+Record small and marine reports in `catalog/wdpa-staged-validation.json`. After
+review, merge, disk quota approval and bootstrap permission verification,
+`wdpa-processing-validation-deploy.yml` deploys an isolated Cloud Run job at
+4 CPU / 8 GiB with 100 GiB disk and a 24-hour timeout. Its runtime service account
+has no dataset permissions and it has no scheduler. Public frozen inputs and
+local processing produce only diagnostics in Cloud Logging, including a
+`wdpa_cloud_validation_report`; downloads also contribute to resource measurements.
+The protected workflow checks exactly three resources and refuses bucket IAM,
+production-worker changes, deletes, larger resource limits and a publishing entrypoint.
+
+Verify the controlled failure's actual alert delivery before triggering the
+large replay. Follow each complete October execution through terminal status and
+collect its report. Two passing cloud reports permit the normal production-worker
+rollout through the unchanged publication-state gate. Interrupted validation
+cannot modify allocations, claims, receipts, release indexes or artifacts.
 
 ## Execution observations and failure recovery
 

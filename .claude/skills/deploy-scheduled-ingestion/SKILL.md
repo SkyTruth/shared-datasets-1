@@ -115,7 +115,13 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
 - Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
   Obtain the additional per-instance disk quota before rollout.
 - Require the two complete October benchmark reports and matching processing
-  source digest in `catalog/wdpa-processing-acceptance.json`.
+  source digest in `catalog/wdpa-processing-acceptance.json` before deploying
+  the production worker. Test small sea-ice fixtures first, then complete marine
+  WDPA on the hosted runner with measured disk spill above RAM. Reviewed evidence
+  in `catalog/wdpa-staged-validation.json` permits the isolated
+  `wdpa-processing-validation-deploy.yml` protected workflow after quota approval;
+  that job has no dataset permissions and tests terrestrial WDPA in Cloud Run
+  before the final publication gate opens.
 - Observe terminal status through the independent execution observer and verify
   actual alert delivery from a controlled failure before a dataset canary.
 - Cloud Run Job task timeout: at least `86400s` (24 hours).
