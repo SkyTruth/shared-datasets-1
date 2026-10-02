@@ -5,7 +5,7 @@ import test from 'node:test';
 import { checkConsumer, checkPackedFiles, createWorkDir, installConsumer, packPackage } from '../scripts/package-smoke.mjs';
 
 test('packed file contract rejects missing declarations and accidentally shipped source', () => {
-  const files = ['package.json', 'README.md', 'dist/index.js', 'dist/index.d.ts', 'dist/server.js', 'dist/server.d.ts']
+  const files = ['package.json', 'README.md', 'dist/index.js', 'dist/index.d.ts', 'dist/server.js', 'dist/server.d.ts', 'dist/maplibre.js', 'dist/maplibre.d.ts']
     .map(path => ({ path }));
   checkPackedFiles(files);
   assert.throws(() => checkPackedFiles(files.filter(file => file.path !== 'dist/server.d.ts')), /missing/);

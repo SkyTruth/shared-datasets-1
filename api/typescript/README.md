@@ -592,10 +592,47 @@ reviewed version to `main` publishes the validated tarball. The workflow does
 not make version commits or bypass branch protection. See the repository README
 for registry comparison, retry, and trusted-publisher configuration.
 
+## Show a dataset on a map
+
+The optional `@skytruth/shared-datasets/maplibre` entrypoint handles protocol
+registration, vector styling, extent fitting, and matching metadata on click:
+
+```typescript
+import {showDataset} from '@skytruth/shared-datasets/maplibre';
+const dataset = await showDataset('map', {
+  tiles: 'gs://example-bucket/category/subcategory/example-layer/releases/2026-06-26/example-layer.pmtiles#1782497508702243',
+  metadata: 'gs://example-bucket/category/subcategory/example-layer/releases/2026-06-26/example-layer.metadata.ndjson.gz#1782497515428207',
+}, {bucket: 'example-bucket'});
+```
+
+Install `maplibre-gl@5.9.0` and `pmtiles@4.3.0` alongside the SDK, import
+`maplibre-gl/dist/maplibre-gl.css` once, and give the container an explicit
+height. The SDK root stays framework-neutral; these optional peers are only
+needed for this entrypoint. `dataset` contains `map`, `records` keyed by
+`feature_id`, and the resolved `layer`. Metadata is optional (`null`);
+the helper requires vector PMTiles and ignores archive attribution HTML.
+Popup properties are inserted as text, never HTML.
+
+Both references require `#generation`. Tiles and metadata must belong to the
+same asset root and release. Availability and identity are checked before a map
+is created; no catalog lookup or release substitution occurs. The shorthand
+records verified object identity but does not carry published checksums/sizes.
+Use the full snapshot API below when published integrity expectations matter.
+`resolveDatasetMap(reference, options)` performs resolution and metadata loading
+without creating a map.
+
+Options include `bucket`, `artifactBaseUrl`, `access`, `mapOptions`,
+`probeArtifact`, and `authorizeArtifact`. For private/internal data, provide
+`access` and either an `authorizeArtifact` callback or `authorizationUrl` for your
+app-owned authenticated `POST` route. The route receives the generated snapshot,
+`asset_slug`, `role`, and `locale`; implement it with `authorizeSnapshotArtifact`
+from the server entrypoint below. Current catalog entitlement and exact indexed
+identity are authoritative. Session tokens, cookies, and signed URLs never appear
+in portable references.
+
 ## Exact portable snapshots
 
-These additive APIs consume the catalog's v1 dataset lockfiles and workspace
-JSON. See the [authoritative portable contract](../../docs/standards/workspace-snapshot-v1.md).
+These additive APIs consume v1 dataset lockfiles and workspace JSON. See the [authoritative portable contract](../../docs/standards/workspace-snapshot-v1.md).
 The browser validator is compiled from the same module used by the viewer.
 
 ```ts

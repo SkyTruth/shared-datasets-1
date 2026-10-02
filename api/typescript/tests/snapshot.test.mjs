@@ -113,7 +113,12 @@ test('generated TypeScript has valid syntax with quotes, newlines, unicode, and 
     const code = typescriptSnippet(snapshot);
     const compiled = ts.transpileModule(code, {compilerOptions: {module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022}, reportDiagnostics: true});
     assert.deepEqual(compiled.diagnostics, []);
-    assert(code.includes('resolveSnapshotLayer'));
+    assert(code.includes('showDataset'));
+    assert.equal(code.split('\n').length, 5);
+    assert(code.includes('#101'));
+    assert(code.includes('#102'));
+    assert(!code.includes('provenance'));
+    assert.equal(pythonSnippet(snapshot).split('\n').length, 4);
     assert(!code.includes('@skytruth/shared-datasets/server";'));
   }
 });

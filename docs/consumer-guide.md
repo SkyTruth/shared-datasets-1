@@ -420,41 +420,45 @@ is excluded from source changes. Identity incompatibility withholds authoritativ
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
 
-## Use a dataset and reopen a workspace
+## Use this dataset
 
-Choose the concrete release using the catalog's version selector, then open
-**Use this dataset** beside the docs/download actions. The action captures the
-selection once and offers Python exact fetch/integration code, public or
-restricted TypeScript/MapLibre integration, human-readable attribution, captured
-provenance, and a downloadable `*.lock.json`. Exported generations are decimal
-strings; checksums/sizes remain explicitly unknown when not published.
+Choose a Version, then copy the Python or TypeScript example in **Use this dataset**
+immediately below it. Each example is 3–5 lines. Python fetches the selected
+file into a verified local cache and opens it with the appropriate reader.
+TypeScript creates a MapLibre map, fits the dataset, and shows matching feature
+attributes on click. References include the selected object generations; no
+catalog refresh or latest substitution occurs when the code runs.
 
-For comparisons, choose each asset's release and add rows with Cmd-click.
-**Save workspace** records selected assets and release identities, selection
-order, viewport, basemap, selected locale, and the single-dataset source-layer
-and color-field controls. All selected layers are visible. Hidden layers,
-opacity, arbitrary styles, legend focus, and selected features are not saved.
-**Open workspace** accepts the JSON, validates all entries, and establishes
-access/availability for every required artifact before mounting the selection.
-Then it restores the supported presentation controls. Imports with unavailable
-bytes or unsupported state fail visibly; the viewer does not restore a partial
-selection or silently switch releases.
+Install the SDK once in your project:
 
-Latest changing and same-date replacements never change a saved identity.
-For restricted assets the viewer must reacquire access using its existing
-authorized routes. If the current release index no longer authorizes a captured
-older generation, the viewer reports that limitation. A public retained
-generation can remain directly readable; Python ADC reads are controlled by
-GCS IAM and fetch captured bytes directly. Ordinary legacy browsing remains
-available, but a selection without published exact identity cannot receive a
-reproducibly pinned export. V1 does not support Zarr collections.
+```bash
+uv pip install "skytruth-shared-datasets[gcs] @ https://github.com/SkyTruth/shared-datasets-1/archive/refs/heads/main.zip#subdirectory=api/python"
+# Add the reader used by your example, e.g. geopandas for FGB or rasterio for COG.
+npm install @skytruth/shared-datasets maplibre-gl@5.9.0 pmtiles@4.3.0
+```
 
-Lockfiles reference data; they do not archive bytes or guarantee indefinite
-retention. Preserve local downloaded bytes if your analysis requires independent
-retention. Published integrity expectations and locally verified evidence are
-different. Source caveats, lifecycle guidance, and terms remain authoritative;
-a captured license is not an interpretation of reuse permission.
+Python uses Application Default Credentials from your runtime identity. For local
+work, run `gcloud auth application-default login`. For TypeScript, import
+`maplibre-gl/dist/maplibre-gl.css` once in your app and give the `map` container
+an explicit height. Restricted examples use your application's authenticated
+`POST /api/snapshot-artifact` endpoint, implemented with
+[`authorizeSnapshotArtifact`](../api/typescript/README.md#exact-portable-snapshots).
+The server checks current entitlement and indexed artifact identity before signing.
 
-See the [portable contract](standards/workspace-snapshot-v1.md),
-[Python API](../api/python/README.md#exact-portable-lockfiles), and
-[TypeScript API](../api/typescript/README.md#exact-portable-snapshots).
+**Copy credit** copies a small `Data: Source · SkyTruth` credit suitable for a
+corner of your interface; link it to the original source. Full citation,
+license, lifecycle guidance, and source caveats remain in the dataset's Source
+section and documentation. Follow any additional attribution required by those terms.
+
+The catalog retains **Open workspace** for importing existing v1 JSON files.
+It validates the complete file, checks artifact access, then restores supported
+selection and map controls together. Unavailable bytes or unsupported state
+fail visibly without substituting a release. Workspace saving and lockfile
+export are no longer part of the catalog interface. Advanced snapshot APIs
+remain available for programmatic workflows.
+
+Pinned references do not archive remote bytes or guarantee retention. Preserve
+local files if your analysis requires independent retention. See the
+[Python API](../api/python/README.md#fetch-an-exact-artifact),
+[MapLibre helper](../api/typescript/README.md#show-a-dataset-on-a-map), and
+[portable contract](standards/workspace-snapshot-v1.md).

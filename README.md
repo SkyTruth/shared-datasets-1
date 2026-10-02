@@ -659,10 +659,10 @@ Terraform validation requires the CI-pinned Terraform version (see
 `TERRAFORM_VERSION` in `.github/workflows/ci.yml`); older binaries reject the
 `optional(type, default)` variable syntax used by the prod environment.
 
-The catalog's **Use this dataset** action provides integration code, attribution,
-and exact-generation lockfiles. **Save workspace** / **Open workspace** round-trip
+The catalog's inline **Use this dataset** section provides 3–5 line integration
+examples and a small source credit. **Open workspace** imports
 supported map controls and concrete dataset references. See the
-[consumer workflow](docs/consumer-guide.md#use-a-dataset-and-reopen-a-workspace) and
+[consumer workflow](docs/consumer-guide.md#use-this-dataset) and
 [portable v1 contract](docs/standards/workspace-snapshot-v1.md).
 
 ## TypeScript SDK release

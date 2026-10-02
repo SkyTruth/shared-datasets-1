@@ -1,6 +1,6 @@
 {
   "name": "@skytruth/shared-datasets",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Framework-neutral TypeScript helpers for SkyTruth shared datasets.",
   "type": "module",
   "repository": {
@@ -27,7 +27,11 @@
       "types": "./dist/server.d.ts",
       "import": "./dist/server.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./maplibre": {
+      "types": "./dist/maplibre.d.ts",
+      "import": "./dist/maplibre.js"
+    }
   },
   "scripts": {
     "prepare": "npm run build",
@@ -39,6 +43,20 @@
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.15.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "maplibre-gl": "5.9.0",
+    "pmtiles": "4.3.0"
+  },
+  "peerDependencies": {
+    "maplibre-gl": "5.9.0",
+    "pmtiles": "4.3.0"
+  },
+  "peerDependenciesMeta": {
+    "maplibre-gl": {
+      "optional": true
+    },
+    "pmtiles": {
+      "optional": true
+    }
   }
 }

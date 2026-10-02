@@ -69,15 +69,13 @@
               <p id="detail-taxonomy" class="eyebrow"></p>
               <h2 id="detail-title"></h2>
               <p id="detail-slug" class="detail-slug"></p>
-              <p id="detail-description" class="detail-description"></p>
-              <div id="selection-legend" class="selection-legend" hidden></div>
             </div>
             <div class="detail-actions">
               <a id="detail-docs" class="quiet-link" href="#" aria-haspopup="dialog">Open docs</a>
-              <button id="use-dataset" class="icon-button" type="button">Use this dataset</button>
-              <button id="save-workspace" class="icon-button" type="button">Save workspace</button>
               <a id="download-fgb" class="icon-button download-button" href="#" download hidden>Download FGB</a>
             </div>
+            <p id="detail-description" class="detail-description"></p>
+            <div id="selection-legend" class="selection-legend" hidden></div>
           </header>
 
           <p id="workspace-status" class="workspace-status" role="status" aria-live="polite"></p>
@@ -91,6 +89,24 @@
             </div>
             <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-panel">Compare releases</button>
           </div>
+            <section id="use-section" class="use-section" aria-labelledby="use-title" hidden>
+              <h3 id="use-title">Use this dataset</h3>
+              <div class="use-code-toolbar">
+                <div class="use-tabs" role="tablist" aria-label="Code language">
+                  <button id="use-tab-python" type="button" role="tab" aria-selected="true" aria-controls="use-python">Python</button>
+                  <button id="use-tab-typescript" type="button" role="tab" aria-selected="false" aria-controls="use-typescript" tabindex="-1">TypeScript</button>
+                </div>
+                <button id="use-copy-code" class="icon-button" type="button">Copy code</button>
+              </div>
+              <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python"></pre>
+              <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" hidden></pre>
+              <p id="use-error" role="status" hidden></p>
+              <div class="use-credit">
+                <a id="use-attribution" target="_blank" rel="noopener"></a>
+                <button id="use-copy-attribution" type="button" aria-label="Copy attribution" title="Copy attribution">Copy credit</button>
+                <a class="use-help" href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/consumer-guide.md#use-this-dataset" target="_blank" rel="noopener">SDK setup</a>
+              </div>
+            </section>
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
               <div class="map-actions map-actions-left">
@@ -229,6 +245,7 @@
           </section>
 
           <section class="path-section" aria-label="Dataset paths">
+
             <div class="path-row">
               <div>
                 <span>Canonical GCS path</span>
@@ -319,18 +336,6 @@
         <div id="docs-body" class="docs-body" tabindex="0"></div>
       </article>
     </div>
-
-    <dialog id="use-dataset-dialog" class="use-dataset-dialog" aria-labelledby="use-title">
-      <header><h2 id="use-title">Use this dataset</h2><button id="use-close" class="icon-button" type="button">Close</button></header>
-      <p>Exact references to remote data. A lockfile does not archive bytes or guarantee indefinite retention. Reacquire authorized access when reopening it.</p>
-      <pre id="use-summary"></pre>
-      <button id="use-export" class="icon-button" type="button">Download exact lockfile</button>
-      <h3>Installation and access</h3><pre id="use-install"></pre>
-      <h3>Python</h3><button id="use-copy-python" class="icon-button" type="button">Copy Python</button><pre id="use-python"></pre>
-      <h3>TypeScript / MapLibre</h3><button id="use-copy-typescript" class="icon-button" type="button">Copy TypeScript</button><pre id="use-typescript"></pre>
-      <h3>Citation, source, and terms</h3><button id="use-copy-attribution" class="icon-button" type="button">Copy attribution</button><pre id="use-attribution"></pre>
-      <h3>Captured provenance</h3><button id="use-copy-provenance" class="icon-button" type="button">Copy provenance JSON</button><pre id="use-provenance"></pre>
-    </dialog>
 
     <template id="asset-card-template">
       <button class="asset-card" type="button">

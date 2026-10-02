@@ -434,35 +434,32 @@ is excluded from source changes. Identity incompatibility withholds authoritativ
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
 
-## Dataset integration and portable workspaces
+## Dataset integration and workspace imports
 
-The **Use this dataset**, **Save workspace**, and **Open workspace** controls
-use the [v1 portable contract](standards/workspace-snapshot-v1.md). Latest is
-captured once into existing release-reference objects; snippets and exports
-reuse those references. Imports are bounded, validated, checked against the
-authorized catalog root/tier, and preflighted before rendering. Existing
-`/api/pmtiles/signed-url` and `/api/download-url` routes reacquire restricted
-access. The latter supports bounded canonical CSV, GeoJSON, NDGeoJSON, and COG
-formats in addition to FGB, metadata, and schema. It never signs arbitrary
-imported paths, and requires the expected indexed generation.
+**Use this dataset** is an inline section immediately below Version. Its
+Python/TypeScript tabs show 3–5 line examples and a single Copy code action.
+A small source link and Copy credit action provide corner-sized attribution.
+Setup lives in the consumer guide; the UI has no integration dialog, Save
+workspace action, lockfile download, artifact identity dump, or provenance output.
+Dataset descriptions span the detail header independently of its action buttons.
 
-Presentation includes selection order, all selected layers visible, viewport,
-basemap, locale, and the product's single-dataset source-layer/color controls.
-Unsupported state is rejected. No server-side workspace store is introduced.
-Exact legacy generation documents can be consumed by Python; viewer restore
-requires a dated indexed release. The UI explains missing identity and remote
-retention limitations.
+Latest is captured once into the existing release-reference objects. Examples
+use dated artifact URIs with exact generations; `fetch_artifact` and
+`showDataset` hide cache, map setup, and metadata joining. Python uses ADC.
+The optional TypeScript MapLibre entrypoint uses the same pinned MapLibre and
+PMTiles versions as the catalog. Restricted integrations need an app-owned
+snapshot authorization route; imported references never authorize access.
 
-Builds include `sdk_revision` when `SHARED_DATASETS_SDK_REVISION` or `GITHUB_SHA`
-names the reviewed 40-character source commit containing these APIs. This
-produces a pinned GitHub archive Python install and a matching repository
-checkout instruction for the TypeScript package. Local builds without a revision
-show editable/development installs and their unreleased status. Do not supply
-an old base commit which lacks the APIs.
+**Open workspace** still accepts [v1 documents](standards/workspace-snapshot-v1.md).
+Imports are bounded, validated, checked against the authorized catalog root/tier,
+and preflighted before rendering. Existing `/api/pmtiles/signed-url` and
+`/api/download-url` routes reacquire restricted access and require expected
+indexed generations. Unsupported state or unavailable bytes fail atomically.
+Full source terms remain in the dataset's Source section and authoritative docs.
 
-The browser smoke suite executes the generated TypeScript with the real
-browser-safe SDK entrypoint, MapLibre, PMTiles, and synthetic archives. It also
-checks clipboard actions, exact exports, single/multiple workspace round-trips,
-map controls, restricted reacquisition, and atomic failure states. Python tests
-execute generated code through the real package entrypoint using a synthetic
-GCS client. These do not prove live IAP/CDN/GCS retention configuration.
+The browser smoke suite executes the five-line TypeScript example with real
+MapLibre, PMTiles, and SDK modules. It checks copying, version changes, desktop
+and narrow layouts, single/multiple workspace imports, and atomic failures.
+Python tests execute each generated format example through the real package
+entrypoint using a synthetic GCS client. These checks do not prove live
+IAP/CDN/GCS retention configuration.
