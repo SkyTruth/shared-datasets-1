@@ -13,7 +13,7 @@ from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_results
 
-from workflow_helpers import load_workflow, workflow_steps_by_name
+from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,36 @@ NATIVE_TOOL_TESTS = {
 class GeospatialCiTests(unittest.TestCase):
     def setUp(self):
         self.workflow = load_workflow(CI_WORKFLOW)
+
+    def test_complete_benchmark_is_manual_read_only_and_resource_constrained(self):
+        inputs = workflow_triggers(self.workflow)["workflow_dispatch"]["inputs"]
+        self.assertIs(inputs["wdpa_full_benchmark"]["default"], False)
+        job = self.workflow["jobs"]["wdpa-full-benchmark"]
+        self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
+        self.assertIn("inputs.wdpa_full_benchmark", job["if"])
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+        steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
+        run = steps["Run two complete builds with 4 CPU and 8 GiB"]["run"]
+        self.assertIn("for replay in 1 2", run)
+        self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", run)
+        self.assertIn("CLOUD_RUN_EXECUTION=wdpa-benchmark", run)
+        self.assertIn("--translation-sources", run)
+        self.assertIn("wdpa-inputs:/inputs:ro", run)
+        self.assertNotIn("SNAPSHOT_READ_TOKEN", run)
+        self.assertNotIn("--genesis", run)
+        upload = steps["Upload measurements only"]["with"]
+        self.assertEqual(upload["path"], "${{ runner.temp }}/wdpa-reports/*.json")
+        self.assertIn("fallocate -l 100G", steps["Provision a 100 GiB disk scratch filesystem"]["run"])
+
+    def test_benchmark_snapshot_download_is_generation_and_hash_pinned(self):
+        steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
+        run = steps["Download the generation-pinned private snapshot"]["run"]
+        self.assertIn("_scratch/wdpa-processing-benchmarks/", run)
+        self.assertIn("'?alt=media&generation=' + generation", run)
+        self.assertIn("digest.hexdigest() != expected", run)
+        self.assertIn("extractall(root, filter='data')", run)
+        script = run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        compile(script, "benchmark-snapshot-download", "exec")
 
     def test_geospatial_job_runs_all_native_tool_integration_tests(self):
         run = workflow_steps_by_name(self.workflow, "geospatial-integration")[

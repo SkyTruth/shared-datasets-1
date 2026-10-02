@@ -79,6 +79,34 @@ Raw rows and distinct source identities agree in both realms. These are source
 record/site counts; they do not establish that the October terrestrial release
 has been published, complete artifact compatibility, or resource acceptance.
 
+## Hosted complete-build runner
+
+The existing `CI` workflow has an opt-in `wdpa_full_benchmark` input. It builds
+one deployment image and runs two fresh containers at exactly 4 CPU / 8 GiB,
+with no swap and a 100 GiB ext4 disk at `/work`. The second replay starts with
+empty scratch. This is the production processing path, including rebuilding
+the translation index, with frozen baseline inputs and no publication.
+GitHub hosted jobs have a six-hour ceiling, stricter than the production
+24-hour target; a hosted timeout cannot establish the production timeout target.
+
+`wdpa_snapshot_uri`, `wdpa_snapshot_generation` and `wdpa_snapshot_sha256` must
+identify one private, generation-pinned diagnostic archive under
+`_scratch/wdpa-processing-benchmarks/`. Package only the frozen upstream ZIP,
+baseline pins/manifests/sidecars and the files referenced by
+`translation-sources.json`; omit the prebuilt translation SQLite cache. Use
+no-clobber staging. The workflow checks the archive hash before extraction,
+then the sandbox validates each baseline and translation snapshot.
+
+Provide `WDPA_BENCHMARK_READ_TOKEN` as a short-lived encrypted Actions secret,
+downscoped through a Cloud Storage credential access boundary to object-reader
+permissions on exactly the staged object. Do not provide publisher credentials
+or a broad local access token. Remove the temporary secret after download. The
+token is used only by the host download step and is absent from the processing
+containers. No dataset bytes are uploaded to public Actions artifacts. Retained
+artifacts contain only measurements, counts, digests and container outcomes.
+Unused preinstalled tooling is removed only on this disposable job VM to make
+room for the disk; the job fails if the disk cannot be provisioned.
+
 ## Infrastructure and failure visibility
 
 The read-only worker/observer plan contains **eight creations, one update, zero
@@ -102,10 +130,10 @@ have been granted by this PR.
 
 ## Remaining acceptance and rollout
 
-1. Provide a Linux Docker runtime with 4 CPU, 8 GiB, reliable cgroup peak telemetry
-   and enough disk for the 100 GiB scratch volume. The current VM has only two
-   CPUs and about 2.9 GiB total memory; restarting it also affects a running
-   database container.
+1. Use the manual `CI` workflow complete-benchmark input on its disposable Linux
+   runner, or provide a Linux Docker runtime with 4 CPU, 8 GiB, cgroup peak
+   telemetry and enough disk for 100 GiB scratch. The local VM cannot meet this
+   target without interrupting an unrelated running database.
 2. Run the deployment image twice on the complete frozen October inputs and
    identical verified baseline/translation snapshots. Require peak memory
    ≤6.4 GiB, scratch <80 GiB, duration ≤24 hours, verified source-derived

@@ -6,6 +6,20 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      wdpa_full_benchmark:
+        description: Run two complete frozen October builds without publication
+        type: boolean
+        default: false
+      wdpa_snapshot_uri:
+        description: Private benchmark snapshot under _scratch/wdpa-processing-benchmarks/
+        type: string
+      wdpa_snapshot_generation:
+        description: Immutable snapshot generation
+        type: string
+      wdpa_snapshot_sha256:
+        description: Snapshot archive SHA-256
+        type: string
 
 permissions:
   contents: read
@@ -19,7 +33,7 @@ env:
 
 jobs:
   wdpa-benchmark-capacity:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.wdpa_full_benchmark
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,6 +54,133 @@ jobs:
           docker run --rm --cpus=4 --memory=8g --memory-swap=8g \
             python:3.12-slim-bookworm python -c \
             'import json; from pathlib import Path; root=Path("/sys/fs/cgroup"); print(json.dumps({name:(root/name).read_text().strip() if (root/name).exists() else None for name in ("cpu.max","memory.max","memory.peak")},sort_keys=True))'
+
+  wdpa-full-benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Prepare disposable benchmark host
+        run: |
+          set -euo pipefail
+          # These are unused preinstalled tools on this job's disposable VM.
+          # Each CI job has its own VM; no other job or user workspace is affected.
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache; do
+            if [[ -e "$path" ]]; then sudo du -sh "$path"; sudo rm -rf "$path"; fi
+          done
+          df -h /
+          mkdir -p "$RUNNER_TEMP/wdpa-inputs" "$RUNNER_TEMP/wdpa-reports"
+      - name: Download the generation-pinned private snapshot
+        env:
+          SNAPSHOT_URI: ${{ inputs.wdpa_snapshot_uri }}
+          SNAPSHOT_GENERATION: ${{ inputs.wdpa_snapshot_generation }}
+          SNAPSHOT_SHA256: ${{ inputs.wdpa_snapshot_sha256 }}
+          SNAPSHOT_READ_TOKEN: ${{ secrets.WDPA_BENCHMARK_READ_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, re, tarfile, urllib.parse, urllib.request
+          from pathlib import Path
+          uri, generation, expected = (os.environ[key] for key in ('SNAPSHOT_URI', 'SNAPSHOT_GENERATION', 'SNAPSHOT_SHA256'))
+          prefix = 'gs://skytruth-shared-datasets-1/_scratch/wdpa-processing-benchmarks/'
+          if not uri.startswith(prefix) or not re.fullmatch(r'[0-9]+', generation) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+              raise SystemExit('A generation-pinned private WDPA benchmark snapshot is required')
+          token = os.environ['SNAPSHOT_READ_TOKEN']
+          if not token:
+              raise SystemExit('The short-lived snapshot reader token is missing')
+          name = uri.split('/', 3)[3]
+          url = 'https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/' + urllib.parse.quote(name, safe='') + '?alt=media&generation=' + generation
+          root = Path(os.environ['RUNNER_TEMP']) / 'wdpa-inputs'
+          archive = root / 'snapshot.tar'
+          digest = hashlib.sha256()
+          size = 0
+          request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token})
+          with urllib.request.urlopen(request, timeout=120) as response, archive.open('xb') as target:
+              while chunk := response.read(1024 * 1024):
+                  size += len(chunk)
+                  if size > 7 * 1024**3:
+                      raise RuntimeError('Snapshot exceeds the reviewed benchmark bundle size')
+                  digest.update(chunk)
+                  target.write(chunk)
+          if digest.hexdigest() != expected:
+              raise SystemExit('Frozen snapshot SHA-256 mismatch')
+          with tarfile.open(archive) as bundle:
+              bundle.extractall(root, filter='data')
+          archive.unlink()
+          print({'snapshot_generation': generation, 'snapshot_sha256': expected, 'snapshot_bytes': size})
+          PY
+      - name: Build the deployment image once
+        id: image
+        run: |
+          docker buildx build --load --platform linux/amd64 \
+            --build-arg SHARED_DATASETS_EXECUTOR_SHA="$GITHUB_SHA" \
+            --metadata-file "$RUNNER_TEMP/wdpa-reports/image.json" \
+            -f ingestion/wdpa_monthly/Dockerfile -t wdpa-processing-benchmark:local .
+      - name: Provision a 100 GiB disk scratch filesystem
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          s = os.statvfs(os.environ['RUNNER_TEMP'])
+          if s.f_bavail * s.f_frsize < 105 * 1024**3:
+              raise SystemExit('Insufficient host storage for a 100 GiB disk; resource target must not be reduced')
+          PY
+          sudo fallocate -l 100G "$RUNNER_TEMP/wdpa-scratch.ext4"
+          device="$(sudo losetup --find --show --direct-io=on "$RUNNER_TEMP/wdpa-scratch.ext4")"
+          echo "WDPA_SCRATCH_DEVICE=$device" >> "$GITHUB_ENV"
+          sudo mkfs.ext4 -q -m 0 -E lazy_itable_init=0,lazy_journal_init=0 "$device"
+          sudo mkdir -p /work
+          sudo mount "$device" /work
+          sudo chmod 0777 /work
+          df -h /work
+      - name: Run two complete builds with 4 CPU and 8 GiB
+        run: |
+          set -euo pipefail
+          for replay in 1 2; do
+            echo "Starting complete October replay $replay"
+            # A fresh cgroup is used for each build; the second starts on an empty disk.
+            docker run --name "wdpa-replay-$replay" \
+              --cpus=4 --memory=8g --memory-swap=8g \
+              -e CLOUD_RUN_EXECUTION=wdpa-benchmark \
+              -v /work:/work \
+              -v "$RUNNER_TEMP/wdpa-inputs:/inputs:ro" \
+              wdpa-processing-benchmark:local \
+              python scripts/local_wdpa_sample.py \
+                --source /inputs/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
+                --baselines /inputs/frozen-inputs \
+                --translation-sources /inputs/frozen-inputs/translation-sources.json \
+                --workdir /work/shared-datasets-1/replay --run-date 2026-10-01
+            cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/replay-$replay.json"
+            docker inspect "wdpa-replay-$replay" --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-$replay.json"
+            docker rm "wdpa-replay-$replay"
+            # This disk contains only this job's completed disposable processing scratch.
+            sudo rm -rf /work/shared-datasets-1 /work/tmp
+          done
+      - name: Retain report if a replay failed
+        if: failure()
+        run: |
+          for replay in 1 2; do
+            if docker inspect "wdpa-replay-$replay" >/dev/null 2>&1; then
+              docker inspect "wdpa-replay-$replay" --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-$replay.json"
+            fi
+          done
+          if [[ -f /work/shared-datasets-1/replay/benchmark.json ]]; then
+            cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/failed-replay.json"
+          fi
+      - name: Upload measurements only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdpa-complete-benchmark-reports
+          path: ${{ runner.temp }}/wdpa-reports/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Unmount disposable benchmark disk
+        if: always()
+        run: |
+          sudo umount /work 2>/dev/null || true
+          if [[ -n "${WDPA_SCRATCH_DEVICE:-}" ]]; then sudo losetup -d "$WDPA_SCRATCH_DEVICE"; fi
 
   lint:
     runs-on: ubuntu-latest
