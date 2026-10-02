@@ -24,6 +24,10 @@ evidence, but the two complete October runs at 4 CPU / 8 GiB have not been run.
   plan passed the deployment workflow's exact resource and processing-limit
   allowlists. No apply was run.
 - Ruff and repository static guardrails passed.
+- Pinned Gitleaks 8.24.3 full-history scanning passed. CI initially flagged a
+  historical `allow_empty=generated != "approved"` Python argument expression
+  as an API key. `.gitleaksignore` excludes only that verified commit/file/line
+  fingerprint; no credential rule or file-wide exclusion was added.
 
 ## Deterministic October comparison
 
