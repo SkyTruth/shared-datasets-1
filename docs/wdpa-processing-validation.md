@@ -133,8 +133,8 @@ The corrected deployment image on `3febe15` passed sea ice in
 The real sea-ice production path generated one polygon and verified metadata,
 FGB and PMTiles contracts in 1.023 seconds. Cgroup peak was 104,140,800 bytes;
 scratch peaked at 823,296 bytes under the exact 4 CPU / 8 GiB limits.
-The image digest and scalar report are retained in
-`catalog/wdpa-staged-validation.json`. The same-image complete marine stage is
+The historical image digest and scalar report are retained in
+`docs/wdpa-processing-evidence/37019403196/staged-validation.json`. The same-image complete marine stage is
 also complete; this small fixture provides no complete-WDPA resource acceptance.
 
 The complete marine replay in that run passed at 4 CPU / 8 GiB with no swap:
@@ -152,7 +152,8 @@ The translation index was rebuilt from frozen inputs; all six locale sidecars
 and the canonical CSV were generated. Metadata, indexed FGB and PMTiles passed
 their contracts, including representative tile decoding. The container exited
 zero with `OOMKilled=false`. The loaded image digest matches sea ice exactly.
-The scalar report is recorded in `catalog/wdpa-staged-validation.json` with its
+The historical scalar report is recorded in
+`docs/wdpa-processing-evidence/37019403196/staged-validation.json` with its
 Actions artifact ID and report hash. This run did not repeat the old/new
 comparison; `compatibility_verified` remains false rather than claiming that
 comparison from artifact checks alone. Earlier fixture/sample compatibility
@@ -164,12 +165,44 @@ open the current isolated cloud gate. No dataset bytes were published; complete
 terrestrial builds and final worker acceptance remain pending.
 
 Fresh [run 37047953130](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130)
-uses the current processing digest and one image for all stages. Sea ice passed,
-then the deterministic October old/new sample passed for both realms with a
-fresh translation index. At the October 2 rollout check, complete marine
-processing was still running. Preserve its raw reports and record separate
-sample compatibility and complete resource evidence in version 2 of
-`catalog/wdpa-staged-validation.json` before another isolated deployment.
+passed all three stages on the current processing digest and one image. Sea ice
+passed in 1.580 seconds, with a 104,988,672-byte kernel phase peak and 876,544-byte
+scratch peak. The deterministic October old/new sample then agreed on all 20
+marine and 499 terrestrial records, including 193 terrestrial India records,
+using fraction `0.001`, seed `7919`, frozen baselines and a fresh translation
+index. Its comparison covers IDs, hashes, properties, geometry, field types,
+metadata, six locale sidecars and the canonical translation CSV.
+
+Complete marine finished at `2026-10-02T19:42:44Z` with exit code zero and
+`OOMKilled=false`:
+
+| Measurement | Fresh marine result | Required target |
+| --- | --- | --- |
+| Processing duration | 3,027.472 seconds (50.5 minutes) | ≤24 hours |
+| Kernel cgroup memory peak | 4,842,131,456 bytes (4.51 GiB) | ≤6.4 GiB |
+| Memory headroom | 43.6% | ≥20% |
+| Scratch peak | 9,561,579,520 bytes (8.90 GiB) | >8 GiB and <80 GiB |
+| Marine records | 17,938 | Frozen source: 17,938 |
+| India records/sites | 304 / 304 | Frozen source: 304 / 304 |
+
+The complete build independently counted the frozen source and verified metadata,
+indexed FGB and PMTiles contracts, including representative tile decoding. It
+rebuilt translations from the frozen inputs. Its output hashes and semantic hash
+also match the historical complete marine replay. Its raw
+`compatibility_verified` remains false: the separate sample supplies old/new
+comparison proof, and artifact validation does not impersonate that comparison.
+
+[Version 2 staged evidence](../catalog/wdpa-staged-validation.json) now opens only
+the isolated cloud validation gate. It records processing fingerprint
+`ebb43140387c3951290ecd0ad119e1ba5ed595ff96c14cbc00b27f26617a8040`,
+configuration digest
+`sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489`,
+the Actions run/head and artifact IDs/hashes. Unmodified reports, image metadata
+and container state are retained under `docs/wdpa-processing-evidence/37047953130/`;
+the previous staged document remains intact in the historical directory. The
+production acceptance gate still requires two complete cloud builds, including
+terrestrial, with the same image and frozen inputs. No dataset bytes were
+published by these stages.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
@@ -322,10 +355,10 @@ describes the separate limits and initial regional grant.
 
 ## Remaining acceptance and rollout
 
-1. Complete the fresh staged run and review matching small-fixture, both-realm
-   old/new sample and complete marine reports, including verified
-   counts/contracts and disk scratch above RAM. Earlier processing digests
-   cannot satisfy this gate.
+1. Review the fresh matching small-fixture, both-realm old/new sample and
+   complete marine reports. These stages passed, including verified
+   counts/contracts and disk scratch above RAM. Merge the staged evidence before
+   isolated deployment; earlier processing digests cannot satisfy this gate.
 2. After review, merge and quota/bootstrap verification, deploy only the isolated
    cloud validation job. Run the deployment image twice on the complete frozen October inputs and
    identical verified baseline/translation snapshots. Require peak memory
