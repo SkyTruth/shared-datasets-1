@@ -55,7 +55,7 @@ function delay(ms, signal) {
   });
 }
 
-export function createComparisonController({loadMapModule = () => import("./map-preview.js"), onModeChange = () => {}, getBasemap = () => "map"} = {}) {
+export function createComparisonController({loadMapModule = () => import("./map-preview.js"), onModeChange = () => {}, onFeatureSelect, getBasemap = () => "map"} = {}) {
   const ids = ["open", "panel", "before", "after", "release-controls", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "details", "map-note", "table", "legend"];
   const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(`compare-${id}`)]));
   const versionControl = document.getElementById("version-control"), mapContainer = document.getElementById("map-preview"), mapStatus = document.getElementById("map-status");
@@ -78,6 +78,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
   function stop() {
     window.clearTimeout(rerunTimer); rerunTimer = null;
     pageSerial++; inspectSerial++;
+    onFeatureSelect([]);
     if (active) {
       viewport = active.map?.viewport() || viewport;
       active.abort.abort(); active.mapAbort?.abort(); active.map?.dispose();
@@ -181,7 +182,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       const module = await loadMapModule(); if (!isCurrent()) return;
       const map = await module.renderComparisonMap({container: mapContainer, status: mapStatus, baseline: session.refs.baseline, target: session.refs.target,
         signal: mapAbort.signal, basemap: getBasemap(), viewport,
-        onSelect: id => { if (current(session) && session.summary?.identity.compatible) void inspect(session, id); },
+        onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features); },
         lookupGeometry: async (side, ids) => (await request(`/api/comparisons/${session.job}/map`, session, {method: "POST", signal: mapAbort.signal, headers: {"Content-Type": "application/json"}, body: JSON.stringify({side, feature_ids: ids})})).map_features,
         onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
       });
@@ -233,7 +234,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
   });
   return {
     isOpen: () => opened,
-    refreshMap: () => { if (active?.refs) void showMap(active); },
+    refreshMap: () => { onFeatureSelect([]); if (active?.refs) void showMap(active); },
     setAsset(next, selectedVersion = "latest", opts = {}) {
       if (asset === next && version === selectedVersion) return;
       stop(); clearResults(); viewport = null; if (opened) setMode(false);

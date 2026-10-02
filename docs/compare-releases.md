@@ -10,7 +10,8 @@ selector. The union occupies the primary map at the top of the detail view,
 retaining its viewport. Before is red and After green. The selections, Close comparison, and right-aligned
 **Details** affordance share one row. Details start collapsed and contain compact
 release, change, and schema tables; progress and failures remain visible. Selecting
-a map feature opens the property details. **Use this dataset** sits directly above
+a map feature shows its property details below the map, independently of the
+collapsed comparison summary. **Use this dataset** sits directly above
 the canonical paths.
 
 The authenticated catalog viewer performs complete comparisons. A static catalog
@@ -23,7 +24,9 @@ The result contains six mutually exclusive feature counts, separate schema
 changes, a searchable table with 50 rows per page, before/after source properties,
 and publication provenance. Complete JSON reports remain available through the
 CLI and API; the viewer has no export button. Selecting
-a row or clicking a displayed feature opens its properties. `Absent` differs
+a table row opens paired properties for its comparable ID. Clicking the map
+shows every overlapping polygon from both release layers in separate **Before**
+and **After** tables, labeled with their release dates. `Absent` differs
 from explicit JSON `null`. The inspector retains publication fields for inspection;
 source-property changes exclude the canonical hash exclusions and any declared
 manifest exclusions. Source language is used regardless of the catalog's display
@@ -58,7 +61,9 @@ supported versioned sequence state. Source-field identities require compatible
 source-field schema semantics, including datatype, nullability and projection;
 they legitimately have no generated contract field. Legacy/missing identity
 evidence, contract resets and incompatible semantics withhold feature counts,
-matching and inspection. They still allow geometry colors and schema/publication comparison; geometry lookups never join feature IDs across releases.
+matching and paired table inspection. Individual map hits remain inspectable
+from their own pinned release sidecars. They still allow geometry colors and
+schema/publication comparison; geometry lookups never join feature IDs across releases.
 There is no inferred identity continuity from similar geometry or numeric IDs.
 Generated IDs must be below the declared next allocation. Each record must match
 its declared assignment-key strategy. The publisher owns reviewed identity
@@ -107,6 +112,15 @@ as map feature states. IDs remain scoped to their own release: an ID reused afte
 a reset can correctly be red in Before and green in After. Paging or inspecting
 records does not replace these colors. Geometry summary counts describe unique
 geometry hashes; they are not feature-ID classifications.
+
+Map inspection retains every overlapping release layer, including transparent
+Before geometry when an exact shared polygon is drawn from After. Identical
+properties do not merge hits across releases. Each hit loads source-language
+metadata using its captured path and generation, without joining a reused ID to
+another release. Map clicks remain available while the comparison runs and on
+static viewers without comparison jobs. Clicking empty space, changing either
+release, closing comparison or rebuilding the map clears the selection; delayed
+metadata cannot restore a superseded inspector.
 
 Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
 historical tile generations produce visible errors. Map signer and comparison

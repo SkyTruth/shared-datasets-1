@@ -152,6 +152,7 @@ const elements = {
 };
 
 const comparisonController = createComparisonController({loadMapModule, getBasemap: () => state.basemap,
+  onFeatureSelect: handleFeatureSelect,
   onModeChange(enabled, {restore}) {
     state.mapRequestSerial++; state.featureLookupSerial++;
     clearFeatureInspector(); clearColorLegend(); setZoomSelectionEnabled(false);
@@ -1449,8 +1450,8 @@ function showToast(message) {
 
 function featureLookupGroups(features) {
   const groups = new Map();
-  const locale = state.metadataLocale;
   for (const feature of features) {
+    const locale = feature.comparisonSide ? "" : state.metadataLocale;
     const featureId = featureIdFor(feature);
     const assetSlug = String(feature?.assetSlug || "").trim();
     const release = String(feature?.release || "latest").trim();
@@ -1988,7 +1989,7 @@ function enrichFeature(feature, item) {
 }
 
 function featureLookupKey(feature) {
-  return `${feature.releaseReference ? snapshotKey(feature.releaseReference) : ""}\n${featureIdFor(feature)}\n${feature?.sourceLayer || ""}`;
+  return `${feature.releaseReference ? snapshotKey(feature.releaseReference) : ""}\n${feature.comparisonSide || ""}\n${featureIdFor(feature)}\n${feature?.sourceLayer || ""}`;
 }
 
 function featureIdFor(feature) {
@@ -2440,7 +2441,8 @@ function appendFeatureHit(feature) {
   const swatch = document.createElement("span");
   swatch.className = "selection-swatch";
   swatch.style.background = feature.color || "var(--accent)";
-  title.append(swatch, document.createTextNode(feature.assetTitle || "Dataset feature"));
+  const label = [feature.comparisonSide, feature.assetTitle || "Dataset feature"].filter(Boolean).join(" · ");
+  title.append(swatch, document.createTextNode(label));
   const meta = document.createElement("span");
   meta.className = "feature-hit-meta";
   const geometryHash = compactGeometryHash(feature.geometryHash);

@@ -1,8 +1,10 @@
 """Run the real catalog viewer/comparison engine with local pinned fixture bytes."""
 
 import json
+import hashlib
 import os
 import sys
+import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -48,10 +50,34 @@ def geometry_opener(ref, *, bucket_name):
     return fixture_path(ref).open("rb")
 
 
+class ScenarioJobs:
+    """Give each browser scenario a fresh real job store with production limits."""
+
+    limits = comparisons.engine.Limits()
+
+    def __init__(self):
+        self.scenarios = {}
+        self.lock = threading.Lock()
+
+    def for_owner(self, owner):
+        with self.lock:
+            if owner not in self.scenarios:
+                self.scenarios[owner] = comparisons.ComparisonJobs(
+                    root=work / "comparison-jobs" / hashlib.sha256(owner.encode()).hexdigest(),
+                    reader=reader,
+                    geometry_opener=geometry_opener,
+                )
+            return self.scenarios[owner]
+
+    def start(self, owner, slug, inputs, bucket_name):
+        return self.for_owner(owner).start(owner, slug, inputs, bucket_name)
+
+    def get(self, job_id, owner):
+        return self.for_owner(owner).get(job_id, owner)
+
+
 store = FixtureStore(work / "site")
-jobs = comparisons.ComparisonJobs(
-    root=work / "comparison-jobs", reader=reader, geometry_opener=geometry_opener
-)
+jobs = ScenarioJobs()
 handler = viewer.make_handler(
     catalog_cache=viewer.CatalogJsonCache(loader=store.read_catalog_json),
     object_store=store,

@@ -20,6 +20,7 @@ const test = base.extend({
     const catalog = await readJSON(resolve(siteDir, 'catalog.json'));
     const indexes = new Map(await Promise.all(catalog.assets.map(async (asset) => [asset.slug, await readJSON(resolve(workDir, 'inputs/indexes', `${asset.slug}.json`))])));
     const requests = [], errors = [], forbidden = [], expectedErrors = new Set();
+    const scenarioEmail = `browser-${testInfo.testId.replace(/[^a-z0-9]/gi, '')}@skytruth.org`;
     const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
     const state = { execution: {
@@ -60,7 +61,7 @@ const test = base.extend({
           expectedErrors.add(url.href);
           return route.fulfill({status:404,contentType:'text/plain',body:'Not found'});
         }
-        const response = await route.fetch({ headers: {...request.headers(), 'X-Goog-Authenticated-User-Email': 'accounts.google.com:browser@skytruth.org'} });
+        const response = await route.fetch({ headers: {...request.headers(), 'X-Goog-Authenticated-User-Email': `accounts.google.com:${scenarioEmail}`} });
         if (state.holdComparison && request.method() === 'POST' && url.pathname === '/api/comparisons') {
           state.holdComparison = false; state.comparisonHeld = true;
           await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
@@ -271,8 +272,10 @@ test('comparison automatically takes over the primary map with compact tables an
   const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
   const scale = Math.min((box.width - 68) / (3 / 360), (box.height - 68) / (mercatorY(-1) - mercatorY(1)), 512 * 2 ** 8);
   await canvas.click({position:{x:box.width / 2 - 1.5 / 360 * scale, y:box.height / 2 - (0.5 - mercatorY(1)) * scale}});
-  await expect(page.locator('#compare-inspector')).toContainText('Shared before');
-  await expect(page.locator('#compare-inspector')).toContainText('Shared after');
+  await expect(page.locator('#feature-inspector')).toContainText('Shared before');
+  await expect(page.locator('#feature-inspector')).toContainText('Shared after');
+  await expect(page.locator('#compare-panel')).toBeHidden();
+  await page.locator('#compare-details').click();
   await page.locator('#compare-search').fill('Shared');
   await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
   await page.locator('#compare-rows button').focus(); await page.keyboard.press('Enter');
@@ -297,11 +300,16 @@ test('comparison automatically takes over the primary map with compact tables an
 
 test('static catalog explains comparison availability and restores ordinary browsing', async ({page, transport}, testInfo) => {
   transport.comparisonUnavailable = true;
-  await select(page, 'public'); await page.locator('#compare-open').click();
+  await select(page, 'public');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').click();
   await expect(page.locator('#compare-status')).toContainText('authenticated catalog viewer');
   await expect(page.locator('#map-preview canvas')).toHaveCount(1);
   await expect(page.locator('#compare-table')).toBeHidden();
   await expect(page.locator('#compare-report')).toHaveCount(0);
+  await clickPoint(page, false, testInfo); await expectMetadata(page, false);
+  await expect(page.locator('#feature-inspector')).toContainText('After ·');
+  await expect(page.locator('#compare-panel')).toBeHidden();
   await page.locator('#compare-details').click();
   await page.locator('.compare-local-guide summary').click();
   await expect(page.locator('.compare-local-guide')).toContainText('scripts/compare_releases.py');
@@ -390,9 +398,76 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   const c = await sample(), distance = (a,b) => Math.hypot(...a.map((v,i) => v-b[i]));
   expect(distance(c.gray,c.background)).toBeLessThan(distance(c.red,c.background) / 2);
   await testInfo.attach('comparison-polygons.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
+
+  const clickPolygon = (lon, lat) => canvas.click({position: {
+    x: box.width / 2 + lon / 360 * scale,
+    y: box.height / 2 + (mercatorY(lat) - (low + high) / 2) * scale,
+  }});
+  const hits = page.locator('#feature-inspector .feature-hit');
+  // Both releases must be inspectable even when their feature IDs cannot be
+  // joined. Transparent Before geometry is still an overlapping map hit.
+  await clickPolygon(.5, .5);
+  await expect(hits).toHaveCount(2);
+  const before = hits.filter({hasText: 'Before ·'}), after = hits.filter({hasText: 'After ·'});
+  await expect(before).toContainText('Shared before');
+  await expect(before).toContainText('2026-01-01');
+  await expect(after).toContainText('Shared after');
+  await expect(after).toContainText('2026-09-22');
+  await expect(page.locator('#compare-panel')).toBeHidden();
+  await expect(page.locator('.map-click-target')).toHaveCount(1);
+  await testInfo.attach('comparison-polygon-details.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
+  await clickPolygon(-2.5, 2.5);
+  // Identical properties in two release layers must not collapse to one hit.
+  await expect(hits).toHaveCount(2);
+  await expect(before).toContainText('2026-01-01');
+  await expect(after).toContainText('2026-09-22');
+  await clickPolygon(-1.5, -1);
+  await expect(hits).toHaveCount(1);
+  await expect(before).toBeVisible();
+  await expect(after).toHaveCount(0);
+  await clickPolygon(2.5, -1);
+  // The same numeric ID belongs to a different Before polygon elsewhere.
+  await expect(hits).toHaveCount(1);
+  await expect(after).toBeVisible();
+  await expect(before).toHaveCount(0);
+  await clickPolygon(-1.5, 2.5);
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await expect(page.locator('.map-click-target')).toHaveCount(0);
   await page.locator('#compare-details').click();
   await testInfo.attach('comparison-polygon-summary.png', {body:await page.locator('#compare-panel').screenshot(), contentType:'image/png'});
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
+});
+
+test('comparison selection changes discard late polygon metadata', async ({page, transport}) => {
+  await select(page, 'polygons');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  const canvas = page.locator('#map-preview canvas'), box = await canvas.boundingBox();
+  const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
+  const low = mercatorY(-1.5), high = mercatorY(3), scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (low - high), 512 * 2 ** 8);
+  const clickShared = () => canvas.click({position: {x: box.width / 2 + .5 / 360 * scale, y: box.height / 2 + (mercatorY(.5) - (low + high) / 2) * scale}});
+  const hits = page.locator('#feature-inspector .feature-hit');
+  transport.holdMetadata = true;
+  await clickShared();
+  await expect(hits).toHaveCount(2);
+  await expect.poll(() => transport.held).toBe(true);
+  await page.locator('#compare-before').selectOption('2026-09-22');
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await expect(page.locator('#compare-summary tbody tr').first().locator('td').first()).toHaveText('2026-09-22');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await clickShared();
+  await expect(hits).toHaveCount(2);
+  await expect(hits.filter({hasText: 'Before ·'})).toContainText('Shared after');
+  await expect(hits.filter({hasText: 'After ·'})).toContainText('Shared after');
+  const completed = page.waitForResponse(response => response.url().includes('/2026-01-01/') && response.url().includes('.metadata.ndjson.gz'));
+  transport.release();
+  await (await completed).finished();
+  await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await expect(page.locator('#feature-inspector')).not.toContainText('Shared before');
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#feature-inspector')).toBeHidden();
+  await expect(page.locator('.map-click-target')).toHaveCount(0);
 });
 
 async function openSnapshot(page, snapshot) {
