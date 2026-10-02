@@ -64,7 +64,7 @@ env:
 
 jobs:
   deploy:
-    name: Build image and apply wdpa-monthly Terraform
+    name: Promote accepted image and apply wdpa-monthly Terraform
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
@@ -133,17 +133,26 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-      - name: Build wdpa-monthly image
+      - name: Promote accepted wdpa-monthly image
         run: |
           set -euo pipefail
 
+          accepted_image="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["runs"][0]["cloud_image"])')"
+          expected_config="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["runs"][0]["image_digest"])')"
+          docker pull --platform linux/amd64 "${accepted_image}"
+          actual_config="$(docker image inspect "${accepted_image}" --format '{{.Id}}')"
+          if [[ "${actual_config}" != "${expected_config}" ]]; then
+            echo "Accepted WDPA image configuration digest does not match the registry image." >&2
+            exit 1
+          fi
+          expected_source="$(uv run --no-sync python scripts/wdpa_processing_gate.py --print-source-digest)"
+          actual_source="$(docker run --platform linux/amd64 --rm "${accepted_image}" python scripts/wdpa_processing_gate.py --print-source-digest)"
+          if [[ "${actual_source}" != "${expected_source}" ]]; then
+            echo "Accepted WDPA image does not match the reviewed processing source tree." >&2
+            exit 1
+          fi
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
-          docker build \
-            --platform linux/amd64 \
-            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
-            -f ingestion/wdpa_monthly/Dockerfile \
-            -t "${image_tag}" \
-            .
+          docker tag "${accepted_image}" "${image_tag}"
           echo "WDPA_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image

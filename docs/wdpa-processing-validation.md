@@ -158,9 +158,18 @@ comparison; `compatibility_verified` remains false rather than claiming that
 comparison from artifact checks alone. Earlier fixture/sample compatibility
 evidence is separate.
 
-Sea ice and marine now satisfy their staged checks. The 100 GiB per-instance
-disk quota is approved and verified, so the isolated cloud gate passes. No dataset bytes were published; the
-complete terrestrial builds and final worker acceptance remain pending.
+These historical sea-ice and marine reports meet their resource targets, but
+their processing digest predates the current code and dependencies. They cannot
+open the current isolated cloud gate. No dataset bytes were published; complete
+terrestrial builds and final worker acceptance remain pending.
+
+Fresh [run 37047953130](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37047953130)
+uses the current processing digest and one image for all stages. Sea ice passed,
+then the deterministic October old/new sample passed for both realms with a
+fresh translation index. At the October 2 rollout check, complete marine
+processing was still running. Preserve its raw reports and record separate
+sample compatibility and complete resource evidence in version 2 of
+`catalog/wdpa-staged-validation.json` before another isolated deployment.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
@@ -168,8 +177,8 @@ sizes and hashes. `download_public_wdpa_benchmark.py` reconstructs the same froz
 inputs anonymously, checking raw and compressed hashes. It neither exports
 credentials nor makes private objects public. Dataset bytes are not uploaded as
 Actions artifacts: only scalar measurement reports and the deployment image
-shared between replay jobs are uploaded. The image artifact expires after one
-day. Unused preinstalled tooling is removed only
+shared between replay jobs are uploaded. The image artifact expires after seven
+days. Unused preinstalled tooling is removed only
 on the disposable job VM to make room for the disk; provisioning failure is fatal.
 
 Set `wdpa_inputs_probe=true` for an input-preparation-only memory measurement.
@@ -228,9 +237,14 @@ require increasing local Docker resources.
 ## Isolated cloud validation
 
 The first cloud attempt failed its CPU/memory preflight before downloading
-source data despite the verified 4 CPU / 8 GiB job configuration. Use the
-[isolated runtime inspection](wdpa-runtime-inspection.md) to inspect the actual
-cgroup files before repairing telemetry; that diagnostic cannot open acceptance.
+source data despite the verified 4 CPU / 8 GiB job configuration. The
+[isolated runtime inspection](wdpa-runtime-inspection.md) established namespaced
+cgroup v1, a measured CPU quota of 3.72, the exact 8 GiB memory limit and the
+kernel's `memory.max_usage_in_bytes`. The shared reader now supports that
+runtime and Docker cgroup v2; it records the real CPU quota and kernel peak.
+The protected job remains configured at 4 CPU / 8 GiB. The diagnostic command
+must be replaced through the protected validation deploy after fresh staged
+evidence passes; a diagnostic execution cannot open acceptance.
 
 `wdpa-processing-validation-deploy.yml` is a manual protected-main workflow in
 the existing production Terraform queue. It gates deployment on reviewed small
@@ -259,6 +273,14 @@ start complete October replays asynchronously and follow each to terminal status
 Two passing reports open the existing final acceptance gate for the production
 worker. Publication ownership checks remain unchanged. A failed validation run
 cannot authorize publication or a resource increase.
+
+The production deploy pulls the immutable validation image recorded in both
+accepted Cloud Run reports. It checks the image configuration digest and the
+processing source fingerprint before tagging those same bytes for
+`wdpa-monthly`. Native-tool and import smoke checks still run before the push,
+and Terraform receives an immutable registry digest. There is no production
+rebuild after acceptance. The image retains its tested executor SHA; the
+deployment SHA identifies the promotion tag without replacing that provenance.
 
 ## Infrastructure and failure visibility
 
@@ -291,28 +313,33 @@ An authenticated Service Usage API read verifies **107,374,182,400 bytes
 (100 GiB)** effective per-instance quota in `us-central1`.
 [Quota observation](wdpa-processing-disk-quota.json) retains the returned values;
 `catalog/wdpa-staged-validation.json` records approval. No API was enabled.
-The regional allocation initially remains zero. Google automatically grants
-100 GiB regional allocation on the first disk-backed resource deployment;
-verify that grant and available capacity after creating the validation job.
+The first disk-backed validation deployment also received 100 GiB of regional
+allocation, verified through Service Usage. Recheck available capacity before
+starting another disk-backed job.
 Run disk-backed WDPA executions sequentially. Google's
 [disk documentation](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
 describes the separate limits and initial regional grant.
 
 ## Remaining acceptance and rollout
 
-1. Small sea-ice smoke and complete marine WDPA have passed in the manual `CI`
-   workflow, including verified counts/contracts and disk scratch above RAM.
+1. Complete the fresh staged run and review matching small-fixture, both-realm
+   old/new sample and complete marine reports, including verified
+   counts/contracts and disk scratch above RAM. Earlier processing digests
+   cannot satisfy this gate.
 2. After review, merge and quota/bootstrap verification, deploy only the isolated
    cloud validation job. Run the deployment image twice on the complete frozen October inputs and
    identical verified baseline/translation snapshots. Require peak memory
    ≤6.4 GiB, scratch <80 GiB, duration ≤24 hours, verified source-derived
    realm/India counts and valid FGB/metadata/PMTiles contracts. Any ambiguity
    requires reviewed decisions before outputs can be emitted.
-3. Record complete reports, immutable image digest and processing digest in the
-   reviewed acceptance document. Sample/genesis runs, missing peak telemetry,
-   mismatched inputs and larger worker sizes cannot satisfy the gate.
-4. The 100 GiB per-instance Preview disk quota is approved. Verify the initial
-   regional grant and review/provision the observer bootstrap permissions
+3. Record two distinct cloud executions, their identical immutable image URI,
+   verified image configuration digest, complete raw reports and separate
+   matching compatibility sample in the reviewed version 2 acceptance document.
+   Sample/genesis runs, missing peak telemetry, mismatched inputs and larger
+   worker sizes cannot satisfy the gate. Promote the accepted image bytes to
+   production after acceptance passes.
+4. The 100 GiB per-instance Preview disk quota and regional allocation are
+   verified. Review/provision the observer bootstrap permissions
    through protected workflows.
 5. After review and merge, apply monitoring and deploy through protected
    workflows, including both catalog web and viewer deployments. Verify actual
