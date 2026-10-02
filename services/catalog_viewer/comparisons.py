@@ -67,12 +67,18 @@ class Job:
 
 class ComparisonJobs:
     def __init__(
-        self, *, root: Path | None = None, limits=engine.Limits(), reader=None
+        self,
+        *,
+        root: Path | None = None,
+        limits=engine.Limits(),
+        reader=None,
+        geometry_opener=None,
     ):
         self.root = root or engine.work_root() / "comparisons" / (
             "viewer-" + uuid.uuid4().hex
         )
         self.limits, self.reader = limits, reader or download_input
+        self.geometry_opener = geometry_opener or open_geometry
         self.jobs = {}
         self.lock = threading.Lock()
         self.pool = ThreadPoolExecutor(
@@ -122,7 +128,14 @@ class ComparisonJobs:
                     )
                     local[role] = target
                 paths.append(local)
-            job.comparison.run(job.inputs["baseline"], job.inputs["target"], *paths)
+            job.comparison.run(
+                job.inputs["baseline"],
+                job.inputs["target"],
+                *paths,
+                open_geometry=lambda ref: self.geometry_opener(
+                    ref, bucket_name=bucket_name
+                ),
+            )
             job.comparison.check()
             with job.lock:
                 job.state, job.phase = "complete", "complete"
@@ -156,6 +169,27 @@ class ComparisonJobs:
             ):
                 return None
             return job
+
+
+def open_geometry(ref, *, bucket_name):
+    from google.cloud import storage
+
+    bucket, name = split_gs_uri(ref["path"])
+    if bucket != bucket_name:
+        raise engine.ComparisonError("Geometry input is outside the catalog bucket")
+    generation = int(ref["generation"])
+    return (
+        storage.Client()
+        .bucket(bucket)
+        .blob(name, generation=generation)
+        .open(
+            "rb",
+            if_generation_match=generation,
+            chunk_size=1024 * 1024,
+            timeout=15,
+            retry=None,
+        )
+    )
 
 
 def download_input(ref, target, *, bucket_name, comparison):
@@ -205,6 +239,8 @@ def resolve_snapshot(asset, release, *, object_store, bucket_name):
         if viewer.asset_has_pmtiles(asset)
         else ("metadata", "schema", "manifest")
     )
+    if asset.get("canonical_format") == "fgb":
+        roles = (*roles, "fgb")
     for role in roles:
         selected = viewer.resolve_artifact(
             asset, role, release, locale="", object_store=snapshot_store

@@ -1,12 +1,17 @@
 # Compare releases
 
-Click **Compare releases** beside Version to enter comparison mode. The single
+The Version row sits directly below the primary map. Click **Compare releases**
+beside Version to enter comparison mode; the button is hidden for single-release assets. The single
 Version dropdown becomes **Before** and **After**, with the selected release and
 its immediate predecessor as defaults. Comparison starts automatically and
 reruns when either selection changes. The same button becomes **Close comparison**;
 closing restores ordinary browsing. There is no second run button or map-mode
 selector. The union occupies the primary map at the top of the detail view,
-retaining its viewport. Release, change, and schema summaries use compact tables.
+retaining its viewport. Before is red and After green. The selections, Close comparison, and right-aligned
+**Details** affordance share one row. Details start collapsed and contain compact
+release, change, and schema tables; progress and failures remain visible. Selecting
+a map feature opens the property details. **Use this dataset** sits directly above
+the canonical paths.
 
 The authenticated catalog viewer performs complete comparisons. A static catalog
 without the endpoint explains availability, keeps browsing/downloads intact, and
@@ -16,7 +21,8 @@ trigger a latest fallback.
 
 The result contains six mutually exclusive feature counts, separate schema
 changes, a searchable table with 50 rows per page, before/after source properties,
-publication provenance, and an export of every feature classification. Selecting
+and publication provenance. Complete JSON reports remain available through the
+CLI and API; the viewer has no export button. Selecting
 a row or clicking a displayed feature opens its properties. `Absent` differs
 from explicit JSON `null`. The inspector retains publication fields for inspection;
 source-property changes exclude the canonical hash exclusions and any declared
@@ -105,7 +111,35 @@ geometry hashes; they are not feature-ID classifications.
 Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
 historical tile generations produce visible errors. Map signer and comparison
 responses must match the selected paths/generations before use. Comparison report
-schema version 2 adds geometry counts and the complete map-color scope.
+schema version 3 also pins optional canonical FGB input for historical v1 readers.
+
+## Published historical v1 releases
+
+The June 6 coral release predates separate `geometry_hash`/`properties_hash`.
+Its combined `feature_hash` cannot establish whether geometry changed. The reader
+accepts only the declared v1 schema/manifest/hash contract and streams its exact,
+generation-pinned canonical FGB. It validates every release-scoped ID, properties,
+feature count, byte count and SHA-256 checksum against the sidecar and manifest.
+It preserves stored coordinate precision, scans sequentially without loading the
+whole archive, and never hashes simplified display tiles. Historical `ext_id`,
+`feature_id`, and `feature_hash` are bookkeeping rather than source changes.
+The v2 writer contract is unchanged. The historical reader stays necessary while
+these citable releases remain available; removing it requires migrating their
+comparison evidence or retiring this explicitly supported reader capability.
+
+Read-only checks on October 2 against pinned published inputs established:
+
+| Asset / Before → After | Rows Before / After | Local viewer job | Workspace size | Unique geometry changes |
+| --- | ---: | ---: | ---: | --- |
+| Coral / 2026-06-06 → 2026-06-10 | 18,429 / 18,429 | 45.39 s | 89.9 MiB | 14 new, 14 removed, 18,409 unchanged |
+| WDPA marine / 2026-09-30 → 2026-10-01 | 17,648 / 17,938 | 4.08 s | 90.2 MiB | 296 new, 6 removed, 504 metadata, 16,633 unchanged |
+
+These timings run the real viewer job code with already downloaded, pinned
+canonical inputs. Workspace sizes include its downloaded sidecars and contracts. Coral's historical FGB is
+329,582,712 bytes; local downloading took about 294 seconds, outside this cached
+comparison measurement. Cloud Run/GCS transport and CPU timings remain unverified.
+WDPA uses sidecars only. Its original index exceeded the 128-MiB workspace budget
+because of duplicate property storage, which this representation removes.
 
 ## Viewer API and budgets
 
@@ -128,7 +162,7 @@ GET /api/comparisons/{job_id}/report
 
 `GET /api/comparisons` reports capabilities and limits. Start takes `slug`,
 `baseline`, `target`, and `expected`, with baseline/target role dictionaries of
-`{path, generation}` for metadata/schema/manifest and available PMTiles. Start
+`{path, generation}` for metadata/schema/manifest, available PMTiles, and canonical FGB when present. Start
 returns `202` with a job ID and pinned inputs. Polls return state/progress and,
 on completion, summary plus a bounded page when feature identity is comparable.
 `POST /api/comparisons/{job_id}/map` takes `side` (`baseline` or `target`) and
@@ -146,7 +180,9 @@ a 15-second transport timeout with retries disabled.
 | Interactive limit | Budget |
 | --- | ---: |
 | Records per release | 100,000 |
-| Bytes per input artifact | 64 MiB |
+| Bytes per downloaded sidecar/schema/manifest | 64 MiB |
+| Historical canonical FGB streamed per release | 512 MiB |
+| Individual FGB feature | 64 MiB |
 | Schema/manifest contract each | 4 MiB |
 | Expanded bytes per sidecar | 256 MiB |
 | Workspace files per job | 128 MiB |
@@ -158,6 +194,13 @@ a 15-second transport timeout with retries disabled.
 | Concurrent jobs per instance | 2 |
 | Retained jobs per instance | 8 |
 | Job retention | 15 minutes from start |
+
+The ID set comparison is inexpensive. These budgets bound validating complete
+source metadata and retaining properties for search/inspection on a 2-GiB Cloud
+Run instance. Source properties are stored once per release record; search reads
+that JSON directly instead of retaining three copies. Current releases use their
+stored hashes and never read canonical geometry. Historical v1 releases need
+the separate geometry pass described below. No row sampling or truncation is used.
 
 Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never
@@ -190,7 +233,8 @@ Follow the repo's `uv` environment instructions. Prepare two snapshot JSON files
 from release-index evidence and generation-pinned downloads in a named workspace.
 The example below is a shape template: replace paths, generations, sizes and hashes
 with observed values; never invent missing evidence. Include only the canonical
-sidecar, schema and manifest for computation. Available PMTiles descriptors may
+sidecar, schema and manifest for current releases. Historical v1 requires an
+`fgb` descriptor and matching `local_paths.fgb`. Available PMTiles descriptors may
 also be included, but the CLI does not read tiles.
 
 ```json
@@ -230,7 +274,7 @@ uv run python scripts/compare_releases.py \
 
 Use a fresh index directory for each run. For a larger local comparison, explicitly
 raise appropriate `--max-rows`, `--max-input-bytes`, `--max-expanded-bytes`,
-`--max-disk-bytes`, and `--max-seconds` budgets after checking local capacity.
+`--max-disk-bytes`, `--max-geometry-bytes`, and `--max-seconds` budgets after checking local capacity.
 The 4-MiB schema/manifest and 900-KiB row bounds remain fixed. Reports are streamed
 to disk without the viewer's 10-MiB response cap. Validation/resource failures exit
 2 and do not export partial results. Progress and retained workspace paths are
@@ -245,7 +289,7 @@ checksums, correction generations, missing historical files, authorization,
 resource limits, cancellation and export. Browser tests use the real engine and
 viewer with synthetic pinned bytes, real MapLibre/PMTiles rendering in
 the primary union map, automatic Before/After controls, actual polygon fill
-colors across identity resets, property inspection, pagination, complete export,
+colors across identity resets and historical v1, collapsed details, property inspection, pagination,
 keyboard operation, narrow layout and a delayed response. They do not establish
 live IAP, CDN, generation retention, affinity or billing behavior.
 

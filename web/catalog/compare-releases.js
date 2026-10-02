@@ -6,6 +6,7 @@ const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", met
 export function comparisonFiles(reference) {
   const files = {metadata: metadataFile(reference.files), schema: releaseFile(reference.files, "schema"), manifest: releaseFile(reference.files, "manifest")};
   if (reference.pmtiles_file) files.pmtiles = reference.pmtiles_file;
+  if (reference.canonical_file?.format === "fgb") files.fgb = reference.canonical_file;
   return Object.fromEntries(Object.entries(files).map(([role, file]) => {
     const artifact = captureArtifact(file, role === "pmtiles" ? "tiles" : role);
     return [role, {path: artifact.gs_uri, generation: artifact.generation}];
@@ -55,14 +56,19 @@ function delay(ms, signal) {
 }
 
 export function createComparisonController({loadMapModule = () => import("./map-preview.js"), onModeChange = () => {}, getBasemap = () => "map"} = {}) {
-  const ids = ["open", "panel", "before", "after", "release-controls", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "report", "map-note", "table", "legend"];
+  const ids = ["open", "panel", "before", "after", "release-controls", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "details", "map-note", "table", "legend"];
   const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(`compare-${id}`)]));
   const versionControl = document.getElementById("version-control"), mapContainer = document.getElementById("map-preview"), mapStatus = document.getElementById("map-status");
   let asset = null, version = "latest", options = {}, active = null, opened = false, viewport = null, pageSerial = 0, inspectSerial = 0, rerunTimer = null;
   const current = session => active === session && !session.abort.signal.aborted;
-  const status = text => { ui.status.textContent = text; };
+  const status = text => { ui.status.textContent = text; ui.status.hidden = !opened || !text; };
+  function setDetails(expanded) {
+    ui.panel.hidden = !opened || !expanded;
+    ui.details.setAttribute("aria-expanded", String(expanded));
+    ui.details.textContent = expanded ? "▾ Details" : "▸ Details";
+  }
   function mapNote(session) {
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.summary ? "Comparing geometry… Colors appear after all records are checked." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
   }
   async function cancelJob(id) {
     if (!id) return;
@@ -80,11 +86,13 @@ export function createComparisonController({loadMapModule = () => import("./map-
   }
   function clearResults() {
     for (const key of ["summary", "schema", "rows", "inspector"]) ui[key].replaceChildren();
-    ui.table.hidden = true; ui.report.disabled = true; ui.previous.disabled = ui.next.disabled = true;
+    ui.table.hidden = true; ui.previous.disabled = ui.next.disabled = true;
   }
   function setMode(enabled, restore = false) {
     opened = enabled;
-    ui.panel.hidden = ui["release-controls"].hidden = ui.legend.hidden = ui["map-note"].hidden = !enabled;
+    ui.details.hidden = ui["release-controls"].hidden = ui.legend.hidden = ui["map-note"].hidden = !enabled;
+    document.getElementById("version-path-row").classList.toggle("comparing", enabled);
+    setDetails(false); status("");
     versionControl.hidden = enabled;
     ui.open.textContent = enabled ? "Close comparison" : "Compare releases";
     ui.open.setAttribute("aria-expanded", String(enabled));
@@ -150,6 +158,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
   }
   async function inspect(session, id) {
     const token = ++inspectSerial;
+    setDetails(true);
     try {
       const result = await request(`/api/comparisons/${session.job}?feature_id=${encodeURIComponent(id)}`, session);
       if (!current(session) || token !== inspectSerial) return;
@@ -200,8 +209,8 @@ export function createComparisonController({loadMapModule = () => import("./map-
         if (!current(session)) return;
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
-      session.summary = response.summary; renderSummary(response.summary); ui.report.disabled = false;
-      status("Comparison complete"); session.map?.refreshGeometry();
+      session.summary = response.summary; renderSummary(response.summary);
+      status(""); mapNote(session); session.map?.refreshGeometry();
       if (response.summary.identity.compatible) await loadPage(session);
     } catch (error) { if (current(session)) status(error.message); }
   }
@@ -218,19 +227,9 @@ export function createComparisonController({loadMapModule = () => import("./map-
   ui.filter.addEventListener("change", () => { if (active?.summary?.identity.compatible) void loadPage(active); });
   ui.previous.addEventListener("click", () => { if (active?.page) void loadPage(active, Math.max(0, active.page.offset - 50)); });
   ui.next.addEventListener("click", () => { if (active?.page) void loadPage(active, active.page.offset + 50); });
-  ui.report.addEventListener("click", async () => {
-    const session = active; if (!session?.job) return;
-    try {
-      const response = await fetch(`/api/comparisons/${session.job}/report`, {credentials: "include", signal: session.abort.signal, cache: "no-store"});
-      if (!response.ok) throw new Error((await response.json()).error || "Report unavailable");
-      const payload = await response.json(); assertComparisonInputs(payload.summary.inputs, session.refs);
-      if (!current(session)) return;
-      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"}));
-      const link = element("a"); link.href = url; link.download = `${asset.slug}-comparison.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (error) { if (current(session)) status(error.message); }
-  });
+  ui.details.addEventListener("click", () => setDetails(ui.panel.hidden));
   document.addEventListener("keydown", event => {
-    if (event.key === "Escape" && opened && (ui.panel.contains(document.activeElement) || ui["release-controls"].contains(document.activeElement) || document.activeElement === ui.open)) close();
+    if (event.key === "Escape" && opened && (ui.panel.contains(document.activeElement) || ui["release-controls"].contains(document.activeElement) || document.activeElement === ui.open || document.activeElement === ui.details)) close();
   });
   return {
     isOpen: () => opened,
@@ -239,9 +238,8 @@ export function createComparisonController({loadMapModule = () => import("./map-
       if (asset === next && version === selectedVersion) return;
       stop(); clearResults(); viewport = null; if (opened) setMode(false);
       asset = next; version = selectedVersion; options = opts;
-      ui.open.disabled = !asset || (asset.versions || []).length < 2;
-      ui.open.title = ui.open.disabled ? "Two published releases are required" : "Compare published releases";
-      if (ui.open.disabled) return;
+      ui.open.hidden = !asset || (asset.versions || []).length < 2;
+      if (ui.open.hidden) return;
       const dates = [...asset.versions].map(v => v.date).sort().reverse();
       for (const side of ["before", "after"]) { ui[side].replaceChildren(); dates.forEach(date => ui[side].append(new Option(date, date))); }
       const after = selectedVersion === "latest" ? asset.latest_release.date : selectedVersion;

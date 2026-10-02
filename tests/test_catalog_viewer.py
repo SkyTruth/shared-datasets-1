@@ -997,7 +997,7 @@ def test_protected_catalog_serves_execution_module_and_revalidated_status():
     store = LocalCatalogWebStore(root)
     cache = CatalogJsonCache(loader=lambda: {"assets": []})
     module = handle_request(
-        "GET", "/execution-status.js", {},
+        "GET", "/release-reference.js", {},
         catalog_cache=cache, object_store=store, signer=FakeSigner(),
     )
     assert module.status == 200

@@ -6,7 +6,7 @@ ENV PYTHONPATH=/app/api/python/src:/app
 WORKDIR /app
 
 RUN python -m pip install --no-cache-dir \
-    "google-cloud-storage>=2.19.0,<3"
+    "google-cloud-storage>=2.19.0,<3" "flatgeobuf==0.3.1"
 
 COPY api/python/src /app/api/python/src
 COPY scripts /app/scripts
