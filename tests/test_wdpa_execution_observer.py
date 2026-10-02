@@ -147,6 +147,7 @@ def accepted_evidence():
         "source_counts_verified": True,
         "contracts_verified": True,
         "compatibility_verified": True,
+        "source_tree_sha256": gate.source_digest(),
         "image_digest": "sha256:" + "a" * 64,
         "source_sha256": "b" * 64,
         "baseline_snapshot_sha256": "c" * 64,
@@ -193,3 +194,9 @@ def test_missed_target_cannot_be_accepted_by_increasing_resources():
     evidence = accepted_evidence()
     evidence["runs"][0]["translation_index_built"] = False
     assert gate.check(evidence), "a cached index cannot certify complete production processing"
+
+
+def test_both_replays_must_match_the_reviewed_processing_tree():
+    evidence = accepted_evidence()
+    evidence["runs"][1]["source_tree_sha256"] = "0" * 64
+    assert any("processing source tree" in error for error in gate.check(evidence))

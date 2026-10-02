@@ -25,6 +25,11 @@ def source_digest():
             ROOT / "scripts/feature_metadata_translation_reuse.py",
             ROOT / "scripts/feature_metadata_localization.py",
             ROOT / "scripts/local_wdpa_sample.py",
+            ROOT / "scripts/translation_local_io.py",
+            ROOT / "scripts/pmtiles_zoom.py",
+            ROOT / "scripts/vector_asset.py",
+            ROOT / "scripts/slack_notify.py",
+            ROOT / "scripts/wdpa_processing_gate.py",
         ]
     )
     digest = hashlib.sha256()
@@ -48,6 +53,8 @@ def check(evidence):
     if len(runs) != 2:
         errors.append("two complete October deployment-image builds are required")
     for run in runs:
+        if run.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
+            errors.append("a benchmark does not match the processing source tree")
         if (
             run.get("state") != "succeeded"
             or run.get("sample_fraction") != 1
