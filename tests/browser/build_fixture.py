@@ -32,8 +32,7 @@ def build(work: Path) -> None:
     # One shared two-release identity fixture is also consumed by JS/SDK unit tests.
     contract = json.loads((REPO / "tests/fixtures/historical-consumers.json").read_text())
     rows = []
-    for tier in ("public", "private", "internal"):
-        slug = f"smoke-{tier}"
+    for tier, slug in [(tier, f"smoke-{tier}") for tier in ("public", "private", "internal")] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
         root = f"gs://example-bucket/category/subcategory/{slug}"
         row = dict(asset_slug=slug, title=f"Smoke {tier}", category="category", subcategory="subcategory",
                    status="active", access_tier=tier, owner="SkyTruth", update_cadence="manual",
@@ -51,6 +50,11 @@ def build(work: Path) -> None:
                                           "manifest_file": f"latest/{slug}.manifest.json", "provenance_default": True})
         (docs / f"{slug}.md").write_text(f"---\n{yaml.safe_dump(metadata)}---\n# Smoke {tier}\n\nSynthetic two-release points.\n")
         index = json.loads(json.dumps(contract["index"]))
+        if slug.startswith("wdpa-"):
+            # One execution can publish marine successfully, then fail before
+            # terrestrial publishes. The UI must keep both facts visible.
+            latest = "2026-10-01" if slug == "wdpa-marine" else "2026-09-30"
+            index = json.loads(json.dumps(index).replace("2026-09-22", latest))
         index["asset_slug"] = slug
         for release in index["releases"]:
             old = release["date"] == "2026-01-01"

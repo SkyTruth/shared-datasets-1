@@ -28,6 +28,7 @@ NATIVE_TOOL_TESTS = {
     "tests/test_feature_metadata_localization.py",
     "tests/test_raster_standards.py",
     "tests/test_wdpa_monthly.py",
+    "tests/test_wdpa_disk_processing.py",
     "tests/test_sea_ice_daily.py",
     "tests/test_eamlis_monthly.py",
 }
@@ -124,7 +125,7 @@ class GeospatialResultTests(unittest.TestCase):
         check_results(self.report)
         result = self.run_checker()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("All 4 required native geospatial tests passed", result.stdout)
+        self.assertIn(f"All {len(REQUIRED_TESTS)} required native geospatial tests passed", result.stdout)
 
     def test_each_required_test_must_be_present_once_and_pass(self):
         for index, (classname, name) in enumerate(REQUIRED_TESTS):
@@ -155,7 +156,7 @@ class GeospatialResultTests(unittest.TestCase):
         self.report.write_text('<testsuite tests="94" failures="0" skipped="0"/>')
         result = self.run_checker()
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stderr.count("expected exactly one result, found 0"), 4)
+        self.assertEqual(result.stderr.count("expected exactly one result, found 0"), len(REQUIRED_TESTS))
 
     def test_invalid_or_missing_report_fails_closed(self):
         for content in (None, "", "<testsuite>"):
@@ -221,6 +222,10 @@ class GeospatialResultTests(unittest.TestCase):
                 (self.work / "tests").mkdir(exist_ok=True)
                 (self.work / "pytest.ini").write_text("[pytest]\n")
                 for index, (classname, name) in enumerate(REQUIRED_TESTS):
+                    if classname.count(".") == 1:
+                        path = self.work / f"{classname.replace('.', '/')}.py"
+                        path.write_text(f"def {name}():\n    pass\n")
+                        continue
                     module, class_name = classname.rsplit(".", 1)
                     body = "pass"
                     decorator = ""

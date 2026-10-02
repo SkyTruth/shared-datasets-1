@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import os
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
@@ -101,7 +102,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
         parameters = operations["run-record"]["source"]["parameters"]
         return {**p.strict_json(derive(parameters, results)), "run_record": blob_info(results["run-record"])}
 
-    def load_generated_identity_baseline(self, asset, *, contract_id: str):
+    def load_generated_identity_baseline(self, asset, *, contract_id: str, identity_index_path: Path | None = None):
         p.require(contract_id == CONTRACT_ID, "unexpected runtime identity contract")
         state = self.state(asset).value
         p.require(state["active"] is None, "publication is incomplete; resume its original execution")
@@ -109,9 +110,14 @@ class OwnedGeneratedPublisher(GcsPublisher):
             adoption = self.store.read_json(state["adoption_receipt"]).value
             reset = load_reset_candidate(self.store, self.context(asset), adoption)
             return reset.allocation_baseline()
-        baseline = super().load_generated_identity_baseline(asset, contract_id=contract_id)
-        p.require(asdict(baseline.snapshot) == state["current"]["latest_manifest"], "latest manifest differs from publication state")
-        p.require(baseline.next_feature_id == state["reserved_next_feature_id"], "manifest sequence differs from durable reservation")
+        baseline = super().load_generated_identity_baseline(asset, contract_id=contract_id, identity_index_path=identity_index_path)
+        try:
+            p.require(asdict(baseline.snapshot) == state["current"]["latest_manifest"], "latest manifest differs from publication state")
+            p.require(baseline.next_feature_id == state["reserved_next_feature_id"], "manifest sequence differs from durable reservation")
+        except BaseException:
+            if isinstance(baseline.records, model.IdentityRecordIndex):
+                baseline.records.close()
+            raise
         return baseline
 
     def load_successful_run_record(self, asset, run_date):
@@ -228,10 +234,16 @@ class OwnedGeneratedPublisher(GcsPublisher):
             roles[f"extra-{index}"] = (suffix, path)
         native = vector_asset.validate_metadata_lookup_bundle(outputs.fgb, outputs.pmtiles)
         p.require(native.valid, "native generated bundle validation failed: " + "; ".join(native.errors))
-        validation = model.validate_sidecar_records(model.read_metadata_sidecar(outputs.metadata), expected_asset_slug=asset.slug, expected_release=run_date.isoformat())
-        p.require(validation.valid and validation.feature_count == outputs.row_count, "generated metadata bundle is invalid")
-        records = tuple(model.project_identity_records(model.read_metadata_sidecar(outputs.metadata)))
-        model.GeneratedIdentityBaseline(records, outputs.next_generated_feature_id, run_date.isoformat(), contract_id=CONTRACT_ID)
+        from ingestion.common.identity_index import DiskIdentityRecords
+        with tempfile.TemporaryDirectory(prefix="publication-validation-", dir=outputs.metadata.parent) as temp:
+            index = DiskIdentityRecords(Path(temp) / "identities.sqlite")
+            try:
+                validation = model.validate_sidecar_records(model.read_metadata_sidecar(outputs.metadata),
+                    expected_asset_slug=asset.slug, expected_release=run_date.isoformat(), identity_index=index)
+                p.require(validation.valid and validation.feature_count == outputs.row_count, "generated metadata bundle is invalid")
+                model.GeneratedIdentityBaseline(index.seal(), outputs.next_generated_feature_id, run_date.isoformat(), contract_id=CONTRACT_ID)
+            finally:
+                index.close()
         p.require(p.strict_json(outputs.schema.read_bytes()) == outputs.schema_payload, "schema bytes differ from manifest schema")
         model.validate_release_schema(outputs.schema_payload, expected_asset_slug=asset.slug, expected_release=run_date.isoformat())
         operations, local_sources = [], {}

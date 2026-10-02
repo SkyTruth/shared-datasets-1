@@ -61,11 +61,13 @@ locals {
     module.wdpa_job_service_account.email,
     module.eamlis_job_service_account.email,
     module.sea_ice_job_service_account.email,
+    module.wdpa_observer_service_account.email,
   ]
 
   canonical_mutation_deny_exception_principals = toset(concat(
     [
       local.shared_datasets_publisher_principal,
+      "principal://iam.googleapis.com/projects/-/serviceAccounts/${module.wdpa_observer_service_account.email}",
       local.google_project_service_agents_principal,
       "principalSet://goog/group/${var.shared_datasets_breakglass_group_email}",
     ],

@@ -415,3 +415,19 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 Resolve visible hygiene issues before announcing the catalog, especially stray
 desktop files, missing asset READMEs, stale bucket-side catalog objects, and
 README sections required by `docs/standards/asset-layout-and-formats.md`.
+
+## WDPA execution status
+
+Both WDPA detail pages show the independent observer's
+`_catalog/wdpa-monthly-execution.json` beside the asset check-in and published
+release. Execution status describes the whole job; a marine release may have
+published successfully before a terrestrial failure. A newer running execution
+also displays the last completed execution. Status is revalidated every minute
+while details are visible, and observations older than 15 minutes are stale.
+Missing or malformed observations display unavailable status without concealing
+the published release. Raw execution messages and configuration are excluded.
+
+The observer is deployed with the worker through protected Terraform and has
+read-only WDPA execution access plus an exact-object generation-preconditioned
+status writer. See [WDPA operations](../ingestion/wdpa_monthly/README.md) for
+resource profiling, rollout gates, failure probes and publication recovery.

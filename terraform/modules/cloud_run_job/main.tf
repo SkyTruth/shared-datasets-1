@@ -53,11 +53,23 @@ variable "max_retries" {
   default     = 0
 }
 
+variable "command" {
+  type    = list(string)
+  default = []
+}
+
+variable "ephemeral_disk_size" {
+  description = "Optional Preview disk volume mounted at /work. Requires disk quota."
+  type        = string
+  default     = null
+}
+
 resource "google_cloud_run_v2_job" "this" {
   project             = var.project_id
   location            = var.location
   name                = var.name
   deletion_protection = false
+  launch_stage        = var.ephemeral_disk_size == null ? "GA" : "BETA"
 
   template {
     task_count  = 1
@@ -68,8 +80,28 @@ resource "google_cloud_run_v2_job" "this" {
       timeout         = var.timeout
       max_retries     = var.max_retries
 
+      dynamic "volumes" {
+        for_each = var.ephemeral_disk_size == null ? [] : [var.ephemeral_disk_size]
+        content {
+          name = "work"
+          empty_dir {
+            medium     = "DISK"
+            size_limit = volumes.value
+          }
+        }
+      }
+
       containers {
-        image = var.image
+        image   = var.image
+        command = var.command
+
+        dynamic "volume_mounts" {
+          for_each = var.ephemeral_disk_size == null ? [] : [1]
+          content {
+            name       = "work"
+            mount_path = "/work"
+          }
+        }
 
         resources {
           limits = {
@@ -97,4 +129,3 @@ output "name" {
 output "id" {
   value = google_cloud_run_v2_job.this.id
 }
-

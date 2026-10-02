@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -68,7 +69,7 @@ class GcsPublisher:
         return json.loads(blob.download_as_text())
 
     def load_generated_identity_baseline(
-        self, asset: ReleaseAsset, *, contract_id: str,
+        self, asset: ReleaseAsset, *, contract_id: str, identity_index_path: Path | None = None,
     ) -> release_feature_model.GeneratedIdentityBaseline:
         """Read one generation-bound allocation baseline, never guess legacy state.
 
@@ -107,6 +108,41 @@ class GcsPublisher:
             metadata_generation = metadata.get("generation")
             if type(metadata_generation) is not int or metadata_generation <= 0:
                 raise release_feature_model.ReleaseFeatureModelError("baseline metadata generation must be a positive integer")
+            if identity_index_path is not None:
+                from ingestion.common.identity_index import DiskIdentityRecords
+                index = DiskIdentityRecords(identity_index_path, exclude_properties=manifest["identity"].get("properties_hash_excluded_properties", ()))
+                metadata_path = identity_index_path.with_suffix(".ndjson.gz")
+                metadata_path.parent.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha256()
+                try:
+                    blob = self.bucket.blob(expected_name, generation=metadata_generation)
+                    with blob.open("rb", chunk_size=8 * 1024 * 1024, if_generation_match=metadata_generation) as source, metadata_path.open("xb") as target:
+                        while data := source.read(8 * 1024 * 1024):
+                            digest.update(data)
+                            target.write(data)
+                    if digest.hexdigest() != str(metadata["sha256"]).removeprefix("sha256:"):
+                        raise release_feature_model.ReleaseFeatureModelError("baseline metadata SHA-256 mismatch")
+                    validation = release_feature_model.validate_sidecar_records(
+                        release_feature_model.read_metadata_sidecar(metadata_path), expected_asset_slug=asset.slug,
+                        expected_release=release, identity_index=index,
+                    )
+                    if not validation.valid:
+                        raise release_feature_model.ReleaseFeatureModelError("; ".join(validation.errors))
+                    expected_count = manifest.get("validation", {}).get("feature_count")
+                    if type(expected_count) is not int or expected_count != validation.feature_count:
+                        raise release_feature_model.ReleaseFeatureModelError("baseline metadata count disagrees with manifest")
+                    return release_feature_model.generated_baseline_from_manifest(
+                        manifest, index.seal(), expected_contract_id=contract_id,
+                        snapshot=release_feature_model.GeneratedIdentitySnapshot(
+                            f"gs://{self.bucket.name}/{manifest_name}", generation,
+                            release_feature_model.sha256_hex(manifest_bytes),
+                        ),
+                    )
+                except BaseException:
+                    index.close()
+                    raise
+                finally:
+                    metadata_path.unlink(missing_ok=True)
             metadata_bytes = self.bucket.blob(expected_name, generation=metadata_generation).download_as_bytes(if_generation_match=metadata_generation)
             if release_feature_model.sha256_hex(metadata_bytes) != str(metadata["sha256"]).removeprefix("sha256:"):
                 raise release_feature_model.ReleaseFeatureModelError("baseline metadata SHA-256 mismatch")

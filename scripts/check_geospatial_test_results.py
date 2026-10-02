@@ -25,6 +25,10 @@ REQUIRED_TESTS = (
         "tests.test_eamlis_monthly.EamlisMonthlyIntegrationTests",
         "test_fixture_geojson_builds_stable_fgb_output",
     ),
+    (
+        "tests.test_wdpa_disk_processing",
+        "test_normalized_store_matches_old_export_semantically",
+    ),
 )
 
 
@@ -33,23 +37,30 @@ def check_results(report: Path) -> None:
     errors = []
     for classname, name in REQUIRED_TESTS:
         matches = [
-            case for case in cases
+            case
+            for case in cases
             if case.get("classname") == classname and case.get("name") == name
         ]
         identity = f"{classname}.{name}"
         if len(matches) != 1:
-            errors.append(f"{identity}: expected exactly one result, found {len(matches)}")
+            errors.append(
+                f"{identity}: expected exactly one result, found {len(matches)}"
+            )
             continue
         for outcome in ("skipped", "failure", "error"):
             if matches[0].find(outcome) is not None:
-                errors.append(f"{identity}: {outcome}; a passing native execution is required")
+                errors.append(
+                    f"{identity}: {outcome}; a passing native execution is required"
+                )
     if errors:
         raise ValueError("\n".join(errors))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path, help="JUnit XML from the native pytest run")
+    parser.add_argument(
+        "report", type=Path, help="JUnit XML from the native pytest run"
+    )
     args = parser.parse_args()
     try:
         check_results(args.report)

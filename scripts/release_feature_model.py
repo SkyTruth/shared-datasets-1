@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import re
+from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field as dataclass_field
 from pathlib import Path
 from types import MappingProxyType
@@ -275,7 +276,11 @@ def identity_key_from_record(record: Mapping[str, Any]) -> tuple[str, ...]:
     raise ReleaseFeatureModelError("record does not contain an identity key")
 
 
-def previous_feature_id_mapping(records: Iterable[SidecarRecord | Mapping[str, Any]]) -> dict[tuple[str, ...], str]:
+def previous_feature_id_mapping(
+    records: Iterable[SidecarRecord | Mapping[str, Any]],
+) -> Mapping[tuple[str, ...], str]:
+    if isinstance(records, IdentityRecordIndex):
+        return records.mapping()
     mapping: dict[tuple[str, ...], str] = {}
     for index, record in enumerate(records, start=1):
         payload = asdict(record) if isinstance(record, SidecarRecord) else dict(record)
@@ -283,7 +288,9 @@ def previous_feature_id_mapping(records: Iterable[SidecarRecord | Mapping[str, A
         validate_feature_id(feature_id)
         key = identity_key_from_record(payload)
         if key in mapping and mapping[key] != feature_id:
-            raise ReleaseFeatureModelError(f"duplicate previous identity key at record {index}: {key}")
+            raise ReleaseFeatureModelError(
+                f"duplicate previous identity key at record {index}: {key}"
+            )
         mapping[key] = feature_id
     return mapping
 
@@ -362,6 +369,29 @@ class GeneratedIdentitySnapshot:
             raise ReleaseFeatureModelError("identity snapshot sha256 must be a lowercase SHA-256 digest")
 
 
+class IdentityRecordIndex(ABC):
+    """Validated, repeatable identity records whose indexes live outside RAM."""
+
+    @abstractmethod
+    def __iter__(self): ...
+
+    @abstractmethod
+    def __len__(self): ...
+
+    @abstractmethod
+    def add(self, record: Mapping[str, Any]) -> None: ...
+
+    @abstractmethod
+    def mapping(self) -> Mapping[tuple[str, ...], str]: ...
+
+    @abstractmethod
+    def validate_baseline(self, next_feature_id: int) -> None: ...
+
+    @property
+    @abstractmethod
+    def excluded_properties(self) -> tuple[str, ...]: ...
+
+
 @dataclass(frozen=True)
 class GeneratedIdentityBaseline:
     """Allocation authority kept together with the previous identity records.
@@ -370,7 +400,7 @@ class GeneratedIdentityBaseline:
     versioned manifest and its exact sidecar before constructing this value.
     """
 
-    records: tuple[Mapping[str, Any], ...]
+    records: tuple[Mapping[str, Any], ...] | IdentityRecordIndex
     next_feature_id: int
     release: str | None
     snapshot: GeneratedIdentitySnapshot | None = None
@@ -379,25 +409,71 @@ class GeneratedIdentityBaseline:
     def __post_init__(self) -> None:
         validate_identity_contract(self.contract_id)
         validate_generated_sequence(self.next_feature_id)
-        if self.snapshot is not None and not isinstance(self.snapshot, GeneratedIdentitySnapshot):
-            raise ReleaseFeatureModelError("generated baseline snapshot must be a validated snapshot reference")
-        records = tuple(MappingProxyType({
-            field: normalize_identity_key(record[field], label="baseline identity key") if field == "identity_key" and record[field] is not None else record[field]
-            for field in ("feature_id", "geometry_hash", "properties_hash", "identity_key") if field in record
-        }) for record in self.records)
+        if self.snapshot is not None and not isinstance(
+            self.snapshot, GeneratedIdentitySnapshot
+        ):
+            raise ReleaseFeatureModelError(
+                "generated baseline snapshot must be a validated snapshot reference"
+            )
+        if isinstance(self.records, IdentityRecordIndex):
+            self.records.validate_baseline(self.next_feature_id)
+            if self.release is None and (
+                len(self.records)
+                or self.next_feature_id != 1
+                or self.snapshot is not None
+            ):
+                raise ReleaseFeatureModelError(
+                    "genesis requires no records, next-ID 1, and no previous snapshot"
+                )
+            if self.release is not None and (
+                not isinstance(self.release, str) or not self.release.strip()
+            ):
+                raise ReleaseFeatureModelError(
+                    "generated baseline release must be a nonempty string"
+                )
+            return
+        records = tuple(
+            MappingProxyType(
+                {
+                    field: normalize_identity_key(
+                        record[field], label="baseline identity key"
+                    )
+                    if field == "identity_key" and record[field] is not None
+                    else record[field]
+                    for field in (
+                        "feature_id",
+                        "geometry_hash",
+                        "properties_hash",
+                        "identity_key",
+                    )
+                    if field in record
+                }
+            )
+            for record in self.records
+        )
         mapping = previous_feature_id_mapping(records)
         if len(mapping) != len(records) or len(set(mapping.values())) != len(mapping):
-            raise ReleaseFeatureModelError("generated baseline has duplicate feature IDs or identity keys")
+            raise ReleaseFeatureModelError(
+                "generated baseline has duplicate feature IDs or identity keys"
+            )
         for feature_id in mapping.values():
             if not GENERATED_FEATURE_ID_RE.fullmatch(feature_id):
-                raise ReleaseFeatureModelError("generated baseline IDs must be canonical positive decimal strings")
+                raise ReleaseFeatureModelError(
+                    "generated baseline IDs must be canonical positive decimal strings"
+                )
             if int(feature_id) >= self.next_feature_id:
-                raise ReleaseFeatureModelError("next generated feature ID must exceed every previous allocation")
+                raise ReleaseFeatureModelError(
+                    "next generated feature ID must exceed every previous allocation"
+                )
         if self.release is None:
             if records or self.next_feature_id != 1 or self.snapshot is not None:
-                raise ReleaseFeatureModelError("genesis requires no records, next-ID 1, and no previous snapshot")
+                raise ReleaseFeatureModelError(
+                    "genesis requires no records, next-ID 1, and no previous snapshot"
+                )
         elif not isinstance(self.release, str) or not self.release.strip():
-            raise ReleaseFeatureModelError("generated baseline release must be a nonempty string")
+            raise ReleaseFeatureModelError(
+                "generated baseline release must be a nonempty string"
+            )
         object.__setattr__(self, "records", records)
 
     @classmethod
@@ -409,6 +485,23 @@ class GeneratedIdentityBaseline:
 class GeneratedFeatureAllocation:
     ids_by_key: Mapping[tuple[str, ...], str]
     next_feature_id: int
+
+
+def allocate_generated_feature_id(
+    *,
+    previous_feature_id: str | None,
+    override: str | None,
+    force_new: bool,
+    next_sequence: int,
+) -> tuple[str, int]:
+    """One allocation rule; callers establish uniqueness and legal overrides."""
+    if override is not None:
+        return override, next_sequence
+    if previous_feature_id is not None and not force_new:
+        return previous_feature_id, next_sequence
+    if next_sequence == GENERATED_SEQUENCE_EXHAUSTED:
+        raise ReleaseFeatureModelError("generated feature ID sequence is exhausted")
+    return str(next_sequence), next_sequence + 1
 
 
 def assign_generated_feature_ids(
@@ -425,32 +518,43 @@ def assign_generated_feature_ids(
         key = tuple(str(part) for part in raw_key)
         feature_id = str(raw_feature_id).strip()
         if key in previous and previous[key] != feature_id:
-            raise ReleaseFeatureModelError(f"feature_id override conflicts with previous mapping for identity key: {key}")
+            raise ReleaseFeatureModelError(
+                f"feature_id override conflicts with previous mapping for identity key: {key}"
+            )
         if feature_id not in previous.values():
-            raise ReleaseFeatureModelError("feature_id override must reuse an existing baseline allocation")
+            raise ReleaseFeatureModelError(
+                "feature_id override must reuse an existing baseline allocation"
+            )
         if key in overrides and overrides[key] != feature_id:
-            raise ReleaseFeatureModelError(f"duplicate feature_id override for identity key: {key}")
+            raise ReleaseFeatureModelError(
+                f"duplicate feature_id override for identity key: {key}"
+            )
         overrides[key] = feature_id
-    force_new = {tuple(str(part) for part in raw_key) for raw_key in force_new_identity_keys}
+    force_new = {
+        tuple(str(part) for part in raw_key) for raw_key in force_new_identity_keys
+    }
     if force_new & overrides.keys():
-        raise ReleaseFeatureModelError("identity cannot both reuse and force a new feature ID")
+        raise ReleaseFeatureModelError(
+            "identity cannot both reuse and force a new feature ID"
+        )
     assigned: dict[tuple[str, ...], str] = {}
     next_sequence = baseline.next_feature_id
     for raw_key in identity_keys:
         key = normalize_identity_key(raw_key, label="generated identity key")
         if key in assigned:
-            raise ReleaseFeatureModelError(f"duplicate identity key while assigning feature_id: {key}")
-        if key in overrides:
-            assigned[key] = overrides[key]
-        elif key in previous and key not in force_new:
-            assigned[key] = previous[key]
-        else:
-            if next_sequence == GENERATED_SEQUENCE_EXHAUSTED:
-                raise ReleaseFeatureModelError("generated feature ID sequence is exhausted")
-            assigned[key] = str(next_sequence)
-            next_sequence += 1
+            raise ReleaseFeatureModelError(
+                f"duplicate identity key while assigning feature_id: {key}"
+            )
+        assigned[key], next_sequence = allocate_generated_feature_id(
+            previous_feature_id=previous.get(key),
+            override=overrides.get(key),
+            force_new=key in force_new,
+            next_sequence=next_sequence,
+        )
     if len(set(assigned.values())) != len(assigned):
-        raise ReleaseFeatureModelError("generated allocation would assign the same feature ID to multiple identities")
+        raise ReleaseFeatureModelError(
+            "generated allocation would assign the same feature ID to multiple identities"
+        )
     return GeneratedFeatureAllocation(MappingProxyType(assigned), next_sequence)
 
 
@@ -464,21 +568,109 @@ def generated_baseline_from_manifest(
     identity = manifest.get("identity")
     validate_identity_metadata(identity)
     if not identity["strategy"].startswith("generated_sequence"):
-        raise ReleaseFeatureModelError("allocation baseline requires generated sequence identity")
+        raise ReleaseFeatureModelError(
+            "allocation baseline requires generated sequence identity"
+        )
     if identity.get("sequence_state_version") != GENERATED_SEQUENCE_STATE_VERSION:
-        raise ReleaseFeatureModelError("legacy generated sequence is unverified; reviewed historical sequence migration required")
+        raise ReleaseFeatureModelError(
+            "legacy generated sequence is unverified; reviewed historical sequence migration required"
+        )
     validate_identity_contract(expected_contract_id)
     if identity.get("contract_id") != expected_contract_id:
-        raise ReleaseFeatureModelError("retired or different identity contract cannot seed new allocations")
+        raise ReleaseFeatureModelError(
+            "retired or different identity contract cannot seed new allocations"
+        )
+    if isinstance(records, IdentityRecordIndex) and set(records.excluded_properties) != set(identity.get("properties_hash_excluded_properties", ())):
+        raise ReleaseFeatureModelError("indexed baseline does not apply the manifest's property exclusion policy")
     return GeneratedIdentityBaseline(
-        records=tuple(project_identity_records(
-            records, exclude_properties=identity.get("properties_hash_excluded_properties", ()),
-        )),
+        records=records
+        if isinstance(records, IdentityRecordIndex)
+        else tuple(
+            project_identity_records(
+                records,
+                exclude_properties=identity.get(
+                    "properties_hash_excluded_properties", ()
+                ),
+            )
+        ),
         next_feature_id=identity["next_generated_feature_id_after_release"],
         release=manifest.get("release"),
         snapshot=snapshot,
         contract_id=expected_contract_id,
     )
+
+
+def classify_identity_matches(
+    record: Mapping[str, Any],
+    *,
+    geometry_records: Iterable[tuple[str, str]],
+    properties_records: Iterable[tuple[str, str]],
+    baseline_geometry: str | None,
+    match_properties: bool = True,
+) -> tuple[IdentityAmbiguity | None, bool]:
+    """Classify one record using identical rules for every index implementation."""
+    geometry_hash_value = str(record.get("geometry_hash") or "").strip()
+    properties_hash_value = str(record.get("properties_hash") or "").strip()
+    geometry_records, properties_records = (
+        tuple(geometry_records),
+        tuple(properties_records),
+    )
+    corroborated = (
+        baseline_geometry is not None and baseline_geometry == geometry_hash_value
+    )
+    geometry_matches = tuple(
+        sorted({feature_id for feature_id, _hash in geometry_records})
+    )
+    properties_matches = tuple(
+        sorted({feature_id for feature_id, _hash in properties_records})
+    )
+    geometry_properties_hashes = tuple(
+        sorted({_hash for _feature_id, _hash in geometry_records if _hash})
+    )
+    properties_geometry_hashes = tuple(
+        sorted({_hash for _feature_id, _hash in properties_records if _hash})
+    )
+    if not match_properties:
+        if not geometry_matches:
+            return None, False
+        if len(geometry_matches) == 1 and geometry_properties_hashes == (
+            properties_hash_value,
+        ):
+            return None, False
+        if corroborated:
+            return None, True
+        return IdentityAmbiguity(
+            ambiguity_type="same_geometry_changed_properties",
+            identity_key=identity_key_from_record(record),
+            geometry_hash=geometry_hash_value,
+            properties_hash=properties_hash_value,
+            matching_geometry_feature_ids=geometry_matches,
+            matching_properties_feature_ids=(),
+            matching_geometry_properties_hashes=geometry_properties_hashes,
+            matching_properties_geometry_hashes=(),
+        ), False
+    if not geometry_matches and not properties_matches:
+        return None, False
+    if geometry_matches == properties_matches and len(geometry_matches) == 1:
+        return None, False
+    if corroborated:
+        return None, True
+    if geometry_matches and not properties_matches:
+        ambiguity_type = "same_geometry_changed_properties"
+    elif properties_matches and not geometry_matches:
+        ambiguity_type = "same_properties_changed_geometry"
+    else:
+        ambiguity_type = "conflicting_partial_matches"
+    return IdentityAmbiguity(
+        ambiguity_type=ambiguity_type,
+        identity_key=identity_key_from_record(record),
+        geometry_hash=geometry_hash_value,
+        properties_hash=properties_hash_value,
+        matching_geometry_feature_ids=geometry_matches,
+        matching_properties_feature_ids=properties_matches,
+        matching_geometry_properties_hashes=geometry_properties_hashes,
+        matching_properties_geometry_hashes=properties_geometry_hashes,
+    ), False
 
 
 def find_identity_ambiguities(
@@ -510,9 +702,13 @@ def find_identity_ambiguities(
         geometry_hash_value = str(payload.get("geometry_hash") or "").strip()
         properties_hash_value = str(payload.get("properties_hash") or "").strip()
         if feature_id and geometry_hash_value:
-            by_geometry.setdefault(geometry_hash_value, []).append((feature_id, properties_hash_value))
+            by_geometry.setdefault(geometry_hash_value, []).append(
+                (feature_id, properties_hash_value)
+            )
         if match_properties and feature_id and properties_hash_value:
-            by_properties.setdefault(properties_hash_value, []).append((feature_id, geometry_hash_value))
+            by_properties.setdefault(properties_hash_value, []).append(
+                (feature_id, geometry_hash_value)
+            )
         baseline_key = identity_key_from_record(payload)
         if baseline_key and geometry_hash_value:
             if (
@@ -529,64 +725,19 @@ def find_identity_ambiguities(
     for record in new_records:
         geometry_hash_value = str(record.get("geometry_hash") or "").strip()
         properties_hash_value = str(record.get("properties_hash") or "").strip()
-        baseline_geometry = baseline_geometry_by_key.get(identity_key_from_record(record))
-        # Corroboration only suppresses a record that would otherwise be
-        # escalated. Applying it earlier would also swallow the records that
-        # were never in question, making the published count read as though
-        # most of a release had been ambiguous.
-        corroborated = baseline_geometry is not None and baseline_geometry == geometry_hash_value
-        geometry_records = by_geometry.get(geometry_hash_value, ())
-        properties_records = by_properties.get(properties_hash_value, ())
-        geometry_matches = tuple(sorted({feature_id for feature_id, _hash in geometry_records}))
-        properties_matches = tuple(sorted({feature_id for feature_id, _hash in properties_records}))
-        geometry_properties_hashes = tuple(sorted({_hash for _feature_id, _hash in geometry_records if _hash}))
-        properties_geometry_hashes = tuple(sorted({_hash for _feature_id, _hash in properties_records if _hash}))
-        if not match_properties:
-            if not geometry_matches:
-                continue
-            if len(geometry_matches) == 1 and geometry_properties_hashes == (properties_hash_value,):
-                continue
-            if corroborated:
-                key_corroborated += 1
-                continue
-            ambiguities.append(
-                IdentityAmbiguity(
-                    ambiguity_type="same_geometry_changed_properties",
-                    identity_key=identity_key_from_record(record),
-                    geometry_hash=geometry_hash_value,
-                    properties_hash=properties_hash_value,
-                    matching_geometry_feature_ids=geometry_matches,
-                    matching_properties_feature_ids=(),
-                    matching_geometry_properties_hashes=geometry_properties_hashes,
-                    matching_properties_geometry_hashes=(),
-                )
-            )
-            continue
-        if not geometry_matches and not properties_matches:
-            continue
-        if geometry_matches == properties_matches and len(geometry_matches) == 1:
-            continue
-        if corroborated:
-            key_corroborated += 1
-            continue
-        if geometry_matches and not properties_matches:
-            ambiguity_type = "same_geometry_changed_properties"
-        elif properties_matches and not geometry_matches:
-            ambiguity_type = "same_properties_changed_geometry"
-        else:
-            ambiguity_type = "conflicting_partial_matches"
-        ambiguities.append(
-            IdentityAmbiguity(
-                ambiguity_type=ambiguity_type,
-                identity_key=identity_key_from_record(record),
-                geometry_hash=geometry_hash_value,
-                properties_hash=properties_hash_value,
-                matching_geometry_feature_ids=geometry_matches,
-                matching_properties_feature_ids=properties_matches,
-                matching_geometry_properties_hashes=geometry_properties_hashes,
-                matching_properties_geometry_hashes=properties_geometry_hashes,
-            )
+        baseline_geometry = baseline_geometry_by_key.get(
+            identity_key_from_record(record)
         )
+        ambiguity, corroborated = classify_identity_matches(
+            record,
+            geometry_records=by_geometry.get(geometry_hash_value, ()),
+            properties_records=by_properties.get(properties_hash_value, ()),
+            baseline_geometry=baseline_geometry,
+            match_properties=match_properties,
+        )
+        key_corroborated += int(corroborated)
+        if ambiguity is not None:
+            ambiguities.append(ambiguity)
     return IdentityAmbiguityScan(
         ambiguities=tuple(ambiguities),
         key_corroborated_count=key_corroborated,
@@ -1022,6 +1173,7 @@ def validate_sidecar_records(
     expected_asset_slug: str | None = None,
     expected_release: str | None = None,
     max_record_bytes: int = DEFAULT_MAX_SIDECAR_RECORD_BYTES,
+    identity_index: IdentityRecordIndex | None = None,
 ) -> ValidationResult:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -1048,23 +1200,35 @@ def validate_sidecar_records(
             validate_hash(properties_hash_value, label="properties_hash")
         except ReleaseFeatureModelError as exc:
             errors.append(f"invalid properties_hash at record {count}: {exc}")
-        if feature_id in seen:
-            duplicates.add(feature_id)
-        seen.add(feature_id)
+        if identity_index is None:
+            if feature_id in seen:
+                duplicates.add(feature_id)
+            seen.add(feature_id)
         try:
             identity_key = identity_key_from_record(payload)
-            if identity_key in identity_keys and identity_keys[identity_key] != feature_id:
-                duplicate_identity_keys.add(identity_key)
+            if identity_index is None:
+                if (
+                    identity_key in identity_keys
+                    and identity_keys[identity_key] != feature_id
+                ):
+                    duplicate_identity_keys.add(identity_key)
+                else:
+                    identity_keys[identity_key] = feature_id
             else:
-                identity_keys[identity_key] = feature_id
+                identity_index.add(payload)
         except ReleaseFeatureModelError as exc:
             errors.append(f"invalid identity key at record {count}: {exc}")
         if len(sidecar_record_bytes(payload)) > max_record_bytes:
             oversized.append(feature_id or f"record-{count}")
         if payload.get("schema_version") != METADATA_SIDECAR_SCHEMA_VERSION:
             errors.append(f"record {count} has unsupported schema_version")
-        if expected_asset_slug is not None and payload.get("asset_slug") != expected_asset_slug:
-            errors.append(f"record {count} asset_slug does not match {expected_asset_slug!r}")
+        if (
+            expected_asset_slug is not None
+            and payload.get("asset_slug") != expected_asset_slug
+        ):
+            errors.append(
+                f"record {count} asset_slug does not match {expected_asset_slug!r}"
+            )
         if expected_release is not None and payload.get("release") != expected_release:
             errors.append(f"record {count} release does not match {expected_release!r}")
         if not isinstance(payload.get("properties"), Mapping):
@@ -1074,7 +1238,10 @@ def validate_sidecar_records(
     if duplicates:
         errors.append("duplicate feature_id values: " + ", ".join(sorted(duplicates)))
     if duplicate_identity_keys:
-        errors.append("duplicate identity keys: " + ", ".join(str(key) for key in sorted(duplicate_identity_keys)))
+        errors.append(
+            "duplicate identity keys: "
+            + ", ".join(str(key) for key in sorted(duplicate_identity_keys))
+        )
     if oversized:
         errors.append(
             "metadata sidecar record(s) exceed the configured serving document size: "

@@ -135,7 +135,7 @@ the `shared-datasets-production` environment. Merging reviewed changes that
 touch this job, `ingestion/common/`, the copied `scripts/` modules, reviewed
 `catalog/feature-identity-resolutions/` decisions, or the job Terraform builds
 a fresh image from `main`, smoke-tests it, pushes an immutable digest, applies
-only `module.wdpa_monthly_job.google_cloud_run_v2_job.this`, and starts an
+only the worker and explicitly allowlisted observer resources/IAM, and starts an
 async canary execution. If the schedule is paused, deployment skips the canary
 unless the dispatch supplies an explicit `canary_run_date`. The image ships the
 feature-identity resolutions directory, so merging reviewed ambiguity decisions redeploys the job and the
@@ -157,59 +157,134 @@ gcloud scheduler jobs pause wdpa-monthly \
 Pausing the scheduler stops future automatic monthly runs without deleting the
 Cloud Run Job, service accounts, IAM, Terraform state, or published GCS data.
 
-To remove the scheduled job infrastructure with Terraform, first provide the
-required image variables for the prod environment:
+Permanent infrastructure teardown requires a reviewed PR and a constrained
+protected production workflow with explicit worker, observer, scheduler and IAM
+allowlists. Do not run a local Terraform destroy/apply or delete dataset releases,
+latest files, run records, README files or catalog rows as part of cost teardown.
+
+## Processing limits and local replay
+
+See [validation and rollout evidence](../../docs/wdpa-processing-validation.md)
+for compatibility results and the outstanding resource acceptance prerequisites.
+
+The worker targets 4 vCPU / 8 GiB, a 24-hour timeout and a 100 GiB ephemeral
+DISK volume at `/work`. `TMPDIR=/work/tmp` and
+`SHARED_DATASETS_WORKDIR=/work/shared-datasets-1` put GDAL, Tippecanoe and SQLite
+scratch on that disk. A Cloud Run execution fails before downloads when the
+mount is missing or memory-backed. Tippecanoe uses at most four threads; SQLite
+caches are capped at 64 MiB and sorting uses disk.
+
+The [Cloud Run disk feature](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
+is Preview. Obtain the regional per-instance quota for 100 GiB before rollout;
+the default per-instance limit is 10 GiB. Disk contents are disposable and are
+never publication authority.
+
+Processing filters the source into a GeoPackage, pipes the existing GDAL 3.6.2
+GeoJSONSeq normalization into a binary normalized GeoPackage and an indexed
+identity plan, completes allocation, attaches IDs/hashes, and writes metadata.
+FGB exports directly from the normalized store. Tippecanoe receives a pipe with
+only geometry and `feature_id`; MBTiles conversion and existing tiling options
+are preserved. The geometry store is removed after both geometry outputs finish.
+Translations follow geometry processing. Verified translation input downloads
+are removed once their reusable SQLite index is built; an approved supplement
+remains available while rebuilding the locales. A published marine bundle is
+removed locally before the terrestrial build.
+
+The invariant is unchanged: normalized content and a verified baseline determine
+one complete allocation before publication. Scratch changes cannot change
+identity or bypass an interrupted publication. Recover durable claims/receipts
+through the original publication owner; never substitute local SQLite state or
+reset a sequence because a disk was lost.
+
+Freeze benchmark inputs without publishing:
 
 ```bash
-export TF_VAR_wdpa_monthly_image="$(gcloud run jobs describe wdpa-monthly \
-  --region=us-central1 \
-  --project=shared-datasets-1 \
-  --format='value(spec.template.spec.template.spec.containers[0].image)')"
-export TF_VAR_sea_ice_daily_image="$(gcloud run jobs describe sea-ice-daily \
-  --region=us-central1 \
-  --project=shared-datasets-1 \
-  --format='value(spec.template.spec.template.spec.containers[0].image)')"
+uv run python scripts/freeze_wdpa_benchmark.py --out "$SHARED_DATASETS_WORKDIR/downloads/wdpa-october-2026/frozen-inputs"
 ```
 
-Then destroy only the WDPA cron resources:
+The freezer verifies publication state, manifest generations and compressed
+sidecar hashes/counts, and downloads translation evidence at pinned generations.
+Keep the upstream ZIP alongside that directory, outside the repository. Replay
+uses the production builder and never instantiates a publisher:
 
 ```bash
-terraform -chdir=terraform/envs/prod destroy \
-  -target=module.wdpa_monthly_scheduler \
-  -target=google_cloud_run_v2_job_iam_member.scheduler_invoker \
-  -target=module.wdpa_monthly_job \
-  -target=google_storage_bucket_iam_member.wdpa_job_object_user \
-  -target=module.wdpa_scheduler_service_account \
-  -target=module.wdpa_job_service_account
+docker run --rm --platform linux/amd64 --cpus=4 --memory=8g --memory-swap=8g \
+  --mount type=bind,src="$SHARED_DATASETS_WORKDIR",dst=/inputs,readonly \
+  --mount type=volume,dst=/work \
+  wdpa-monthly python scripts/local_wdpa_sample.py \
+  --source /inputs/downloads/wdpa-october-2026/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
+  --baselines /inputs/downloads/wdpa-october-2026/frozen-inputs \
+  --translation-memory /inputs/downloads/wdpa-october-2026/frozen-inputs/translation-memory.sqlite \
+  --workdir /work/shared-datasets-1/october-build-1
 ```
 
-If the teardown should be permanent, remove or comment the WDPA Terraform blocks
-before the next untargeted apply; otherwise Terraform will recreate them. Do not
-delete existing GCS releases, latest files, run records, README files, or catalog
-rows as part of cost teardown unless the team explicitly decides to remove the
-dataset assets.
+Use a named disk volume and retain its reports for the two complete acceptance
+runs. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genesis`
+fixtures cannot satisfy acceptance. Add `--compare-legacy` on a sample to compare
+the retained old allocation/export path against IDs, hashes, properties, geometry,
+field types, metadata schemas, all six locales and the canonical translation CSV.
+The report records semantic identity/property
+digests, realm/India counts, artifact hashes, elapsed time and structured phase
+measurements. Raw metadata bytes can differ because scratch source paths appear
+in provenance; compare semantic values and identities, not those paths.
 
-## Local Fractional Sandbox
+Each phase emits `wdpa_phase_started` and `wdpa_phase_resources` JSON with elapsed
+time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
+and native tool versions. Missing peak telemetry is not passing evidence.
+Scratch measurements cover the entire `/work` filesystem, including native
+temporary files outside the build directory and open files that were unlinked.
 
-For fast debugging against the real upstream source, download/extract the source
-ZIPs under a local scratch directory and run a deterministic FID sample through
-the same FGB and PMTiles conversion chain without publishing to GCS:
+`scripts/wdpa_processing_gate.py` blocks protected deployment until the reviewed
+`catalog/wdpa-processing-acceptance.json` matches the processing source digest,
+records two complete October builds on 4 CPU / 8 GiB with matching frozen inputs,
+peak memory ≤6.4 GiB, scratch <80 GiB and completion within 24 hours, verifies
+source-derived realm/India counts, compatibility and artifact contracts, and
+confirms disk quota approval. A missed target blocks readiness; increasing the
+worker size does not satisfy the gate. Benchmark the deployment amd64 image,
+record its immutable digest and verify FGB/metadata/PMTiles contracts. Re-run
+benchmarks when processing code changes.
 
-```bash
-docker run --platform linux/amd64 --rm -i \
-  -e TMPDIR=/data/tmp \
-  -e WDPA_SAMPLE_FRACTION=0.001 \
-  -e WDPA_SAMPLE_SEED=7919 \
-  -e LOCAL_WDPA_WORKDIR=/data/wdpa-sample-output \
-  -v "$PWD":/work \
-  -v /private/tmp/wdpa-monthly-local:/data \
-  -w /work \
-  wdpa-monthly \
-  python scripts/local_wdpa_sample.py
-```
+## Execution observations and failure recovery
 
-The sample harness never instantiates a GCS client and leaves outputs in the
-local work directory.
+`wdpa-execution-observer` uses 1 CPU / 512 MiB, a 120-second timeout and a
+five-minute scheduler. It reads WDPA executions independently of the worker and
+writes only `gs://skytruth-shared-datasets-1/_catalog/wdpa-monthly-execution.json`
+with generation preconditions and revalidation headers. It has no dataset,
+release-index, claim, receipt or allocation permissions. An exact-object storage
+binding and deny-policy exception permit replacing only that status document.
+Before provisioning, review the protected Terraform identity's create permissions
+for the observer job, scheduler and custom execution-reader role. Its existing
+scheduled-ingestion role supports job updates, not those creations. Bootstrap
+must use a reviewed protected workflow; do not add broad project permissions or
+use a local production apply to bypass that requirement.
+
+The version1 document contains `schema_version`, `job_name`, `observed_at`,
+`latest_execution` and `latest_completed_execution`. Entries include ID,
+created/started/completed timestamps, state (`pending`, `running`, `succeeded`,
+`failed`, `cancelled`, `unknown`) and an allowlisted API reason code. Raw messages
+and execution configuration are never published. A newer running attempt retains
+the last completed failure. API or IAM failures leave the old observation stale
+and fail the observer job, so the general execution alert covers them too.
+
+Both WDPA catalog details show execution observations separately from the asset
+check-in and published release. A successful marine publication does not imply
+a successful overall job. Visible details revalidate every minute; observations
+older than 15 minutes are marked stale. A status-document failure does not alter
+any release or allocation state.
+
+Before the normal rollout canary, execute a controlled failure with the
+`WDPA_FAIL_BEFORE_WRITES=true` execution override, after checking existing
+executions/publication ownership and applying monitoring through the protected
+cron alert-policy workflow. The failure occurs before a publisher is created.
+Verify the terminal failed execution, observer JSON and actual alert delivery;
+then run the normal canary without that override, follow its terminal state,
+and inspect release indexes and generation/hash metadata when it publishes.
+The protected workflow starts only a controlled probe on its first attempt and
+stops before a dataset canary. After verifying actual alert delivery, dispatch
+with `failure_alert_verified_execution` naming that failed probe; it verifies
+the probe flag and terminal failure before starting the normal canary.
+If delivery has not been verified, stop before the normal canary. Do not grant
+the observer write access to worker data to repair missing execution status.
 
 ## Generated-ID publication
 

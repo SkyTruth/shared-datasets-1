@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import json
 import unittest
 import os
 import re
@@ -34,6 +36,33 @@ REQUIRED_SCRIPT_COPIES = (
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
+    def test_allowlist_cannot_increase_worker_size_or_use_ram_scratch(self):
+        run = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Enforce wdpa-monthly resource-change allowlist"]["run"]
+        code = run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        image = "registry/wdpa@sha256:" + "a" * 64
+        after = {"template": [{"template": [{
+            "timeout": "86400s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
+            "containers": [{"image": image, "resources": [{"limits": {"cpu": "4", "memory": "8Gi"}}],
+                "volume_mounts": [{"name": "work", "mount_path": "/work"}],
+                "env": [{"name": "TMPDIR", "value": "/work/tmp"}, {"name": "SHARED_DATASETS_WORKDIR", "value": "/work/shared-datasets-1"}]}],
+        }]}]}
+        for mismatch in (None, "memory", "disk", "scratch"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as root:
+                proposed = copy.deepcopy(after)
+                task = proposed["template"][0]["template"][0]
+                if mismatch == "memory":
+                    task["containers"][0]["resources"][0]["limits"]["memory"] = "16Gi"
+                elif mismatch == "disk":
+                    task["volumes"][0]["empty_dir"][0]["medium"] = "MEMORY"
+                elif mismatch == "scratch":
+                    task["containers"][0]["env"][0]["value"] = "/tmp"
+                plan = Path(root) / "plan.json"
+                plan.write_text(json.dumps({"resource_changes": [{
+                    "address": "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+                    "change": {"actions": ["update"], "after": proposed}}]}))
+                result = subprocess.run([sys.executable, "-c", code, str(plan), image], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stdout + result.stderr)
+
     def test_wdpa_monthly_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = load_workflow(DEPLOY_WORKFLOW)
         trigger = workflow_triggers(workflow)
@@ -82,7 +111,18 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(
             terraform_targets(plan_run),
-            {"module.wdpa_monthly_job.google_cloud_run_v2_job.this"},
+            {
+                "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+                "module.wdpa_observer_service_account.google_service_account.this",
+                "google_project_iam_custom_role.wdpa_execution_reader",
+                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+                "google_service_account_iam_member.wdpa_observer_deployer",
+                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+                "google_iam_deny_policy.canonical_destructive_actions[0]",
+            },
         )
         self.assertIn("wdpa_monthly_image=${WDPA_MONTHLY_IMAGE}", plan_run)
         self.assertIn("eamlis_monthly_image=unused-by-wdpa-monthly-deploy", plan_run)
@@ -94,9 +134,20 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         enforce_run = steps["Enforce wdpa-monthly resource-change allowlist"]["run"]
         self.assertEqual(
             python_literal_string_set(enforce_run, "allowed_exact"),
-            {"module.wdpa_monthly_job.google_cloud_run_v2_job.this"},
+            {
+                "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
+                "module.wdpa_observer_service_account.google_service_account.this",
+                "google_project_iam_custom_role.wdpa_execution_reader",
+                "google_cloud_run_v2_job_iam_member.wdpa_observer_execution_reader",
+                "google_storage_bucket_iam_member.wdpa_observer_status_writer",
+                "google_service_account_iam_member.wdpa_observer_deployer",
+                "module.wdpa_execution_observer_job.google_cloud_run_v2_job.this",
+                "google_cloud_run_v2_job_iam_member.wdpa_observer_scheduler_invoker",
+                "module.wdpa_execution_observer_scheduler.google_cloud_scheduler_job.this",
+                "google_iam_deny_policy.canonical_destructive_actions[0]",
+            },
         )
-        self.assertIn('actions != ["update"]', enforce_run)
+        self.assertIn("if actions not in permitted", enforce_run)
         self.assertIn("image != expected_image", enforce_run)
         self.assertIn("terraform -chdir=terraform/envs/prod show -json", steps["Export Terraform plan JSON"]["run"])
         self.assertIn("terraform_retry.sh\" -chdir=terraform/envs/prod apply", steps["Terraform apply"]["run"])

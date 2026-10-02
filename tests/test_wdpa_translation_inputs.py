@@ -36,6 +36,7 @@ class TranslationInputTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"RUN_DATE": "2026-05-01"}, clear=True),
             patch.object(wdpa, "require_binary"),
+            patch.object(wdpa, "native_versions", return_value={}),
             patch.object(wdpa.storage, "Client"),
             patch.object(wdpa.GcsPublisher, "from_runtime", return_value=publisher),
             patch.object(wdpa, "download_file"),

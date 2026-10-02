@@ -412,31 +412,44 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             events.append("build_gpkg")
             kwargs["output"].write_text("gpkg", encoding="utf-8")
 
-        def fake_convert_gpkg_to_geojsonseq(gpkg, _asset, output):
-            events.append("gpkg->geojsonseq")
-            lines = [
-                json.dumps(
-                    {
-                        "type": "Feature",
-                        "properties": {"SITE_PID": str(index), "NAME_ENG": f"Site {index}"},
-                        "geometry": {"type": "Point", "coordinates": [index, 0]},
-                    }
-                )
-                for index in indices
-            ]
-            output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        def source_features():
+            return ({"type": "Feature", "properties": {"SITE_PID": str(index), "NAME_ENG": f"Site {index}"},
+                     "geometry": {"type": "Point", "coordinates": [index, 0]}} for index in indices)
+
+        class FixtureGeometryStore:
+            # Mock only the native boundary. Allocation, validation and the
+            # translation join still use the real SQLite production path.
+            def __init__(self, path, *, layer_name):
+                self.path = path
+                path.write_bytes(b"normalized geometry fixture")
+                self.features = {}
+            def add(self, feature, ordinal):
+                self.features[ordinal] = feature
+            def prepare_fields(self):
+                pass
+            def projection_sql(self):
+                return "SELECT geometry fixture"
+            def close(self):
+                pass
+            def sidecar_records(self, *, plan, asset_slug, release, provenance):
+                for ordinal, feature in self.features.items():
+                    row = plan.record(ordinal)
+                    yield feature_metadata.sidecar_record(asset_slug=asset_slug, release=release,
+                        feature_id=row["feature_id"], geometry_hash=row["geometry_hash"], properties_hash=row["properties_hash"],
+                        properties=feature["properties"], identity_key=row["identity_key"],
+                        provenance={**provenance, "source_row_number": ordinal, "identity_key": list(row["identity_key"])})
 
         def fake_remove_if_exists(path):
             events.append(f"remove:{Path(path).name}")
             Path(path).unlink(missing_ok=True)
 
-        def fake_build_pmtiles(_geojsonseq, _asset, output):
+        def fake_build_pmtiles(_gpkg, _sql, _asset, output):
             events.append("build_pmtiles")
             output.write_text("pmtiles", encoding="utf-8")
 
-        def fake_convert_geojsonseq_to_fgb(_geojsonseq, _asset, output):
-            events.append("geojsonseq->fgb")
-            output.write_text("fgb", encoding="utf-8")
+        def fake_export(args):
+            events.append("gpkg->fgb")
+            Path(args[3]).write_bytes(b"fgb")
 
         # Exercise the real translation join with old IDs that differ from the
         # release writer's IDs, rather than mocking the retired Spanish scaffold.
@@ -449,10 +462,11 @@ class WdpaBuildPipelineTests(unittest.TestCase):
             closing(TranslationMemory(tmp_path / "memory.sqlite")) as memory,
             mock.patch.object(wdpa, "expected_feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "build_filtered_gpkg", fake_build_filtered_gpkg),
-            mock.patch.object(wdpa, "convert_gpkg_to_geojsonseq", fake_convert_gpkg_to_geojsonseq),
+            mock.patch.object(wdpa, "feature_stream", side_effect=lambda *a, **kw: __import__("contextlib").nullcontext(source_features())),
+            mock.patch.object(wdpa, "NormalizedGeometryStore", FixtureGeometryStore),
             mock.patch.object(wdpa, "remove_if_exists", fake_remove_if_exists),
-            mock.patch.object(wdpa, "build_pmtiles", fake_build_pmtiles),
-            mock.patch.object(wdpa, "convert_geojsonseq_to_fgb", fake_convert_geojsonseq_to_fgb),
+            mock.patch.object(wdpa, "build_streamed_pmtiles", fake_build_pmtiles),
+            mock.patch.object(wdpa, "run_command", fake_export),
             mock.patch.object(wdpa, "feature_count", return_value=len(indices)),
             mock.patch.object(wdpa, "layer_fields", return_value=source_fields + (
                 wdpa.FieldSpec(name="feature_id", type="String"),
@@ -480,10 +494,12 @@ class WdpaBuildPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             outputs, events = self._run_build(Path(tmp))
 
-        gpkg_removal = events.index(f"remove:{outputs.fgb.stem}.gpkg")
-        self.assertLess(events.index("gpkg->geojsonseq"), gpkg_removal)
-        self.assertLess(gpkg_removal, events.index("geojsonseq->fgb"))
+        gpkg_removal = events.index(f"remove:{outputs.fgb.stem}.filtered.gpkg")
+        self.assertLess(gpkg_removal, events.index("gpkg->fgb"))
         self.assertLess(gpkg_removal, events.index("build_pmtiles"))
+        normalized_removal = events.index(f"remove:{outputs.fgb.stem}.normalized.gpkg")
+        self.assertLess(events.index("build_pmtiles"), normalized_removal)
+        self.assertLess(events.index("gpkg->fgb"), normalized_removal)
 
     def test_build_writes_metadata_translations_and_next_feature_id(self):
         with tempfile.TemporaryDirectory() as tmp:

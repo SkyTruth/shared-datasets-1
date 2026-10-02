@@ -19,7 +19,11 @@ const test = base.extend({
     const indexes = new Map(await Promise.all(catalog.assets.map(async (asset) => [asset.slug, await readJSON(resolve(workDir, 'inputs/indexes', `${asset.slug}.json`))])));
     const requests = [], errors = [], forbidden = [], expectedErrors = new Set();
     let releaseHeld;
-    const state = { deny: 0, holdMetadata: false, held: false, release: () => releaseHeld?.(), requests };
+    const state = { execution: {
+      schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
+      latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
+      latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
+    }, deny: 0, holdMetadata: false, held: false, release: () => releaseHeld?.(), requests };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -29,6 +33,7 @@ const test = base.extend({
       const url = new URL(request.url());
       requests.push({ url: url.href, method: request.method(), range: request.headers().range || null });
       const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
+      if (url.origin === baseURL && url.pathname === "/wdpa-monthly-execution.json") return json(state.execution);
       if (libraries.has(url.href)) {
         const [file, contentType] = libraries.get(url.href);
         return route.fulfill({ path: resolve(packageDir, 'node_modules', file), contentType });
@@ -176,4 +181,23 @@ test('late historical metadata cannot replace the current inspector', async ({ p
   // Wait for response processing and a painted frame, not merely response headers.
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   await expectMetadata(page, false);
+});
+
+test('WDPA execution status preserves publication and refreshes running, cancellation and stale observations', async ({page, transport}) => {
+  await page.clock.install();
+  await page.goto(baseURL);
+  for (const slug of ['wdpa-marine', 'wdpa-terrestrial']) {
+    await page.locator(`#asset-list [data-slug="${slug}"]`).click();
+    await expect(page.locator('#detail-execution-status')).toContainText('failed');
+    await expect(page.locator('#detail-updated')).toHaveText(slug === 'wdpa-marine' ? '2026-10-01' : '2026-09-30');
+  }
+  transport.execution.latest_execution = {id: 'wdpa-monthly-running', state: 'running', started_at: new Date().toISOString()};
+  await page.clock.fastForward(61_000);
+  await expect(page.locator('#detail-execution-status')).toContainText('running');
+  await expect(page.locator('#detail-execution-status')).toContainText('Last completed: failed');
+  transport.execution.latest_execution.state = 'cancelled';
+  transport.execution.observed_at = new Date(Date.now() - 30 * 60_000).toISOString();
+  await page.clock.fastForward(61_000);
+  await expect(page.locator('#detail-execution-status')).toContainText('cancelled');
+  await expect(page.locator('#detail-execution-status')).toContainText('Stale observation');
 });

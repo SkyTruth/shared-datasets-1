@@ -79,6 +79,10 @@ def prepare_memory(publisher, assets, workdir: Path):
                         "provenance": {suffix: version.identity() for suffix, version in versions.items()}})
     database = workdir / "translation-memory.sqlite"
     build_memory(database=database, sources=sources, fields=FIELDS, locales=LOCALES, source_key_fields=("SITE_PID",))
+    # Rebuilds consume only the verified reusable SQLite index from here.
+    for source in sources:
+        for key in ("canonical_sidecar", "translation_source"):
+            Path(source[key]).unlink()
     supplement_path = None
     if supplement is not None:
         supplement_path = workdir / "translation-inputs" / "approved-supplement.ndjson"
