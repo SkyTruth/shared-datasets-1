@@ -71,7 +71,8 @@ Comparison acceptance scenarios run the real catalog-viewer routes and SQLite
 engine against local pinned fixture files. The union fixtures exercise green
 new geometry, red removed geometry, yellow metadata changes, and faint unchanged
 geometry. The polygon scenario reuses numeric IDs across generated-contract resets
-and checks actual screenshot interior pixels, with no map instances mocked. Tests cover pagination, full export, property absence/null, keyboard
+and checks actual screenshot interior pixels, with no map instances mocked. The Before polygon bundle uses a real canonical historical v1 FGB and combined
+hash sidecar, covering the coral failure. Tests cover collapsed details, pagination, property absence/null, keyboard
 operation, narrow layout, cancellation and a delayed start. `comparison_server.py`
 uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
 Set `CATALOG_BROWSER_PORT` to use another loopback port for a concurrent local run.

@@ -220,7 +220,9 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#version-select')).toBeHidden();
   await expect(page.locator('#compare-open')).toHaveText('Close comparison');
   await expect(page.locator('#compare-run, #compare-close, #compare-mode, #compare-maps')).toHaveCount(0);
-  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  await expect(page.locator('#compare-panel')).toBeHidden();
+  await expect(page.locator('#compare-details')).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('#compare-page')).toHaveText('1–50 of 106');
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas');
@@ -242,9 +244,7 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-inspector')).toContainText('null');
   await page.locator('#compare-search').fill(''); await page.locator('#compare-next').click();
   await expect(page.locator('#compare-page')).toHaveText('51–100 of 106');
-  const report = await downloadedJson(page, page.locator('#compare-report'));
-  expect(report.features).toHaveLength(106);
-  expect(report.summary.counts).toEqual({added:1,removed:1,geometry_only:1,properties_only:1,both:0,unchanged:102});
+  await expect(page.locator('#compare-report')).toHaveCount(0);
   await page.locator('#compare-open').scrollIntoViewIfNeeded();
   await testInfo.attach('comparison-desktop.png', {body:await page.screenshot(), contentType:'image/png'});
   await page.setViewportSize({width:390,height:844});
@@ -265,7 +265,8 @@ test('static catalog explains comparison availability and restores ordinary brow
   await expect(page.locator('#compare-status')).toContainText('authenticated catalog viewer');
   await expect(page.locator('#map-preview canvas')).toHaveCount(1);
   await expect(page.locator('#compare-table')).toBeHidden();
-  await expect(page.locator('#compare-report')).toBeDisabled();
+  await expect(page.locator('#compare-report')).toHaveCount(0);
+  await page.locator('#compare-details').click();
   await page.locator('.compare-local-guide summary').click();
   await expect(page.locator('.compare-local-guide')).toContainText('scripts/compare_releases.py');
   await page.locator('#compare-open').focus(); await page.keyboard.press('Escape');
@@ -278,10 +279,11 @@ test('static catalog explains comparison availability and restores ordinary brow
 test('comparison table updates preserve a denied historical map error and selection changes retry', async ({page, transport}) => {
   await select(page, 'private'); transport.deny = 403;
   await page.locator('#compare-open').click();
-  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   await expect(page.locator('#compare-page')).toHaveText('1–50 of 105');
   await expect(page.locator('#compare-map-note')).toContainText('Map inspection unavailable');
   await expect(page.locator('#map-preview canvas')).toHaveCount(0);
+  await page.locator('#compare-details').click();
   await page.locator('#compare-search').fill('Old');
   await expect(page.locator('#compare-page')).toHaveText('1–2 of 2');
   await page.locator('#compare-rows button').first().click();
@@ -290,7 +292,7 @@ test('comparison table updates preserve a denied historical map error and select
   transport.deny = 0;
   await page.locator('#compare-before').selectOption('2026-09-22');
   await page.locator('#compare-after').selectOption('2026-01-01');
-  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   await expect(page.locator('#map-preview canvas')).toHaveCount(1);
   await expect(page.locator('#compare-map-note')).not.toContainText('Map inspection unavailable');
 });
@@ -301,7 +303,7 @@ test('automatic comparison rejects delayed starts and closing cancels pending wo
   await expect.poll(() => transport.comparisonHeld).toBe(true);
   await page.locator('#compare-before').selectOption('2026-09-22');
   await page.locator('#compare-after').selectOption('2026-01-01');
-  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const releaseRow = page.locator('#compare-summary tbody tr').first();
   await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
   const firstReleased = page.waitForResponse(response => response.url().endsWith('/api/comparisons') && response.request().method() === 'POST');
@@ -325,7 +327,7 @@ test('automatic comparison rejects delayed starts and closing cancels pending wo
 test('polygons render red green yellow and faint gray across a generated ID reset', async ({page, transport}, testInfo) => {
   await select(page, 'polygons'); await expect(page.locator('#map-status')).toBeHidden();
   await page.locator('#compare-open').click();
-  await expect(page.locator('#compare-status')).toHaveText('Comparison complete');
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   await expect(page.locator('#compare-summary')).toContainText('Feature IDs cannot be matched');
   await expect(page.locator('#compare-summary')).toContainText('Unique geometries');
   await expect(page.locator('#compare-table')).toBeHidden();
@@ -352,10 +354,9 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   const c = await sample(), distance = (a,b) => Math.hypot(...a.map((v,i) => v-b[i]));
   expect(distance(c.gray,c.background)).toBeLessThan(distance(c.red,c.background) / 2);
   await testInfo.attach('comparison-polygons.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
+  await page.locator('#compare-details').click();
   await testInfo.attach('comparison-polygon-summary.png', {body:await page.locator('#compare-panel').screenshot(), contentType:'image/png'});
-  const report = await downloadedJson(page, page.locator('#compare-report'));
-  expect(report.summary.counts).toBeNull();
-  expect(report.summary.geometry_counts).toEqual({novel:2,removed:2,metadata_changed:1,unchanged:1});
+  await expect(page.locator('#compare-summary')).toContainText('New geometry');
 });
 
 async function downloadedJson(page, button) {
@@ -375,7 +376,8 @@ test('inline dataset examples are short, copyable and execute a real map integra
   const section = page.locator('#use-section');
   await expect(section).toBeVisible();
   expect(await page.locator('#save-workspace, #use-dataset-dialog, #use-install, #use-provenance, #use-export').count()).toBe(0);
-  expect(await section.evaluate(node => node.previousElementSibling.id)).toBe('version-path-row');
+  expect(await section.evaluate(node => node.nextElementSibling.className)).toBe('path-section');
+  expect(await page.locator('#version-path-row').evaluate(node => node.previousElementSibling.id)).toBe('map-section');
   await page.locator('#use-copy-code').click();
   const python = await page.evaluate(() => navigator.clipboard.readText());
   expect(python.split('\n').length).toBe(4);
@@ -494,5 +496,15 @@ test('unavailable or malformed workspace fails atomically without upgrading or r
   await openSnapshot(page, snapshot);
   await expect(page.locator('#workspace-status')).toContainText('Captured source layer is unavailable');
   await expect(page.locator('#version-select')).toHaveValue('latest');
+  await expect(page.locator('#map-status')).toBeHidden();
+});
+
+
+test('single-release assets hide comparison while normal version selection remains usable', async ({page, transport}) => {
+  const index = transport.indexes.get('smoke-public');
+  index.releases = [index.releases[0]];
+  await select(page, 'public');
+  await expect(page.locator('#version-select')).toBeVisible();
+  await expect(page.locator('#compare-open')).toBeHidden();
   await expect(page.locator('#map-status')).toBeHidden();
 });

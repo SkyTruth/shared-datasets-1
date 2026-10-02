@@ -25,7 +25,9 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import release_feature_model as model
 
 POLICY = "feature-id-hashes-v1"
-RESULT_VERSION = 2
+RESULT_VERSION = 3
+LEGACY_FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
+LEGACY_BOOKKEEPING = {"ext_id", "feature_hash", "feature_id"}
 
 
 def reject_json_constant(value):
@@ -74,6 +76,7 @@ class Limits:
     max_rows: int = 100_000
     max_disk_bytes: int = 128 * 1024 * 1024
     max_seconds: int = 120
+    max_geometry_bytes: int = 512 * 1024 * 1024
 
 
 def work_root() -> Path:
@@ -146,6 +149,12 @@ def snapshot(raw: Mapping) -> dict:
         files["pmtiles"] = artifact(raw["files"]["pmtiles"])
         if files["pmtiles"]["path"] != f"{root}/releases/{release}/{slug}.pmtiles":
             raise ComparisonError("Map input is outside the selected asset release")
+    if "fgb" in raw["files"]:
+        files["fgb"] = artifact(raw["files"]["fgb"])
+        if files["fgb"]["path"] != f"{root}/releases/{release}/{slug}.fgb":
+            raise ComparisonError(
+                "Geometry input is outside the selected asset release"
+            )
     return {"asset_slug": slug, "release": release, "files": files}
 
 
@@ -293,7 +302,7 @@ class Comparison:
                     "Input checksum does not match pinned declaration"
                 )
 
-    def load(self, db, side: str, ref: dict, paths: dict):
+    def load(self, db, side: str, ref: dict, paths: dict, open_geometry=None):
         for role in ("metadata", "schema", "manifest"):
             self.verify_bytes(paths[role], ref["files"][role])
         if any(
@@ -305,14 +314,36 @@ class Comparison:
             )
         schema = read_json(paths["schema"].read_text())
         manifest = read_json(paths["manifest"].read_text())
+        legacy = schema.get("schema_version") == 1
+        if legacy and (
+            manifest.get("schema_version") != 1
+            or manifest.get("release_feature_model_schema_version") != 1
+            or manifest.get("feature_hash_algorithm")
+            != "sha256:canonical-feature-content:v1"
+        ):
+            raise ComparisonError(
+                "Historical comparison needs the declared v1 feature contract"
+            )
         fields = model.validate_release_schema(
-            schema,
+            {**schema, "schema_version": 2} if legacy else schema,
             expected_asset_slug=ref["asset_slug"],
             expected_release=ref["release"],
         )
         # Legacy identity evidence is a capability failure, never permission to guess IDs.
         artifacts = model.validate_release_manifest(
-            manifest,
+            {
+                **manifest,
+                "schema_version": 2,
+                "release_feature_model_schema_version": 2,
+                "schema": {**schema, "schema_version": 2},
+                "index_load_status": "Firestore metadata serving is inactive",
+                "index_status_policy": {
+                    "mode": "inactive_firestore_serving",
+                    "path": None,
+                },
+            }
+            if legacy
+            else manifest,
             expected_asset_slug=ref["asset_slug"],
             expected_release=ref["release"],
             require_generations=True,
@@ -340,10 +371,10 @@ class Comparison:
                         raise ComparisonError(
                             f"Manifest {role} {key} differs from selected snapshot"
                         )
-                if role in paths:
+                if role in paths and role != "fgb":
                     self.verify_bytes(paths[role], evidence)
         db.execute(
-            f"CREATE TABLE {side} (id TEXT PRIMARY KEY, identity_key TEXT UNIQUE, geometry TEXT, properties_hash TEXT, record TEXT, search TEXT)"
+            f"CREATE TABLE {side} (id TEXT PRIMARY KEY, identity_key TEXT UNIQUE, geometry TEXT, properties_hash TEXT, record TEXT)"
         )
         raw_identity = manifest.get("identity")
         try:
@@ -378,90 +409,45 @@ class Comparison:
                 if not line.strip():
                     continue
                 record = read_json(line)
-                validation = model.validate_sidecar_records(
-                    [record],
-                    expected_asset_slug=ref["asset_slug"],
-                    expected_release=ref["release"],
-                )
-                if not validation.valid:
-                    raise ComparisonError("; ".join(validation.errors))
-                if type(record["feature_id"]) is not str:
-                    raise ComparisonError("feature_id must be a string")
-                props = record["properties"]
-                if set(props) - set(fields):
-                    raise ComparisonError(
-                        "Record has properties outside the release schema"
-                    )
-                if identity is not None and (
-                    model.properties_hash(
-                        props,
-                        exclude_properties=identity.get(
-                            "properties_hash_excluded_properties", []
-                        ),
-                    )
-                    != record["properties_hash"]
-                ):
-                    raise ComparisonError(
-                        "Record properties_hash does not match canonical properties"
-                    )
-                if identity is not None and identity.get("strategy") == "source_field":
-                    field = identity["source_fields"][0]
+                if legacy:
                     if (
-                        model.source_field_feature_id(
-                            source_field=field, source_value=props.get(field)
-                        )
-                        != record["feature_id"]
+                        record.get("schema_version") != 1
+                        or record.get("asset_slug") != ref["asset_slug"]
+                        or record.get("release") != ref["release"]
+                        or not isinstance(record.get("feature_id"), str)
+                        or not LEGACY_FEATURE_ID_RE.fullmatch(record["feature_id"])
+                        or not isinstance(record.get("properties"), dict)
                     ):
+                        raise ComparisonError("Invalid historical sidecar record")
+                    model.validate_hash(
+                        record.get("feature_hash", ""), label="feature_hash"
+                    )
+                    if set(record["properties"]) - set(fields):
                         raise ComparisonError(
-                            "Record does not match the declared source-field identity"
+                            "Historical properties are outside the release schema"
                         )
-                elif identity is not None and identity.get("strategy", "").startswith(
-                    "generated_sequence"
-                ):
-                    if not model.GENERATED_FEATURE_ID_RE.fullmatch(
-                        record["feature_id"]
-                    ):
-                        raise ComparisonError(
-                            "Generated feature_id must be a monotonic decimal string"
-                        )
-                    next_id = identity.get("next_generated_feature_id_after_release")
-                    if next_id is not None and int(record["feature_id"]) >= next_id:
-                        raise ComparisonError(
-                            "Generated feature_id exceeds the declared allocation state"
-                        )
-                key_value = model.identity_key_from_record(record)
-                if (
-                    identity is not None
-                    and identity.get("strategy") == "generated_sequence_source_fields"
-                ):
-                    if key_value != model.source_fields_identity_key(
-                        props, identity["source_fields"]
-                    ):
-                        raise ComparisonError(
-                            "Record assignment key differs from declared source fields"
-                        )
-                if (
-                    identity is not None
-                    and identity.get("strategy") == "generated_sequence_content_hash"
-                ):
-                    if key_value != (
-                        record["geometry_hash"],
-                        record["properties_hash"],
-                    ):
-                        raise ComparisonError(
-                            "Record assignment key differs from content hashes"
-                        )
-                key = model.canonical_json(key_value)
+                    record["properties"] = {
+                        k: v
+                        for k, v in record["properties"].items()
+                        if k not in LEGACY_BOOKKEEPING
+                    }
+                    record["geometry_hash"] = None
+                    record["properties_hash"] = model.properties_hash(
+                        record["properties"]
+                    )
+                else:
+                    self.validate_record(record, ref, fields, identity)
+                key_value = None if legacy else model.identity_key_from_record(record)
+                key = None if legacy else model.canonical_json(key_value)
                 try:
                     db.execute(
-                        f"INSERT INTO {side} VALUES (?, ?, ?, ?, ?, ?)",
+                        f"INSERT INTO {side} VALUES (?, ?, ?, ?, ?)",
                         (
                             record["feature_id"],
                             key,
                             record["geometry_hash"],
                             record["properties_hash"],
                             model.canonical_json(record),
-                            model.canonical_json(props),
                         ),
                     )
                 except sqlite3.IntegrityError as exc:
@@ -477,6 +463,10 @@ class Comparison:
             raise ComparisonError(
                 "Manifest feature_count differs from the complete sidecar"
             )
+        if legacy:
+            self.load_legacy_geometry(
+                db, side, ref, paths, fields, count, open_geometry
+            )
         self.progress(side, count)
         declared_fields = {
             f["name"]: model.ReleaseSchemaField(
@@ -488,6 +478,218 @@ class Comparison:
             for f in schema["fields"]
         }
         return manifest, declared_fields, count
+
+    def validate_record(self, record, ref, fields, identity):
+        validation = model.validate_sidecar_records(
+            [record],
+            expected_asset_slug=ref["asset_slug"],
+            expected_release=ref["release"],
+        )
+        if not validation.valid:
+            raise ComparisonError("; ".join(validation.errors))
+        if type(record["feature_id"]) is not str:
+            raise ComparisonError("feature_id must be a string")
+        props = record["properties"]
+        if set(props) - set(fields):
+            raise ComparisonError("Record has properties outside the release schema")
+        if identity is not None and (
+            model.properties_hash(
+                props,
+                exclude_properties=identity.get(
+                    "properties_hash_excluded_properties", []
+                ),
+            )
+            != record["properties_hash"]
+        ):
+            raise ComparisonError(
+                "Record properties_hash does not match canonical properties"
+            )
+        if identity is not None and identity.get("strategy") == "source_field":
+            field = identity["source_fields"][0]
+            if (
+                model.source_field_feature_id(
+                    source_field=field, source_value=props.get(field)
+                )
+                != record["feature_id"]
+            ):
+                raise ComparisonError(
+                    "Record does not match the declared source-field identity"
+                )
+        elif identity is not None and identity.get("strategy", "").startswith(
+            "generated_sequence"
+        ):
+            if not model.GENERATED_FEATURE_ID_RE.fullmatch(record["feature_id"]):
+                raise ComparisonError(
+                    "Generated feature_id must be a monotonic decimal string"
+                )
+            next_id = identity.get("next_generated_feature_id_after_release")
+            if next_id is not None and int(record["feature_id"]) >= next_id:
+                raise ComparisonError(
+                    "Generated feature_id exceeds the declared allocation state"
+                )
+        key_value = model.identity_key_from_record(record)
+        if (
+            identity is not None
+            and identity.get("strategy") == "generated_sequence_source_fields"
+        ):
+            if key_value != model.source_fields_identity_key(
+                props, identity["source_fields"]
+            ):
+                raise ComparisonError(
+                    "Record assignment key differs from declared source fields"
+                )
+        if (
+            identity is not None
+            and identity.get("strategy") == "generated_sequence_content_hash"
+        ):
+            if key_value != (
+                record["geometry_hash"],
+                record["properties_hash"],
+            ):
+                raise ComparisonError(
+                    "Record assignment key differs from content hashes"
+                )
+
+    def load_legacy_geometry(
+        self, db, side, ref, paths, fields, expected_count, open_geometry
+    ):
+        """Recover separate hashes from canonical v1 geometry, never display tiles."""
+        from flatgeobuf.FlatGeobuf.Feature import Feature
+        from flatgeobuf.FlatGeobuf.GeometryType import GeometryType
+        from flatgeobuf.generic.feature import parse_properties
+        from flatgeobuf.geojson.geometry import to_geojson_coordinates
+        from flatgeobuf.header_meta import from_byte_buffer
+        from flatgeobuf.packedrtree import calc_tree_size
+
+        fgb = ref["files"].get("fgb")
+        if fgb is None or (open_geometry is None and "fgb" not in paths):
+            raise ComparisonError("Historical comparison needs the exact canonical FGB")
+        if fgb.get("size", 0) > self.limits.max_geometry_bytes:
+            raise ComparisonLimit(
+                "Historical FGB exceeds the streaming geometry budget"
+            )
+        digest, total = hashlib.sha256(), 0
+
+        def geometry(value, kind):
+            kind = value.Type() if kind == GeometryType.Unknown else kind
+            if kind == GeometryType.MultiPolygon:
+                return {
+                    "type": "MultiPolygon",
+                    "coordinates": [
+                        geometry(value.Parts(i), GeometryType.Polygon)["coordinates"]
+                        for i in range(value.PartsLength())
+                    ],
+                }
+            if kind == GeometryType.GeometryCollection:
+                return {
+                    "type": "GeometryCollection",
+                    "geometries": [
+                        geometry(value.Parts(i), GeometryType.Unknown)
+                        for i in range(value.PartsLength())
+                    ],
+                }
+            names = {
+                GeometryType.Point: "Point",
+                GeometryType.MultiPoint: "MultiPoint",
+                GeometryType.LineString: "LineString",
+                GeometryType.MultiLineString: "MultiLineString",
+                GeometryType.Polygon: "Polygon",
+            }
+            if kind not in names:
+                raise ComparisonError("Unsupported canonical historical geometry type")
+            return {
+                "type": names[kind],
+                "coordinates": to_geojson_coordinates(value, kind),
+            }
+
+        with open_geometry(fgb) if open_geometry else paths["fgb"].open("rb") as stream:
+
+            def read(size, *, eof=False):
+                nonlocal total
+                self.check()
+                if not 0 <= size <= 64 * 1024 * 1024:
+                    raise ComparisonLimit("Historical FGB feature exceeds 64 MiB")
+                data = stream.read(size)
+                total += len(data)
+                digest.update(data)
+                if total > self.limits.max_geometry_bytes:
+                    raise ComparisonLimit(
+                        "Historical FGB exceeds the streaming geometry budget"
+                    )
+                if len(data) != size and not (eof and not data):
+                    raise ComparisonError("Historical FGB is truncated")
+                return data
+
+            if read(8) != b"fgb\x03fgb\x01":
+                raise ComparisonError("Historical geometry is not FlatGeobuf v3")
+            header_size = int.from_bytes(read(4), "little")
+            if not 0 < header_size <= 4 * 1024 * 1024:
+                raise ComparisonError("Invalid historical FGB header size")
+            header = from_byte_buffer(bytearray(read(header_size)))
+            if header.features_count != expected_count:
+                raise ComparisonError(
+                    "Historical FGB feature count differs from the complete sidecar"
+                )
+            remaining = (
+                (
+                    80
+                    if header.features_count == 1
+                    else calc_tree_size(header.features_count, header.index_node_size)
+                )
+                if header.index_node_size and header.features_count
+                else 0
+            )
+            while remaining:
+                size = min(remaining, 1024 * 1024)
+                read(size)
+                remaining -= size
+            count = 0
+            while prefix := read(4, eof=True):
+                value = Feature.GetRootAsFeature(
+                    bytearray(read(int.from_bytes(prefix, "little")))
+                )
+                props = parse_properties(value, header.columns)
+                feature_id = props.get("feature_id")
+                row = db.execute(
+                    f"SELECT record, geometry FROM {side} WHERE id=?", (feature_id,)
+                ).fetchone()
+                if row is None or row[1] is not None:
+                    raise ComparisonError(
+                        "Historical FGB IDs differ from the complete sidecar"
+                    )
+                record = json.loads(row[0])
+                projected = {
+                    k: v
+                    for k, v in props.items()
+                    if k in fields and k not in LEGACY_BOOKKEEPING
+                }
+                if (
+                    projected != record["properties"]
+                    or props.get("feature_hash") != record["feature_hash"]
+                ):
+                    raise ComparisonError(
+                        "Historical FGB metadata differs from the pinned sidecar"
+                    )
+                raw = value.Geometry()
+                hashed = model.geometry_hash(
+                    geometry(raw, header.geometry_type) if raw else None
+                )
+                db.execute(
+                    f"UPDATE {side} SET geometry=? WHERE id=?", (hashed, feature_id)
+                )
+                count += 1
+                if count % 500 == 0:
+                    self.progress(f"{side} geometry", count)
+            if count != expected_count:
+                raise ComparisonError("Historical FGB is incomplete")
+        if "size" in fgb and total != fgb["size"]:
+            raise ComparisonError(
+                "Historical FGB size differs from the selected snapshot"
+            )
+        if "sha256" in fgb and digest.hexdigest() != fgb["sha256"]:
+            raise ComparisonError(
+                "Historical FGB checksum differs from the selected snapshot"
+            )
 
     @contextmanager
     def checked_connection(self):
@@ -511,7 +713,13 @@ class Comparison:
                 raise
 
     def run(
-        self, baseline: dict, target: dict, baseline_paths: dict, target_paths: dict
+        self,
+        baseline: dict,
+        target: dict,
+        baseline_paths: dict,
+        target_paths: dict,
+        *,
+        open_geometry=None,
     ) -> dict:
         baseline, target = snapshot(baseline), snapshot(target)
         if baseline["asset_slug"] != target["asset_slug"]:
@@ -523,8 +731,10 @@ class Comparison:
         with self.checked_connection() as db:
             db.execute("PRAGMA cache_size=-8192")
             db.execute("PRAGMA temp_store=FILE")
-            a, af, ac = self.load(db, "baseline", baseline, baseline_paths)
-            b, bf, bc = self.load(db, "target", target, target_paths)
+            a, af, ac = self.load(
+                db, "baseline", baseline, baseline_paths, open_geometry
+            )
+            b, bf, bc = self.load(db, "target", target, target_paths, open_geometry)
             for side in ("baseline", "target"):
                 db.execute(
                     f"CREATE INDEX {side}_geometry ON {side}(geometry, properties_hash)"
@@ -562,10 +772,9 @@ class Comparison:
                     SELECT a.id, CASE WHEN b.id IS NULL THEN 'removed'
                       WHEN a.geometry=b.geometry AND a.properties_hash=b.properties_hash THEN 'unchanged'
                       WHEN a.geometry=b.geometry THEN 'properties_only'
-                      WHEN a.properties_hash=b.properties_hash THEN 'geometry_only' ELSE 'both' END AS classification,
-                      a.search || coalesce(b.search, '') AS search
+                      WHEN a.properties_hash=b.properties_hash THEN 'geometry_only' ELSE 'both' END AS classification
                     FROM baseline a LEFT JOIN target b ON a.id=b.id
-                    UNION ALL SELECT b.id, 'added', b.search FROM target b LEFT JOIN baseline a ON a.id=b.id WHERE a.id IS NULL""")
+                    UNION ALL SELECT b.id, 'added' FROM target b LEFT JOIN baseline a ON a.id=b.id WHERE a.id IS NULL""")
                 db.execute("CREATE UNIQUE INDEX change_id ON changes(id)")
                 counts = dict.fromkeys(CLASSES, 0)
                 counts.update(
@@ -591,7 +800,7 @@ class Comparison:
             "feature_counts": {"baseline": ac, "target": bc},
             "schema_changes": schema_changes(af, bf),
             "limits": asdict(self.limits),
-            "method": "Complete canonical sidecars; match feature_id; compare geometry_hash/properties_hash. No spatial matching or tile-derived counts. Provenance and localization excluded.",
+            "method": "Complete canonical sidecars; match compatible feature_id; compare geometry_hash/properties_hash. Historical v1 geometry hashes come from the exact canonical FGB, with legacy bookkeeping excluded from source properties. No spatial matching or tile-derived counts. Provenance and localization excluded.",
             "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. All loaded map features are colored through bounded per-release lookups, independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
@@ -620,7 +829,8 @@ class Comparison:
         for feature_id in feature_ids:
             if not isinstance(feature_id, str):
                 raise ComparisonError("Map feature IDs must be strings")
-            model.validate_feature_id(feature_id)
+            if not LEGACY_FEATURE_ID_RE.fullmatch(feature_id):
+                raise ComparisonError("Invalid display feature ID")
         if len(set(feature_ids)) != len(feature_ids):
             raise ComparisonError("Map feature IDs must be unique")
         with sqlite3.connect(self.db_path) as db:
@@ -656,20 +866,21 @@ class Comparison:
         ):
             raise ComparisonError("Invalid page options")
         where, args = (
-            "WHERE (instr(lower(id), lower(?)) > 0 OR instr(lower(search), lower(?)) > 0)",
-            [query, query],
+            "WHERE (instr(lower(c.id), lower(?)) > 0 OR instr(lower(json_extract(a.record, '$.properties')), lower(?)) > 0 OR instr(lower(json_extract(b.record, '$.properties')), lower(?)) > 0)",
+            [query, query, query],
         )
         if classification:
-            where += " AND classification=?"
+            where += " AND c.classification=?"
             args.append(classification)
         with sqlite3.connect(self.db_path) as db:
             total = db.execute(
-                f"SELECT count(*) FROM changes {where}", args
+                f"SELECT count(*) FROM changes c LEFT JOIN baseline a USING(id) LEFT JOIN target b USING(id) {where}",
+                args,
             ).fetchone()[0]
             rows = [
                 {"feature_id": i, "classification": c, **self.map_membership(db, i)}
                 for i, c in db.execute(
-                    f"SELECT id, classification FROM changes {where} ORDER BY id COLLATE BINARY LIMIT ? OFFSET ?",
+                    f"SELECT c.id, c.classification FROM changes c LEFT JOIN baseline a USING(id) LEFT JOIN target b USING(id) {where} ORDER BY c.id COLLATE BINARY LIMIT ? OFFSET ?",
                     [*args, limit, offset],
                 )
             ]
@@ -776,7 +987,8 @@ def main(argv=None):
         paths = [
             {
                 role: Path(raw["local_paths"][role])
-                for role in ("metadata", "schema", "manifest")
+                for role in ("metadata", "schema", "manifest", "fgb")
+                if role in raw["files"]
             }
             for raw in inputs
         ]

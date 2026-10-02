@@ -272,3 +272,49 @@ def test_map_endpoint_is_release_scoped_even_without_compatible_feature_ids(tmp_
         )
     finally:
         jobs.pool.shutdown(wait=True)
+
+
+def test_historical_coral_completes_through_viewer_and_colors_legacy_handles(tmp_path):
+    from tests.comparison_fixtures import historical_bundle
+
+    a, geom = historical_bundle(tmp_path / "before", A)
+    b = bundle(tmp_path / "after", B, [record(1, B, geometry=geom)])
+    store = Store(a, b)
+    jobs = comparisons.ComparisonJobs(
+        root=tmp_path / "jobs",
+        reader=store.reader,
+        geometry_opener=lambda ref, **kwargs: store.paths[
+            (ref["path"], ref["generation"])
+        ].open("rb"),
+    )
+    request = {
+        "slug": "example",
+        "baseline": A,
+        "target": B,
+        "expected": {
+            side: {
+                role: {"path": f["path"], "generation": f["generation"]}
+                for role, f in ref["files"].items()
+            }
+            for side, (ref, _) in zip(("baseline", "target"), (a, b))
+        },
+    }
+    ctx = (store, jobs, request)
+    try:
+        status, started = call(ctx)
+        assert status == 202
+        result = complete(ctx, started["job_id"])
+        assert result["state"] == "complete", result
+        assert result["summary"]["counts"] is None
+        status, colors = call(
+            ctx,
+            "POST",
+            f"/api/comparisons/{started['job_id']}/map",
+            {"side": "baseline", "feature_ids": ["gen:coral-example"]},
+        )
+        assert status == 200
+        assert colors["map_features"] == [
+            {"feature_id": "gen:coral-example", "change": "metadata_changed"}
+        ]
+    finally:
+        jobs.pool.shutdown(wait=True)
