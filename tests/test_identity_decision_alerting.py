@@ -151,7 +151,7 @@ class DecisionAlertCopyTests(unittest.TestCase):
 
 
 class AlertPolicyTests(unittest.TestCase):
-    def test_alert_policy_role_can_create_log_notification_rules(self):
+    def test_alert_policy_role_can_replace_log_notification_rules(self):
         iam = (MONITORING_TF.parent / "monitoring_alert_policy_iam.tf").read_text(encoding="utf-8")
         role = iam.split('resource "google_project_iam_custom_role" "monitoring_alert_policy_manager"', 1)[1]
         role = role.split("\nresource ", 1)[0]
@@ -161,6 +161,7 @@ class AlertPolicyTests(unittest.TestCase):
             set(re.findall(r'^\s*"([^"]+)"', permissions.group(1), re.MULTILINE)),
             {
                 "logging.notificationRules.create",
+                "logging.notificationRules.delete",
                 "monitoring.alertPolicies.create",
                 "monitoring.alertPolicies.delete",
                 "monitoring.alertPolicies.get",
