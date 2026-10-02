@@ -196,6 +196,11 @@ viewer GCS readers with default budgets in 273.77 seconds, using 14.1 MiB of
 workspace files and 905.4 MiB peak process RSS. Both release-scoped map lookups
 returned canonical hashes and categories. This read pinned June 7 FGB generation
 `1780838301984256` and October 1 sidecar generation `1790866699087905`.
+June 5 → June 7 also completed through the real GCS readers with default budgets
+in 476.91 seconds: 17,657 features per side, 13.5 MiB workspace and 944.4 MiB peak
+process RSS. It verified both complete historical streams at FGB generations
+`1780651675251674` / `1780838301984256` and both map lookups, yielding no new or
+removed geometry, 470 metadata changes and 16,677 unchanged unique geometries.
 Cloud Run CPU timings remain unverified. September WDPA and EAMLIS use sidecars
 only. Their classifications depend on IDs and hashes,
 not expanded property payloads. The previous full-record SQLite representation
