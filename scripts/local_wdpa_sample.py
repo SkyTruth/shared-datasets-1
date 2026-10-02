@@ -338,17 +338,11 @@ def main():
         "schema_version": 1,
         "source_tree_sha256": source_digest(),
         "native_versions": profiler.versions,
-        "source_sha256": wdpa.sha256_file(args.source),
-        "translation_memory_sha256": wdpa.sha256_file(args.translation_memory)
-        if args.translation_memory
-        else None,
-        "translation_inputs_snapshot_sha256": wdpa.sha256_file(args.translation_sources)
-        if args.translation_sources
-        else None,
+        "source_sha256": None,
+        "translation_memory_sha256": None,
+        "translation_inputs_snapshot_sha256": None,
         "translation_index_built": args.translation_sources is not None,
-        "baseline_snapshot_sha256": wdpa.sha256_file(args.baselines / "pins.json")
-        if args.baselines
-        else None,
+        "baseline_snapshot_sha256": None,
         "cpu_limit": cpu_limit,
         "memory_limit_bytes": memory_limit,
         "sample_fraction": args.fraction,
@@ -363,6 +357,22 @@ def main():
     try:
         with ExitStack() as stack:
             with profiler.phase("frozen-inputs"):
+                # Hashing the complete ZIP reads gigabytes into the cgroup's
+                # file cache. Keep verification inside the measured phase so
+                # scratch/input cache pressure is controlled from the first read.
+                report["source_sha256"] = wdpa.sha256_file(args.source)
+                if args.translation_memory:
+                    report["translation_memory_sha256"] = wdpa.sha256_file(
+                        args.translation_memory
+                    )
+                if args.translation_sources:
+                    report["translation_inputs_snapshot_sha256"] = wdpa.sha256_file(
+                        args.translation_sources
+                    )
+                if args.baselines:
+                    report["baseline_snapshot_sha256"] = wdpa.sha256_file(
+                        args.baselines / "pins.json"
+                    )
                 source_copy = args.workdir / args.source.name
                 shutil.copyfile(args.source, source_copy)
                 sources = wdpa.prepare_source_datasets(source_copy, args.workdir)
