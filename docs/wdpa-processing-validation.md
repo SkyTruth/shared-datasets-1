@@ -131,7 +131,32 @@ FGB and PMTiles contracts in 1.023 seconds. Cgroup peak was 104,140,800 bytes;
 scratch peaked at 823,296 bytes under the exact 4 CPU / 8 GiB limits.
 The image digest and scalar report are retained in
 `catalog/wdpa-staged-validation.json`. The same-image complete marine stage is
-now running; this small fixture provides no complete-WDPA resource acceptance.
+also complete; this small fixture provides no complete-WDPA resource acceptance.
+
+The complete marine replay in that run passed at 4 CPU / 8 GiB with no swap:
+
+| Measurement | Marine result | Required target |
+| --- | --- | --- |
+| Processing duration | 3,004.028 seconds (50.1 minutes) | ≤24 hours |
+| Cgroup memory peak | 6,603,804,672 bytes (6.15 GiB) | ≤6.4 GiB |
+| Memory headroom | 23.1% | ≥20% |
+| Scratch peak | 9,457,233,920 bytes (8.81 GiB) | >8 GiB and <80 GiB |
+| Marine records | 17,938 | Frozen source: 17,938 |
+| India records/sites | 304 / 304 | Frozen source: 304 / 304 |
+
+The translation index was rebuilt from frozen inputs; all six locale sidecars
+and the canonical CSV were generated. Metadata, indexed FGB and PMTiles passed
+their contracts, including representative tile decoding. The container exited
+zero with `OOMKilled=false`. The loaded image digest matches sea ice exactly.
+The scalar report is recorded in `catalog/wdpa-staged-validation.json` with its
+Actions artifact ID and report hash. This run did not repeat the old/new
+comparison; `compatibility_verified` remains false rather than claiming that
+comparison from artifact checks alone. Earlier fixture/sample compatibility
+evidence is separate.
+
+Sea ice and marine now satisfy their staged checks. The isolated cloud gate
+still rejects the unapproved disk quota. No dataset bytes were published; the
+complete terrestrial builds and final worker acceptance remain pending.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
 upstream ZIP hash and the exact published baseline/translation object generations,
@@ -261,8 +286,8 @@ describes the separate limits. No quota change or authentication change was made
 
 ## Remaining acceptance and rollout
 
-1. Run the manual `CI` workflow: require small sea-ice smoke first, then complete
-   marine WDPA with verified counts/contracts and measured disk spill above RAM.
+1. Small sea-ice smoke and complete marine WDPA have passed in the manual `CI`
+   workflow, including verified counts/contracts and disk scratch above RAM.
 2. After review, merge and quota/bootstrap verification, deploy only the isolated
    cloud validation job. Run the deployment image twice on the complete frozen October inputs and
    identical verified baseline/translation snapshots. Require peak memory
