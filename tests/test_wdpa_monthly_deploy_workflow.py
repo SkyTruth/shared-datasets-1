@@ -91,10 +91,22 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["IMAGE_NAME"], "wdpa-monthly")
         self.assertEqual(env["JOB_NAME"], "wdpa-monthly")
 
-        build_run = steps["Build wdpa-monthly image"]["run"]
-        self.assertIn("-f ingestion/wdpa_monthly/Dockerfile", build_run)
-        self.assertIn("--platform linux/amd64", build_run)
-        self.assertIn("WDPA_MONTHLY_IMAGE_TAG=${image_tag}", build_run)
+        promote_run = steps["Promote accepted wdpa-monthly image"]["run"]
+        self.assertIn("catalog/wdpa-processing-acceptance.json", promote_run)
+        self.assertIn("docker pull --platform linux/amd64", promote_run)
+        self.assertIn("docker image inspect", promote_run)
+        self.assertIn("--print-source-digest", promote_run)
+        self.assertIn("docker tag", promote_run)
+        self.assertNotIn("docker build", promote_run)
+        self.assertIn("WDPA_MONTHLY_IMAGE_TAG=${image_tag}", promote_run)
+        self.assertLess(
+            step_names.index("Require WDPA processing acceptance and disk quota"),
+            step_names.index("Promote accepted wdpa-monthly image"),
+        )
+        self.assertLess(
+            step_names.index("Verify feature-ID publication state"),
+            step_names.index("Promote accepted wdpa-monthly image"),
+        )
 
         self.assertIn("tippecanoe --version", steps["Smoke-test native tools in image"]["run"])
         import_run = steps["Smoke-test job import closure in image"]["run"]
@@ -166,6 +178,51 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         watch_run = steps["Watch wdpa-monthly canary"]["run"]
         self.assertIn("gcloud run jobs executions describe", watch_run)
         self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
+
+    def test_image_mismatch_fails_before_tagging(self):
+        steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
+        script = steps["Promote accepted wdpa-monthly image"]["run"]
+        image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:" + "a" * 64
+        config = "sha256:" + "b" * 64
+        fake_tools = '''docker() {
+          printf '%s\\n' "$*" >> "$TEST_DOCKER_CALLS"
+          case "$1" in
+            pull) return "$TEST_PULL_RESULT" ;;
+            image) printf '%s\\n' "$TEST_CONFIG" ;;
+            run) printf '%s\\n' "$TEST_SOURCE" ;;
+            tag) return 0 ;;
+            *) return 1 ;;
+          esac
+        }
+        uv() { printf '%s\\n' expected-source; }
+        '''
+        for mismatch in (None, "config", "source", "pull"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "catalog").mkdir()
+                (root / "catalog/wdpa-processing-acceptance.json").write_text(json.dumps({
+                    "runs": [{"cloud_image": image, "image_digest": config}]}))
+                calls = root / "docker-calls"
+                env_file = root / "env"
+                result = subprocess.run(
+                    ["bash", "-c", fake_tools + script], cwd=root,
+                    env={**os.environ, "TEST_CONFIG": "wrong" if mismatch == "config" else config,
+                         "TEST_SOURCE": "wrong" if mismatch == "source" else "expected-source",
+                         "TEST_PULL_RESULT": "1" if mismatch == "pull" else "0",
+                         "TEST_DOCKER_CALLS": str(calls), "GITHUB_ENV": str(env_file),
+                         "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
+                         "ARTIFACT_REGISTRY_REPOSITORY": "shared-datasets-jobs",
+                         "IMAGE_NAME": "wdpa-monthly", "GITHUB_SHA": "c" * 40, "GITHUB_RUN_ID": "123"},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stderr)
+                recorded = calls.read_text().splitlines()
+                self.assertEqual(recorded[0], f"pull --platform linux/amd64 {image}")
+                self.assertEqual(any(call.startswith("tag ") for call in recorded), mismatch is None)
+                self.assertEqual(env_file.exists(), mismatch is None)
+                self.assertFalse(any(call.startswith(("build ", "push ")) for call in recorded))
+                if mismatch == "config":
+                    self.assertFalse(any(call.startswith("run ") for call in recorded))
 
     def test_paused_schedule_requires_explicit_canary_date(self):
         steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
