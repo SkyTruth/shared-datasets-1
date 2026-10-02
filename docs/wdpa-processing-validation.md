@@ -179,6 +179,14 @@ the observer's job/scheduler/custom-role creation permissions. A reviewed
 protected bootstrap is a rollout prerequisite. No broader project permissions
 have been granted by this PR.
 
+The current disk quota could not be verified: the read-only Cloud Quotas command
+failed because the local GCP session requires interactive reauthentication.
+Before rollout, verify both `run.googleapis.com/max_per_instance_ephemeral_disk`
+(100 GiB per worker instance) and `run.googleapis.com/ephemeral_disk_allocation`
+(at least 100 GiB available in `us-central1` for one concurrent worker). Google's
+[disk documentation](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
+describes the separate limits. No quota change or authentication change was made.
+
 ## Remaining acceptance and rollout
 
 1. Use the manual `CI` workflow complete-benchmark input on its disposable Linux

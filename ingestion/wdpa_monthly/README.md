@@ -175,8 +175,12 @@ mount is missing or memory-backed. Tippecanoe uses at most four threads; SQLite
 caches are capped at 64 MiB and sorting uses disk.
 
 The [Cloud Run disk feature](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
-is Preview. Obtain the regional per-instance quota for 100 GiB before rollout;
-the default per-instance limit is 10 GiB. Disk contents are disposable and are
+is Preview. Before rollout, verify `run.googleapis.com/max_per_instance_ephemeral_disk`
+permits 100 GiB and `run.googleapis.com/ephemeral_disk_allocation` has enough
+capacity in `us-central1` for every concurrent worker instance (at least 100 GiB
+for one instance). Record the effective limits in the reviewed acceptance
+document. The observer has no ephemeral disk volume. Google's default
+per-instance limit is 10 GiB. Disk contents are disposable and are
 never publication authority.
 
 Processing filters the source into a GeoPackage, pipes the existing GDAL 3.6.2
