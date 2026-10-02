@@ -426,6 +426,12 @@ also displays the last completed execution. Status is revalidated every minute
 while details are visible, and observations older than 15 minutes are stale.
 Missing or malformed observations display unavailable status without concealing
 the published release. Raw execution messages and configuration are excluded.
+The protected viewer serves the `execution-status.js` module and maps its root
+`/wdpa-monthly-execution.json` route to the observer object under `_catalog/`,
+preserving revalidation headers and reading each observation afresh. For the
+first rollout, approve the protected `catalog-viewer-deploy.yml` deployment
+before `catalog-web-deploy.yml` publishes the updated web bundle. Verify status
+on both static and protected WDPA pages after deployment.
 
 The observer is deployed with the worker through protected Terraform and has
 read-only WDPA execution access plus an exact-object generation-preconditioned

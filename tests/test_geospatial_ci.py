@@ -41,16 +41,19 @@ class GeospatialCiTests(unittest.TestCase):
     def test_complete_benchmark_is_manual_read_only_and_resource_constrained(self):
         inputs = workflow_triggers(self.workflow)["workflow_dispatch"]["inputs"]
         self.assertIs(inputs["wdpa_full_benchmark"]["default"], False)
+        self.assertEqual(inputs["wdpa_benchmark_fraction"]["default"], "1")
+        self.assertEqual(inputs["wdpa_benchmark_fraction"]["options"], ["1", "0.001"])
         job = self.workflow["jobs"]["wdpa-full-benchmark"]
         self.assertIn("github.event_name == 'workflow_dispatch'", job["if"])
         self.assertIn("inputs.wdpa_full_benchmark", job["if"])
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
         steps = workflow_steps_by_name(self.workflow, "wdpa-full-benchmark")
-        run = steps["Run two complete builds with 4 CPU and 8 GiB"]["run"]
+        run = steps["Run two frozen builds with 4 CPU and 8 GiB"]["run"]
         self.assertIn("for replay in 1 2", run)
         self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", run)
         self.assertIn("CLOUD_RUN_EXECUTION=wdpa-benchmark", run)
         self.assertIn("--translation-sources", run)
+        self.assertIn('--fraction "$WDPA_BENCHMARK_FRACTION"', run)
         self.assertIn("wdpa-inputs:/inputs:ro", run)
         self.assertNotIn("SNAPSHOT_READ_TOKEN", run)
         self.assertNotIn("--genesis", run)

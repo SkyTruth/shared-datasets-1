@@ -8,9 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       wdpa_full_benchmark:
-        description: Run two complete frozen October builds without publication
+        description: Run two frozen October builds without publication
         type: boolean
         default: false
+      wdpa_benchmark_fraction:
+        description: Use 1 for complete acceptance; 0.001 is a short diagnostic probe only
+        type: choice
+        options: ["1", "0.001"]
+        default: "1"
       wdpa_snapshot_uri:
         description: Private benchmark snapshot under _scratch/wdpa-processing-benchmarks/
         type: string
@@ -139,11 +144,13 @@ jobs:
           sudo mount "$device" /work
           sudo chmod 0777 /work
           df -h /work
-      - name: Run two complete builds with 4 CPU and 8 GiB
+      - name: Run two frozen builds with 4 CPU and 8 GiB
+        env:
+          WDPA_BENCHMARK_FRACTION: ${{ inputs.wdpa_benchmark_fraction || '1' }}
         run: |
           set -euo pipefail
           for replay in 1 2; do
-            echo "Starting complete October replay $replay"
+            echo "Starting October replay $replay (fraction $WDPA_BENCHMARK_FRACTION)"
             # A fresh cgroup is used for each build; the second starts on an empty disk.
             docker run --name "wdpa-replay-$replay" \
               --cpus=4 --memory=8g --memory-swap=8g \
@@ -155,7 +162,8 @@ jobs:
                 --source /inputs/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
                 --baselines /inputs/frozen-inputs \
                 --translation-sources /inputs/frozen-inputs/translation-sources.json \
-                --workdir /work/shared-datasets-1/replay --run-date 2026-10-01
+                --workdir /work/shared-datasets-1/replay --run-date 2026-10-01 \
+                --fraction "$WDPA_BENCHMARK_FRACTION"
             cp /work/shared-datasets-1/replay/benchmark.json "$RUNNER_TEMP/wdpa-reports/replay-$replay.json"
             docker inspect "wdpa-replay-$replay" --format '{{json .State}}' > "$RUNNER_TEMP/wdpa-reports/container-$replay.json"
             docker rm "wdpa-replay-$replay"
@@ -177,7 +185,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wdpa-complete-benchmark-reports
+          name: ${{ inputs.wdpa_benchmark_fraction == '0.001' && 'wdpa-debug-benchmark-reports' || 'wdpa-complete-benchmark-reports' }}
           path: ${{ runner.temp }}/wdpa-reports/*.json
           if-no-files-found: ignore
           retention-days: 30

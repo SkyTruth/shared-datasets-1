@@ -7,9 +7,11 @@ not yet passed resource acceptance.
 
 ## Completed checks
 
-- Full CI Python suite: 1,078 passed; five host-native checks skipped and exercised
+- Full CI Python suite: 1,079 passed; five host-native checks skipped and exercised
   separately in the deployment toolchain. Earlier local validation also passed
   1,171 subtests.
+  [Final code CI](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36988900690)
+  passed on `faf90b5`, including lint/Terraform and native integration.
 - Native geospatial suite: 120 passed, 17 subtests passed, no skips. All five
   mandatory native fixtures passed, including old/new normalized metadata,
   field types and geometry, WDPA PMTiles, sea ice, EAMLIS and COG validation.
@@ -96,6 +98,10 @@ one deployment image and runs two fresh containers at exactly 4 CPU / 8 GiB,
 with no swap and a 100 GiB ext4 disk at `/work`. The second replay starts with
 empty scratch. This is the production processing path, including rebuilding
 the translation index, with frozen baseline inputs and no publication.
+The optional `wdpa_benchmark_fraction=0.001` uses the same full input preparation
+and translation indexing for a shorter diagnostic probe, with separately named
+debug reports. It cannot satisfy acceptance. Complete builds use the default
+fraction `1`, which is also required by the rollout gate.
 GitHub hosted jobs have a six-hour ceiling, stricter than the production
 24-hour target; a hosted timeout cannot establish the production timeout target.
 
