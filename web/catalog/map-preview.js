@@ -1533,7 +1533,7 @@ function serializeFeatures(features, sourcesById) {
     const source = sourcesById.get(feature?.source);
     if (!source) continue;
     const item = serializeFeature(feature, source);
-    const key = `${item.assetSlug}|${item.sourceLayer}|${item.geometryType}|${JSON.stringify(item.properties)}`;
+    const key = `${source.sourceId}|${item.sourceLayer}|${item.geometryType}|${JSON.stringify(item.properties)}`;
     if (seen.has(key)) continue;
     seen.add(key);
     serialized.push(item);
@@ -1550,6 +1550,7 @@ function serializeFeature(feature, source) {
     color: colorForFeature(properties, source),
     release: source.asset.date || "latest",
     releaseReference: source.asset,
+    comparisonSide: source.comparisonSide,
     sourceLayer: feature.sourceLayer || feature.layer?.["source-layer"] || "",
     geometryType: feature.geometry?.type || geometryTypeFromLayer(feature.layer?.type),
     properties,
@@ -1848,7 +1849,7 @@ function normalizedBounds(minLon, minLat, maxLon, maxLat) {
 }
 
 // Comparison owns the same primary map slot and release-scoped feature states.
-export async function renderComparisonMap({container, status, baseline, target, signal, onSelect, lookupGeometry, onError, basemap = "map", viewport = null}) {
+export async function renderComparisonMap({container, status, baseline, target, signal, onFeatureSelect, lookupGeometry, onError, basemap = "map", viewport = null}) {
   const previousViewport = viewport || captureViewport();
   const renderSerial = ++activeRenderSerial;
   clearActiveMap();
@@ -1860,7 +1861,7 @@ export async function renderComparisonMap({container, status, baseline, target, 
   const dispose = () => {
     if (disposed) return;
     disposed = true; signal.removeEventListener("abort", dispose);
-    if (activeMap === map) { activeMap = null; activeSelectionBounds = null; }
+    if (activeMap === map) { clearFeatureInspectionIndicator(); activeMap = null; activeSelectionBounds = null; }
     map?.remove();
   };
   signal.addEventListener("abort", dispose, {once: true});
@@ -1900,7 +1901,11 @@ export async function renderComparisonMap({container, status, baseline, target, 
     for (const [index, reference] of [baseline, target].entries()) {
       if (!reference.pmtiles_file) throw new Error("Selected release has no display tiles.");
       const asset = pmtilesCanUseSigner(reference) ? await resolvePmtilesAccess(reference) : reference;
-      check(); sources.push(await mapSourceForAsset(asset, index, basemap, "", protocol)); check();
+      check();
+      const source = await mapSourceForAsset(asset, index, basemap, "", protocol);
+      source.comparisonSide = index === 0 ? "Before" : "After";
+      source.color = index === 0 ? colors.removed : colors.novel;
+      sources.push(source); check();
     }
     const tiers = restrictedPmtilesTiers(sources.map(source => source.asset));
     if (tiers.length) { await ensureRestrictedPmtilesSessions(tiers); check(); }
@@ -1936,11 +1941,7 @@ export async function renderComparisonMap({container, status, baseline, target, 
     else if (activeSelectionBounds) map.fitBounds(activeSelectionBounds, {padding: 44, duration: 0, maxZoom: 8});
     map.on("idle", () => void refresh());
     map.on("error", event => { if (isCurrent()) onError(event.error || new Error("Selected tile generation unavailable; this map is incomplete.")); });
-    const layerIds = sources.flatMap(source => source.sourceLayers.flatMap(layer => [layer.fillId, layer.polygonOutlineId, layer.lineId, layer.pointId]));
-    map.on("click", event => {
-      const feature = map.queryRenderedFeatures(event.point, {layers: layerIds})[0];
-      if (feature?.properties?.feature_id != null) onSelect(String(feature.properties.feature_id));
-    });
+    enableFeatureInspection(map, sources, onFeatureSelect);
     return {dispose, viewport: () => isCurrent() ? captureViewport() : null,
       refreshGeometry() { ready = true; void refresh(); },
       selectFeature(id) {
