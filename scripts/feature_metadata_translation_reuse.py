@@ -236,8 +236,8 @@ class TranslationMemory:
         snapshots = local_io.snapshots(protected)
         output_dir.mkdir(parents=True)
         pending_db = sqlite3.connect(output_dir / "pending.sqlite")
+        pending_db.executescript("PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; CREATE TABLE target_sources (source_key TEXT PRIMARY KEY) WITHOUT ROWID;")
         pending_db.execute("CREATE TABLE pending (slot INTEGER, hash TEXT, source TEXT, reason TEXT, affected INTEGER, PRIMARY KEY(slot,hash,reason)) WITHOUT ROWID")
-        source_keys = set()
         counts = {locale: Counter() for locale in self.locales}
         translations_path = output_dir / f"{asset_slug}.metadata-translations.csv"
         locale_paths = {locale: output_dir / f"{asset_slug}.metadata.{locale}.ndjson.gz" for locale in self.locales}
@@ -254,8 +254,10 @@ class TranslationMemory:
                 for number, record in enumerate(model.read_metadata_sidecar(canonical_sidecar), 1):
                     properties = record["properties"]
                     key = source_key(properties, self.config["source_key_fields"])
-                    require(key not in source_keys, "target source identity is ambiguous")
-                    source_keys.add(key)
+                    try:
+                        pending_db.execute("INSERT INTO target_sources VALUES (?)", (key,))
+                    except sqlite3.IntegrityError as exc:
+                        raise TranslationReuseError("target source identity is ambiguous") from exc
                     direct = self.direct(asset_slug, key)
                     hashes = {field: localization.source_value_hash(properties[field]) for field in self.fields if field in properties}
                     localized = {locale: dict(properties) for locale in self.locales}

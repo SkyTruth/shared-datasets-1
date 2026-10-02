@@ -53,6 +53,7 @@ def check(evidence):
             or run.get("sample_fraction") != 1
             or run.get("genesis") is not False
             or run.get("run_date") != "2026-10-01"
+            or run.get("translation_index_built") is not True
         ):
             errors.append(
                 "a benchmark is incomplete, sampled, or uses a genesis baseline"
@@ -85,7 +86,7 @@ def check(evidence):
         for key in (
             "source_sha256",
             "baseline_snapshot_sha256",
-            "translation_memory_sha256",
+            "translation_inputs_snapshot_sha256",
             "image_digest",
         ):
             if not runs[0].get(key) or runs[0].get(key) != runs[1].get(key):

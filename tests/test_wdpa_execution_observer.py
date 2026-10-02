@@ -151,6 +151,8 @@ def accepted_evidence():
         "source_sha256": "b" * 64,
         "baseline_snapshot_sha256": "c" * 64,
         "translation_memory_sha256": "d" * 64,
+        "translation_inputs_snapshot_sha256": "d" * 64,
+        "translation_index_built": True,
         "assets": {
             "wdpa-marine": {
                 "rows": 100,
@@ -188,3 +190,6 @@ def test_missed_target_cannot_be_accepted_by_increasing_resources():
     evidence = accepted_evidence()
     evidence["runs"][1]["source_sha256"] = "different"
     assert any("disagree" in error for error in gate.check(evidence))
+    evidence = accepted_evidence()
+    evidence["runs"][0]["translation_index_built"] = False
+    assert gate.check(evidence), "a cached index cannot certify complete production processing"

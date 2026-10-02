@@ -214,7 +214,7 @@ docker run --rm --platform linux/amd64 --cpus=4 --memory=8g --memory-swap=8g \
   wdpa-monthly python scripts/local_wdpa_sample.py \
   --source /inputs/downloads/wdpa-october-2026/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
   --baselines /inputs/downloads/wdpa-october-2026/frozen-inputs \
-  --translation-memory /inputs/downloads/wdpa-october-2026/frozen-inputs/translation-memory.sqlite \
+  --translation-sources /inputs/downloads/wdpa-october-2026/frozen-inputs/translation-sources.json \
   --workdir /work/shared-datasets-1/october-build-1
 ```
 
@@ -223,7 +223,14 @@ runs. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genes
 fixtures cannot satisfy acceptance. Add `--compare-legacy` on a sample to compare
 the retained old allocation/export path against IDs, hashes, properties, geometry,
 field types, metadata schemas, all six locales and the canonical translation CSV.
-The report records semantic identity/property
+Complete runs rebuild the reusable SQLite translation index from the frozen
+generation-pinned inputs and delete their scratch copies after indexing. The
+freezer's optional `--build-translation-cache` creates a sample-debugging cache;
+`--translation-memory` cannot satisfy complete acceptance. The gate explicitly
+requires index construction, not only geometry and locale output generation.
+An independent stream of source identity/country fields verifies realm/India
+counts against the outputs; identical duplicate source rows count once, matching
+the allocation contract. The report records semantic identity/property
 digests, realm/India counts, artifact hashes, elapsed time and structured phase
 measurements. Raw metadata bytes can differ because scratch source paths appear
 in provenance; compare semantic values and identities, not those paths.
@@ -243,6 +250,13 @@ confirms disk quota approval. A missed target blocks readiness; increasing the
 worker size does not satisfy the gate. Benchmark the deployment amd64 image,
 record its immutable digest and verify FGB/metadata/PMTiles contracts. Re-run
 benchmarks when processing code changes.
+
+Record each retained `benchmark.json` in the acceptance document, adding the
+resolved registry image digest and linking the reviewed fixture/sample
+compatibility evidence. Full resource replays do not also run the old pipeline;
+`compatibility_verified` in acceptance records attests to that separately
+reviewed comparison, while `source_counts_verified` and `contracts_verified`
+come from the replay itself.
 
 ## Execution observations and failure recovery
 

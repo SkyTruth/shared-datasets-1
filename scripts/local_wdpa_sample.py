@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 import hashlib
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 import time
 
@@ -16,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.common.identity_index import DiskIdentityRecords
 from ingestion.common import feature_metadata
 from ingestion.common.process_stream import feature_stream
-from ingestion.wdpa_monthly import run as wdpa
+from ingestion.wdpa_monthly import run as wdpa, translations
 from ingestion.wdpa_monthly.resources import PhaseProfiler, prepare_scratch
 from scripts import release_feature_model as model
-from scripts.feature_metadata_translation_reuse import TranslationMemory
+from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
 from scripts.wdpa_processing_gate import source_digest
 
 
@@ -106,6 +107,92 @@ def cgroup_limit(name):
     if values[0] == "max":
         return None
     return int(values[0]) / int(values[1]) if name == "cpu.max" else int(values[0])
+
+
+def source_count_summary(layers, where, workdir):
+    """Count source identities independently of normalization and allocation."""
+    database = workdir / "source-counts.sqlite"
+    raw_rows = 0
+    try:
+        with closing(sqlite3.connect(database)) as index:
+            index.executescript(
+                "PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; "
+                "CREATE TABLE sources (identity TEXT PRIMARY KEY, india INTEGER, site TEXT) WITHOUT ROWID;"
+            )
+            for number, layer in enumerate(layers):
+                with feature_stream(
+                    [
+                        "ogr2ogr", "-f", "GeoJSONSeq", "-lco", "RS=NO",
+                        "-select", "SITE_PID,SITE_ID,ISO3", "-nlt", "NONE",
+                        "-where", where, "/vsistdout/", layer.source, layer.name,
+                    ],
+                    log_path=workdir / f"source-counts-{number}.log",
+                ) as features:
+                    for row in features:
+                        properties = row["properties"]
+                        identity = model.canonical_json(
+                            model.source_fields_identity_key(properties, ("SITE_PID",))
+                        )
+                        india = int("IND" in str(properties.get("ISO3", "")).split(";"))
+                        index.execute(
+                            "INSERT OR IGNORE INTO sources VALUES (?,?,?)",
+                            (identity, india, str(properties.get("SITE_ID"))),
+                        )
+                        raw_rows += 1
+            rows, india_rows, india_sites = index.execute(
+                "SELECT COUNT(*), COALESCE(SUM(india),0), "
+                "COUNT(DISTINCT CASE WHEN india=1 THEN site END) FROM sources"
+            ).fetchone()
+        return dict(rows=rows, india_rows=india_rows, india_sites=india_sites, raw_rows=raw_rows)
+    finally:
+        database.unlink(missing_ok=True)
+
+
+def build_frozen_translation_memory(config_path, workdir):
+    config = json.loads(config_path.read_text())
+    if config.get("schema_version") != 1 or {
+        s["asset_slug"] for s in config["sources"]
+    } != {a.slug for a in wdpa.ASSETS}:
+        raise RuntimeError("frozen translation inputs must include both WDPA realms")
+    root = config_path.parent.resolve()
+    copies = {}
+    for relative, expected_hash in config["files"].items():
+        if Path(relative).is_absolute() or ".." in Path(relative).parts:
+            raise RuntimeError("frozen translation input paths must be relative")
+        source = (root / relative).resolve()
+        if not source.is_relative_to(root) or wdpa.sha256_file(source) != expected_hash:
+            raise RuntimeError(
+                "frozen translation input path/hash differs from its snapshot"
+            )
+        target = workdir / "translation-inputs" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        if wdpa.sha256_file(target) != expected_hash:
+            raise RuntimeError("translation input changed during scratch copy")
+        copies[relative] = target
+    sources = [
+        {
+            **source,
+            **{
+                key: str(copies[source[key]])
+                for key in ("canonical_sidecar", "translation_source")
+            },
+        }
+        for source in config["sources"]
+    ]
+    database = workdir / "translation-memory.sqlite"
+    build_memory(
+        database=database,
+        sources=sources,
+        fields=translations.FIELDS,
+        locales=translations.LOCALES,
+        source_key_fields=("SITE_PID",),
+    )
+    for source in sources:
+        for key in ("canonical_sidecar", "translation_source"):
+            Path(source[key]).unlink()
+    supplement = copies[config["supplement"]] if config.get("supplement") else None
+    return TranslationMemory(database, supplement=supplement)
 
 
 def legacy_sample(
@@ -198,7 +285,17 @@ def main():
         action="store_true",
         help="Fixture comparison only, never acceptance evidence",
     )
-    parser.add_argument("--translation-memory", required=True, type=Path)
+    translation_input = parser.add_mutually_exclusive_group(required=True)
+    translation_input.add_argument(
+        "--translation-sources",
+        type=Path,
+        help="Frozen generation-pinned translation-sources.json; rebuilds the production index",
+    )
+    translation_input.add_argument(
+        "--translation-memory",
+        type=Path,
+        help="Prebuilt cache, for sample/genesis debugging only",
+    )
     parser.add_argument("--supplement", type=Path)
     parser.add_argument("--run-date", default="2026-10-01")
     parser.add_argument("--fraction", type=float, default=1)
@@ -213,6 +310,12 @@ def main():
         parser.error("fraction must be in (0,1]")
     if args.compare_legacy and args.fraction == 1:
         parser.error("legacy comparison requires a sample fraction below 1")
+    if args.translation_memory and args.fraction == 1 and not args.genesis:
+        parser.error(
+            "complete acceptance runs must rebuild --translation-sources, not use a cache"
+        )
+    if args.translation_sources and args.supplement:
+        parser.error("approved supplements must be frozen in translation-sources.json")
     wdpa.configure_logging()
     prepare_scratch()
     args.workdir.mkdir(parents=True, exist_ok=False)
@@ -228,7 +331,13 @@ def main():
         "source_tree_sha256": source_digest(),
         "native_versions": profiler.versions,
         "source_sha256": wdpa.sha256_file(args.source),
-        "translation_memory_sha256": wdpa.sha256_file(args.translation_memory),
+        "translation_memory_sha256": wdpa.sha256_file(args.translation_memory)
+        if args.translation_memory
+        else None,
+        "translation_inputs_snapshot_sha256": wdpa.sha256_file(args.translation_sources)
+        if args.translation_sources
+        else None,
+        "translation_index_built": args.translation_sources is not None,
         "baseline_snapshot_sha256": wdpa.sha256_file(args.baselines / "pins.json")
         if args.baselines
         else None,
@@ -260,10 +369,17 @@ def main():
                     )
                     if isinstance(baselines[asset.slug].records, DiskIdentityRecords):
                         stack.callback(baselines[asset.slug].records.close)
-                local_memory = args.workdir / "translation-memory.sqlite"
-                shutil.copyfile(args.translation_memory, local_memory)
-                memory = TranslationMemory(local_memory, supplement=args.supplement)
+            with profiler.phase("translation-index"):
+                if args.translation_sources:
+                    memory = build_frozen_translation_memory(
+                        args.translation_sources, args.workdir
+                    )
+                else:
+                    local_memory = args.workdir / "translation-memory.sqlite"
+                    shutil.copyfile(args.translation_memory, local_memory)
+                    memory = TranslationMemory(local_memory, supplement=args.supplement)
                 stack.callback(memory.close)
+                report["translation_memory_sha256"] = wdpa.sha256_file(memory.database)
             sample = (
                 None
                 if args.fraction == 1
@@ -274,6 +390,8 @@ def main():
                 where = wdpa.sampled_where_clause(
                     wdpa.asset_where_clause(asset, split), sample
                 )
+                with profiler.phase(f"{asset.slug}:independent-source-counts"):
+                    source_counts = source_count_summary(layers, where, args.workdir)
                 decisions = model.load_identity_resolution_decisions(
                     asset_slug=asset.slug, release=args.run_date
                 )
@@ -312,8 +430,12 @@ def main():
                         compare_legacy_sample(
                             legacy, output, asset, memory, args.workdir
                         )
+                summary = semantic_summary(output.metadata)
+                if any(summary[key] != source_counts[key] for key in ("rows", "india_rows", "india_sites")):
+                    raise RuntimeError(f"{asset.slug} output realm/India counts differ from the frozen source")
                 report["assets"][asset.slug] = {
-                    **semantic_summary(output.metadata),
+                    **summary,
+                    "source_counts": source_counts,
                     "artifact_sha256": output.sha256,
                     "next_generated_feature_id": output.next_generated_feature_id,
                     "compatibility_verified": legacy is not None,
@@ -334,6 +456,7 @@ def main():
                     path.unlink()
             report["state"] = "succeeded"
             report["contracts_verified"] = True
+            report["source_counts_verified"] = True
             report["compatibility_verified"] = args.compare_legacy
             if source_digest() != report["source_tree_sha256"]:
                 report["state"] = "failed"

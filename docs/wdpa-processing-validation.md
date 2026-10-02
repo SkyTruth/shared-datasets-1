@@ -6,9 +6,9 @@ evidence, but the two complete October runs at 4 CPU / 8 GiB have not been run.
 
 ## Completed checks
 
-- Full Python suite: 1,073 passed, 1,171 subtests passed; five native checks skipped
+- Full Python suite: 1,075 passed, 1,171 subtests passed; five native checks skipped
   on the host and exercised separately in the deployment toolchain.
-- Native geospatial suite: 111 passed, 11 subtests passed, no skips. All five
+- Native geospatial suite: 120 passed, 17 subtests passed, no skips. All five
   mandatory native fixtures passed, including old/new normalized metadata,
   field types and geometry, WDPA PMTiles, sea ice, EAMLIS and COG validation.
 - Browser checks: three execution-status unit tests and five Chromium scenarios.
@@ -56,7 +56,10 @@ peaked at 8.35 GiB; parent-process peak RSS was 457.2 MiB. Sampled cgroup usage
 reached the 2 GiB limit, and this kernel did not expose `memory.peak`.
 The replay did not freeze a processing digest at startup. It is compatibility
 evidence only; **none of these measurements satisfies resource acceptance**.
-The current runner records and verifies its processing digest across the run.
+It also reused a cached translation index. The current runner records and
+verifies its processing digest across the run, requires complete replays to
+rebuild the production translation index from `translation-sources.json`, and
+the gate refuses cached-index runs.
 
 ## Infrastructure and failure visibility
 

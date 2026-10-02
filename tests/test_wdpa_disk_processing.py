@@ -201,6 +201,24 @@ def test_cloud_run_requires_disk_before_work(monkeypatch, tmp_path):
         prepare_scratch(mountinfo=mountinfo)
 
 
+def test_replay_source_counts_deduplicate_across_layers(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from ingestion.wdpa_monthly.run import SourceLayer
+    from scripts import local_wdpa_sample as replay
+
+    rows = [feature("a", SITE_ID=1, ISO3="IND;NPL"), feature("a", SITE_ID=1, ISO3="IND;NPL"),
+            feature("b", SITE_ID=1, ISO3="IND"), feature("c", SITE_ID=2, ISO3=None)]
+    @contextmanager
+    def stream(command, **kwargs):
+        yield iter(rows[:2] if command[-1] == "one" else rows[2:])
+    monkeypatch.setattr(replay, "feature_stream", stream)
+    counts = replay.source_count_summary(
+        [SourceLayer(name, (), "GEOMETRY", "fixture") for name in ("one", "two")], "1=1", tmp_path
+    )
+    assert counts == dict(rows=3, india_rows=2, india_sites=1, raw_rows=4)
+    assert not (tmp_path / "source-counts.sqlite").exists()
+
+
 def test_normalized_store_matches_old_export_semantically(tmp_path):
     pytest.importorskip("osgeo")
     from ingestion.wdpa_monthly.geometry_store import NormalizedGeometryStore
@@ -208,13 +226,13 @@ def test_normalized_store_matches_old_export_semantically(tmp_path):
 
     raw = tmp_path / "source.geojsonseq"
     fixtures = [
-        feature("a", 1.123456789, FLAG=True, NAME=None),
-        feature("b", 2, COUNT=2**35, DATE="2026-10-01"),
+        feature("a", 1.123456789, FLAG=True, NAME=None, SITE_ID=1, ISO3="IND"),
+        feature("b", 2, COUNT=2**35, DATE="2026-10-01", SITE_ID=2, ISO3=None),
     ]
     fixtures += [
         {
             "type": "Feature",
-            "properties": {"SITE_PID": "polygon", "NAME": "poly"},
+            "properties": {"SITE_PID": "polygon", "NAME": "poly", "SITE_ID": 1, "ISO3": "IND;NPL"},
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [[[0, 0], [0, 1], [1, 1], [0, 0]]],
@@ -237,6 +255,10 @@ def test_normalized_store_matches_old_export_semantically(tmp_path):
             "GEOMETRY",
         ]
     )
+    from scripts.local_wdpa_sample import source_count_summary
+    assert source_count_summary(
+        [wdpa.SourceLayer(asset.tile_layer, (), "GEOMETRY", str(filtered))], "1=1", tmp_path
+    ) == dict(rows=3, india_rows=2, india_sites=1, raw_rows=3)
     normalized_path = tmp_path / "normalized.geojsonseq"
     wdpa.convert_gpkg_to_geojsonseq(filtered, asset, normalized_path)
     normalized = list(metadata.iter_geojsonseq(normalized_path))

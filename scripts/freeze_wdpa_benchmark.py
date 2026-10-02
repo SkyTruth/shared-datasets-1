@@ -6,13 +6,13 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from google.cloud import storage
 from ingestion.common.owned_publication import OwnedGeneratedPublisher
 from ingestion.wdpa_monthly import run as wdpa, translations
+from scripts.feature_metadata_translation_reuse import build_memory
 
 
 def copy_generation(bucket, uri, generation, destination, expected_sha256):
@@ -34,6 +34,11 @@ def copy_generation(bucket, uri, generation, destination, expected_sha256):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--build-translation-cache",
+        action="store_true",
+        help="Also build a debug cache; complete acceptance replays rebuild from the frozen input files",
+    )
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=False)
     wdpa.configure_logging()
@@ -86,11 +91,49 @@ def main():
                 "manifest_sha256": snapshot.sha256,
                 "metadata": metadata,
             }
-        with translations.prepare_memory(publisher, wdpa.ASSETS, args.out) as memory:
-            if memory.supplement_snapshot:
-                shutil.copyfile(
-                    memory.supplement_snapshot.path, args.out / "supplement.ndjson"
-                )
+        sources, supplement = translations.download_inputs(
+            publisher, wdpa.ASSETS, args.out
+        )
+        config = {
+            "schema_version": 1,
+            "sources": sources,
+            "files": {},
+            "supplement": None,
+        }
+        for source in sources:
+            for key in ("canonical_sidecar", "translation_source"):
+                path = Path(source[key])
+                relative = str(path.relative_to(args.out))
+                config["files"][relative] = wdpa.sha256_file(path)
+                source[key] = relative
+        if supplement is not None:
+            path = args.out / "supplement.ndjson"
+            translations.download_source(
+                publisher.bucket, supplement, path, compress=False
+            )
+            config["supplement"] = path.name
+            config["files"][path.name] = wdpa.sha256_file(path)
+        (args.out / "translation-sources.json").write_text(
+            json.dumps(config, indent=2, sort_keys=True) + "\n"
+        )
+        if args.build_translation_cache:
+            cache_sources = [
+                {
+                    **source,
+                    **{
+                        key: str(args.out / source[key])
+                        for key in ("canonical_sidecar", "translation_source")
+                    },
+                }
+                for source in sources
+            ]
+            build_memory(
+                database=args.out / "translation-memory.sqlite",
+                sources=cache_sources,
+                fields=translations.FIELDS,
+                locales=translations.LOCALES,
+                source_key_fields=("SITE_PID",),
+            )
         (args.out / "pins.json").write_text(
             json.dumps(pins, indent=2, sort_keys=True) + "\n"
         )

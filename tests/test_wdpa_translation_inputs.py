@@ -18,6 +18,36 @@ from test_publication import publication_temp_directory
 
 
 class TranslationInputTests(unittest.TestCase):
+    def test_frozen_replay_rebuilds_index_and_verifies_input_hashes(self):
+        from scripts.local_wdpa_sample import build_frozen_translation_memory
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            inputs = root / "frozen"
+            sources, files = [], {}
+            for slug in ("wdpa-marine", "wdpa-terrestrial"):
+                old = record("1", "site-a", "Alpha", slug=slug)
+                old["properties"]["NAME_ENG"] = old["properties"].pop("name")
+                rows = [{**row("1", "Alpha", "Alpha " + locale), "field": "NAME_ENG", "locale": locale} for locale in translations.LOCALES]
+                source = source_bundle(inputs / slug, [old], rows)
+                for key in ("canonical_sidecar", "translation_source"):
+                    path = Path(source[key])
+                    relative = str(path.relative_to(inputs))
+                    files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    source[key] = relative
+                sources.append(source)
+            config = inputs / "translation-sources.json"
+            config.write_text(json.dumps({"schema_version": 1, "sources": sources, "files": files, "supplement": None}))
+            memory = build_frozen_translation_memory(config, root / "work")
+            try:
+                self.assertEqual(len(memory.direct("wdpa-marine", '["site-a"]')), 6)
+                self.assertEqual(len(memory.direct("wdpa-terrestrial", '["site-a"]')), 6)
+            finally:
+                memory.close()
+            self.assertFalse(list((root / "work/translation-inputs").rglob("*.csv")))
+            (inputs / sources[0]["translation_source"]).write_text("changed")
+            with self.assertRaisesRegex(RuntimeError, "hash differs"):
+                build_frozen_translation_memory(config, root / "mismatch")
+
     def test_monthly_run_builds_and_cleans_all_locales_for_both_assets(self):
         from ingestion.wdpa_monthly import run as wdpa
         from test_wdpa_monthly import fake_asset_outputs
