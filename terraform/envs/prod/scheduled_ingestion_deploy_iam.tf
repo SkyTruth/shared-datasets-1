@@ -2,13 +2,17 @@ resource "google_project_iam_custom_role" "scheduled_ingestion_deployer" {
   project     = var.project_id
   role_id     = "sharedDatasetsScheduledIngestionDeployer"
   title       = "Shared Datasets Scheduled Ingestion Deployer"
-  description = "Allows approved GitHub Actions Terraform to update and verify scheduled ingestion Cloud Run jobs."
+  description = "Allows approved GitHub Actions Terraform to create, update and verify scheduled ingestion Cloud Run jobs."
   permissions = [
     "cloudscheduler.jobs.enable",
     "cloudscheduler.jobs.get",
     "cloudscheduler.jobs.pause",
     "run.executions.get",
     "run.executions.list",
+    # Job creation is checked on the parent project/location. The protected
+    # validation workflow permits only its three isolated resources; this does
+    # not grant additional runtime, dataset, job IAM or deletion permissions.
+    "run.jobs.create",
     "run.jobs.get",
     "run.jobs.run",
     "run.jobs.runWithOverrides",

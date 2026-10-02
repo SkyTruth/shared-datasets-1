@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_tree_sha256": "cc3bffc3dd91255ac1d73d55cad948bc23acb968fc2eed65dd49cf85fda4e944",
-  "disk_quota_approved": false,
+  "disk_quota_approved": true,
   "small_fixture": {
     "schema_version": 1,
     "scope": "small-sea-ice-fixture",
