@@ -227,6 +227,11 @@ require increasing local Docker resources.
 
 ## Isolated cloud validation
 
+The first cloud attempt failed its CPU/memory preflight before downloading
+source data despite the verified 4 CPU / 8 GiB job configuration. Use the
+[isolated runtime inspection](wdpa-runtime-inspection.md) to inspect the actual
+cgroup files before repairing telemetry; that diagnostic cannot open acceptance.
+
 `wdpa-processing-validation-deploy.yml` is a manual protected-main workflow in
 the existing production Terraform queue. It gates deployment on reviewed small
 and marine reports in `catalog/wdpa-staged-validation.json`, including the same

@@ -1,0 +1,97 @@
+name: WDPA isolated runtime inspection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GOOGLE_CLOUD_PROJECT: shared-datasets-1
+  REGION: us-central1
+  JOB_NAME: wdpa-processing-validation
+  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require trusted main
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/wdpa-runtime-inspection.yml@refs/heads/main" ]]; then
+            echo "Runtime inspection must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --all-groups
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Reuse the deployed immutable image and refuse active executions
+        run: |
+          set -euo pipefail
+          image="$(gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(spec.template.spec.template.spec.containers[0].image)')"
+          [[ "$image" =~ ^us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:[0-9a-f]{64}$ ]]
+          echo "VALIDATION_IMAGE=$image" >> "$GITHUB_ENV"
+          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format=json > "$RUNNER_TEMP/executions.json"
+          python - "$RUNNER_TEMP/executions.json" <<'PY'
+          import json, sys
+          for execution in json.load(open(sys.argv[1])):
+              if not execution.get('status', {}).get('completionTime'):
+                  raise SystemExit('A validation execution is pending or running; inspection must wait')
+          PY
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+          terraform_wrapper: false
+      - name: Plan only the existing isolated job command
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/envs/prod init -input=false
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false \
+            -out="$RUNNER_TEMP/inspection.tfplan" \
+            -target=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            -var="wdpa_validation_image=$VALIDATION_IMAGE" \
+            -var=wdpa_validation_runtime_inspection=true \
+            -var=wdpa_monthly_image=unused-by-runtime-inspection \
+            -var=sea_ice_daily_image=unused-by-runtime-inspection \
+            -var=eamlis_monthly_image=unused-by-runtime-inspection
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/inspection.tfplan" > "$RUNNER_TEMP/inspection-plan.json"
+      - name: Enforce the exact read-only command and resource limits
+        env:
+          allowed_exact: module.wdpa_processing_validation_job.google_cloud_run_v2_job.this
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/inspection-plan.json" \
+            --allowed-exact="$allowed_exact" \
+            --block-deletes --refusal-prefix='Refusing WDPA runtime inspection'
+          uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/inspection-plan.json" \
+            --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT" --runtime-inspection
+      - name: Apply the saved protected plan
+        run: bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/inspection.tfplan"
+      - name: Inspect runtime without processing or dataset writes
+        run: |
+          set -euo pipefail
+          execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --async --format='value(metadata.name)')"
+          echo "Runtime inspection: $execution. Collect wdpa_runtime_inspection from Cloud Logging. This is not acceptance evidence."

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -193,6 +196,7 @@ def plan():
     [
         None,
         "null_subpath",
+        "empty_subpath",
         "subdirectory",
         "worker",
         "bucket_iam",
@@ -225,9 +229,11 @@ def test_validation_plan_rejects_publication_and_resource_escalation(defect):
         )
     if defect == "null_subpath":
         container["volume_mounts"][0]["sub_path"] = None
+    if defect == "empty_subpath":
+        container["volume_mounts"][0]["sub_path"] = ""
     if defect == "subdirectory":
         container["volume_mounts"][0]["sub_path"] = "other"
-    if defect in (None, "null_subpath"):
+    if defect in (None, "null_subpath", "empty_subpath"):
         policy.check(document, image=IMAGE, deployer=DEPLOYER)
     else:
         with pytest.raises(ValueError):
@@ -247,3 +253,84 @@ def test_controlled_cloud_failure_precedes_downloads_and_processing(monkeypatch)
     )
     with pytest.raises(RuntimeError, match="before any dataset writes"):
         cloud.main()
+
+
+def inspection_recipe():
+    return json.loads((ROOT / "catalog/wdpa-runtime-inspection.json").read_text())
+
+
+def test_runtime_inspection_is_distinct_from_source_processing():
+    document = plan()
+    container = document["resource_changes"][0]["change"]["after"]["template"][0][
+        "template"
+    ][0]["containers"][0]
+    container["command"] = inspection_recipe()["command"]
+    policy.check(document, image=IMAGE, deployer=DEPLOYER, runtime_inspection=True)
+    with pytest.raises(ValueError, match="configuration"):
+        policy.check(document, image=IMAGE, deployer=DEPLOYER)
+    container["command"] = ["python", "-c", "print('unreviewed')"]
+    with pytest.raises(ValueError, match="configuration"):
+        policy.check(document, image=IMAGE, deployer=DEPLOYER, runtime_inspection=True)
+
+
+def test_runtime_inspection_cannot_increase_resources_or_gain_dataset_permissions():
+    for defect in ("memory", "identity", "bucket_iam"):
+        document = plan()
+        task = document["resource_changes"][0]["change"]["after"]["template"][0][
+            "template"
+        ][0]
+        task["containers"][0]["command"] = inspection_recipe()["command"]
+        if defect == "memory":
+            task["containers"][0]["resources"][0]["limits"]["memory"] = "16Gi"
+        elif defect == "identity":
+            task["service_account"] = (
+                "wdpa-monthly@shared-datasets-1.iam.gserviceaccount.com"
+            )
+        else:
+            document["resource_changes"][0]["address"] = (
+                "google_storage_bucket_iam_member.writer"
+            )
+        with pytest.raises(ValueError):
+            policy.check(
+                document, image=IMAGE, deployer=DEPLOYER, runtime_inspection=True
+            )
+
+
+def test_runtime_inspection_reports_only_diagnostics():
+    recipe = inspection_recipe()
+    assert recipe["schema_version"] == 1
+    output = subprocess.run(
+        [sys.executable, *recipe["command"][1:]],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    report = json.loads(output.stdout)
+    assert report["event"] == "wdpa_runtime_inspection"
+    assert report["scope"] == "runtime-inspection-not-acceptance"
+    assert report["source_tree_sha256"] == gate.source_digest()
+    assert "assets" not in report and "contracts_verified" not in report
+    assert "/proc/self/cgroup" in report["files"]
+
+
+def test_runtime_inspection_workflow_cannot_apply_worker_or_iam_changes():
+    workflow = load_workflow(ROOT / ".github/workflows/wdpa-runtime-inspection.yml")
+    job = workflow["jobs"]["inspect"]
+    assert job["environment"] == "shared-datasets-production"
+    assert job["concurrency"] == dict(
+        group="prod-terraform-state", queue="max", **{"cancel-in-progress": False}
+    )
+    steps = workflow_steps_by_name(workflow, "inspect")
+    assert terraform_targets(
+        steps["Plan only the existing isolated job command"]["run"]
+    ) == {policy.JOB}
+    check = steps["Enforce the exact read-only command and resource limits"]["run"]
+    assert "--runtime-inspection" in check and "--block-deletes" in check
+    names = list(steps)
+    assert names.index(
+        "Enforce the exact read-only command and resource limits"
+    ) < names.index("Apply the saved protected plan")
+    assert "wdpa_processing_gate.py --pre-cloud" not in str(steps), (
+        "inspection does not build source or claim staged acceptance"
+    )
