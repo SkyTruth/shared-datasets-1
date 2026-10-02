@@ -6,6 +6,14 @@ read the expected Docker cgroup limits. The Cloud Run API independently verifies
 4 CPU, 8 GiB RAM, a 100 GiB DISK at `/work`, zero retries and a 24-hour timeout.
 No complete-build or resource acceptance is claimed from that failed startup.
 
+Protected target applies refresh live infrastructure before creating their saved
+plans. A failed provider update can leave cached Terraform values ahead of the
+live resource. Disabling refresh made the alert-filter retry report no changes
+while the API still showed `status.code=10`; the workflow now explicitly uses
+`-refresh=true`. The same queued job still validates its resource allowlist and
+applies only that saved plan. Verify the live filter and notification delivery
+after deployment.
+
 Use the manual protected-main `WDPA isolated runtime inspection` workflow to
 inspect the runtime before changing telemetry. It reuses the already deployed
 immutable validation image and refuses to deploy while a validation execution
