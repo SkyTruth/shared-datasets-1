@@ -13,10 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingestion.wdpa_monthly import run as wdpa
 from ingestion.wdpa_monthly.resources import (
     PhaseProfiler,
+    cgroup_limits,
     cgroup_memory,
     prepare_scratch,
+    validation_limits,
 )
-from scripts.local_wdpa_sample import cgroup_limit
 from scripts.wdpa_processing_gate import source_digest
 
 
@@ -27,10 +28,14 @@ def main():
             "Controlled WDPA validation failure before any dataset writes"
         )
     prepare_scratch()
-    if (cgroup_limit("cpu.max"), cgroup_limit("memory.max")) != (4, 8 * 1024**3):
-        raise RuntimeError("Cloud validation requires exactly 4 CPU / 8 GiB")
+    cpu_limit, memory_limit = cgroup_limits()
+    if not validation_limits(cpu_limit, memory_limit):
+        raise RuntimeError(
+            f"Cloud validation requires a kernel CPU quota in (0,4] and 8 GiB; "
+            f"observed cpu={cpu_limit!r}, memory_bytes={memory_limit!r}"
+        )
     if cgroup_memory()[1] is None:
-        raise RuntimeError("Cloud validation requires cgroup memory.peak telemetry")
+        raise RuntimeError("Cloud validation requires kernel cgroup peak-memory telemetry")
     root = Path(os.environ["SHARED_DATASETS_WORKDIR"]) / "cloud-validation"
     root.mkdir(parents=True, exist_ok=False)
     inputs, replay = root / "inputs", root / "replay"

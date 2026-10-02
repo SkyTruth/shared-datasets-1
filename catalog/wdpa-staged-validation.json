@@ -615,5 +615,5 @@
     "report_sha256": "2a81d3b1fb2b1218bad47c352a8c8ec141651c7ba9f04282facbd92572582334",
     "image_metadata_sha256": "f1c39cfd7215af36df3753c3a86448d92b49faf8c91e57769d8b3f88bfc2c50f"
   },
-  "blocked_reason": "Sea-ice and complete marine WDPA stages passed on the same deployment image. The current per-instance Cloud Run disk limit is 10 GiB; 100 GiB quota and protected bootstrap remain prerequisites for isolated cloud validation. Terrestrial and final publication acceptance remain pending."
+  "blocked_reason": "Historical sea-ice and marine stages passed on the captured cc3b processing digest. The 100 GiB quota and protected isolated job are now provisioned, but the runtime-reader repair and updated dependency lock require fresh stages and separate old/new sample proof. Preserve these original reports; they cannot authorize the new processing digest or terrestrial publication."
 }

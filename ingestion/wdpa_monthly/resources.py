@@ -40,15 +40,92 @@ def prepare_scratch(
     os.environ["SQLITE_TMPDIR"] = str(temporary)
 
 
-def cgroup_memory():
-    root = Path("/sys/fs/cgroup")
-    current = root / "memory.current"
-    if current.exists():
-        peak = root / "memory.peak"
-        return int(current.read_text()), int(
-            peak.read_text()
-        ) if peak.exists() else None
-    return None, None
+CGROUP_ROOT = Path("/sys/fs/cgroup")
+
+
+def memory_controller(root=CGROUP_ROOT):
+    """Select the namespaced controller exposed by Docker or Cloud Run."""
+    if (root / "memory.current").exists():
+        return root, "memory.current", "memory.peak", "memory.max"
+    if (root / "memory/memory.usage_in_bytes").exists():
+        return (
+            root / "memory",
+            "memory.usage_in_bytes",
+            "memory.max_usage_in_bytes",
+            "memory.limit_in_bytes",
+        )
+    return None
+
+
+def cgroup_limits(root=CGROUP_ROOT):
+    cpu = None
+    if (root / "cpu.max").exists():
+        quota, period = (root / "cpu.max").read_text().split()
+        if quota != "max":
+            cpu = int(quota) / int(period)
+    elif (root / "cpu,cpuacct/cpu.cfs_quota_us").exists():
+        controller = root / "cpu,cpuacct"
+        quota = int((controller / "cpu.cfs_quota_us").read_text())
+        if quota >= 0:
+            cpu = quota / int((controller / "cpu.cfs_period_us").read_text())
+    controller = memory_controller(root)
+    memory = None
+    if controller:
+        directory, _current, _peak, limit = controller
+        value = (directory / limit).read_text().strip()
+        if value != "max":
+            memory = int(value)
+    return cpu, memory
+
+
+def validation_limits(cpu, memory):
+    # The protected job spec pins 4 CPU. Cloud Run's measured CPU quota is
+    # 3.72; never substitute configuration or affinity for the kernel reading.
+    return (
+        isinstance(cpu, (int, float))
+        and not isinstance(cpu, bool)
+        and 0 < cpu <= 4
+        and memory == 8 * 1024**3
+    )
+
+
+def cgroup_memory(root=CGROUP_ROOT):
+    controller = memory_controller(root)
+    if controller is None:
+        return None, None
+    directory, current, peak, _limit = controller
+    peak_path = directory / peak
+    return int((directory / current).read_text()), (
+        int(peak_path.read_text()) if peak_path.exists() else None
+    )
+
+
+def cgroup_memory_stat(root=CGROUP_ROOT):
+    controller = memory_controller(root)
+    if controller is None:
+        return {}
+    directory, _current, _peak, _limit = controller
+    return {
+        key: int(value)
+        for key, value in (
+            line.split()
+            for line in (directory / "memory.stat").read_text().splitlines()
+        )
+        if key
+        in {
+            "anon",
+            "file",
+            "file_dirty",
+            "file_mapped",
+            "kernel",
+            "shmem",
+            "rss",
+            "cache",
+            "dirty",
+            "mapped_file",
+            "swap",
+        }
+    }
 
 
 def scratch_bytes(path):
@@ -93,7 +170,12 @@ def release_file_cache(path):
 
 class PhaseProfiler:
     def __init__(
-        self, workdir: Path, *, versions=None, interval=0.5, scratch_root=None,
+        self,
+        workdir: Path,
+        *,
+        versions=None,
+        interval=0.5,
+        scratch_root=None,
         input_cache_roots=(),
     ):
         self.workdir, self.versions, self.interval = workdir, versions or {}, interval
@@ -128,13 +210,7 @@ class PhaseProfiler:
             nonlocal peak_memory, peak_scratch, cache_releases, peak_breakdown
             current, _peak = cgroup_memory()
             if current and current > peak_memory:
-                memory_stat = Path("/sys/fs/cgroup/memory.stat")
-                if memory_stat.exists():
-                    peak_breakdown = {
-                        key: int(value) for key, value in
-                        (line.split() for line in memory_stat.read_text().splitlines())
-                        if key in {"anon", "file", "file_dirty", "file_mapped", "kernel", "shmem"}
-                    }
+                peak_breakdown = cgroup_memory_stat()
             peak_memory = max(peak_memory, current or 0)
             if current and current > self.cache_pressure_bytes:
                 for root in self.cache_roots:

@@ -6,6 +6,54 @@ read the expected Docker cgroup limits. The Cloud Run API independently verifies
 4 CPU, 8 GiB RAM, a 100 GiB DISK at `/work`, zero retries and a 24-hour timeout.
 No complete-build or resource acceptance is claimed from that failed startup.
 
+The protected inspection run
+[`37044294978`](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37044294978)
+completed successfully as `wdpa-processing-validation-lb5ln` at
+2026-10-02T18:07:28Z. Its immutable image was
+`wdpa-validation@sha256:325aa32eb8b4ab968b6b03e3c162ff7d21ca207b1c130f8074e18e2ba287285b`.
+Cloud Run exposed namespaced **cgroup v1** controllers: CPU quota `372000`
+microseconds per `100000` microseconds (3.72 CPUs), memory limit `8589934592`
+bytes and `memory.max_usage_in_bytes` kernel peak. Affinity included five cores;
+affinity does not replace the quota. No v2 `cpu.max`, `memory.max` or
+`memory.peak` file existed at the root.
+
+The corrected reader supports both this observed v1 interface and Docker's v2
+interface. Reports preserve the actual CPU quota. The protected Terraform
+allowlist continues to require exactly 4 configured CPU, 8 GiB RAM and a 100 GiB
+disk. Resource checks require a positive measured CPU quota no greater than 4,
+exactly 8 GiB memory and a real kernel high-water mark. Missing telemetry blocks
+validation; sampled usage and process RSS cannot replace the kernel peak.
+The ≤6.4 GiB peak, <80 GiB scratch and 24-hour completion targets remain intact.
+
+The refreshed alert apply
+[`37044038452`](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37044038452)
+succeeded. The live Monitoring API confirmed `protoPayload.status.code>0`,
+with the project, region, resource, severity, service and method restrictions
+retained. Applying the live filter to historical logs matched a WDPA code 8
+failure at 2026-10-01T17:34:36Z and a validation code 10 failure at
+2026-10-02T17:15:16Z, and matched no successful code 0 executions.
+The controlled pre-write failure `wdpa-processing-validation-tlwbd`
+actually reached `#shared-datasets-alerts`; a green workflow alone is not proof
+of live filter or notification delivery.
+
+Version 2 acceptance evidence separates the deterministic October old/new
+sample (`fraction=0.001`, `seed=7919`) from the two complete resource builds.
+The sample compares both realms' IDs, hashes, properties, geometry, field types,
+canonical metadata, every locale and translation CSV. Its processing digest,
+frozen source/baseline/translation snapshots, native versions and image config
+digest must match the complete builds. Full reports retain
+`compatibility_verified=false`; their contract checks do not imply a legacy
+comparison. Keep the raw sample and full reports unchanged.
+
+Cloud deployment now loads and verifies the reviewed staged image artifact,
+then tags and pushes those same bytes. It does not rebuild after the staged
+tests. `image_digest` in reviewed benchmark evidence identifies the verified
+image **configuration** digest from `image.json`; complete cloud evidence also
+records the execution's immutable registry URI as `cloud_image`. The two cloud
+executions must use the same URI. Capture these deployment facts alongside
+raw reports rather than rewriting a raw compatibility or measurement result.
+The image artifact lasts seven days; expired bytes require rerunning stages.
+
 Protected target applies refresh live infrastructure before creating their saved
 plans. A failed provider update can leave cached Terraform values ahead of the
 live resource. Disabling refresh made the alert-filter retry report no changes

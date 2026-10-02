@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 env:
@@ -60,13 +61,55 @@ jobs:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Build and push the immutable validation image
+      - name: Refuse to replace an active validation execution
         run: |
           set -euo pipefail
+          existing="$(gcloud run jobs list --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --filter="metadata.name=$JOB_NAME" --format='value(metadata.name)')"
+          if [[ -z "$existing" ]]; then exit 0; fi
+          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/active-validation-executions.json"
+          python - "$RUNNER_TEMP/active-validation-executions.json" <<'PY'
+          import json, sys
+          if any(not execution.get('status', {}).get('completionTime') for execution in json.load(open(sys.argv[1]))):
+              raise SystemExit('A validation execution is pending or running; wait before replacing its image or command')
+          PY
+      - name: Resolve the reviewed staged image artifact
+        id: staged-image
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re
+          from pathlib import Path
+          evidence = json.loads(Path('catalog/wdpa-staged-validation.json').read_text())
+          small, marine = evidence['small_fixture'], evidence['marine']
+          if small['workflow_run_url'] != marine['workflow_run_url'] or small['head_sha'] != marine['head_sha']:
+              raise SystemExit('Staged checks must use one reviewed image build')
+          match = re.fullmatch(r'https://github.com/SkyTruth/shared-datasets-1/actions/runs/([0-9]+)', marine['workflow_run_url'])
+          if not match:
+              raise SystemExit('Unexpected staged image artifact origin')
+          print('run_id=' + match[1])
+          print('config_digest=' + marine['image_digest'])
+          PY
+      - name: Download the tested deployment image
+        uses: actions/download-artifact@v4
+        with:
+          name: wdpa-benchmark-image
+          run-id: ${{ steps.staged-image.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/wdpa-tested-image
+      - name: Publish the tested immutable validation image
+        run: |
+          set -euo pipefail
+          gzip -dc "$RUNNER_TEMP/wdpa-tested-image/image.tar.gz" | docker load
+          config="$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')"
+          [[ "$config" == '${{ steps.staged-image.outputs.config_digest }}' ]]
+          actual_source="$(docker run --rm wdpa-processing-benchmark:local python scripts/wdpa_processing_gate.py --print-source-digest)"
+          expected_source="$(uv run --no-sync python scripts/wdpa_processing_gate.py --print-source-digest)"
+          [[ "$actual_source" == "$expected_source" ]]
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
           tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/shared-datasets-jobs/wdpa-validation:${GITHUB_SHA}-${GITHUB_RUN_ID}"
-          docker build --platform linux/amd64 --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
-            -f ingestion/wdpa_monthly/Dockerfile -t "$tag" .
+          docker tag wdpa-processing-benchmark:local "$tag"
           docker run --rm --platform linux/amd64 "$tag" python -c 'import scripts.cloud_wdpa_validation; from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"'
           docker push "$tag"
           digest="$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')"
