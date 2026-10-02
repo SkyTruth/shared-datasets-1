@@ -666,8 +666,11 @@ dt {
 }
 
 .version-row {
-  grid-template-columns: minmax(0, 260px);
+  grid-template-columns: minmax(0, 260px) auto;
+  justify-content: start;
 }
+
+#compare-open { align-self: end; min-height: 42px; }
 
 .version-control {
   display: grid;
@@ -1302,3 +1305,30 @@ h3 {
     min-height: 320px;
   }
 }
+
+.compare-panel { padding: 1rem; border: 1px solid var(--border, #c8d4cc); border-radius: 12px; min-width: 0; }
+.compare-controls { display: flex; flex-wrap: wrap; gap: .65rem; align-items: end; margin: .6rem 0; }
+.compare-controls label { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.compare-panel select, .compare-panel input, .compare-panel button, #compare-open { font: inherit; padding: .4rem .65rem; max-width: 100%; }
+.compare-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+.compare-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.compare-panel th, .compare-panel td { padding: .45rem; text-align: left; vertical-align: top; border-bottom: 1px solid #c8d4cc; overflow-wrap: anywhere; }
+.compare-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; }
+.compare-counts dd { font-size: 1.3rem; font-weight: 700; margin: 0; }
+.compare-counts dt { font-size: .8rem; }
+.compare-maps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
+.compare-map { height: 280px; min-width: 0; position: relative; }
+.compare-map canvas { max-width: 100%; }
+.compare-legend { display: flex; flex-wrap: wrap; gap: .6rem; font-size: .8rem; margin: .7rem 0; }
+.compare-legend span::before { content: ""; display: inline-block; width: .8rem; height: .8rem; border-radius: 50%; background: var(--change-color); margin-right: .3rem; }
+@media (max-width: 650px) {
+  .compare-maps { grid-template-columns: 1fr; }
+  .compare-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .compare-controls label { width: 100%; }
+}
+
+.compare-maps.compare-union { grid-template-columns: minmax(0, 1fr); }
+.compare-union .compare-map { height: 380px; }
+
+.compare-table-scroll { max-height: 320px; overflow: auto; }
+.compare-table-scroll thead { position: sticky; top: 0; background: #f5f8f5; }

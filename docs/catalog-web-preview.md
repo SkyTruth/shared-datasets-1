@@ -415,3 +415,15 @@ UV_CACHE_DIR=.uv-cache GOOGLE_CLOUD_PROJECT=shared-datasets-1 SHARED_DATASETS_BU
 Resolve visible hygiene issues before announcing the catalog, especially stray
 desktop files, missing asset READMEs, stale bucket-side catalog objects, and
 README sections required by `docs/standards/asset-layout-and-formats.md`.
+
+## Compare releases
+
+The authenticated catalog viewer compares generation-pinned canonical release
+sidecars, schemas and manifests through `scripts/compare_releases.py` and the
+same-origin `/api/comparisons` job routes. The catalog offers release selection,
+complete change counts, a searchable table, source property inspection, a union
+map (green novel geometry, red removed geometry, yellow identical geometry with
+altered metadata), before/after maps and complete report export. Localization
+is excluded from source changes. Identity incompatibility withholds authoritative
+feature classification; static catalogs retain visual inspection and a local CLI
+route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).

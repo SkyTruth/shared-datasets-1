@@ -39,3 +39,37 @@ At zoom0 Tippecanoe retains one point; at the test's fitted zoom both are presen
 When changing fixtures, rerun magic/verify/show and decode validation, update
 these hashes and the input generator's digest check, and inspect the rendered
 screenshots. Do not commit intermediate MBTiles or generated bundles.
+
+The `union-before`/`union-after` CC0 fixtures cover one removed point (`a1`),
+one novel point (`b1`), identical geometry with changed metadata (`common`),
+an unchanged point (`fixed`), and a moved point (`move`). The `changes` layer
+contains only `feature_id`; all four records survive zoom 0. Source geometry
+hashes and canonical properties live in the generated test sidecars, independently
+of these simplified display tiles. Another 101 sidecar records deliberately lack
+display tiles, proving comparison counts use complete inputs.
+
+Built on 2026-10-01 with `/usr/local/bin/tippecanoe` v2.79.0 and
+`/usr/local/bin/pmtiles` reporting `dev, commit none, built at unknown`. Relative
+source/output names keep archive metadata portable. The recorded command for
+each side, using its matching name and description, is:
+
+```sh
+tippecanoe -f -Z0 -z4 --drop-rate=1 --no-feature-limit --no-tile-size-limit \
+  -l changes --name 'Synthetic comparison before' \
+  --description 'Repository-authored synthetic points; CC0' \
+  -o union-before.mbtiles union-before.geojson
+pmtiles convert union-before.mbtiles union-before.pmtiles
+pmtiles verify union-before.pmtiles
+pmtiles show union-before.pmtiles
+tippecanoe-decode union-before.pmtiles 0 0 0
+```
+
+Both archives have PMTiles v3 magic, gzip MVT tiles, verified directory/content
+ranges, and four decoded zoom-0 features with only `feature_id`. Before has
+17 addressed tiles; after has 13. Tests use these checked-in bytes rather than
+requiring native build tools or claiming tool-version-independent reproduction.
+
+| File | Bytes | SHA256 |
+| --- | ---: | --- |
+| union-before.pmtiles | 2316 | d3f55632463ab954c1eb611fb58ddde25f2ba0926899db351588d5aa36c7ac99 |
+| union-after.pmtiles | 2050 | f2ed884416a9e502ee949141a029d2d3b967e3c598b919e60770db3494e6f5d2 |
