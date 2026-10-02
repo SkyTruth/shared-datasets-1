@@ -156,7 +156,14 @@ uses the updated processing digest
 `78387be4a53dfb00b28307ad73409c34afcc3071fcd0681c89d11a2c22bff310`
 on `b5be93c`, with separate replay jobs loading the identical image. The earlier
 complete-build attempt on `bbfe68b` predates the cache-pressure fix and cannot
-be used as acceptance evidence for this processing digest.
+be used as acceptance evidence for this processing digest. That attempt
+([run 36976690829](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36976690829))
+was cancelled by GitHub's six-hour job limit at `2026-10-02T13:09:47Z`.
+GitHub's termination annotation explicitly reports the six-hour limit. No
+benchmark reports were retained, and the downloadable run archive contains no
+processing-job log. This establishes a hosted-runner limitation; it provides
+neither resource acceptance nor evidence of exceeding the production 24-hour
+limit. The newer replays each have their own six-hour job budget.
 
 ## Infrastructure and failure visibility
 
