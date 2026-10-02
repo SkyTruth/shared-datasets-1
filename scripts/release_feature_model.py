@@ -1551,6 +1551,7 @@ def validate_release_manifest(
     expected_asset_slug: str | None = None,
     expected_release: str | None = None,
     require_generations: bool = False,
+    validate_identity: bool = True,
 ) -> dict[str, Mapping[str, Any]]:
     errors: list[str] = []
     if manifest.get("schema_version") != RELEASE_MANIFEST_SCHEMA_VERSION:
@@ -1561,10 +1562,11 @@ def validate_release_manifest(
         errors.append(f"manifest release does not match {expected_release!r}")
     if manifest.get("release_feature_model_schema_version") != RELEASE_FEATURE_MODEL_SCHEMA_VERSION:
         errors.append("manifest release_feature_model_schema_version is unsupported")
-    try:
-        validate_identity_metadata(manifest.get("identity"))
-    except ReleaseFeatureModelError as exc:
-        errors.append(str(exc))
+    if validate_identity:
+        try:
+            validate_identity_metadata(manifest.get("identity"))
+        except ReleaseFeatureModelError as exc:
+            errors.append(str(exc))
     raw_artifacts = manifest.get("artifacts")
     if not isinstance(raw_artifacts, Sequence) or isinstance(raw_artifacts, (str, bytes, bytearray)):
         errors.append("manifest artifacts must be an array")

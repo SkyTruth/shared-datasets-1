@@ -11,6 +11,8 @@ instructions:
 
 ```sh
 uv sync --locked
+npm ci --ignore-scripts --prefix api/typescript
+npm run build --prefix api/typescript
 npm ci --ignore-scripts --prefix tests/browser
 cd tests/browser
 npx --no-install playwright install --with-deps chromium
@@ -56,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal four-scenario count gate cannot supply a misleading failure.
+so the normal thirteen-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -64,3 +66,29 @@ This coverage does not prove live IAP, CDN/CORS or GCS retention configuration;
 it does not cover Firefox/Safari or replace the broader unit-test matrix.
 FlatGeobuf download controls are URL-checked only; their fixture bytes are not a
 valid FGB. See [fixture provenance](fixtures/README.md) for the real PMTiles.
+
+Comparison acceptance scenarios run the real catalog-viewer routes and SQLite
+engine against local pinned fixture files. The union fixture exercises green
+novel geometry, red removed geometry, yellow metadata changes, and a moved
+feature. Tests cover pagination, full export, property absence/null, keyboard
+operation, narrow layout, cancellation and a delayed start. `comparison_server.py`
+uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
+Set `CATALOG_BROWSER_PORT` to use another loopback port for a concurrent local run.
+
+The static-catalog scenario removes the comparison endpoint, checks the visible
+availability and CLI guidance, then verifies keyboard close and historical
+browsing/inspection still work.
+
+Historical comparison-map denial stays visible while the table is searched and
+inspected; retrying map inspection can recover without replacing pinned inputs.
+
+The suite has thirteen required scenarios, including generated TypeScript
+execution, workspace export/import and WDPA execution status. The WDPA scenario
+preserves each realm's published release alongside overall execution failures,
+newer running executions, cancellation and stale observations. The SDK build in the setup above is
+required for the generated integration test.
+
+The fixture builder copies compiled browser SDK modules into the disposable
+site solely for integration-code execution. The production catalog shell and
+modules remain unchanged. Tests preserve synthetic captured artifact storage
+independently from mutable index pointers to exercise replacement/retention.

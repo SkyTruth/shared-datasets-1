@@ -43,3 +43,7 @@ __all__ = [
     "resolve_dataset",
     "split_gs_uri",
 ]
+
+from .snapshot import SnapshotError, FetchedSnapshotArtifact, validate_snapshot, fetch_snapshot_artifact
+
+__all__ += ["SnapshotError", "FetchedSnapshotArtifact", "validate_snapshot", "fetch_snapshot_artifact"]

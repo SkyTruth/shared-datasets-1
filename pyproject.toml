@@ -22,7 +22,9 @@ gdal = ["numpy==1.26.4"]
 
 [dependency-groups]
 dev = [
+  "geopandas==1.1.1",
   "pytest>=9.0.0",
+  "rasterio==1.4.3",
   "ruff>=0.14.0",
 ]
 

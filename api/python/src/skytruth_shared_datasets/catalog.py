@@ -405,31 +405,37 @@ class Catalog:
             ref = self.resolve(slug, format)
         else:
             ref = _release_ref(asset, release_index, version, format, index_generation=index_generation)
+        return _fetch_ref(ref, cache_dir=cache_dir, force=force, timeout=timeout, access=access_mode, client=client)
+
+
+def _fetch_ref(ref: DatasetRef, *, cache_dir=None, force=False, timeout=60.0, access="gcs", client=None) -> DatasetRef:
+    """Fetch already-resolved identity through the existing verified cache."""
+    access_mode = _normalize_access(access)
+    try:
+        if ref.generation is None:
+            ref = _observe_artifact(ref, access=access_mode, client=client, timeout=timeout)
+        destination = _cache_path(ref, cache_dir)
+        if not force:
+            cached = _verified_cache(ref, destination)
+            if cached is not None:
+                return cached
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+        os.close(fd)
+        temp_path = Path(temp_name)
         try:
-            if ref.generation is None:
-                ref = _observe_artifact(ref, access=access_mode, client=client, timeout=timeout)
-            destination = _cache_path(ref, cache_dir)
-            if not force:
-                cached = _verified_cache(ref, destination)
-                if cached is not None:
-                    return cached
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_name = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
-            os.close(fd)
-            temp_path = Path(temp_name)
-            try:
-                _download_artifact(ref, temp_path, access=access_mode, client=client, timeout=timeout)
-                sha256, size = _file_digest(temp_path)
-                _check_integrity(ref, sha256, size)
-                fetched = replace(ref, cache_path=destination, sha256=sha256, size=size)
-                temp_path.replace(destination)
-                _write_cache_record(fetched, destination)
-                return fetched
-            finally:
-                temp_path.unlink(missing_ok=True)
-        except Exception as exc:
-            hint = f" {AUTHENTICATED_GCS_HINT}" if access_mode == "gcs" else ""
-            raise FetchError(f"Could not fetch {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
+            _download_artifact(ref, temp_path, access=access_mode, client=client, timeout=timeout)
+            sha256, size = _file_digest(temp_path)
+            _check_integrity(ref, sha256, size)
+            fetched = replace(ref, cache_path=destination, sha256=sha256, size=size)
+            temp_path.replace(destination)
+            _write_cache_record(fetched, destination)
+            return fetched
+        finally:
+            temp_path.unlink(missing_ok=True)
+    except Exception as exc:
+        hint = f" {AUTHENTICATED_GCS_HINT}" if access_mode == "gcs" else ""
+        raise FetchError(f"Could not fetch {ref.gs_uri} with {access!r} access: {exc}.{hint}") from exc
 
 
 def resolve_dataset(

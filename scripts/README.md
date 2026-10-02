@@ -563,3 +563,10 @@ uv run python scripts/gcs_asset.py delete gs://skytruth-shared-datasets-1/path/t
   --generation 123456789 \
   --confirm DELETE
 ```
+
+## Release comparison
+
+`compare_releases.py` compares complete, pinned canonical sidecar/schema/manifest
+bundles with a task-scoped SQLite index. The CLI and authenticated catalog viewer
+share the engine. See [comparison semantics, snapshot JSON and explicit local
+budgets](../docs/compare-releases.md). It performs no remote writes or downloads.

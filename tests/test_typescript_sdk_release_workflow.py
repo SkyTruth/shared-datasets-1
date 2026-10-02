@@ -19,6 +19,7 @@ class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
             "api/typescript/src/**", "api/typescript/README.md", "api/typescript/package.json",
             "api/typescript/package-lock.json", "api/typescript/tsconfig.json",
             ".github/workflows/publish-typescript-sdk.yml",
+            "api/typescript/scripts/copy-snapshot-contract.mjs", "web/catalog/workspace-contract.js",
         })
         self.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
         job = workflow["jobs"]["publish"]

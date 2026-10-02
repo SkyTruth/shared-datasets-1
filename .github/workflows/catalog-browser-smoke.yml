@@ -33,6 +33,8 @@ jobs:
         run: |
           uv sync --locked
           npm ci --ignore-scripts --prefix tests/browser
+          npm ci --ignore-scripts --prefix api/typescript
+          npm run build --prefix api/typescript
       - name: Install pinned Chromium and OS libraries
         working-directory: tests/browser
         run: npx --no-install playwright install --with-deps chromium

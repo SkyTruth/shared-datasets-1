@@ -404,3 +404,54 @@ Do:
 - Record fetched `DatasetRef.gs_uri` and generation-bearing `resolved_id` for reproducible backend runs.
 - Keep PMTiles browser access on `tiles.skytruth.org`.
 - Scope restricted cookies to their tier path and the current SDK default TTL.
+
+## Compare published releases
+
+The authenticated catalog viewer compares generation-pinned canonical release
+sidecars, schemas and manifests through `scripts/compare_releases.py` and the
+same-origin `/api/comparisons` job routes. The catalog offers release selection,
+complete change counts, a searchable table, source property inspection, a union
+map (green novel geometry, red removed geometry, yellow identical geometry with
+altered metadata), before/after maps and complete report export. Localization
+is excluded from source changes. Identity incompatibility withholds authoritative
+feature classification; static catalogs retain visual inspection and a local CLI
+route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
+
+## Use a dataset and reopen a workspace
+
+Choose the concrete release using the catalog's version selector, then open
+**Use this dataset** beside the docs/download actions. The action captures the
+selection once and offers Python exact fetch/integration code, public or
+restricted TypeScript/MapLibre integration, human-readable attribution, captured
+provenance, and a downloadable `*.lock.json`. Exported generations are decimal
+strings; checksums/sizes remain explicitly unknown when not published.
+
+For comparisons, choose each asset's release and add rows with Cmd-click.
+**Save workspace** records selected assets and release identities, selection
+order, viewport, basemap, selected locale, and the single-dataset source-layer
+and color-field controls. All selected layers are visible. Hidden layers,
+opacity, arbitrary styles, legend focus, and selected features are not saved.
+**Open workspace** accepts the JSON, validates all entries, and establishes
+access/availability for every required artifact before mounting the selection.
+Then it restores the supported presentation controls. Imports with unavailable
+bytes or unsupported state fail visibly; the viewer does not restore a partial
+selection or silently switch releases.
+
+Latest changing and same-date replacements never change a saved identity.
+For restricted assets the viewer must reacquire access using its existing
+authorized routes. If the current release index no longer authorizes a captured
+older generation, the viewer reports that limitation. A public retained
+generation can remain directly readable; Python ADC reads are controlled by
+GCS IAM and fetch captured bytes directly. Ordinary legacy browsing remains
+available, but a selection without published exact identity cannot receive a
+reproducibly pinned export. V1 does not support Zarr collections.
+
+Lockfiles reference data; they do not archive bytes or guarantee indefinite
+retention. Preserve local downloaded bytes if your analysis requires independent
+retention. Published integrity expectations and locally verified evidence are
+different. Source caveats, lifecycle guidance, and terms remain authoritative;
+a captured license is not an interpretation of reuse permission.
+
+See the [portable contract](standards/workspace-snapshot-v1.md),
+[Python API](../api/python/README.md#exact-portable-lockfiles), and
+[TypeScript API](../api/typescript/README.md#exact-portable-snapshots).

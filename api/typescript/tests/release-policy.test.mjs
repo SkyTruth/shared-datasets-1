@@ -30,11 +30,12 @@ test('package and both lockfile versions must agree', () => {
 });
 
 test('every release-content path needs a reviewed version increase', () => {
-  for (const file of ['src/catalog.ts', 'README.md', 'package.json', 'package-lock.json', 'tsconfig.json']) {
+  for (const file of ['src/catalog.ts', 'README.md', 'package.json', 'package-lock.json', 'tsconfig.json', 'scripts/copy-snapshot-contract.mjs']) {
     const changed = [`api/typescript/${file}`];
     assert.throws(() => needsRelease(pkg('0.8.0'), pkg('0.8.0'), changed), /increase/);
     assert.equal(needsRelease(pkg('0.8.0'), pkg('0.9.0'), changed), true);
   }
+  assert.throws(() => needsRelease(pkg('0.9.0'), pkg('0.9.0'), ['web/catalog/workspace-contract.js']), /increase/);
   assert.throws(() => needsRelease(pkg('0.9.0'), pkg('0.8.0'), []), /decrease/);
 });
 

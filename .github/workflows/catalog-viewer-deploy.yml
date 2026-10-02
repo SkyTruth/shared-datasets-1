@@ -8,6 +8,7 @@ on:
       - ".github/workflows/catalog-viewer-deploy.yml"
       - "api/python/src/**"
       - "services/catalog_viewer/**"
+      - "scripts/compare_releases.py"
       - "terraform/envs/prod/catalog_viewer.tf"
       - "terraform/envs/prod/main.tf"
       - "terraform/envs/prod/pmtiles_cdn.tf"

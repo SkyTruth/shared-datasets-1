@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import sys
@@ -1182,6 +1183,13 @@ def asset_with_latest_from_release_index(asset: CatalogAsset) -> CatalogAsset | 
     )
 
 
+def sdk_revision() -> str | None:
+    revision = os.environ.get("SHARED_DATASETS_SDK_REVISION") or os.environ.get("GITHUB_SHA")
+    if revision and not re.fullmatch(r"[a-f0-9]{40}", revision):
+        raise CatalogSiteError("SDK revision must be a 40-character commit SHA")
+    return revision or None
+
+
 def build_catalog_payload(
     *,
     catalog_path: Path,
@@ -1234,6 +1242,7 @@ def build_catalog_payload(
     assets.sort(key=lambda asset: asset.sort_key, reverse=True)
     return {
         "schema_version": 1,
+        "sdk_revision": sdk_revision(),
         "generated_at": generated_at or dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "bucket": bucket,
         "site_prefix": site_prefix.strip("/"),
@@ -1246,7 +1255,7 @@ def build_catalog_payload(
 
 def copy_static_files(source_dir: Path, out_dir: Path) -> list[Path]:
     copied: list[Path] = []
-    for name in ("index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "execution-status.js"):
+    for name in ("index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "workspace-contract.js", "workspace.js", "execution-status.js"):
         src = source_dir / name
         if not src.exists():
             raise CatalogSiteError(f"missing static source file: {src}")

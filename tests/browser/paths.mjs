@@ -6,4 +6,4 @@ export const packageDir = dirname(fileURLToPath(import.meta.url));
 export const repoDir = resolve(packageDir, '../..');
 export const workDir = resolve(process.env.SHARED_DATASETS_WORKDIR || resolve(tmpdir(), 'shared-datasets-1'), 'catalog-browser-smoke');
 export const siteDir = resolve(workDir, 'site');
-export const baseURL = 'http://127.0.0.1:4179';
+export const baseURL = `http://127.0.0.1:${process.env.CATALOG_BROWSER_PORT || '4179'}`;

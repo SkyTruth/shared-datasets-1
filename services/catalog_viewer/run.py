@@ -20,6 +20,7 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
+from services.catalog_viewer import comparisons
 from services.http_base import (
     NO_STORE,
     Response,
@@ -48,7 +49,8 @@ LOCALIZED_METADATA_RE = re.compile(r"\.metadata(?:\.(?P<locale>[a-z]{2,3}(?:_[a-
 EXECUTION_STATUS_FILE = "wdpa-monthly-execution.json"
 ROOT_STATIC_FILES = {
     "index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js",
-    "execution-status.js", "catalog.json", EXECUTION_STATUS_FILE,
+    "execution-status.js", "compare-releases.js", "workspace.js",
+    "workspace-contract.js", "catalog.json", EXECUTION_STATUS_FILE,
 }
 
 
@@ -321,12 +323,17 @@ def handle_request(
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
     feature_require_iap: bool = True,
+    comparison_jobs: comparisons.ComparisonJobs | None = None,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
     method = method.upper()
     request_path = urlsplit(path).path
     if request_path == "/healthz":
         return text_response(HTTPStatus.OK, "ok", {"Cache-Control": NO_STORE}, include_body=method != "HEAD")
+    if request_path == "/api/comparisons" or request_path.startswith("/api/comparisons/"):
+        return comparisons.handle_request(method, path, headers, body, object_store=object_store,
+            bucket_name=bucket_name, allowed_email_domains=allowed_email_domains,
+            require_iap=feature_require_iap, jobs=comparison_jobs or default_comparison_jobs())
     if feature_preview_run.LOOKUP_RE.fullmatch(request_path):
         return handle_feature_lookup(
             method,
@@ -416,6 +423,8 @@ class SelectedArtifact:
     uri: str
     release: str | None
     generation: str | None
+    sha256: str | None = None
+    size: int | None = None
 
     def identity(self) -> dict[str, str | None]:
         return {"gs_uri": self.uri, "resolved_release": self.release, "generation": self.generation}
@@ -439,10 +448,10 @@ def request_parameter(path: str, key: str, default: str = "") -> str:
 
 
 def resolve_artifact(asset, format_name, version, *, locale, object_store) -> SelectedArtifact:
-    if format_name not in {"pmtiles", "fgb", "metadata", "schema"}:
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "format must be fgb, metadata, or schema")
-    if format_name == "fgb" and asset.get("canonical_format") != "fgb":
-        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish canonical FGB")
+    if format_name not in {"pmtiles", "fgb", "csv", "geojson", "ndgeojson", "cog", "metadata", "schema", "manifest"}:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "unsupported artifact format")
+    if format_name in {"fgb", "csv", "geojson", "ndgeojson", "cog"} and asset.get("canonical_format") != format_name:
+        raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish this canonical format")
     if format_name == "pmtiles" and not asset_has_pmtiles(asset):
         raise DownloadResolutionError(HTTPStatus.BAD_REQUEST, "asset does not publish PMTiles")
     if version != "latest":
@@ -494,8 +503,8 @@ def resolve_artifact(asset, format_name, version, *, locale, object_store) -> Se
             if matches:
                 break
         candidates = matches
-    elif format_name == "schema":
-        candidates = [f for f in candidates if str(f.get("path") or "").endswith(".schema.json")]
+    elif format_name in {"schema", "manifest"}:
+        candidates = [f for f in candidates if str(f.get("path") or "").endswith(f".{format_name}.json")]
     else:
         matches = [f for f in candidates if basename(str(f.get("path") or "")) == basename(preferred)]
         candidates = matches or candidates
@@ -509,7 +518,7 @@ def resolve_artifact(asset, format_name, version, *, locale, object_store) -> Se
     expected_prefix = f"{root}/releases/{date}/"
     if not uri.startswith(expected_prefix) or "/" in uri[len(expected_prefix):] or any(p in {".", "..", ""} for p in uri[5:].split("/")):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact is outside the catalog asset release")
-    suffixes = {"fgb": ".fgb", "pmtiles": ".pmtiles", "schema": ".schema.json", "metadata": ".ndjson.gz"}
+    suffixes = {"fgb": ".fgb", "csv": ".csv", "geojson": ".geojson", "ndgeojson": (".ndgeojson", ".geojsonl"), "cog": (".tif", ".tiff"), "pmtiles": ".pmtiles", "schema": ".schema.json", "metadata": ".ndjson.gz", "manifest": ".manifest.json"}
     if not uri.endswith(suffixes[format_name]):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "artifact format/path mismatch")
     generation = artifact_generation(file.get("generation"))
@@ -517,7 +526,7 @@ def resolve_artifact(asset, format_name, version, *, locale, object_store) -> Se
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid artifact size")
     if "sha256" in file and (not isinstance(file["sha256"], str) or not re.fullmatch(r"[a-fA-F0-9]{64}", file["sha256"])):
         raise DownloadResolutionError(HTTPStatus.BAD_GATEWAY, "invalid artifact checksum")
-    return SelectedArtifact(uri, date, generation)
+    return SelectedArtifact(uri, date, generation, file.get("sha256"), file.get("size"))
 
 
 def handle_signed_url(method, path, headers, *, catalog_cache, object_store, signer, bucket_name,
@@ -876,7 +885,10 @@ def make_handler(
     feature_max_fields: int = feature_preview_run.DEFAULT_MAX_FIELDS,
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
     feature_require_iap: bool = True,
+    comparison_jobs: comparisons.ComparisonJobs | None = None,
 ):
+    comparison_jobs = comparison_jobs or comparisons.ComparisonJobs()
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             self._send(handle_request_from_self("GET", self, b""))
@@ -889,6 +901,10 @@ def make_handler(
 
         def do_POST(self) -> None:
             content_length = int(self.headers.get("Content-Length") or "0")
+            if self.path.startswith("/api/comparisons") and content_length > 16 * 1024:
+                self.close_connection = True
+                self._send(json_response(413, {"error": "Comparison request exceeds 16 KiB"}))
+                return
             body = self.rfile.read(content_length) if content_length > 0 else b""
             self._send(handle_request_from_self("POST", self, body))
 
@@ -915,9 +931,20 @@ def make_handler(
             feature_max_fields=feature_max_fields,
             feature_max_response_bytes=feature_max_response_bytes,
             feature_require_iap=feature_require_iap,
+            comparison_jobs=comparison_jobs,
         )
 
     return Handler
+
+
+_comparison_jobs = None
+
+
+def default_comparison_jobs():
+    global _comparison_jobs
+    if _comparison_jobs is None:
+        _comparison_jobs = comparisons.ComparisonJobs()
+    return _comparison_jobs
 
 
 def main() -> None:
