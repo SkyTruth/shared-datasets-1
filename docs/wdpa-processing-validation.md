@@ -157,5 +157,12 @@ The catalog deployment includes `_catalog/web/app.js`, `index.html` and the new
 `execution-status.js`. Normal WDPA publication paths remain
 `100-geographic-reference/130-protected-areas/{wdpa-marine,wdpa-terrestrial}/`
 with the existing `releases/`, `latest/`, run records and release indexes.
-Existing allocation, claim and receipt ownership is unchanged. **No remote
-objects or production infrastructure were changed during implementation.**
+Existing allocation, claim and receipt ownership is unchanged. No canonical
+dataset objects or production infrastructure were changed during implementation.
+
+Diagnostic benchmark inputs were staged privately, with `if_generation_match=0`,
+at `gs://skytruth-shared-datasets-1/_scratch/wdpa-processing-benchmarks/20261002T040200Z/october-frozen-snapshot.tar`,
+generation `1790924057375117`, 5,189,560,320 bytes, SHA-256
+`70b9f8b0356de097c7392972c65b0b073485c80ea814d0284a97762a9478151b`.
+This disposable scratch bundle is not a shared dataset contract. Its temporary
+reader was restricted to that exact object; a read of another object was denied.

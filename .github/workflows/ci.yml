@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
           # These are unused preinstalled tools on this job's disposable VM.
           # Each CI job has its own VM; no other job or user workspace is affected.
-          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache; do
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache /usr/local/.ghcup /usr/share/swift /opt/swift /usr/lib/jvm /usr/local/share/chromium /usr/local/share/boost /usr/local/share/vcpkg; do
             if [[ -e "$path" ]]; then sudo du -sh "$path"; sudo rm -rf "$path"; fi
           done
           df -h /
@@ -117,13 +117,18 @@ jobs:
             --build-arg SHARED_DATASETS_EXECUTOR_SHA="$GITHUB_SHA" \
             --metadata-file "$RUNNER_TEMP/wdpa-reports/image.json" \
             -f ingestion/wdpa_monthly/Dockerfile -t wdpa-processing-benchmark:local .
+          # Only this build's unused intermediate layers exist on this disposable VM.
+          docker builder prune --all --force
+          df -h /
       - name: Provision a 100 GiB disk scratch filesystem
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import os
           s = os.statvfs(os.environ['RUNNER_TEMP'])
-          if s.f_bavail * s.f_frsize < 105 * 1024**3:
+          available = s.f_bavail * s.f_frsize
+          print({'host_free_bytes_before_disk': available}, flush=True)
+          if available < 105 * 1024**3:
               raise SystemExit('Insufficient host storage for a 100 GiB disk; resource target must not be reduced')
           PY
           sudo fallocate -l 100G "$RUNNER_TEMP/wdpa-scratch.ext4"
