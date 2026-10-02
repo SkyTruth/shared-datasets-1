@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import ts from 'typescript';
 import {validateWorkspaceSnapshot, resolveSnapshotLayer, fetchSnapshotMetadata} from '../dist/index.js';
 import {authorizeSnapshotArtifact} from '../dist/server.js';
-import {captureWorkspace, prepareWorkspace, pythonSnippet, typescriptSnippet} from '../../../web/catalog/workspace.js';
+import {captureWorkspace, pythonSnippet, typescriptSnippet} from '../../../web/catalog/workspace.js';
 import {selectReleaseReference} from '../../../web/catalog/release-reference.js';
 const corpus = JSON.parse(await readFile(new URL('../../../tests/fixtures/workspace-snapshot-v1.json', import.meta.url), 'utf8'));
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -32,15 +32,12 @@ test('capture resolves latest once; changed latest and same-date replacement nev
   const snapshot = captureWorkspace([reference], {bucket: 'example-bucket', presentation: corpus.snapshot.presentation});
   const requests = [];
   asset.latest_release = {date: '2026-10-01'}; asset.versions = []; asset.citation = 'Different current citation';
-  const prepared = await prepareWorkspace(snapshot, [asset], {bucket: 'example-bucket', fetchImpl: async url => {requests.push(url); return new Response('', {status: 200});}});
-  assert.equal(prepared.references[0].date, '2026-01-01');
-  assert.equal(prepared.references[0].citation, snapshot.datasets[0].provenance.citation);
-  const recaptured = captureWorkspace(prepared.references, {bucket: 'example-bucket', presentation: snapshot.presentation});
-  assert.deepEqual(recaptured.datasets[0].provenance, snapshot.datasets[0].provenance);
-  assert.equal(prepared.references[0].canonical_file.generation, '9007199254740993');
+  const layer = await resolveSnapshotLayer(snapshot, asset.slug, {bucket: 'example-bucket', probeArtifact: async url => {requests.push(url);}});
+  assert.equal(layer.dataset.release, '2026-01-01');
+  assert.deepEqual(layer.dataset.provenance, snapshot.datasets[0].provenance);
+  assert.equal(layer.dataset.artifacts.find(a => a.role === 'canonical').generation, '9007199254740993');
   assert(requests.every(url => url.includes('/2026-01-01/') && url.includes('generation=')));
-  assert.deepEqual(prepared.snapshot.presentation, corpus.snapshot.presentation);
-  assert.equal(pythonSnippet(snapshot), pythonSnippet(snapshot));
+  assert.deepEqual(validateWorkspaceSnapshot(snapshot, {bucket: 'example-bucket'}).presentation, corpus.snapshot.presentation);
   assert(!JSON.stringify(snapshot).includes('Signature='));
 });
 test('exact TypeScript tiles and metadata are coherent and verify byte integrity', async () => {
@@ -71,11 +68,13 @@ test('localized and canonical metadata preserve requested and resolved locale on
   assert.equal(fallback.datasets[0].artifacts.find(a => a.role === 'metadata').requested_locale, 'fr');
   assert.equal(fallback.datasets[0].artifacts.find(a => a.role === 'metadata').resolved_locale, null);
 });
-test('unavailable generations and malformed signing paths fail before mounting without substitution', async () => {
+test('unavailable generations and malformed signing paths fail before mounting without substitution', async t => {
   let requests = 0;
-  await assert.rejects(prepareWorkspace({...corpus.snapshot, unexpected: true}, [assetFor(corpus.snapshot)], {bucket: 'example-bucket', fetchImpl: async () => {requests++;}}));
+  t.mock.method(globalThis, 'fetch', async () => {requests++; return new Response('', {status: 404});});
+  await assert.rejects(resolveSnapshotLayer({...corpus.snapshot, unexpected: true}, 'example-layer', {bucket: 'example-bucket'}));
   assert.equal(requests, 0);
-  await assert.rejects(prepareWorkspace(corpus.snapshot, [assetFor(corpus.snapshot)], {bucket: 'example-bucket', fetchImpl: async () => new Response('', {status: 404})}), /9007199254740993.*no release was substituted/);
+  await assert.rejects(resolveSnapshotLayer(corpus.snapshot, 'example-layer', {bucket: 'example-bucket'}), /9007199254740993.*captured bytes unavailable/);
+  assert.equal(requests, 1);
   assert.throws(() => captureWorkspace([{...assetFor(corpus.snapshot), date: null, files: [], release_snapshot_key: null}], {bucket: 'example-bucket'}), /not reproducibly pinned/);
 });
 test('restricted restore reacquires app authorization and never exports secrets', async () => {

@@ -52,6 +52,31 @@ def test_complete_mutually_exclusive_classifications_and_inspection(tmp_path):
             "after": {"present": True, "value": "changed"},
         }
     ]
+    # A moved ID participates in both red and green geometry sets, regardless
+    # of its feature-level classification. Pagination and search stay complete.
+    for category, ids in {
+        "novel": ["2", "4", "7"],
+        "removed": ["1", "2", "4"],
+        "metadata_changed": ["3"],
+        "unchanged": ["5", "6"],
+    }.items():
+        assert [
+            row["feature_id"] for row in engine.page(geometry_change=category)["rows"]
+        ] == ids
+    assert (
+        engine.page(geometry_change="novel", classification="geometry_only")["total"]
+        == 1
+    )
+    assert (
+        engine.page(geometry_change="removed", query="also")["rows"][0]["feature_id"]
+        == "4"
+    )
+    assert (
+        engine.page(geometry_change="novel", limit=1, offset=2)["rows"][0]["feature_id"]
+        == "7"
+    )
+    with pytest.raises(compare.ComparisonError, match="Invalid page options"):
+        engine.page(geometry_change="added")
     engine.export(tmp_path / "report.json")
     report = json.loads((tmp_path / "report.json").read_text())
     assert len(report["features"]) == 7
@@ -94,9 +119,12 @@ def test_large_properties_do_not_expand_the_comparison_workspace(tmp_path):
     assert engine.page(query="BEFORE-ONLY")["rows"][0]["feature_id"] == "80"
     assert engine.page(query="after-only")["rows"][0]["feature_id"] == "2"
     assert engine.page(query="source description", limit=1, offset=1)["total"] == 81
-    assert engine.page(query="source description", classification="added")["rows"][0][
-        "feature_id"
-    ] == "81"
+    assert (
+        engine.page(query="source description", classification="added")["rows"][0][
+            "feature_id"
+        ]
+        == "81"
+    )
     # Provenance is not source metadata.
     assert engine.page(query="Synthetic")["total"] == 0
     assert engine.inspect("2")["before"] == old[1]
@@ -513,10 +541,20 @@ def test_geometry_colors_survive_generated_id_reset_without_matching_ids(tmp_pat
         "unchanged": 0,
     }
     assert engine.map_features("baseline", ["1"]) == [
-        {"feature_id": "1", "change": "removed"}
+        {
+            "feature_id": "1",
+            "change": "removed",
+            "geometry_hash": record(1, A)["geometry_hash"],
+        }
     ]
     assert engine.map_features("target", ["1"]) == [
-        {"feature_id": "1", "change": "novel"}
+        {
+            "feature_id": "1",
+            "change": "novel",
+            "geometry_hash": model.geometry_hash(
+                {"type": "Point", "coordinates": [9, 0]}
+            ),
+        }
     ]
     for side, ids in [
         ("latest", ["1"]),
@@ -554,8 +592,68 @@ def test_historical_coral_geometry_uses_full_precision_without_joining_ids(tmp_p
     )
     assert engine.summary["counts"] is None
     assert engine.map_features("baseline", ["gen:coral-example"]) == [
-        {"feature_id": "gen:coral-example", "change": "unchanged"}
+        {
+            "feature_id": "gen:coral-example",
+            "change": "unchanged",
+            "geometry_hash": model.geometry_hash(geom),
+        }
     ]
+
+
+@pytest.mark.parametrize("after_has_null", [True, False])
+def test_historical_fgb_omits_null_entries_without_erasing_source_nulls(
+    tmp_path, after_has_null
+):
+    from tests.comparison_fixtures import historical_bundle
+
+    old, geom = historical_bundle(tmp_path / "before", A, nullable=True)
+    new = record(1, B, geometry=geom, name="reef")
+    new["properties"] = {
+        "name": "reef",
+        **({"optional": None} if after_has_null else {}),
+    }
+    new["properties_hash"] = model.properties_hash(new["properties"])
+    engine = run(
+        tmp_path,
+        old,
+        bundle(
+            tmp_path / "after",
+            B,
+            [new],
+            identity=generated(),
+            fields=[
+                {"name": "name", "type": "string"},
+                {"name": "optional", "type": "string"},
+            ],
+        ),
+    )
+    category = "unchanged" if after_has_null else "metadata_changed"
+    assert (
+        engine.map_features("baseline", ["gen:coral-example"])[0]["change"] == category
+    )
+    assert engine.summary["geometry_counts"][category] == 1
+
+
+def test_published_wdpa_size_enters_stream_validation_with_default_budget(tmp_path):
+    from tests.comparison_fixtures import historical_bundle
+
+    old, geom = historical_bundle(tmp_path / "before", A)
+    # June 7 Marine is 1.29 GB. The former 512 MiB ceiling rejected it before
+    # opening the stream. A tiny truncated stand-in must reach byte validation
+    # under the default budget, without allocating a large test artifact.
+    declared_size = 1_293_973_624
+    old[0]["files"]["fgb"]["size"] = declared_size
+    manifest = json.loads(old[1]["manifest"].read_text())
+    next(item for item in manifest["artifacts"] if item["role"] == "fgb")["size"] = (
+        declared_size
+    )
+    old[1]["manifest"].write_text(json.dumps(manifest))
+    old[0]["files"]["manifest"].update(
+        size=old[1]["manifest"].stat().st_size,
+        sha256=hashlib.sha256(old[1]["manifest"].read_bytes()).hexdigest(),
+    )
+    with pytest.raises(compare.ComparisonError, match="FGB size differs"):
+        run(tmp_path, old, bundle(tmp_path / "after", B, [record(1, B, geometry=geom)]))
 
 
 @pytest.mark.parametrize(

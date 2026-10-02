@@ -185,7 +185,7 @@ def open_geometry(ref, *, bucket_name):
         .open(
             "rb",
             if_generation_match=generation,
-            chunk_size=1024 * 1024,
+            chunk_size=8 * 1024 * 1024,
             timeout=15,
             retry=None,
         )
@@ -441,6 +441,7 @@ def handle_request(
             "limit",
             "query",
             "classification",
+            "geometry_change",
             "feature_id",
         }:
             raise engine.ComparisonError("Invalid comparison page parameters")
@@ -453,6 +454,7 @@ def handle_request(
                     limit=int(params.get("limit", [50])[0]),
                     query=params.get("query", [""])[0],
                     classification=params.get("classification", [""])[0],
+                    geometry_change=params.get("geometry_change", [""])[0],
                 )
         return bounded_response(200, result)
     except viewer.DownloadResolutionError as exc:

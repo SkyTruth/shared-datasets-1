@@ -92,7 +92,7 @@ def generated(contract="contract-v1"):
     )
 
 
-def historical_bundle(root, release):
+def historical_bundle(root, release, *, nullable=False):
     """A persisted v1 polygon bundle, including exact full-precision FGB bytes."""
     import geopandas as gpd
     import pyogrio
@@ -104,6 +104,8 @@ def historical_bundle(root, release):
     )
     feature_id = "gen:coral-example"
     properties = {"ext_id": "1", "name": "reef"}
+    if nullable:
+        properties["optional"] = None
     feature_hash = (
         "sha256:"
         + hashlib.sha256(
@@ -119,6 +121,7 @@ def historical_bundle(root, release):
         fields=[
             {"name": "ext_id", "type": "string"},
             {"name": "name", "type": "string"},
+            *([{"name": "optional", "type": "string"}] if nullable else []),
         ],
     )
     pyogrio.write_dataframe(

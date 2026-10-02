@@ -14,8 +14,6 @@
             <p class="eyebrow">SkyTruth data plane</p>
             <h1>Shared datasets</h1>
           </div>
-          <button id="open-workspace" class="icon-button" type="button">Open workspace</button>
-          <input id="open-workspace-file" type="file" accept="application/json,.json" hidden />
           <p id="catalog-count" class="result-count" aria-live="polite">Loading catalog</p>
         </header>
 
@@ -78,7 +76,6 @@
             <div id="selection-legend" class="selection-legend" hidden></div>
           </header>
 
-          <p id="workspace-status" class="workspace-status" role="status" aria-live="polite"></p>
           <section id="map-section" class="map-section" aria-label="Map" hidden>
             <div class="section-title-row">
               <div class="map-actions map-actions-left">
@@ -117,8 +114,10 @@
               <div id="map-status" class="map-status">Preview loads when PMTiles is selected.</div>
             </div>
             <div id="compare-legend" class="compare-legend" aria-label="Change map legend" hidden>
-              <span style="--change-color:#168153">New geometry</span><span style="--change-color:#c33b3b">Removed geometry</span>
-              <span style="--change-color:#e3bd20">Metadata changed</span><span class="compare-unchanged" style="--change-color:#949d97">Unchanged</span>
+              <button type="button" data-change="novel" aria-pressed="false" disabled style="--change-color:#168153">New geometry</button>
+              <button type="button" data-change="removed" aria-pressed="false" disabled style="--change-color:#c33b3b">Removed geometry</button>
+              <button type="button" data-change="metadata_changed" aria-pressed="false" disabled style="--change-color:#e3bd20">Metadata changed</button>
+              <button type="button" data-change="unchanged" aria-pressed="false" disabled class="compare-unchanged" style="--change-color:#949d97">Unchanged</button>
             </div>
             <p id="compare-map-note" class="compare-map-note" role="status" hidden></p>
             <div id="color-legend" class="color-legend" hidden></div>
@@ -139,7 +138,7 @@
           <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
               <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
-                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 120 seconds. Historical v1 releases also stream up to 512 MiB of canonical FGB geometry; current releases use their stored hashes. Larger inputs require an explicit local budget. No sampling is used.</p>
+                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 10 minutes. Historical v1 releases also stream up to 2 GiB of canonical FGB geometry; current releases use their stored hashes. Larger inputs require an explicit local budget. No sampling is used.</p>
                 <pre>uv run python scripts/compare_releases.py --baseline baseline.json --target target.json --output report.json</pre>
                 <a href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/compare-releases.md" target="_blank" rel="noopener">Pinned bundle preparation and CLI guide</a>
               </details>
