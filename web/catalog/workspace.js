@@ -1,15 +1,8 @@
 import {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES} from './workspace-contract.js';
-import {artifactGeneration, artifactUrl, metadataFile, releaseFile, selectReleaseReference, assertArtifactResponse} from './release-reference.js';
+import {captureArtifact, artifactGeneration, artifactUrl, metadataFile, releaseFile, selectReleaseReference, assertArtifactResponse} from './release-reference.js';
 export {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES};
 const identityKeys = ['strategy', 'source_fields', 'generated_id_type', 'assignment_key', 'feature_id_column', 'geometry_hash_column', 'properties_hash_column'];
 const metadataKeys = ['title', 'citation', 'source', 'source_url', 'license', 'notes', 'status', 'lifecycle_reason', 'lifecycle_date', 'successor_asset_slug', 'consumer_guidance', 'source_version'];
-function captureArtifact(file, role, requestedLocale = null) {
-  if (!file) throw new Error(`Exact ${role} identity is missing from the release index.`);
-  const resolvedLocale = role === 'metadata' ? (/\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz$/.exec(file.path)?.[1] || null) : null;
-  return {format: file.format, role, gs_uri: file.path, generation: artifactGeneration(file.generation),
-    size: file.size ?? null, sha256: file.sha256?.toLowerCase() ?? null,
-    requested_locale: requestedLocale, resolved_locale: resolvedLocale};
-}
 export function captureWorkspace(references, {bucket = 'skytruth-shared-datasets-1', presentation = null, locale = null} = {}) {
   const datasets = references.map(reference => {
     if (reference.release_error) throw new Error(reference.release_error);

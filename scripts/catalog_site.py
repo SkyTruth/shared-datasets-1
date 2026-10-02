@@ -1255,7 +1255,7 @@ def build_catalog_payload(
 
 def copy_static_files(source_dir: Path, out_dir: Path) -> list[Path]:
     copied: list[Path] = []
-    for name in ("index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "workspace-contract.js", "workspace.js"):
+    for name in ("index.html", "styles.css", "app.js", "map-preview.js", "release-reference.js", "compare-releases.js", "workspace-contract.js", "workspace.js"):
         src = source_dir / name
         if not src.exists():
             raise CatalogSiteError(f"missing static source file: {src}")

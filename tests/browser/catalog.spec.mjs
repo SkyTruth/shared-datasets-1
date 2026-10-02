@@ -21,7 +21,7 @@ const test = base.extend({
     const requests = [], errors = [], forbidden = [], expectedErrors = new Set();
     const storedFiles = [...indexes.values()].flatMap(index => index.releases.flatMap(release => release.files)).map(file => structuredClone(file));
     let releaseHeld;
-    const state = { deny: 0, holdMetadata: false, held: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    const state = { deny: 0, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -39,6 +39,21 @@ const test = base.extend({
       if (/^https:\/\/services\.arcgisonline\.com\/ArcGIS\/rest\/services\/World_Imagery\/MapServer\/tile\/\d+\/\d+\/\d+$/.test(url.href)) return route.fulfill({body: basemapPNG, contentType: 'image/png'});
       const asset = catalog.assets.find((entry) => new URL(entry.release_index_url, baseURL).href === `${url.origin}${url.pathname}`);
       if (asset) return json(indexes.get(asset.slug));
+      if (url.origin === baseURL && /^\/sdk\/[a-z-]+\.js$/.test(url.pathname)) {
+        return route.fulfill({path: resolve(siteDir, url.pathname.slice(1)), contentType: 'text/javascript'});
+      }
+      if (url.origin === baseURL && url.pathname.startsWith('/api/comparisons')) {
+        if (state.comparisonUnavailable) {
+          expectedErrors.add(url.href);
+          return route.fulfill({status:404,contentType:'text/plain',body:'Not found'});
+        }
+        const response = await route.fetch({ headers: {...request.headers(), 'X-Goog-Authenticated-User-Email': 'accounts.google.com:browser@skytruth.org'} });
+        if (state.holdComparison && request.method() === 'POST' && url.pathname === '/api/comparisons') {
+          state.holdComparison = false; state.comparisonHeld = true;
+          await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
+        }
+        return route.fulfill({response});
+      }
       if (url.origin === baseURL && ['/api/pmtiles/signed-url', '/api/download-url'].includes(url.pathname)) {
         const slug = url.searchParams.get('slug'), date = url.searchParams.get('version');
         const format = url.pathname.includes('/pmtiles/') ? 'pmtiles' : url.searchParams.get('format');
@@ -185,6 +200,120 @@ test('late historical metadata cannot replace the current inspector', async ({ p
   await expectMetadata(page, false);
 });
 
+
+test('comparison uses complete inputs, union maps, real controls and keyboard inspection', async ({page, transport}, testInfo) => {
+  await select(page, 'comparison');
+  await page.locator('#compare-open').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#compare-baseline')).toBeFocused();
+  await expect(page.locator('#compare-baseline')).toHaveValue('2026-01-01');
+  await expect(page.locator('#compare-target')).toHaveValue('2026-09-22');
+  await page.locator('#compare-run').click();
+  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
+  await expect(page.locator('#compare-page')).toHaveText('1–50 of 106');
+  await expect(page.locator('#compare-summary')).toContainText('Properties only');
+  const canvas = page.locator('#compare-maps canvas');
+  await expect(canvas).toHaveCount(1);
+  await expect(canvas).toBeVisible();
+  expect(transport.requests.some(r => r.range && r.url.includes('/2026-01-01/') && r.url.includes('.pmtiles'))).toBe(true);
+  expect(transport.requests.some(r => r.range && r.url.includes('/2026-09-22/') && r.url.includes('.pmtiles'))).toBe(true);
+  await page.locator('#compare-maps').scrollIntoViewIfNeeded();
+  await testInfo.attach('comparison-union.png', {body:await page.locator('#compare-maps').screenshot(), contentType:'image/png'});
+  // Click the real shared [1, 1] point within combined [-2, -1, 4, 1] bounds.
+  // The pixel is derived from independent fixture geometry, without a map test hook.
+  const box = await canvas.boundingBox();
+  const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
+  const scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (mercatorY(-1) - mercatorY(1)), 512 * 2 ** 8);
+  await canvas.click({position:{x:box.width / 2, y:box.height / 2 - (0.5 - mercatorY(1)) * scale}});
+  await expect(page.locator('#compare-inspector')).toContainText('Shared before');
+  await expect(page.locator('#compare-inspector')).toContainText('Shared after');
+  await page.locator('#compare-search').fill('Shared');
+  await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
+  await page.locator('#compare-rows button').focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('#compare-inspector')).toContainText('Shared before');
+  await expect(page.locator('#compare-inspector')).toContainText('Shared after');
+  await expect(page.locator('#compare-inspector')).toContainText('Absent');
+  await expect(page.locator('#compare-inspector')).toContainText('null');
+  await page.locator('#compare-search').fill('');
+  await page.locator('#compare-next').click();
+  await expect(page.locator('#compare-page')).toHaveText('51–100 of 106');
+  await page.locator('#compare-mode').selectOption('before-after');
+  await expect(page.locator('#compare-maps canvas')).toHaveCount(2);
+  const download = page.waitForEvent('download'); await page.locator('#compare-report').click();
+  const file = await (await download).path();
+  const report = await readJSON(file);
+  expect(report.features).toHaveLength(106);
+  expect(report.summary.counts).toEqual({added:1,removed:1,geometry_only:1,properties_only:1,both:0,unchanged:102});
+  await page.locator('#compare-open').scrollIntoViewIfNeeded();
+  await testInfo.attach('comparison-desktop.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.setViewportSize({width:390,height:844});
+  await expect(page.locator('#compare-baseline')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.locator('#compare-open').scrollIntoViewIfNeeded();
+  await testInfo.attach('comparison-narrow.png', {body:await page.screenshot(), contentType:'image/png'});
+  await page.locator('#compare-maps').scrollIntoViewIfNeeded();
+  await testInfo.attach('comparison-narrow-maps.png', {body:await page.locator('#compare-maps').screenshot(), contentType:'image/png'});
+});
+
+test('static catalog explains comparison availability and keeps browsing functional', async ({page, transport}, testInfo) => {
+  transport.comparisonUnavailable = true;
+  await select(page, 'public');
+  await page.locator('#compare-open').click();
+  await page.locator('#compare-run').click();
+  await expect(page.locator('#compare-status')).toContainText('authenticated catalog viewer');
+  await expect(page.locator('#compare-maps canvas')).toHaveCount(1);
+  await expect(page.locator('#compare-table')).toBeHidden();
+  await expect(page.locator('#compare-report')).toBeDisabled();
+  await page.locator('.compare-local-guide summary').click();
+  await expect(page.locator('.compare-local-guide')).toContainText('scripts/compare_releases.py');
+  await page.locator('#compare-close').focus(); await page.keyboard.press('Escape');
+  await expect(page.locator('#compare-panel')).toBeHidden();
+  await expect(page.locator('#compare-open')).toBeFocused();
+  await page.locator('#version-select').selectOption('2026-01-01');
+  await clickPoint(page, true, testInfo); await expectMetadata(page, true);
+});
+
+test('comparison table updates preserve a denied historical map error and allow retry', async ({page, transport}) => {
+  await select(page, 'private');
+  transport.deny = 403;
+  await page.locator('#compare-open').click(); await page.locator('#compare-run').click();
+  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
+  await expect(page.locator('#compare-page')).toHaveText('1–50 of 105');
+  await expect(page.locator('#compare-map-note')).toContainText('Map inspection unavailable');
+  await expect(page.locator('#compare-maps canvas')).toHaveCount(0);
+  await page.locator('#compare-search').fill('Old');
+  await expect(page.locator('#compare-page')).toHaveText('1–2 of 2');
+  await page.locator('#compare-rows button').first().click();
+  await expect(page.locator('#compare-inspector')).toContainText('Old footprint');
+  await expect(page.locator('#compare-map-note')).toContainText('Map inspection unavailable');
+  transport.deny = 0;
+  await page.locator('#compare-mode').selectOption('before-after');
+  await expect(page.locator('#compare-maps canvas')).toHaveCount(2);
+  await expect(page.locator('#compare-map-note')).not.toContainText('Map inspection unavailable');
+});
+
+test('delayed comparison start cannot overwrite a newer release selection and cancellation', async ({page, transport}) => {
+  await select(page, 'public'); await page.locator('#compare-open').click();
+  transport.holdComparison = true;
+  await page.locator('#compare-run').click();
+  await expect.poll(() => transport.comparisonHeld).toBe(true);
+  await page.locator('#compare-baseline').selectOption('2026-09-22');
+  await page.locator('#compare-target').selectOption('2026-01-01');
+  await page.locator('#compare-run').click();
+  await expect(page.locator('#compare-status')).toContainText('Comparison complete');
+  await expect(page.locator('#compare-summary')).toContainText('Baseline: 2026-09-22');
+  transport.release();
+  await expect.poll(() => transport.requests.some(r => r.url.endsWith('/cancel'))).toBe(true);
+  await expect(page.locator('#compare-summary')).toContainText('Baseline: 2026-09-22');
+  await expect(page.locator('#compare-summary')).toContainText('Target: 2026-01-01');
+  transport.comparisonHeld = false; transport.holdComparison = true;
+  await page.locator('#compare-run').click();
+  await expect.poll(() => transport.comparisonHeld).toBe(true);
+  await page.locator('#compare-run').click();
+  transport.release();
+  await expect(page.locator('#compare-status')).toHaveText('Comparison cancelled.');
+  await expect(page.locator('#compare-summary')).toBeEmpty();
+});
 
 async function downloadedJson(page, button) {
   const waiting = page.waitForEvent('download');

@@ -58,7 +58,7 @@ see the [dependency review](DEPENDENCIES.md). This test package does not claim a
 dependency audit or silently upgrade the production runtime.
 
 For these targeted controls use the pinned Playwright CLI directly, as shown,
-so the normal eight-scenario count gate cannot supply a misleading failure.
+so the normal twelve-scenario count gate cannot supply a misleading failure.
 Inspect the report: the intended identity or stale-inspector assertion must
 fail. A setup error or an unrelated failure does not validate the control.
 
@@ -67,7 +67,22 @@ it does not cover Firefox/Safari or replace the broader unit-test matrix.
 FlatGeobuf download controls are URL-checked only; their fixture bytes are not a
 valid FGB. See [fixture provenance](fixtures/README.md) for the real PMTiles.
 
-The suite has eight required scenarios, including generated TypeScript
+Comparison acceptance scenarios run the real catalog-viewer routes and SQLite
+engine against local pinned fixture files. The union fixture exercises green
+novel geometry, red removed geometry, yellow metadata changes, and a moved
+feature. Tests cover pagination, full export, property absence/null, keyboard
+operation, narrow layout, cancellation and a delayed start. `comparison_server.py`
+uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
+Set `CATALOG_BROWSER_PORT` to use another loopback port for a concurrent local run.
+
+The static-catalog scenario removes the comparison endpoint, checks the visible
+availability and CLI guidance, then verifies keyboard close and historical
+browsing/inspection still work.
+
+Historical comparison-map denial stays visible while the table is searched and
+inspected; retrying map inspection can recover without replacing pinned inputs.
+
+The suite has twelve required scenarios, including generated TypeScript
 execution and workspace export/import. The SDK build in the setup above is
 required for the generated integration test.
 

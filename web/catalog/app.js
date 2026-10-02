@@ -1,3 +1,4 @@
+import {createComparisonController} from "./compare-releases.js";
 import {selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
 import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, installationInstructions, SNAPSHOT_MAX_BYTES} from "./workspace.js";
@@ -148,6 +149,8 @@ const elements = {
   docsClose: document.querySelector("#docs-close"),
   toast: createToastElement(),
 };
+
+const comparisonController = createComparisonController({loadMapModule});
 
 const collator = new Intl.Collator("en", { sensitivity: "base" });
 const RELEASE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -641,6 +644,7 @@ function selectedAssets() {
 }
 
 function renderDetail(asset) {
+  comparisonController.setAsset(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET});
   elements.empty.hidden = true;
   elements.detail.hidden = false;
   elements.detail.classList.remove("multi-detail");
@@ -687,6 +691,7 @@ function renderDocsLink(asset) {
 }
 
 function renderMultiDetail(assets) {
+  comparisonController.setAsset(null);
   const references = selectedReferences(assets);
   const mapAssets = references.filter((asset) => asset.pmtiles_url);
   elements.empty.hidden = true;
@@ -2815,6 +2820,7 @@ function safeMarkdownHref(href) {
 }
 
 function clearDetail() {
+  comparisonController.setAsset(null);
   state.selectedSlug = null;
   state.selectedSlugs = [];
   elements.detail.hidden = true;

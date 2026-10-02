@@ -8,7 +8,9 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
   iap_enabled         = true
 
   template {
-    service_account = local.preview_service_account_email
+    # Comparison jobs use bounded instance-local SQLite workspaces.
+    session_affinity = true
+    service_account  = local.preview_service_account_email
 
     scaling {
       min_instance_count = 0
@@ -78,9 +80,10 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       }
 
       resources {
+        cpu_idle = false
         limits = {
           cpu    = "1"
-          memory = "512Mi"
+          memory = "2Gi"
         }
       }
     }
