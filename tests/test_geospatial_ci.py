@@ -70,6 +70,7 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertNotIn("secrets.", str(self.workflow["jobs"]["wdpa-full-benchmark"]))
         self.assertIn("!inputs.wdpa_inputs_probe", steps["Run two frozen builds with 4 CPU and 8 GiB"]["if"])
         self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", steps["Measure input preparation only"]["run"])
+        self.assertIn("wdpa_input_memory_probe.py:/app/scripts/wdpa_input_memory_probe.py:ro", steps["Measure input preparation only"]["run"])
 
     def test_geospatial_job_runs_all_native_tool_integration_tests(self):
         run = workflow_steps_by_name(self.workflow, "geospatial-integration")[

@@ -138,6 +138,7 @@ jobs:
         run: |
           docker run --name wdpa-replay-1 --cpus=4 --memory=8g --memory-swap=8g \
             -e CLOUD_RUN_EXECUTION=wdpa-benchmark -v /work:/work \
+            -v "$PWD/scripts/wdpa_input_memory_probe.py:/app/scripts/wdpa_input_memory_probe.py:ro" \
             -v "$RUNNER_TEMP/wdpa-inputs:/inputs:ro" wdpa-processing-benchmark:local \
             python scripts/wdpa_input_memory_probe.py \
               --source /inputs/WDPA_WDOECM_Oct2026_Public_all_shp.zip \
