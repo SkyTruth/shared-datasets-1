@@ -275,9 +275,28 @@ source data despite the verified 4 CPU / 8 GiB job configuration. The
 cgroup v1, a measured CPU quota of 3.72, the exact 8 GiB memory limit and the
 kernel's `memory.max_usage_in_bytes`. The shared reader now supports that
 runtime and Docker cgroup v2; it records the real CPU quota and kernel peak.
-The protected job remains configured at 4 CPU / 8 GiB. The diagnostic command
-must be replaced through the protected validation deploy after fresh staged
-evidence passes; a diagnostic execution cannot open acceptance.
+The protected job remains configured at 4 CPU / 8 GiB. Protected deployment
+[37059026485](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37059026485)
+restored the processing command using the reviewed staged image; a diagnostic
+execution cannot open acceptance.
+
+Complete execution `wdpa-processing-validation-6mvsp` passed preflight and
+downloaded the frozen inputs, but its early lifetime kernel peak reached
+**7,520,972,800 bytes (7.00 GiB)**, exceeding the 6.4 GiB target. The input
+download phase itself peaked at 4,446,232,576 bytes. These
+[early Cloud Logging resource events](wdpa-processing-evidence/wdpa-processing-validation-6mvsp/early-phase-logs.json)
+are diagnostic evidence while the execution continues; they cannot establish
+complete counts, contracts or acceptance.
+
+The replay hashed the 4.8 GB source ZIP before entering its first measured
+phase. Linux file cache from that read therefore accumulated without the
+sampler's cache-pressure control. Input fingerprint verification now runs
+inside `frozen-inputs`, and its time, memory and verification failures are
+included in the report. This changes the processing fingerprint: the previous
+staged evidence remains historical evidence, and fresh small, comparison and
+marine stages are required before another isolated deployment. The corrected
+image still needs two complete passing cloud builds; the resource target and
+lifetime kernel peak remain unchanged.
 
 `wdpa-processing-validation-deploy.yml` is a manual protected-main workflow in
 the existing production Terraform queue. It gates deployment on reviewed small

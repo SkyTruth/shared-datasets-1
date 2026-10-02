@@ -1,0 +1,49 @@
+{
+  "scope": "early-diagnostic-not-acceptance",
+  "observed_at": "2026-10-02T20:34:23Z",
+  "execution": "wdpa-processing-validation-6mvsp",
+  "entries": [
+    {
+      "textPayload": "2026-10-02 20:26:00,197 INFO ingestion.wdpa_monthly.resources {\"artifact_sizes\": {\"wdpa-marine.baseline.sqlite\": 7745536, \"wdpa-terrestrial.baseline.sqlite\": 133713920}, \"cgroup_memory_peak_bytes\": 7520972800, \"elapsed_seconds\": 55.3, \"event\": \"wdpa_phase_resources\", \"memory_breakdown_at_sampled_peak\": {\"cache\": 5333336064, \"dirty\": 8192, \"mapped_file\": 53133312, \"rss\": 83288064, \"shmem\": 6066176, \"swap\": 0}, \"native_versions\": {\"gdal_python\": \"3.6.2\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\", \"pmtiles_build_version\": \"v1.30.1\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\"}, \"phase\": \"frozen-inputs\", \"phase_memory_peak_bytes\": 5445849088, \"process_rss_peak_bytes\": 180142080, \"scratch_cache_releases\": 4, \"scratch_peak_bytes\": 14452150272, \"state\": \"succeeded\"}",
+      "insertId": "6ac0135800030ad5e34a1834",
+      "resource": {
+        "type": "cloud_run_job",
+        "labels": {
+          "project_id": "shared-datasets-1",
+          "location": "us-central1",
+          "job_name": "wdpa-processing-validation"
+        }
+      },
+      "timestamp": "2026-10-02T20:26:00.199381Z",
+      "labels": {
+        "instanceId": "0010dd8607a6d700d48cc172ff1b161292d5ed88caa5be070e41b2b79312bf91c04e591d1c555ae50c830492e10b898fa641845fbec15cddd74f955aa0dedce1531b64a3b4a6734f1188435ffb2d77c6feb0c42fc754947e13f7",
+        "run.googleapis.com/task_index": "0",
+        "run.googleapis.com/task_attempt": "0",
+        "run.googleapis.com/execution_name": "wdpa-processing-validation-6mvsp"
+      },
+      "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+      "receiveTimestamp": "2026-10-02T20:26:00.210216557Z"
+    },
+    {
+      "textPayload": "2026-10-02 20:24:48,884 INFO ingestion.wdpa_monthly.resources {\"artifact_sizes\": {}, \"cgroup_memory_peak_bytes\": 4446232576, \"elapsed_seconds\": 173.547, \"event\": \"wdpa_phase_resources\", \"memory_breakdown_at_sampled_peak\": {\"cache\": 4338315264, \"dirty\": 0, \"mapped_file\": 51863552, \"rss\": 71659520, \"shmem\": 6066176, \"swap\": 0}, \"native_versions\": {\"gdal_python\": \"3.6.2\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\", \"pmtiles_build_version\": \"v1.30.1\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\"}, \"phase\": \"cloud-input-download\", \"phase_memory_peak_bytes\": 4446232576, \"process_rss_peak_bytes\": 93212672, \"scratch_cache_releases\": 2, \"scratch_peak_bytes\": 5189582848, \"state\": \"succeeded\"}",
+      "insertId": "6ac01310000d8872d5ab08df",
+      "resource": {
+        "type": "cloud_run_job",
+        "labels": {
+          "job_name": "wdpa-processing-validation",
+          "project_id": "shared-datasets-1",
+          "location": "us-central1"
+        }
+      },
+      "timestamp": "2026-10-02T20:24:48.886898Z",
+      "labels": {
+        "run.googleapis.com/task_attempt": "0",
+        "run.googleapis.com/execution_name": "wdpa-processing-validation-6mvsp",
+        "instanceId": "0010dd8607a6d700d48cc172ff1b161292d5ed88caa5be070e41b2b79312bf91c04e591d1c555ae50c830492e10b898fa641845fbec15cddd74f955aa0dedce1531b64a3b4a6734f1188435ffb2d77c6feb0c42fc754947e13f7",
+        "run.googleapis.com/task_index": "0"
+      },
+      "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+      "receiveTimestamp": "2026-10-02T20:24:48.898373340Z"
+    }
+  ]
+}
