@@ -1,0 +1,75 @@
+name: Cron alert delivery test
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Deliberately fail before writes, then verify Monitoring Slack delivery
+        type: choice
+        options: [wdpa-monthly, wdpa-processing-validation]
+        default: wdpa-monthly
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    env:
+      GOOGLE_CLOUD_PROJECT: shared-datasets-1
+      REGION: us-central1
+      JOB_NAME: ${{ inputs.job }}
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/cron-alert-delivery-test.yml@refs/heads/main" ]]; then
+            echo "Alert delivery tests must use the reviewed workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run a controlled failure without dataset writes
+        run: |
+          set -euo pipefail
+          case "$JOB_NAME" in
+            wdpa-monthly) override=WDPA_FAIL_BEFORE_WRITES=true ;;
+            wdpa-processing-validation) override=WDPA_FAIL_BEFORE_DATASET_WRITES=1 ;;
+            *) exit 1 ;;
+          esac
+          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/executions.json"
+          python - "$RUNNER_TEMP/executions.json" <<'PY'
+          import json, sys
+          if any(not e.get('status', {}).get('completionTime') for e in json.load(open(sys.argv[1]))):
+              raise SystemExit('An execution is pending or running; defer the alert test')
+          PY
+          # Intentionally unmarked: this explicit test must reach Monitoring.
+          execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --update-env-vars="$override" --async --format='value(metadata.name)')"
+          for _ in $(seq 1 20); do
+            failed="$(gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+              --format='value(status.failedCount)')"
+            if [[ "$failed" == 1 ]]; then
+              echo "Controlled failure: $execution. Verify the matching Monitoring Slack notification; terminal failure alone does not prove delivery." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Controlled probe $execution did not reach terminal failure within five minutes." >&2
+          exit 1

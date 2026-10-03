@@ -27,13 +27,15 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
             with self.subTest(date=date):
                 result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                                         env={**os.environ, "JOB_NAME": "sea-ice-daily", "REGION": "us-central1",
-                                             "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date})
+                                             "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date,
+                                             "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                                             "GITHUB_RUN_ID": "123"})
                 if date.startswith("invalid"):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout, "")
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual("--update-env-vars=RUN_DATE=2026-10-01" in result.stdout.splitlines(), bool(date))
+                    self.assertEqual(",RUN_DATE=2026-10-01" in result.stdout, bool(date))
 
     def test_sea_ice_daily_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = load_workflow(DEPLOY_WORKFLOW)

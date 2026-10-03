@@ -198,6 +198,7 @@ class AlertPolicyTests(unittest.TestCase):
             "google_monitoring_alert_policy.scheduled_ingestion_cloud_run_failure",
             "google_monitoring_alert_policy.release_awaiting_identity_decision",
             "google_monitoring_alert_policy.scheduled_ingestion_scheduler_failure",
+            "google_monitoring_alert_policy.dataset_object_written_by_unapproved_principal",
         }
         assert_target_apply_caller(
             self,
@@ -207,6 +208,8 @@ class AlertPolicyTests(unittest.TestCase):
                 ".github/workflows/cron-alert-policy-sync.yml",
                 ".github/workflows/prod-terraform-target-apply.yml",
                 "terraform/envs/prod/monitoring.tf",
+                "terraform/envs/prod/canonical_mutation_iam.tf",
+                "terraform/envs/prod/wdpa_execution_observer.tf",
                 "terraform/envs/prod/monitoring_alert_policy_iam.tf",
                 "terraform/envs/prod/monitoring_variables.tf",
                 "terraform/envs/prod/variables.tf",

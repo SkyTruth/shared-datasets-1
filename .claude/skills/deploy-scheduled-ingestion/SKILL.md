@@ -137,8 +137,9 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
   producer image and copy only the approved consumer/gate/entrypoint; it must
   never regenerate dataset files or fall back to source processing.
   Follow `docs/wdpa-processing-validation.md` for the single-build sequence.
-- Observe terminal status through the independent execution observer and verify
-  actual alert delivery from a controlled failure before a dataset canary.
+- Observe terminal status through the independent execution observer. After an
+  alert-policy change, verify delivery separately through
+  `cron-alert-delivery-test.yml`; routine deploys do not inject failure probes.
 - Cloud Run Job task timeout: at least `86400s` (24 hours).
 - Retries: `0` while first validating idempotency and partial-release behavior;
   add retries only after failures are known to be safe to replay.
@@ -195,7 +196,10 @@ Preferred behavior:
 - Cloud Run Job execution failure alerts cover all Cloud Run Jobs in the shared-datasets project and region, or all jobs with a stable scheduled-ingestion label.
 - Cloud Scheduler dispatch failure alerts cover all Scheduler jobs in the shared-datasets project and region, or all jobs with a stable scheduled-ingestion label.
 - New cron jobs should not require editing a monitoring allowlist just to receive basic failure alerts.
-- Manual deploy canary failures should alert unless a specific test is intentionally isolated and documented.
+- Synchronous GitHub canaries may pass the execution-only
+  `SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL` marker when the trusted deployment
+  workflow waits for terminal status and fails with the job. Never persist the
+  marker in a job template. Detached executions and missing metadata stay alertable.
 - If alert policies intentionally exclude manual canaries, verify scheduled execution coverage another way before calling the deployment complete.
 
 After changing a job or alert policy, verify the live filters:

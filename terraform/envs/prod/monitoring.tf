@@ -114,6 +114,10 @@ severity>=ERROR
 protoPayload.serviceName="run.googleapis.com"
 protoPayload.methodName="/Jobs.RunJob"
 protoPayload.status.code>0
+NOT (
+  protoPayload.response.metadata.annotations."run.googleapis.com/creator"="${var.github_actions_terraform_service_account_email}"
+  AND protoPayload.response.spec.template.spec.containers.env.name="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL"
+)
 EOT
     }
   }
@@ -131,7 +135,9 @@ gcloud run jobs executions list --job=<job-name> --region=${var.region} --projec
 gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="<job-name>" AND severity>=ERROR' --project=${var.project_id} --limit=20
 ```
 
-This policy covers all Cloud Run Job execution failures in the shared-datasets project and region, including future scheduled-ingestion jobs and manual deploy canaries.
+This policy covers unattended Cloud Run Job execution failures throughout the project and region, including future jobs and detached deployment canaries.
+
+A trusted deployment execution is quiet only when it has the execution-only SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL environment marker. That workflow must wait for the result and fail when the execution fails. Missing creator/marker fields remain alertable. Never put this marker in a persistent job template or on an asynchronous execution that outlives its workflow.
 
 A release that stops to ask for a maintainer identity decision does **not** reach this policy. That case exits successfully and is reported by "Shared datasets release waiting on a maintainer decision" instead.
 EOT
@@ -359,6 +365,10 @@ protoPayload.serviceName="storage.googleapis.com"
 ${local.dataset_write_method_filter}
 ${local.dataset_delete_excluded_prefix_filter}
 ${local.dataset_write_allowed_principal_filter}
+NOT (
+  protoPayload.authenticationInfo.principalEmail="${module.wdpa_observer_service_account.email}"
+  AND protoPayload.resourceName="${local.shared_bucket_object_resource_prefix}_catalog/wdpa-monthly-execution.json"
+)
 EOT
 
       label_extractors = {

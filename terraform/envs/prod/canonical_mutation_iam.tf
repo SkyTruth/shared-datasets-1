@@ -61,7 +61,6 @@ locals {
     module.wdpa_job_service_account.email,
     module.eamlis_job_service_account.email,
     module.sea_ice_job_service_account.email,
-    module.wdpa_observer_service_account.email,
   ]
 
   canonical_mutation_deny_exception_principals = toset(concat(
