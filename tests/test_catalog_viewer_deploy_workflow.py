@@ -95,6 +95,8 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
                 "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
                 "google_service_account_iam_member.catalog_viewer_self_sign_blob",
                 "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
+                "google_storage_bucket.catalog_comparisons",
+                "google_storage_bucket_iam_member.catalog_comparisons_worker",
                 "module.catalog_viewer_service_account.google_service_account.this",
             },
         )
@@ -119,6 +121,8 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
                 "google_cloud_run_v2_service_iam_member.catalog_viewer_iap_invoker",
                 "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
                 "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
+                "google_storage_bucket.catalog_comparisons",
+                "google_storage_bucket_iam_member.catalog_comparisons_worker",
             },
         )
 

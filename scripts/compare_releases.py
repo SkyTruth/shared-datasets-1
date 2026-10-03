@@ -54,6 +54,14 @@ def read_json(payload):
     return value
 
 
+def legacy_projection_hash(properties):
+    # FlatGeobuf represents null by omitting the property entry. Only this
+    # format-boundary fingerprint collapses null/absence; source hashes do not.
+    return model.sha256_hex(
+        model.canonical_json({k: v for k, v in properties.items() if v is not None})
+    )
+
+
 CLASSES = ("added", "removed", "geometry_only", "properties_only", "both", "unchanged")
 
 
@@ -75,8 +83,8 @@ class Limits:
     max_expanded_bytes: int = 256 * 1024 * 1024
     max_rows: int = 100_000
     max_disk_bytes: int = 128 * 1024 * 1024
-    max_seconds: int = 120
-    max_geometry_bytes: int = 512 * 1024 * 1024
+    max_seconds: int = 600
+    max_geometry_bytes: int = 2 * 1024 * 1024 * 1024
 
 
 def work_root() -> Path:
@@ -478,9 +486,7 @@ class Comparison:
                     if k not in LEGACY_BOOKKEEPING
                 }
                 record["geometry_hash"] = None
-                record["properties_hash"] = model.properties_hash(
-                    record["properties"]
-                )
+                record["properties_hash"] = model.properties_hash(record["properties"])
             else:
                 self.validate_record(record, ref, fields, identity)
             key_value = None if legacy else model.identity_key_from_record(record)
@@ -491,7 +497,9 @@ class Comparison:
                     (
                         record["feature_id"],
                         key,
-                        bytes.fromhex(record["geometry_hash"][7:]) if not legacy else None,
+                        bytes.fromhex(record["geometry_hash"][7:])
+                        if not legacy
+                        else None,
                         bytes.fromhex(record["properties_hash"][7:]),
                         offset,
                     ),
@@ -502,7 +510,7 @@ class Comparison:
                         (
                             record["feature_id"],
                             record["feature_hash"],
-                            model.sha256_hex(model.canonical_json(record["properties"])),
+                            legacy_projection_hash(record["properties"]),
                         ),
                     )
             except sqlite3.IntegrityError as exc:
@@ -730,7 +738,7 @@ class Comparison:
                     if k in fields and k not in LEGACY_BOOKKEEPING
                 }
                 if (
-                    model.sha256_hex(model.canonical_json(projected)) != row[2]
+                    legacy_projection_hash(projected) != row[2]
                     or props.get("feature_hash") != row[1]
                 ):
                     raise ComparisonError(
@@ -873,10 +881,13 @@ class Comparison:
             "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. All loaded map features are colored through bounded per-release lookups, independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
-                | set(a["identity"].get("properties_hash_excluded_properties", []))
-            )
-            if compatibility["compatible"]
-            else None,
+                | set(
+                    a.get("identity", {}).get("properties_hash_excluded_properties", [])
+                )
+                | set(
+                    b.get("identity", {}).get("properties_hash_excluded_properties", [])
+                )
+            ),
             "publication": {
                 "baseline": a.get("source_inputs", []),
                 "target": b.get("source_inputs", []),
@@ -904,7 +915,7 @@ class Comparison:
             raise ComparisonError("Map feature IDs must be unique")
         with sqlite3.connect(self.db_path) as db:
             rows = db.execute(
-                f"SELECT r.id, g.color FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry WHERE r.id IN ({','.join('?' for _ in feature_ids)}) ORDER BY r.id COLLATE BINARY",
+                f"SELECT r.id, g.color, r.geometry FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry WHERE r.id IN ({','.join('?' for _ in feature_ids)}) ORDER BY r.id COLLATE BINARY",
                 feature_ids,
             ).fetchall()
         if len(rows) != len(feature_ids):
@@ -912,7 +923,12 @@ class Comparison:
                 "Display feature is absent from the complete selected release input"
             )
         return [
-            {"feature_id": feature_id, "change": change} for feature_id, change in rows
+            {
+                "feature_id": feature_id,
+                "change": change,
+                "geometry_hash": "sha256:" + geometry.hex(),
+            }
+            for feature_id, change, geometry in rows
         ]
 
     def page(
@@ -922,6 +938,7 @@ class Comparison:
         limit: int = 50,
         query: str = "",
         classification: str = "",
+        geometry_change: str = "",
     ) -> dict:
         if self.summary is None or not self.summary["identity"]["compatible"]:
             raise ComparisonError("Authoritative feature classification is unavailable")
@@ -932,6 +949,8 @@ class Comparison:
             or not 1 <= limit <= 100
             or len(query) > 200
             or classification not in ("", *CLASSES)
+            or geometry_change
+            not in ("", "novel", "removed", "metadata_changed", "unchanged")
         ):
             raise ComparisonError("Invalid page options")
         started = time.monotonic()
@@ -939,6 +958,12 @@ class Comparison:
         if classification:
             where += " AND c.classification=?"
             args.append(classification)
+        if geometry_change:
+            where += """ AND (EXISTS (SELECT 1 FROM baseline r JOIN geometry_display g
+                ON r.geometry=g.geometry WHERE r.id=c.id AND g.color=?)
+                OR EXISTS (SELECT 1 FROM target r JOIN geometry_display g
+                ON r.geometry=g.geometry WHERE r.id=c.id AND g.color=?))"""
+            args.extend([geometry_change, geometry_change])
         with self.checked_connection(started=started) as db:
             if query:
                 # Search is optional. Retain only matching IDs for this request,
@@ -953,7 +978,8 @@ class Comparison:
                     for _, record in self.iter_records(path, started=started):
                         if (
                             needle in record["feature_id"].lower()
-                            or needle in model.canonical_json(record["properties"]).lower()
+                            or needle
+                            in model.canonical_json(record["properties"]).lower()
                         ):
                             db.execute(
                                 "INSERT OR IGNORE INTO search_ids VALUES (?)",

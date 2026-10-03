@@ -1,0 +1,54 @@
+{
+  "buildx.build.provenance": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/golang@1.25-bookworm?platform=linux%2Famd64",
+        "digest": {
+          "sha256": "3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437"
+        }
+      },
+      {
+        "uri": "pkg:docker/python@3.12-slim-bookworm?platform=linux%2Famd64",
+        "digest": {
+          "sha256": "54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3"
+        }
+      },
+      {
+        "uri": "pkg:docker/ghcr.io/astral-sh/uv@0.11.8?platform=linux%2Famd64",
+        "digest": {
+          "sha256": "3b7b60a81d3c57ef471703e5c83fd4aaa33abcd403596fb22ab07db85ae91347"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile"
+      },
+      "parameters": {
+        "frontend": "dockerfile.v0",
+        "args": {
+          "build-arg:SHARED_DATASETS_EXECUTOR_SHA": "51077ee5965d97086bb4b60e43aeb7a15e455ec1"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ]
+      },
+      "environment": {
+        "platform": "linux/amd64"
+      }
+    }
+  },
+  "buildx.build.ref": "default/default/v6sco9a6yyvrhl303ci2m8t3x",
+  "containerimage.config.digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+  "containerimage.digest": "sha256:595f1a3e299033f60d9619ec2a569d36b5a83de9b61e6f694ebea8542d2f6489",
+  "image.name": "docker.io/library/wdpa-processing-benchmark:local"
+}

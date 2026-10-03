@@ -66,6 +66,23 @@ let activeFeatureMarker = null;
 let restrictedSessionPromises = new Map();
 let privateSignerUnavailable = false;
 
+function addExtentsControl(map, zoom) {
+  map.addControl({
+    onAdd() {
+      this.container = document.createElement("div");
+      this.container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "map-zoom-extents";
+      button.title = "Zoom to extents"; button.setAttribute("aria-label", "Zoom to extents");
+      button.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/><path d="m4 4 5 5m11-5-5 5M4 20l5-5m11 5-5-5"/></svg>';
+      button.addEventListener("click", zoom);
+      this.container.append(button);
+      return this.container;
+    },
+    onRemove() { this.container.remove(); },
+  }, "top-right");
+}
+
 export async function renderMapPreview({
   container,
   status,
@@ -152,6 +169,7 @@ export async function renderMapPreview({
   });
   activeMap = map;
   map.addControl(new window.maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
+  addExtentsControl(map, zoomToSelection);
   map.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
   await withTimeout(
@@ -1491,11 +1509,11 @@ function metadataFieldStringExpression() {
   return ["to-string", ["coalesce", ["feature-state", FEATURE_STATE_COLOR_VALUE], ""]];
 }
 
-function enableFeatureInspection(map, mapSources, onFeatureSelect) {
+function enableFeatureInspection(map, mapSources, onFeatureSelect, acceptsFeature = () => true) {
   const inspectableLayers = mapSources.flatMap(layerIdsForSource);
   const sourcesById = new Map(mapSources.map((source) => [source.sourceId, source]));
   map.on("click", (event) => {
-    const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers });
+    const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers }).filter(acceptsFeature);
     const selectedFeatures = serializeFeatures(features, sourcesById);
     if (!selectedFeatures.length) {
       clearFeatureInspectionIndicator();
@@ -1506,7 +1524,7 @@ function enableFeatureInspection(map, mapSources, onFeatureSelect) {
     onFeatureSelect(selectedFeatures);
   });
   map.on("mousemove", (event) => {
-    const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers });
+    const features = map.queryRenderedFeatures(event.point, { layers: inspectableLayers }).filter(acceptsFeature);
     map.getCanvas().style.cursor = features.length ? "pointer" : "";
   });
   map.getCanvas().addEventListener("mouseleave", () => {
@@ -1849,51 +1867,85 @@ function normalizedBounds(minLon, minLat, maxLon, maxLat) {
 }
 
 // Comparison owns the same primary map slot and release-scoped feature states.
-export async function renderComparisonMap({container, status, baseline, target, signal, onFeatureSelect, lookupGeometry, onError, basemap = "map", viewport = null}) {
+export async function renderComparisonMap({container, status, baseline, target, signal, onFeatureSelect, lookupGeometry, onError, basemap = "map", viewport = null, category = ""}) {
   const previousViewport = viewport || captureViewport();
   const renderSerial = ++activeRenderSerial;
   clearActiveMap();
-  let map = null, disposed = false, ready = false, refreshing = false, rerun = false;
+  let map = null, disposed = false, ready = false, refreshPromise = null, rerun = false, focusAbort = null;
   const sources = [], colors = {novel: "#168153", removed: "#c33b3b", metadata_changed: "#e3bd20", unchanged: MISSING_COLOR};
-  const known = [new Map(), new Map()], applied = new Set();
+  const known = [new Map(), new Map()], applied = new Set(), categoryBounds = new Map();
+  const change = ["coalesce", ["feature-state", "comparisonChange"], "pending"];
+  const opacityRules = new Map();
   const isCurrent = () => !disposed && !signal.aborted && renderIsCurrent(renderSerial);
   const check = () => { if (!isCurrent()) throw new DOMException("Cancelled", "AbortError"); };
   const dispose = () => {
     if (disposed) return;
-    disposed = true; signal.removeEventListener("abort", dispose);
+    disposed = true; focusAbort?.abort(); signal.removeEventListener("abort", dispose);
     if (activeMap === map) { clearFeatureInspectionIndicator(); activeMap = null; activeSelectionBounds = null; }
     map?.remove();
   };
   signal.addEventListener("abort", dispose, {once: true});
   container.replaceChildren(status); status.hidden = false; status.textContent = "Loading release union…";
-  async function refresh() {
-    if (!ready || !isCurrent()) return;
-    if (refreshing) { rerun = true; return; }
-    refreshing = true;
-    try {
+  function refresh() {
+    if (!ready || !isCurrent()) return Promise.resolve();
+    if (refreshPromise) { rerun = true; return refreshPromise; }
+    refreshPromise = (async () => {
       do {
         rerun = false;
         for (const [index, source] of sources.entries()) {
-          const layers = source.sourceLayers.map(layer => ({layer, ids: new Set(map.querySourceFeatures(source.sourceId, {sourceLayer: layer.sourceLayer}).map(feature => String(feature.properties?.feature_id ?? "")))}));
-          const ids = [...new Set(layers.flatMap(item => [...item.ids]))];
+          const layers = source.sourceLayers.map(layer => ({layer, features: map.querySourceFeatures(source.sourceId, {sourceLayer: layer.sourceLayer})}));
+          const ids = [...new Set(layers.flatMap(item => item.features.map(feature => String(feature.properties?.feature_id ?? ""))))];
           if (ids.includes("")) throw new Error("Display tiles lack feature IDs; geometry colors are unavailable.");
           const missing = ids.filter(id => !known[index].has(id));
           for (let offset = 0; offset < missing.length; offset += 200) {
             const batch = missing.slice(offset, offset + 200), rows = await lookupGeometry(index === 0 ? "baseline" : "target", batch);
             check();
-            if (rows.length !== batch.length || rows.some(row => !batch.includes(row.feature_id) || !Object.hasOwn(colors, row.change)) || new Set(rows.map(row => row.feature_id)).size !== rows.length) throw new Error("Geometry lookup does not match the displayed release features.");
-            rows.forEach(row => known[index].set(row.feature_id, row.change));
+            if (rows.length !== batch.length || rows.some(row => !batch.includes(row.feature_id) || !Object.hasOwn(colors, row.change) || !/^sha256:[0-9a-f]{64}$/.test(row.geometry_hash)) || new Set(rows.map(row => row.feature_id)).size !== rows.length) throw new Error("Geometry lookup does not match the displayed release features.");
+            rows.forEach(row => known[index].set(row.feature_id, row));
           }
-          for (const {layer, ids: layerIds} of layers) for (const id of layerIds) {
+          for (const {layer, features} of layers) for (const feature of features) {
+            const id = String(feature.properties.feature_id), row = known[index].get(id);
+            categoryBounds.set(row.change, combineTwoBounds(categoryBounds.get(row.change), boundsFromFeatureGeometry(feature.geometry)));
             const key = `${source.sourceId}/${layer.sourceLayer}/${id}`;
             if (applied.has(key)) continue;
-            map.setFeatureState({source: source.sourceId, sourceLayer: layer.sourceLayer, id}, {comparisonChange: known[index].get(id)});
+            map.setFeatureState({source: source.sourceId, sourceLayer: layer.sourceLayer, id}, {comparisonChange: row.change});
             applied.add(key);
           }
         }
       } while (rerun && isCurrent());
-    } catch (error) { if (isCurrent()) onError(error); }
-    finally { refreshing = false; }
+    })().finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
+  const refreshInBackground = () => { void refresh().catch(error => { if (isCurrent()) onError(error); }); };
+  function updateCategory() {
+    const visible = category ? ["==", change, category] : true;
+    for (const [id, rules] of opacityRules) for (const [property, opacity] of Object.entries(rules)) {
+      map.setPaintProperty(id, property, ["case", visible, opacity, 0]);
+    }
+  }
+  function overviewLoaded(abort) {
+    return new Promise((resolve, reject) => {
+      const finish = error => {
+        clearTimeout(timer); map.off("idle", idle); abort.signal.removeEventListener("abort", cancelled);
+        if (error) reject(error); else resolve();
+      };
+      const idle = () => finish(), cancelled = () => finish(new DOMException("Cancelled", "AbortError"));
+      const timer = setTimeout(() => finish(new Error("Comparison category tiles timed out.")), 15000);
+      map.once("idle", idle); abort.signal.addEventListener("abort", cancelled, {once: true});
+      map.fitBounds(activeSelectionBounds, {padding: 44, duration: 0, maxZoom: 8});
+    });
+  }
+  async function focusCategory(abort) {
+    // Source tiles are spatially loaded. Visit the union overview before fitting
+    // a category, so a previously panned viewport cannot exclude its other items.
+    if (!activeSelectionBounds) return;
+    await overviewLoaded(abort);
+    if (abort.signal.aborted || !isCurrent()) return;
+    await refresh();
+    if (abort.signal.aborted || !isCurrent()) return;
+    const bounds = category ? categoryBounds.get(category) : activeSelectionBounds;
+    if (!bounds) throw new Error("No matching display geometry is available at overview zoom. Zoom in to inspect finer tiles.");
+    map.fitBounds(bounds, {padding: 44, duration: 450, maxZoom: 12});
   }
   try {
     await loadDependencies(); check();
@@ -1910,23 +1962,36 @@ export async function renderComparisonMap({container, status, baseline, target, 
     const tiers = restrictedPmtilesTiers(sources.map(source => source.asset));
     if (tiers.length) { await ensureRestrictedPmtilesSessions(tiers); check(); }
     const style = styleFor(sources, basemap);
-    const change = ["coalesce", ["feature-state", "comparisonChange"], "pending"];
     const color = ["match", change, ...Object.entries(colors).flat(), MISSING_COLOR];
     const changed = ["in", change, ["literal", ["novel", "removed", "metadata_changed"]]];
+    const changedLayers = [];
     for (const [index, source] of sources.entries()) {
-      const opacity = (strong, faint) => ["case", ...(index === 0 ? [["in", change, ["literal", ["unchanged", "metadata_changed"]]], 0] : []), changed, strong, faint];
       for (const layer of style.layers.filter(layer => layer.source === source.sourceId)) {
         for (const property of ["fill-color", "line-color", "circle-color"]) if (property in layer.paint) layer.paint[property] = color;
-        if (layer.type === "fill") layer.paint["fill-opacity"] = opacity(.48, .08);
-        if (layer.type === "line") layer.paint["line-opacity"] = opacity(.95, .22);
-        if (layer.type === "circle") { layer.paint["circle-opacity"] = opacity(.95, .3); layer.paint["circle-stroke-opacity"] = opacity(.95, .22); }
+        const overlay = {...layer, id: `${layer.id}-comparison-changed`, paint: {...layer.paint}};
+        const opacity = (pass, strong, faint) => ["case", ...(index === 0 ? [["in", change, ["literal", ["unchanged", "metadata_changed"]]], 0] : []), changed, pass === "changed" ? strong : 0, pass === "changed" ? 0 : faint];
+        for (const [item, pass] of [[layer, "unchanged"], [overlay, "changed"]]) {
+          const values = item.type === "fill" ? {"fill-opacity": opacity(pass, .48, .08)}
+            : item.type === "line" ? {"line-opacity": opacity(pass, .95, .22)}
+            : {"circle-opacity": opacity(pass, .95, .3), "circle-stroke-opacity": opacity(pass, .95, .22)};
+          opacityRules.set(item.id, values);
+          for (const [property, value] of Object.entries(values)) item.paint[property] = ["case", category ? ["==", change, category] : true, value, 0];
+        }
+        changedLayers.push(overlay);
       }
     }
+    // Every changed pass comes after every unchanged pass in both sources.
+    style.layers.push(...changedLayers);
     const canvas = document.createElement("div"); canvas.className = "map-canvas"; canvas.setAttribute("aria-label", "Union release map");
     container.append(canvas);
     map = new window.maplibregl.Map({container: canvas, style, cooperativeGestures: true, attributionControl: false, center: [0, 15], zoom: 1});
     activeMap = map;
     map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+    addExtentsControl(map, () => {
+      focusAbort?.abort();
+      const abort = new AbortController(); focusAbort = abort;
+      void focusCategory(abort).catch(error => { if (!abort.signal.aborted && isCurrent()) onError(error); });
+    });
     map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
     await withTimeout(new Promise((resolve, reject) => {
       const abort = () => reject(new DOMException("Cancelled", "AbortError"));
@@ -1939,18 +2004,34 @@ export async function renderComparisonMap({container, status, baseline, target, 
     activeSelectionBounds = combinedBounds(sources.map(source => source.bounds).filter(Boolean));
     if (previousViewport) map.jumpTo(previousViewport);
     else if (activeSelectionBounds) map.fitBounds(activeSelectionBounds, {padding: 44, duration: 0, maxZoom: 8});
-    map.on("idle", () => void refresh());
+    map.on("idle", refreshInBackground);
     map.on("error", event => { if (isCurrent()) onError(event.error || new Error("Selected tile generation unavailable; this map is incomplete.")); });
-    enableFeatureInspection(map, sources, onFeatureSelect);
+    enableFeatureInspection(map, sources, features => onFeatureSelect(features.map(feature => {
+      const index = feature.comparisonSide === "Before" ? 0 : 1;
+      const row = known[index].get(String(feature.properties.feature_id));
+      return row ? {...feature, comparisonChange: row.change, geometryHash: row.geometry_hash, color: colors[row.change]} : feature;
+    })), feature => {
+      const index = sources.findIndex(source => source.sourceId === feature.source);
+      const row = known[index].get(String(feature.properties.feature_id));
+      return !category || row?.change === category;
+    });
     return {dispose, viewport: () => isCurrent() ? captureViewport() : null,
-      refreshGeometry() { ready = true; void refresh(); },
+      refreshGeometry() { ready = true; refreshInBackground(); },
+      setCategory(next) {
+        if (!isCurrent()) return;
+        focusAbort?.abort();
+        map.stop();
+        category = next; updateCategory(); clearFeatureInspectionIndicator();
+      },
       selectFeature(id) {
         if (!isCurrent()) return;
         const selected = ["==", ["to-string", ["get", "feature_id"]], id || ""];
         for (const source of sources) for (const layer of source.sourceLayers) {
-          map.setPaintProperty(layer.polygonOutlineId, "line-width", ["case", selected, 4, 1.5]);
-          map.setPaintProperty(layer.lineId, "line-width", ["case", selected, 5, 2]);
-          map.setPaintProperty(layer.pointId, "circle-stroke-width", ["case", selected, 3, 1.2]);
+          for (const suffix of ["", "-comparison-changed"]) {
+            map.setPaintProperty(layer.polygonOutlineId + suffix, "line-width", ["case", selected, 4, 1.5]);
+            map.setPaintProperty(layer.lineId + suffix, "line-width", ["case", selected, 5, 2]);
+            map.setPaintProperty(layer.pointId + suffix, "circle-stroke-width", ["case", selected, 3, 1.2]);
+          }
         }
       }};
   } catch (error) {
@@ -1965,28 +2046,4 @@ export function captureViewport() {
   const center = activeMap.getCenter();
   return {center: [((center.lng + 180) % 360 + 360) % 360 - 180, Math.max(-85.051129, Math.min(85.051129, center.lat))],
     zoom: activeMap.getZoom(), bearing: activeMap.getBearing(), pitch: activeMap.getPitch()};
-}
-export async function restorePresentation(presentation) {
-  if (!activeMap || !activeColorContext) {
-    if (presentation.viewport !== null) throw new Error('Captured viewport requires a ready map');
-    return;
-  }
-  const context = activeColorContext;
-  if (presentation.layers.length === 1) {
-    const layer = presentation.layers[0];
-    if (layer.source_layer && context.mapSources[0].selectedLayer !== layer.source_layer) throw new Error('Captured source layer is unavailable');
-    await context.metadataColorFieldsPromise;
-    if (layer.color_field) {
-      if (!context.availableFields.includes(layer.color_field)) throw new Error('Captured color field is unavailable');
-      if (colorFieldValueSource(context, layer.color_field) === 'metadata') {
-        const values = await context.metadataColorValueSource(context.mapSources[0].asset, layer.color_field);
-        if (values.unavailable) throw new Error(values.unavailableReason || 'Captured color field cannot be loaded');
-        context.metadataColorField = layer.color_field;
-        context.metadataColorValuesByFeatureId = values.valuesByFeatureId;
-        context.metadataColorValuesLoaded = true;
-      }
-      setColorizeField(layer.color_field);
-    }
-  }
-  if (presentation.viewport) activeMap.jumpTo(presentation.viewport);
 }

@@ -1,5 +1,5 @@
 import {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES} from './workspace-contract.js';
-import {captureArtifact, artifactGeneration, artifactUrl, metadataFile, releaseFile, selectReleaseReference, assertArtifactResponse} from './release-reference.js';
+import {captureArtifact, artifactGeneration, metadataFile, releaseFile} from './release-reference.js';
 export {validateSnapshot, parseSnapshotJson, SNAPSHOT_MAX_BYTES};
 const identityKeys = ['strategy', 'source_fields', 'generated_id_type', 'assignment_key', 'feature_id_column', 'geometry_hash_column', 'properties_hash_column'];
 const metadataKeys = ['title', 'citation', 'source', 'source_url', 'license', 'notes', 'status', 'lifecycle_reason', 'lifecycle_date', 'successor_asset_slug', 'consumer_guidance', 'source_version'];
@@ -25,9 +25,6 @@ export function captureWorkspace(references, {bucket = 'skytruth-shared-datasets
       access_tier: reference.access_tier, artifacts, provenance};
   });
   return validateSnapshot({kind: 'skytruth-workspace', schema_version: 1, bucket, datasets, presentation}, {bucket});
-}
-export function attribution(snapshot) {
-  return snapshot.datasets.map(d => `Data: ${d.provenance.source || d.provenance.title || d.asset_slug} · SkyTruth`).join('; ');
 }
 function pinnedUri(artifact) { return `${artifact.gs_uri}#${artifact.generation}`; }
 export function pythonSnippet(snapshot) {
@@ -61,43 +58,4 @@ export function typescriptSnippet(snapshot) {
     `  metadata: ${metadata ? JSON.stringify(pinnedUri(metadata)) : 'null'},`,
     `}${options.length ? `, {${options.join(', ')}}` : ''});`,
   ].join('\n');
-}
-export async function prepareWorkspace(snapshot, assets, {bucket = 'skytruth-shared-datasets-1', fetchImpl = fetch} = {}) {
-  snapshot = validateSnapshot(snapshot, {bucket});
-  const references = [];
-  for (const dataset of snapshot.datasets) {
-    const current = assets.find(a => a.slug === dataset.asset_slug);
-    if (!current) throw new Error(`${dataset.asset_slug}: asset is absent from the authorized catalog.`);
-    if (!dataset.release) throw new Error(`${dataset.asset_slug}: this viewer cannot restore unindexed legacy identities. Python can fetch their exact bytes.`);
-    const root = current.canonical_path.split(/\/(?:latest|releases)\//)[0];
-    if (dataset.artifacts.some(a => !a.gs_uri.startsWith(`${root}/releases/${dataset.release}/`))) throw new Error(`${dataset.asset_slug}: artifact is outside the authorized catalog asset root.`);
-    const files = dataset.artifacts.map(a => ({format: a.format, role: a.format, path: a.gs_uri, generation: a.generation, ...(a.size !== null ? {size: a.size} : {}), ...(a.sha256 !== null ? {sha256: a.sha256} : {}), ...(a.resolved_locale ? {locale: a.resolved_locale} : {})}));
-    const reference = selectReleaseReference({...current, ...dataset.provenance, release_error: undefined,
-      canonical_format: dataset.canonical_format, feature_identity: dataset.provenance.identity_contract,
-      has_pmtiles: files.some(f => f.format === 'pmtiles'), versions: [{date: dataset.release, files}], latest_release: {date: dataset.release}}, dataset.release, {bucket});
-    for (const artifact of dataset.artifacts) {
-      try {
-        let url;
-        if (current.access_tier === 'public') url = artifactUrl({path: artifact.gs_uri, generation: artifact.generation}, {bucket});
-        else {
-          const params = new URLSearchParams({slug: dataset.asset_slug, version: dataset.release, generation: artifact.generation});
-          const tiles = artifact.format === 'pmtiles';
-          if (!tiles) { params.set('format', artifact.format); if (artifact.resolved_locale) params.set('locale', artifact.resolved_locale); }
-          const response = await fetchImpl(`${tiles ? '/api/pmtiles/signed-url' : '/api/download-url'}?${params}`, {credentials: 'include', cache: 'no-store'});
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload.error || `access route returned HTTP ${response.status}`);
-          assertArtifactResponse(payload, reference, {path: artifact.gs_uri, generation: artifact.generation});
-          url = tiles ? payload.pmtiles_url : payload.download_url;
-          if (!url) throw new Error('Access route did not return an artifact URL');
-        }
-        const response = await fetchImpl(url, {method: 'HEAD', credentials: 'same-origin', cache: 'no-store'});
-        if (!response.ok) throw new Error(`HTTP ${response.status}; captured generation unavailable`);
-        const generation = response.headers.get('x-goog-generation'), size = response.headers.get('x-goog-stored-content-length') ?? response.headers.get('content-length');
-        if (generation !== null && generation !== artifact.generation) throw new Error('generation mismatch');
-        if (artifact.size !== null && size !== null && Number(size) !== artifact.size) throw new Error('published size mismatch');
-      } catch (error) { throw new Error(`${artifact.gs_uri}#${artifact.generation}: ${error.message}. Workspace was not restored; no release was substituted.`); }
-    }
-    references.push(reference);
-  }
-  return {snapshot, references};
 }

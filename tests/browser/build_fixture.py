@@ -23,6 +23,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 def build(work: Path) -> None:
     for name, digest in {
+        "union-overlap-before": "c1c15f45c64f4b275ed971bf08fd3df59c298066da1ea696e32a9106c6eeef20",
+        "union-overlap-after": "d76eb6fdc9a61545746d13bb54131eeb05848e736df9c55d52204ee1a17fa19f",
         "union-polygons-before": "0c372994eb305e3e52e88f1ba138cc5c38d463c9d70ef125bd687c5990ea24b2",
         "union-polygons-after": "8c4603fb7bb5db14ee051d00ab48c4d04f9ff2ecc30545aea343fa6d91dd1d40",
         "old": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",
@@ -47,7 +49,17 @@ def build(work: Path) -> None:
         (REPO / "tests/fixtures/historical-consumers.json").read_text()
     )
     rows = []
-    for tier, slug in [(tier, f"smoke-{tier}") for tier in ("public", "private", "internal", "comparison", "polygons")] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
+    for tier, slug in [
+        (tier, f"smoke-{tier}")
+        for tier in (
+            "public",
+            "private",
+            "internal",
+            "comparison",
+            "polygons",
+            "overlap",
+        )
+    ] + [("public", "wdpa-marine"), ("public", "wdpa-terrestrial")]:
         root = f"gs://example-bucket/category/subcategory/{slug}"
         row = dict(
             asset_slug=slug,
@@ -55,7 +67,9 @@ def build(work: Path) -> None:
             category="category",
             subcategory="subcategory",
             status="active",
-            access_tier="public" if tier in {"comparison", "polygons"} else tier,
+            access_tier="public"
+            if tier in {"comparison", "polygons", "overlap"}
+            else tier,
             owner="SkyTruth",
             update_cadence="manual",
             canonical_path=f"{root}/latest/{slug}.fgb",
@@ -73,7 +87,7 @@ def build(work: Path) -> None:
             available_formats=["fgb", "pmtiles"],
             metadata_paths=["README.md"],
             geometry_type="Polygon" if tier == "polygons" else "Point",
-            row_count=4 if tier == "polygons" else 2,
+            row_count=5 if tier == "overlap" else 4 if tier == "polygons" else 2,
             feature_identity=(
                 {
                     "strategy": "generated_sequence_content_hash",
@@ -128,8 +142,12 @@ def build(work: Path) -> None:
                 }
                 for i in (1, 2)
             ]
-            if tier in {"comparison", "polygons"}:
-                fixture_prefix = "union-polygons" if tier == "polygons" else "union"
+            if tier in {"comparison", "polygons", "overlap"}:
+                fixture_prefix = {
+                    "polygons": "union-polygons",
+                    "overlap": "union-overlap",
+                    "comparison": "union",
+                }[tier]
                 geometry = json.loads(
                     (
                         FIXTURES
@@ -235,12 +253,8 @@ def build(work: Path) -> None:
                 file["path"] = file["path"].replace("example-layer", slug)
                 if file["format"] == "pmtiles":
                     archive_name = (
-                        (
-                            f"union-polygons-{'before' if old else 'after'}"
-                            if tier == "polygons"
-                            else ("union-before" if old else "union-after")
-                        )
-                        if tier in {"comparison", "polygons"}
+                        f"{fixture_prefix}-{'before' if old else 'after'}"
+                        if tier in {"comparison", "polygons", "overlap"}
                         else ("old" if old else "new")
                     )
                     data = (FIXTURES / f"{archive_name}.pmtiles").read_bytes()

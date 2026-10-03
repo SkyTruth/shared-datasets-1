@@ -27,7 +27,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -66,6 +66,7 @@ const test = base.extend({
           state.holdComparison = false; state.comparisonHeld = true;
           await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
         }
+        if (state.progress && (url.pathname === '/api/comparisons' || /^\/api\/comparisons\/[a-f0-9]{32}$/.test(url.pathname))) return json({...await response.json(), state:'running', progress:state.progress});
         return route.fulfill({response});
       }
       if (url.origin === baseURL && url.pathname.endsWith('.js') && !url.pathname.startsWith('/sdk/')) {
@@ -281,6 +282,8 @@ test('comparison automatically takes over the primary map with compact tables an
   await page.locator('#compare-rows button').focus(); await page.keyboard.press('Enter');
   await expect(page.locator('#compare-inspector')).toContainText('Absent');
   await expect(page.locator('#compare-inspector')).toContainText('null');
+  await expect(page.locator('#compare-inspector tr.metadata-changed')).toHaveCount(2);
+  await expect(page.locator('#compare-inspector tr.metadata-changed').first()).toContainText('name');
   await page.locator('#compare-search').fill(''); await page.locator('#compare-next').click();
   await expect(page.locator('#compare-page')).toHaveText('51–100 of 106');
   await expect(page.locator('#compare-report')).toHaveCount(0);
@@ -342,7 +345,26 @@ test('comparison table updates preserve a denied historical map error and select
 });
 
 test('automatic comparison rejects delayed starts and closing cancels pending work', async ({page, transport}) => {
-  await select(page, 'public'); transport.holdComparison = true;
+  await select(page, 'public');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await page.locator('#compare-open').click();
+  const progress = page.locator('#compare-progress'), bar = page.locator('#compare-progress-bar');
+  await expect(progress).toBeVisible();
+  transport.progress = {phase:'baseline', rows:38500};
+  await expect(bar).not.toHaveAttribute('value');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await expect(page.locator('#compare-progress-label')).toHaveText('Validating Before');
+  await expect(bar).toHaveAttribute('value','38500');
+  await expect(bar).toHaveAttribute('max','128786');
+  const rowBox = await page.locator('#version-path-row').boundingBox(), barBox = await bar.boundingBox();
+  expect(barBox.width).toBeGreaterThan(rowBox.width - 35);
+  expect(barBox.y + barBox.height).toBeLessThan(rowBox.y + rowBox.height);
+  await test.info().attach('comparison-progress.png', {body:await progress.screenshot(),contentType:'image/png'});
+  transport.progress = null;
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  await expect(progress).toBeHidden();
+  await page.locator('#compare-open').click();
+  transport.holdComparison = true;
   await page.locator('#compare-open').click();
   await expect.poll(() => transport.comparisonHeld).toBe(true);
   await page.locator('#compare-before').selectOption('2026-09-22');
@@ -413,6 +435,9 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(before).toContainText('2026-01-01');
   await expect(after).toContainText('Shared after');
   await expect(after).toContainText('2026-09-22');
+  await expect(before.locator('th.metadata-changed')).toHaveText(['name']);
+  await expect(after.locator('th.metadata-changed')).toHaveText(['name', 'optional']);
+  expect(await after.locator('th.metadata-changed').first().evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgb(255, 243, 176)');
   await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('.map-click-target')).toHaveCount(1);
   await testInfo.attach('comparison-polygon-details.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
@@ -421,6 +446,7 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(hits).toHaveCount(2);
   await expect(before).toContainText('2026-01-01');
   await expect(after).toContainText('2026-09-22');
+  await expect(page.locator('#feature-inspector .metadata-changed')).toHaveCount(0);
   await clickPolygon(-1.5, -1);
   await expect(hits).toHaveCount(1);
   await expect(before).toBeVisible();
@@ -436,6 +462,83 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await page.locator('#compare-details').click();
   await testInfo.attach('comparison-polygon-summary.png', {body:await page.locator('#compare-panel').screenshot(), contentType:'image/png'});
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
+});
+
+test('category filters preserve the camera, extents zoom explicitly and changes draw above gray', async ({page, transport}, testInfo) => {
+  await select(page, 'overlap'); await expect(page.locator('#map-status')).toBeHidden();
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  const colors = [[195,59,59], [22,129,83], [227,189,32]];
+  const nearColor = (image, color) => {
+    for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
+    return false;
+  };
+  const sample = async () => PNG.sync.read(await canvas.screenshot());
+  // Gray points occupy the same pixels as changes. Assert actual paint output
+  // across both release sources, rather than testing style expression strings.
+  await expect.poll(async () => { const image = await sample(); return colors.every(color => nearColor(image,color)); }).toBe(true);
+  await testInfo.attach('comparison-overlapping-points.png', {body:await page.locator('#map-section').screenshot(), contentType:'image/png'});
+  const viewport = () => page.evaluate(async () => {
+    const url = performance.getEntriesByType('resource').find(item => new URL(item.name).pathname === '/map-preview.js').name;
+    return (await import(url)).captureViewport();
+  });
+  const union = await viewport(), hits = page.locator('#feature-inspector .feature-hit');
+  for (const [category, count, side, longitude] of [['novel',1,'After',1], ['removed',1,'Before',-1], ['metadata_changed',2,'',.1]]) {
+    const beforeFilter = await viewport();
+    await legend.locator(`[data-change="${category}"]`).click();
+    await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(1);
+    await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
+    expect(await viewport()).toEqual(beforeFilter);
+    await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
+    await expect.poll(async () => {
+      const view = await viewport();
+      return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
+    }).toBe(true);
+    await canvas.screenshot();
+    const box = await canvas.boundingBox();
+    await canvas.click({position:{x:box.width/2,y:box.height/2}});
+    await expect(hits).toHaveCount(count);
+    if (side) await expect(hits.first()).toContainText(`${side} ·`);
+    if (category === 'metadata_changed') {
+      await expect(hits.filter({hasText:'Before ·'})).toContainText('Shared before');
+      await expect(hits.filter({hasText:'After ·'})).toContainText('Shared after');
+      await expect(hits.locator('th.metadata-changed')).toHaveCount(3);
+    }
+    const image = await sample(), selected = category === 'novel' ? 1 : category === 'removed' ? 0 : 2;
+    expect(nearColor(image, colors[selected])).toBe(true);
+    expect(colors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
+  }
+  const beforeUnchanged = await viewport();
+  await legend.locator('[data-change="unchanged"]').click();
+  await expect(page.locator('#compare-page')).toHaveText('1–3 of 3');
+  expect(await viewport()).toEqual(beforeUnchanged);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
+  await expect.poll(async () => (await viewport()).zoom).toBeLessThan(union.zoom + 1);
+  await canvas.screenshot();
+  {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
+  await page.locator('#basemap-select').selectOption('satellite');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(legend.locator('[data-change="unchanged"]')).toHaveAttribute('aria-pressed','true');
+  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(4);
+  {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
+  // Clicking the selected category restores all geometry and table rows.
+  const beforeUnfilter = await viewport();
+  await legend.locator('[data-change="unchanged"]').click();
+  await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('#compare-page')).toHaveText('1–6 of 6');
+  expect(await viewport()).toEqual(beforeUnfilter);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
+  await expect.poll(async () => {const image=await sample();return colors.every(color=>nearColor(image,color));}).toBe(true);
+  await legend.locator('[data-change="novel"]').click();
+  await legend.locator('[data-change="removed"]').click();
+  await page.locator('#compare-before').selectOption('2026-09-22');
+  await expect(page.locator('#compare-summary tbody tr').first().locator('td').first()).toHaveText('2026-09-22');
+  await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
+  const emptyViewport = await viewport();
+  await legend.locator('[data-change="novel"]').click();
+  await expect(page.locator('#compare-page')).toHaveText('No matching features');
+  expect(await viewport()).toEqual(emptyViewport);
 });
 
 test('comparison selection changes discard late polygon metadata', async ({page, transport}) => {
@@ -470,17 +573,13 @@ test('comparison selection changes discard late polygon metadata', async ({page,
   await expect(page.locator('.map-click-target')).toHaveCount(0);
 });
 
-async function openSnapshot(page, snapshot) {
-  await page.locator('#open-workspace-file').setInputFiles({name: 'fixture.workspace.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(snapshot))});
-}
-
 test('inline dataset examples are short, copyable and execute a real map integration', async ({page, context}, testInfo) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await select(page, 'public');
   await expect(page.locator('#map-status')).toBeHidden();
   const section = page.locator('#use-section');
   await expect(section).toBeVisible();
-  expect(await page.locator('#save-workspace, #use-dataset-dialog, #use-install, #use-provenance, #use-export').count()).toBe(0);
+  expect(await page.locator('#open-workspace, #open-workspace-file, #workspace-status, #save-workspace, #use-dataset-dialog, #use-install, #use-provenance, #use-export').count()).toBe(0);
   expect(await section.evaluate(node => node.nextElementSibling.className)).toBe('path-section');
   expect(await page.locator('#version-path-row').evaluate(node => node.previousElementSibling.id)).toBe('map-section');
   await page.locator('#use-copy-code').click();
@@ -494,10 +593,8 @@ test('inline dataset examples are short, copyable and execute a real map integra
   expect(code.split('\n').length).toBe(5);
   expect(code).toContain('showDataset');
   expect(code).toContain('#201'); expect(code).toContain('#202');
-  await page.locator('#use-copy-attribution').click();
-  const credit = await page.evaluate(() => navigator.clipboard.readText());
-  expect(credit).toBe(await page.locator('#use-attribution').textContent());
-  expect(credit.split('\n')).toHaveLength(1);
+  await expect(page.locator('#use-attribution, #use-copy-attribution')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Zoom to extents',exact:true})).toBeVisible();
   await testInfo.attach('inline-use-desktop.png', {body: await section.screenshot(), contentType: 'image/png'});
   await testInfo.attach('generated-python.py', {body: python, contentType: 'text/x-python'});
   await testInfo.attach('generated-typescript.ts', {body: code, contentType: 'text/plain'});
@@ -533,77 +630,6 @@ test('inline dataset examples are short, copyable and execute a real map integra
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await testInfo.attach('inline-use-mobile.png', {body:await page.screenshot(),contentType:'image/png'});
 });
-
-async function fixtureSnapshot(page, transport, selections, presentation = {}) {
-  const catalog = await readJSON(resolve(siteDir, 'catalog.json'));
-  const assets = selections.map(([slug, date]) => {
-    const asset = catalog.assets.find(a => a.slug === slug), index = transport.indexes.get(slug);
-    return {...asset, versions:index.releases, latest_release:index.latest_release, date};
-  });
-  return page.evaluate(async ({assets,bucket,presentation}) => {
-    const {captureWorkspace} = await import('/workspace.js');
-    const {selectReleaseReference} = await import('/release-reference.js');
-    const references = assets.map(asset => selectReleaseReference(asset, asset.date, {bucket}));
-    return captureWorkspace(references, {bucket, presentation:{basemap:'map', locale:null, viewport:null,
-      layers:references.map(r => ({asset_slug:r.slug,visible:true,source_layer:null,color_field:null})), ...presentation}});
-  }, {assets,bucket:catalog.bucket,presentation});
-}
-
-test('single workspace import restores release, viewport, basemap and supported layer/color controls', async ({page, transport}, testInfo) => {
-  await select(page, 'public');
-  const before = await fixtureSnapshot(page, transport, [['smoke-public','2026-01-01']], {basemap:'satellite',
-    viewport:{center:[-9.5,0.5],zoom:8,bearing:0,pitch:0},
-    layers:[{asset_slug:'smoke-public',visible:true,source_layer:null,color_field:'name'}]});
-  await openSnapshot(page, before);
-  await expect(page.locator('#workspace-status')).toContainText('Workspace opened');
-  await expect(page.locator('#version-select')).toHaveValue('2026-01-01');
-  await expect(page.locator('#basemap-select')).toHaveValue('satellite');
-  await expect(page.locator('#colorize-select')).toHaveValue('name');
-  await expect(page.locator('#use-python')).toContainText('#100');
-  await clickPoint(page, true, testInfo); await expectMetadata(page, true);
-});
-
-test('multiple dataset workspace import preserves exact per-asset releases and display order', async ({page, transport}, testInfo) => {
-  await select(page, 'internal');
-  const before = await fixtureSnapshot(page, transport, [['smoke-public','2026-01-01'],['smoke-private','2026-09-22']]);
-  const requests = transport.requests.length;
-  await openSnapshot(page, before);
-  await expect(page.locator('#workspace-status')).toContainText('Workspace opened');
-  await expect(page.locator('#selection-legend')).toContainText('Smoke public');
-  await expect(page.locator('#selection-legend')).toContainText('Smoke private');
-  await expect(page.locator('#use-section')).toBeHidden();
-  expect(transport.requests.slice(requests).some(r => r.url.includes('/api/pmtiles/signed-url') && r.url.includes('slug=smoke-private'))).toBeTruthy();
-  await testInfo.attach('imported-workspace.png', {body:await page.screenshot(),contentType:'image/png'});
-});
-
-test('unavailable or malformed workspace fails atomically without upgrading or requesting arbitrary paths', async ({page, transport}) => {
-  await select(page, 'public');
-  await page.locator('#version-select').selectOption('2026-01-01');
-  await expect(page.locator('#map-status')).toBeHidden();
-  const snapshot = await fixtureSnapshot(page, transport, [['smoke-public','2026-01-01']]);
-  await page.locator('#version-select').selectOption('latest');
-  await expect(page.locator('#map-status')).toBeHidden();
-  const old = structuredClone(snapshot.datasets[0].artifacts.find(a => a.role === 'canonical'));
-  transport.unavailable.add(`${old.gs_uri}#${old.generation}`);
-  await openSnapshot(page, snapshot);
-  await expect(page.locator('#workspace-status')).toContainText('Workspace not restored');
-  await expect(page.locator('#workspace-status')).toContainText('#100');
-  await expect(page.locator('#version-select')).toHaveValue('latest');
-  await expect(page.locator('#workspace-status')).toContainText('no release was substituted');
-  snapshot.datasets[0].artifacts[0].gs_uri = 'gs://example-bucket/secrets/key.json';
-  const count = transport.requests.length;
-  await openSnapshot(page, snapshot);
-  await expect(page.locator('#workspace-status')).toContainText('Invalid workspace');
-  expect(transport.requests.slice(count).filter(r => r.url.includes('/api/'))).toEqual([]);
-  snapshot.datasets[0].artifacts[0].gs_uri = old.gs_uri;
-  transport.unavailable.clear();
-  snapshot.presentation.layers[0].source_layer = 'unsupported-source-layer';
-  await openSnapshot(page, snapshot);
-  await expect(page.locator('#workspace-status')).toContainText('Captured source layer is unavailable');
-  await expect(page.locator('#version-select')).toHaveValue('latest');
-  await expect(page.locator('#map-status')).toBeHidden();
-});
-
 
 test('single-release assets hide comparison while normal version selection remains usable', async ({page, transport}) => {
   const index = transport.indexes.get('smoke-public');

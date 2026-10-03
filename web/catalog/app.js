@@ -1,13 +1,11 @@
-import {createComparisonController} from "./compare-releases.js";
+import {createComparisonController, changedPropertyFields} from "./compare-releases.js";
 import {executionStatusText, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
-import {captureWorkspace, parseSnapshotJson, prepareWorkspace, attribution, pythonSnippet, typescriptSnippet, SNAPSHOT_MAX_BYTES} from "./workspace.js";
+import {captureWorkspace, pythonSnippet, typescriptSnippet} from "./workspace.js";
 
 const state = {
   catalog: null,
   referenceCache: new Map(),
-  pinnedReferenceBySlug: new Map(),
-  restoring: false,
   assets: [],
   filtered: [],
   selectedSlug: null,
@@ -353,7 +351,7 @@ function gsToHttps(path) {
 }
 
 function wireEvents() {
-  wireWorkspaceEvents();
+  wireUseEvents();
   elements.search.addEventListener("input", applyFilters);
   for (const select of [elements.category, elements.format, elements.cadence, elements.status, elements.accessTier]) {
     select.addEventListener("change", applyFilters);
@@ -388,7 +386,6 @@ function wireEvents() {
   elements.versionSelect.addEventListener("change", () => {
     const asset = state.assets.find((candidate) => candidate.slug === state.selectedSlug);
     if (!asset) return;
-    state.pinnedReferenceBySlug.delete(asset.slug);
     state.versionBySlug[asset.slug] = elements.versionSelect.value;
     renderSelection();
   });
@@ -820,7 +817,6 @@ function selectedVersionValue(asset) {
 }
 
 function selectedReference(asset) {
-  if (state.pinnedReferenceBySlug.has(asset.slug)) return state.pinnedReferenceBySlug.get(asset.slug);
   const key = `${asset.slug}\n${selectedVersionValue(asset)}`;
   try {
     if (!state.referenceCache.has(key)) state.referenceCache.set(key, selectReleaseReference(asset, selectedVersionValue(asset), {bucket: state.catalog?.bucket || DEFAULT_SHARED_DATASETS_BUCKET}));
@@ -1301,7 +1297,6 @@ async function renderPmtiles(assets) {
   }
   const mapAssets = rawMapAssets.map(withPmtilesCacheBust);
   const layerAsset = selectedLayerAsset(rawMapAssets);
-  const capturedLayer = layerAsset && state.restoring ? state.layerByReference[mapReferenceKey(layerAsset)] || "" : null;
   const selectedLayer = prepareLayerControl(layerAsset);
   const colorizeAsset = selectedColorizeAsset(rawMapAssets);
   const colorField = prepareColorizeControl(colorizeAsset);
@@ -1322,7 +1317,7 @@ async function renderPmtiles(assets) {
       assets: mapAssets,
       basemap: state.basemap,
       colorField,
-      selectedLayer: capturedLayer ?? selectedLayer,
+      selectedLayer,
       onLayerOptionsChange: (layers, layer) => updateLayerOptions(layerAsset, layers, layer),
       onColorFieldsChange: (fields) => updateColorizeFields(colorizeAsset, fields),
       onColorFieldUnavailable: (field, reason) => clearUnavailableColorField(colorizeAsset, field, reason),
@@ -1336,7 +1331,6 @@ async function renderPmtiles(assets) {
     if (requestSerial !== state.mapRequestSerial) return;
     setZoomSelectionEnabled(false);
     elements.mapStatus.textContent = mapUnavailableMessage(error, mapAssets);
-    if (state.restoring) throw error;
   }
 }
 
@@ -1977,6 +1971,7 @@ function enrichFeature(feature, item) {
   const featureId = featureIdFor(feature);
   return {
     ...feature,
+    metadataLoaded: true,
     metadataLocaleMessage: item.metadataLocaleMessage || "",
     geometryHash: item.geometry_hash || feature.geometryHash || "",
     propertiesHash: item.properties_hash || feature.propertiesHash || "",
@@ -2040,7 +2035,7 @@ function prepareMetadataLanguageControl(asset) {
   const locales = availableMetadataLocales(asset);
   if (!locales.length) {
     resetMetadataLanguageControl();
-    if (!state.pinnedReferenceBySlug.has(asset.slug)) state.metadataLocale = "";
+    state.metadataLocale = "";
     return "";
   }
   const selected = selectedMetadataLocale(asset, locales);
@@ -2051,7 +2046,7 @@ function prepareMetadataLanguageControl(asset) {
   }
   elements.metadataLanguage.disabled = false;
   elements.metadataLanguage.value = selected;
-  if (!state.pinnedReferenceBySlug.has(asset.slug)) state.metadataLocale = selected;
+  state.metadataLocale = selected;
   return selected;
 }
 
@@ -2424,12 +2419,20 @@ function renderFeatureInspector(features) {
   elements.featureInspector.append(heading);
 
   for (const feature of selectedFeatures) {
-    appendFeatureHit(feature);
+    const changedFields = new Set();
+    if (feature.metadataLoaded && feature.comparisonChange === "metadata_changed") {
+      for (const other of selectedFeatures) {
+        if (other.metadataLoaded && other.assetSlug === feature.assetSlug && other.comparisonSide !== feature.comparisonSide && other.geometryHash === feature.geometryHash) {
+          for (const field of changedPropertyFields(feature.properties, other.properties, feature.comparisonExcludedProperties)) changedFields.add(field);
+        }
+      }
+    }
+    appendFeatureHit(feature, changedFields);
   }
   elements.featureInspector.hidden = false;
 }
 
-function appendFeatureHit(feature) {
+function appendFeatureHit(feature, changedFields) {
   const entries = Object.entries(feature.properties || {});
   const hit = document.createElement("section");
   hit.className = "feature-hit";
@@ -2477,7 +2480,7 @@ function appendFeatureHit(feature) {
     return;
   }
 
-  appendFeatureTable(hit, entries);
+  appendFeatureTable(hit, entries, changedFields);
   elements.featureInspector.append(hit);
 }
 
@@ -2490,14 +2493,14 @@ function compactGeometryHash(value) {
   return digest.slice(0, 12);
 }
 
-function appendFeatureTable(container, entries) {
+function appendFeatureTable(container, entries, changedFields) {
   const table = document.createElement("table");
   table.className = "feature-table";
   const tbody = document.createElement("tbody");
   for (let index = 0; index < entries.length; index += 2) {
     const row = document.createElement("tr");
-    appendFeaturePair(row, entries[index], { side: "first" });
-    appendFeaturePair(row, entries[index + 1], { side: "second", empty: !entries[index + 1] });
+    appendFeaturePair(row, entries[index], { side: "first", changed: changedFields.has(entries[index][0]) });
+    appendFeaturePair(row, entries[index + 1], { side: "second", empty: !entries[index + 1], changed: changedFields.has(entries[index + 1]?.[0]) });
     tbody.append(row);
   }
   table.append(tbody);
@@ -2538,6 +2541,7 @@ function appendFeaturePair(row, entry, options = {}) {
   } else {
     field.textContent = entry[0];
     cell.textContent = formatFeatureValue(entry[1]);
+    if (options.changed) { field.classList.add("metadata-changed"); cell.classList.add("metadata-changed"); }
   }
   row.append(field, cell);
 }
@@ -2919,15 +2923,6 @@ function renderFatalError(error) {
 init();
 
 
-function workspacePresentation() {
-  const references = selectedReferences();
-  return {basemap: state.basemap, viewport: state.mapModule?.captureViewport?.() || null,
-    locale: state.metadataLocale || null,
-    layers: references.map(reference => ({asset_slug: reference.slug, visible: true,
-      source_layer: references.length === 1 ? (state.layerByReference[mapReferenceKey(reference)] || null) : null,
-      color_field: references.length === 1 ? (state.colorFieldByReference[colorReferenceKey(reference)] || null) : null}))};
-}
-function workspaceStatus(message) { document.querySelector('#workspace-status').textContent = message; }
 function useLanguage(language) {
   for (const name of ['python', 'typescript']) {
     const active = name === language, tab = document.querySelector(`#use-tab-${name}`);
@@ -2947,18 +2942,14 @@ function renderUseSection(reference) {
     document.querySelector('#use-tab-typescript').hidden = !typescript;
     const active = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' && typescript ? 'typescript' : 'python';
     useLanguage(active);
-    const credit = document.querySelector('#use-attribution');
-    credit.textContent = attribution(snapshot);
-    credit.href = reference.source_url || reference.docs_url || 'https://skytruth.org';
   } catch (failure) {
     document.querySelector('#use-python').textContent = '';
     document.querySelector('#use-typescript').textContent = '';
-    document.querySelector('#use-attribution').textContent = '';
     error.textContent = 'Code is unavailable for this version. Please choose another version.';
     error.hidden = false; document.querySelector('#use-copy-code').disabled = true;
   }
 }
-function wireWorkspaceEvents() {
+function wireUseEvents() {
   for (const language of ['python', 'typescript']) {
     const tab = document.querySelector(`#use-tab-${language}`);
     tab.addEventListener('click', () => useLanguage(language));
@@ -2972,54 +2963,5 @@ function wireWorkspaceEvents() {
   document.querySelector('#use-copy-code').addEventListener('click', event => {
     const language = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' ? 'typescript' : 'python';
     copyValue(document.querySelector(`#use-${language}`).textContent, event.currentTarget);
-  });
-  document.querySelector('#use-copy-attribution').addEventListener('click', event => copyValue(document.querySelector('#use-attribution').textContent, event.currentTarget));
-  const fileInput = document.querySelector('#open-workspace-file');
-  document.querySelector('#open-workspace').addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files[0]; fileInput.value = '';
-    if (!file) return;
-    const open = document.querySelector('#open-workspace'); open.disabled = true;
-    let prior = null;
-    elements.detail.inert = true; document.querySelector('.catalog-panel').inert = true;
-    try {
-      if (file.size > SNAPSHOT_MAX_BYTES) throw new Error('Workspace exceeds 1 MiB.');
-      const snapshot = parseSnapshotJson(await file.text(), {bucket: state.catalog.bucket});
-      workspaceStatus('Checking access and availability for every captured artifact…');
-      const prepared = await prepareWorkspace(snapshot, state.assets, {bucket: state.catalog.bucket});
-      const p = prepared.snapshot.presentation;
-      // Commit the selection only after the complete document has passed preflight.
-      prior = {selectedSlugs: [...state.selectedSlugs], selectedSlug: state.selectedSlug,
-        pinnedReferenceBySlug: state.pinnedReferenceBySlug, versionBySlug: {...state.versionBySlug},
-        layerByReference: {...state.layerByReference}, colorFieldByReference: {...state.colorFieldByReference},
-        basemap: state.basemap, metadataLocale: state.metadataLocale, viewport: state.mapModule?.captureViewport?.() || null};
-      state.restoring = true;
-      state.pinnedReferenceBySlug = new Map(prepared.references.map(r => [r.slug, r]));
-      state.selectedSlugs = p ? p.layers.map(l => l.asset_slug) : prepared.references.map(r => r.slug);
-      state.selectedSlug = state.selectedSlugs.at(-1);
-      for (const reference of prepared.references) state.versionBySlug[reference.slug] = reference.date;
-      state.basemap = p?.basemap || 'map'; elements.basemap.value = state.basemap;
-      const capturedLocale = prepared.snapshot.datasets.flatMap(d => d.artifacts).find(a => a.role === 'metadata' && a.requested_locale !== null)?.requested_locale;
-      state.metadataLocale = p ? (p.locale || '') : (capturedLocale || '');
-      state.layerByReference = {}; state.colorFieldByReference = {};
-      for (const layer of p?.layers || []) {
-        const reference = state.pinnedReferenceBySlug.get(layer.asset_slug);
-        state.layerByReference[mapReferenceKey(reference)] = layer.source_layer || '';
-        state.colorFieldByReference[colorReferenceKey(reference)] = layer.color_field || '';
-      }
-      renderList();
-      await renderSelection();
-      if (p) await state.mapModule?.restorePresentation?.(p);
-      workspaceStatus('Workspace opened.');
-    } catch (error) {
-      if (prior) {
-        const {viewport, ...selection} = prior;
-        Object.assign(state, selection);
-        state.restoring = false; elements.basemap.value = state.basemap;
-        renderList(); await renderSelection();
-        if (viewport) await state.mapModule?.restorePresentation?.({...workspacePresentation(), viewport});
-      }
-      workspaceStatus(`Workspace not restored: ${error.message}`);
-    } finally { state.restoring = false; open.disabled = false; elements.detail.inert = false; document.querySelector('.catalog-panel').inert = false; }
   });
 }

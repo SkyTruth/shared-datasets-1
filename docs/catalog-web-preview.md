@@ -465,11 +465,12 @@ is excluded from source changes. Identity incompatibility withholds authoritativ
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
 
-## Dataset integration and workspace imports
+## Dataset integration
 
-**Use this dataset** is an inline section immediately below Version. Its
+**Use this dataset** is an inline section immediately above the canonical paths. Its
 Python/TypeScript tabs show 3–5 line examples and a single Copy code action.
-A small source link and Copy credit action provide corner-sized attribution.
+Citation, source and licensing remain in Source and terms; this section only
+provides integration code and an SDK setup link.
 Setup lives in the consumer guide; the UI has no integration dialog, Save
 workspace action, lockfile download, artifact identity dump, or provenance output.
 Dataset descriptions span the detail header independently of its action buttons.
@@ -481,16 +482,13 @@ The optional TypeScript MapLibre entrypoint uses the same pinned MapLibre and
 PMTiles versions as the catalog. Restricted integrations need an app-owned
 snapshot authorization route; imported references never authorize access.
 
-**Open workspace** still accepts [v1 documents](standards/workspace-snapshot-v1.md).
-Imports are bounded, validated, checked against the authorized catalog root/tier,
-and preflighted before rendering. Existing `/api/pmtiles/signed-url` and
-`/api/download-url` routes reacquire restricted access and require expected
-indexed generations. Unsupported state or unavailable bytes fail atomically.
+The catalog has no workspace file-import controls. The [v1 snapshot contract](standards/workspace-snapshot-v1.md)
+and SDK snapshot APIs remain available for programmatic consumers.
 Full source terms remain in the dataset's Source section and authoritative docs.
 
 The browser smoke suite executes the five-line TypeScript example with real
 MapLibre, PMTiles, and SDK modules. It checks copying, version changes, desktop
-and narrow layouts, single/multiple workspace imports, and atomic failures.
+and narrow layouts, and the absence of workspace import controls.
 Python tests execute each generated format example through the real package
 entrypoint using a synthetic GCS client. These checks do not prove live
 IAP/CDN/GCS retention configuration.

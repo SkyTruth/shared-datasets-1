@@ -1,6 +1,6 @@
 """Allocation parity, interruption and native normalization contracts."""
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 import errno
 import json
 import os
@@ -270,6 +270,58 @@ def test_cache_advice_failure_fails_measurement(monkeypatch, tmp_path):
     with pytest.raises(PermissionError, match="owned scratch"):
         with profiler.phase("normalization"):
             pytest.fail("processing must not start after sampler failure")
+
+
+@pytest.mark.parametrize("failed_input", [
+    "source.zip", "memory.sqlite", "translation-sources.json", "pins.json",
+])
+def test_replay_verifies_inputs_with_cache_control_and_retains_hash_failures(
+    monkeypatch, tmp_path, failed_input
+):
+    from scripts import local_wdpa_sample as replay
+
+    active_phases = []
+
+    class ObservedProfiler(resources.PhaseProfiler):
+        @contextmanager
+        def phase(self, name):
+            with super().phase(name):
+                active_phases.append(name)
+                try:
+                    yield
+                finally:
+                    active_phases.pop()
+
+    def verify(path):
+        assert active_phases == ["frozen-inputs"], "input read escaped cache control"
+        if path.name == failed_input:
+            raise RuntimeError("frozen input hash verification failed")
+        return "1" * 64
+
+    work = tmp_path / "replay"
+    monkeypatch.setattr(sys, "argv", [
+        "local_wdpa_sample.py", "--source", str(tmp_path / "source.zip"),
+        "--workdir", str(work), "--baselines", str(tmp_path / "baselines"),
+        "--translation-sources" if failed_input == "translation-sources.json" else "--translation-memory",
+        str(tmp_path / ("translation-sources.json" if failed_input == "translation-sources.json" else "memory.sqlite")),
+        "--fraction", "0.001",
+    ])
+    monkeypatch.setattr(replay, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(replay, "PhaseProfiler", ObservedProfiler)
+    monkeypatch.setattr(replay, "cgroup_limits", lambda: (3.72, 8 * 1024**3))
+    monkeypatch.setattr(replay.wdpa, "native_versions", lambda: {})
+    monkeypatch.setattr(replay.wdpa, "sha256_file", verify)
+    monkeypatch.setattr(resources, "cgroup_memory", lambda: (100, 123))
+    monkeypatch.setattr(resources, "cgroup_memory_stat", lambda: {})
+    with pytest.raises(RuntimeError, match="hash verification failed"):
+        replay.main()
+    report = json.loads((work / "benchmark.json").read_text())
+    assert report["state"] == "failed"
+    assert report["memory_peak_bytes"] == 123
+    assert report["phases"][0]["phase"] == "frozen-inputs"
+    assert report["phases"][0]["state"] == "failed"
+    assert report["assets"] == {}
+    assert list(work.iterdir()) == [work / "benchmark.json"]
 
 
 def test_replay_source_counts_deduplicate_across_layers(monkeypatch, tmp_path):

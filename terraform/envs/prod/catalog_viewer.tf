@@ -72,7 +72,7 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
   iap_enabled         = true
 
   template {
-    # Comparison jobs use bounded instance-local SQLite workspaces.
+    # Affinity saves cache downloads; correctness uses shared comparison state.
     session_affinity = true
     service_account  = module.catalog_viewer_service_account.email
 
@@ -91,6 +91,11 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
       env {
         name  = "SHARED_DATASETS_BUCKET"
         value = var.bucket_name
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_COMPARISON_BUCKET"
+        value = google_storage_bucket.catalog_comparisons.name
       }
 
       env {
@@ -156,7 +161,37 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer,
+    google_storage_bucket_iam_member.catalog_comparisons_worker,
   ]
+}
+
+# Temporary private computation cache, separate from canonical dataset storage.
+resource "google_storage_bucket" "catalog_comparisons" {
+  project                     = var.project_id
+  name                        = "${var.project_id}-catalog-comparisons"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = false
+
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 1
+    }
+    action {
+      type = "Delete"
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "catalog_comparisons_worker" {
+  bucket = google_storage_bucket.catalog_comparisons.name
+  role   = "roles/storage.objectUser"
+  member = module.catalog_viewer_service_account.member
 }
 
 resource "google_cloud_run_v2_service_iam_member" "catalog_viewer_iap_invoker" {

@@ -943,8 +943,17 @@ _comparison_jobs = None
 def default_comparison_jobs():
     global _comparison_jobs
     if _comparison_jobs is None:
-        _comparison_jobs = comparisons.ComparisonJobs()
+        _comparison_jobs = comparison_jobs_from_env()
     return _comparison_jobs
+
+
+def comparison_jobs_from_env():
+    from services.catalog_viewer.comparison_store import GcsComparisonStore
+
+    bucket = os.environ.get("CATALOG_VIEWER_COMPARISON_BUCKET")
+    if os.environ.get("K_SERVICE") and not bucket:
+        raise ValueError("Cloud Run comparisons require CATALOG_VIEWER_COMPARISON_BUCKET")
+    return comparisons.ComparisonJobs(store=GcsComparisonStore(bucket) if bucket else None)
 
 
 def main() -> None:
@@ -980,6 +989,7 @@ def main() -> None:
             feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
         ),
         feature_require_iap=bool_env("CATALOG_VIEWER_FEATURE_LOOKUP_REQUIRE_IAP", True),
+        comparison_jobs=comparison_jobs_from_env(),
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()

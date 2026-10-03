@@ -174,7 +174,8 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
 
         canary_run = steps["Execute wdpa-monthly canary"]["run"]
         self.assertIn("--async", canary_run)
-        self.assertIn("RUN_DATE=${CANARY_RUN_DATE}", canary_run)
+        self.assertIn("RUN_DATE=${build_date}", canary_run)
+        self.assertIn("WDPA_PROMOTION_BUNDLE=${bundle}", canary_run)
         watch_run = steps["Watch wdpa-monthly canary"]["run"]
         self.assertIn("gcloud run jobs executions describe", watch_run)
         self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
@@ -201,7 +202,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                 root = Path(tmp)
                 (root / "catalog").mkdir()
                 (root / "catalog/wdpa-processing-acceptance.json").write_text(json.dumps({
-                    "runs": [{"cloud_image": image, "image_digest": config}]}))
+                    "build": {"cloud_image": image, "image_digest": config}}))
                 calls = root / "docker-calls"
                 env_file = root / "env"
                 result = subprocess.run(
