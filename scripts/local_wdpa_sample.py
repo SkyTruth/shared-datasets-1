@@ -299,6 +299,7 @@ def main():
     )
     parser.add_argument("--supplement", type=Path)
     parser.add_argument("--run-date", default="2026-10-01")
+    parser.add_argument("--stage-build", action="store_true", help="Retain a complete cloud build in immutable noncanonical staging")
     parser.add_argument(
         "--asset", choices=[a.slug for a in wdpa.ASSETS] + ["all"], default="all",
         help="Select a realm for staged validation; a single realm cannot satisfy full acceptance",
@@ -311,6 +312,8 @@ def main():
         help="Compare the retained old path on a sample; not resource acceptance evidence",
     )
     args = parser.parse_args()
+    if args.stage_build and (args.fraction != 1 or args.genesis or args.compare_legacy or args.asset != "all"):
+        parser.error("staging requires a complete non-genesis build of both realms")
     if not 0 < args.fraction <= 1:
         parser.error("fraction must be in (0,1]")
     if args.compare_legacy and args.fraction == 1:
@@ -354,6 +357,10 @@ def main():
         "state": "failed",
     }
     started = time.monotonic()
+    if args.stage_build:
+        from ingestion.wdpa_monthly.artifact_bundle import BuildStager
+        stager = BuildStager.from_runtime()
+        report["staged_assets"] = {}
     try:
         with ExitStack() as stack:
             with profiler.phase("frozen-inputs"):
@@ -462,8 +469,11 @@ def main():
                     if baselines[asset.slug].snapshot
                     else None,
                 }
-                # Match production's lifetime: marine bytes are gone before the
-                # terrestrial build. The summary keeps their validation evidence.
+                # Persist validated bytes before cleanup. Promotion consumes these
+                # exact generations; it never repeats source processing.
+                if args.stage_build:
+                    with profiler.phase(f"{asset.slug}:stage"):
+                        report["staged_assets"][asset.slug] = stager.stage_asset(asset, output, fields)
                 for path in (
                     output.fgb,
                     output.pmtiles,

@@ -1,0 +1,265 @@
+{
+  "schema_version": 2,
+  "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+  "disk_quota_approved": true,
+  "small_fixture": {
+    "schema_version": 1,
+    "scope": "small-sea-ice-fixture",
+    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "state": "succeeded",
+    "source": "synthetic IMS classes, 4 by 4 cells",
+    "cpu_limit": 4.0,
+    "memory_limit_bytes": 8589934592,
+    "native_versions": {
+      "gdal_python": "3.6.2",
+      "pmtiles_build_version": "v1.30.1",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "tippecanoe_path": "/usr/bin/tippecanoe",
+      "pmtiles_path": "/usr/local/bin/pmtiles",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "tippecanoe": "tippecanoe v2.52.0",
+      "pmtiles": "pmtiles dev, commit none, built at unknown"
+    },
+    "rows": 1,
+    "artifact_sha256": {
+      "fgb": "e6adc05c8a6c584b2b79873994bf708cd2a704fa500374ff00d419880638285b",
+      "pmtiles": "5031faf765df1f5715d85eea0420c71cdcf92bc88a9073daad523e9f1a20e6f0",
+      "metadata": "30edb50616289fa6ecf60d105f2bf3cb047009016443336cf644854394c58bef",
+      "schema": "996d00f80b6a6b5e7510e0000d6a9c126522593b9e5832daab04501460570d8a"
+    },
+    "contracts_verified": true,
+    "elapsed_seconds": 1.5449491849999504,
+    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
+    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
+    "artifact_id": 11251571922,
+    "github_artifact_sha256": "sha256:de5604c7ff7d6b68695f3e873ceb768c997a516d48aeb4ab20431911df22d786",
+    "report_path": "docs/wdpa-processing-evidence/37062181850/small.json",
+    "report_sha256": "33ba7377d7740a91bb983a6f84e1edacef54caf6ef29d0366b15dcbf65a3dacd",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
+    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f",
+    "phase_cgroup_memory_peak_bytes": 103837696,
+    "phase_scratch_peak_bytes": 876544
+  },
+  "compatibility_sample": {
+    "asset_scope": [
+      "wdpa-marine",
+      "wdpa-terrestrial"
+    ],
+    "assets": {
+      "wdpa-marine": {
+        "artifact_sha256": {
+          "csv": "a6caf77bf4c089eac1a929586d1906b4af28e66d9537973f74b0615cc64acf26",
+          "fgb": "22ae7b2b24203b1bb9ef720589126836557216f9138aa3fcdcd433ff4a7b5879",
+          "metadata": "46284acdd12395ebf8d30740b38b6aa9011695258d6eaf6f34a6006f8c98be50",
+          "metadata_es": "50e5a8ce5802d18c3b0275cec219cfbbb8b6b6b3c7e505ec6e1f25e218d584c0",
+          "metadata_fr": "9af53c2e076557cb430be38d7dceaed643dfb801ed6d765de2b271bf71648ee2",
+          "metadata_id": "1c47cc9d40cdda6fb8c067692658795438f2dc31582c6f0d57bfe62a5a10099b",
+          "metadata_pt": "e22625d9379a3c5d17230f199984c132c09dc4c13e2ff8a11f5ff54106a0b8c6",
+          "metadata_pt_br": "e22625d9379a3c5d17230f199984c132c09dc4c13e2ff8a11f5ff54106a0b8c6",
+          "metadata_sw": "3e8bd0cdb2c0162be42eb5e84ea4968ca3cea6d7b7c954a94b81f5c3ee53d9dc",
+          "metadata_translations": "a6caf77bf4c089eac1a929586d1906b4af28e66d9537973f74b0615cc64acf26",
+          "pmtiles": "2904cf6910a87a377c8e5f32477740f3ccdb13be39a9c3ae4b1c86930f14d082",
+          "schema": "7481c3c01f6cc59a44ff56d4a401c141b8bcba0835b2172165ef1267c6778e71"
+        },
+        "baseline": {
+          "generation": 1790866753009809,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+          "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+        },
+        "compatibility_verified": true,
+        "india_rows": 0,
+        "india_sites": 0,
+        "next_generated_feature_id": 17943,
+        "rows": 20,
+        "semantic_sha256": "4e4b296884d58aeba43533126a400a485a75dd33968a24baeaa28db06502bf31",
+        "source_counts": {
+          "india_rows": 0,
+          "india_sites": 0,
+          "raw_rows": 20,
+          "rows": 20
+        }
+      },
+      "wdpa-terrestrial": {
+        "artifact_sha256": {
+          "csv": "deaf0f98401c2fa31eb88d56fe46c668521f3eb3785c77d1b02f4eb31cb1cf6c",
+          "fgb": "a9d8adda25f409d057f11b934ccb121c68c48494242cec842ee524bc8fb0d29c",
+          "metadata": "4da41c053c01f2609db131abfca3cc7236280482ccc17d778346db9cd3cbeab6",
+          "metadata_es": "caaaf4d6f4494b4990ac66a8c36a2c42467165f0ad2d8332932080eeb45a9a85",
+          "metadata_fr": "9c9c7d6ea21cb812d160a445f6185df4b91aa23f23dbb5a44a6d2ff60abff24a",
+          "metadata_id": "5e753bc7735ed22b323fde6b3055cc023d566b56fb358fcfe56512c117c562c0",
+          "metadata_pt": "8b146cc001f3f6c10e712392231429ea37bad8df402f8b86d7431c7670a3f114",
+          "metadata_pt_br": "8b146cc001f3f6c10e712392231429ea37bad8df402f8b86d7431c7670a3f114",
+          "metadata_sw": "0fc8d64535305621ab9644a1d329e39764d4f105235b5d549757ec7711a91cd0",
+          "metadata_translations": "deaf0f98401c2fa31eb88d56fe46c668521f3eb3785c77d1b02f4eb31cb1cf6c",
+          "pmtiles": "ea744f11bd8cac6b3dbe0fc1b8be9b0ff40699deb769f006603cefadbb0e0dae",
+          "schema": "82c6833587f1133beb8f3bf86c36d3f14745a45db1fd51d00cd43977553a1981"
+        },
+        "baseline": {
+          "generation": 1790815952362262,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+          "sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88"
+        },
+        "compatibility_verified": true,
+        "india_rows": 193,
+        "india_sites": 193,
+        "next_generated_feature_id": 305011,
+        "rows": 499,
+        "semantic_sha256": "81fbf37e4fe611897806dcfcb8ce4171f5950ca6098de7915a0684db86d9250c",
+        "source_counts": {
+          "india_rows": 193,
+          "india_sites": 193,
+          "raw_rows": 499,
+          "rows": 499
+        }
+      }
+    },
+    "baseline_snapshot_sha256": "e65323aecb705d8c1f489404727b7940aed475fc69bfd9345c01db15a0cb4b2f",
+    "compatibility_verified": true,
+    "contracts_verified": true,
+    "cpu_limit": 4.0,
+    "elapsed_seconds": 812.620878526,
+    "genesis": false,
+    "memory_limit_bytes": 8589934592,
+    "memory_peak_bytes": 6449491968,
+    "native_versions": {
+      "gdal_python": "3.6.2",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "pmtiles": "pmtiles dev, commit none, built at unknown",
+      "pmtiles_build_version": "v1.30.1",
+      "pmtiles_path": "/usr/local/bin/pmtiles",
+      "tippecanoe": "tippecanoe v2.52.0",
+      "tippecanoe_path": "/usr/bin/tippecanoe"
+    },
+    "run_date": "2026-10-01",
+    "sample_fraction": 0.001,
+    "sample_seed": 7919,
+    "schema_version": 1,
+    "scratch_peak_bytes": 9419808768,
+    "source_counts_verified": true,
+    "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
+    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "state": "succeeded",
+    "translation_index_built": true,
+    "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
+    "translation_memory_sha256": "07c363536c65e577f54d1d1eb146192387f1dd22fcf1ef1a26aeb3c1e2ad0eb9",
+    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
+    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
+    "artifact_id": 11254325391,
+    "github_artifact_sha256": "sha256:0e322dea26a679283cf96bcf0827a1ca4b4c63488b5e62fcca1163c7fd91fcc2",
+    "report_path": "docs/wdpa-processing-evidence/37062181850/compatibility.json",
+    "report_sha256": "a7594ad571425e8c023475d3044e46c79799a37a09a7a96de182ec9932f06d8a",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
+    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f"
+  },
+  "marine": {
+    "asset_scope": [
+      "wdpa-marine"
+    ],
+    "assets": {
+      "wdpa-marine": {
+        "artifact_sha256": {
+          "csv": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "fgb": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+          "metadata": "ab7896c8bd09cd7831ca236ce67834ae0249e761390d0b09dba4b9ec09bf0eeb",
+          "metadata_es": "120f6a0f03c7e7ac2eea27b9516a246df9efe691b8aff6cea37b12f9e2a1cf2e",
+          "metadata_fr": "2cca596065f77d56c7d901671a7b4b40518531cb64a113d06843d959612cdbe6",
+          "metadata_id": "13a5cb57b22068c44b298706f2f7933c47e7e76360526cc005ce287aa9c0fcdf",
+          "metadata_pt": "5d28b0dc3edaf989b5b79a07a8e4e95ea978947c1de85f47327467a2ba52d597",
+          "metadata_pt_br": "5d28b0dc3edaf989b5b79a07a8e4e95ea978947c1de85f47327467a2ba52d597",
+          "metadata_sw": "8f747dbb97f41d1726ce03a9f92d97cf539aa57d407a3b9984c8b22460c19154",
+          "metadata_translations": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "pmtiles": "25224be3854d4aa478ca6ab20143a8c13bf6216c88fbd87e68a17325e0ac8af6",
+          "schema": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3"
+        },
+        "baseline": {
+          "generation": 1790866753009809,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+          "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+        },
+        "compatibility_verified": false,
+        "india_rows": 304,
+        "india_sites": 304,
+        "next_generated_feature_id": 17943,
+        "rows": 17938,
+        "semantic_sha256": "abc81213f8db78942ba71d0027356816c932b7e53c530686f8b9acae1290218b",
+        "source_counts": {
+          "india_rows": 304,
+          "india_sites": 304,
+          "raw_rows": 17938,
+          "rows": 17938
+        }
+      }
+    },
+    "baseline_snapshot_sha256": "e65323aecb705d8c1f489404727b7940aed475fc69bfd9345c01db15a0cb4b2f",
+    "compatibility_verified": false,
+    "contracts_verified": true,
+    "cpu_limit": 4.0,
+    "elapsed_seconds": 3059.5260084680003,
+    "genesis": false,
+    "memory_limit_bytes": 8589934592,
+    "memory_peak_bytes": 4744769536,
+    "native_versions": {
+      "gdal_python": "3.6.2",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "pmtiles": "pmtiles dev, commit none, built at unknown",
+      "pmtiles_build_version": "v1.30.1",
+      "pmtiles_path": "/usr/local/bin/pmtiles",
+      "tippecanoe": "tippecanoe v2.52.0",
+      "tippecanoe_path": "/usr/bin/tippecanoe"
+    },
+    "run_date": "2026-10-01",
+    "sample_fraction": 1.0,
+    "sample_seed": 7919,
+    "schema_version": 1,
+    "scratch_peak_bytes": 9379639296,
+    "source_counts_verified": true,
+    "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
+    "source_tree_sha256": "b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337",
+    "state": "succeeded",
+    "translation_index_built": true,
+    "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
+    "translation_memory_sha256": "8bcbe0dbcfe453fca9ad9ec5a41d099c7fcfde2ca3d2fcab872a4c3fcf7bfc1c",
+    "image_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
+    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9",
+    "artifact_id": 11254325391,
+    "github_artifact_sha256": "sha256:0e322dea26a679283cf96bcf0827a1ca4b4c63488b5e62fcca1163c7fd91fcc2",
+    "report_path": "docs/wdpa-processing-evidence/37062181850/marine.json",
+    "report_sha256": "5a5d0bdc7e0276d5fbb99c888786c276c304b47cfb06c72dfaa560d8e2699465",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37062181850/image.json",
+    "image_metadata_sha256": "74f82ffddf6eaff9a27599fdd7d24f5a76dc0993f663b7dc178a0590ccf60e1f"
+  },
+  "tested_image_artifact": {
+    "artifact_id": 11251406946,
+    "artifact_sha256": "sha256:4d8c310d0f51a56443e8c5244a6c8f1f1f7762b0763f94c30264f6a5610017c4",
+    "configuration_digest": "sha256:61442d5115fa9d32d6e5d35fc10d7f64c7d8257de2a85900d7b1c98fcdf97b4e",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37062181850",
+    "head_sha": "136861e64a171ae7d8d2b763e064dbacfe95e9a9"
+  },
+  "marine_container": {
+    "state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-10-02T21:02:26.418930409Z",
+      "FinishedAt": "2026-10-02T21:53:27.146027655Z"
+    },
+    "report_path": "docs/wdpa-processing-evidence/37062181850/container.json",
+    "report_sha256": "28ed5bd85a72b66bfbc56e1d17d2eb3b80aaf6166e76ebc6a3aabbbdf4df1bbe"
+  },
+  "historical_evidence": {
+    "path": "docs/wdpa-processing-evidence/37047953130/staged-validation.json",
+    "sha256": "2dfc5ce2650bb93bc23a20417fde626848f95c78e352ed51b57147fcb0fe173a"
+  },
+  "readiness": "isolated-cloud-validation-only"
+}

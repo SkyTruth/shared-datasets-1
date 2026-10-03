@@ -1,11 +1,64 @@
 # WDPA processing validation and rollout evidence
 
-Readiness is **pending**. The implementation has compatibility and integration
-evidence. Validation now follows the requested sequence: a small sea-ice smoke
-test, complete marine WDPA with measured disk spill, then isolated Cloud Run
-validation of the complete October source including terrestrial WDPA.
-The previous hosted complete runs were stopped to enforce this ordering.
-`catalog/wdpa-processing-acceptance.json` intentionally blocks production deployment.
+Readiness is **pending**. The rollout builds the complete October artifacts once,
+retains the validated files, and promotes those exact bytes to the production
+bucket. It does not require a second complete build or regenerate artifacts in
+the production canary. `catalog/wdpa-processing-acceptance.json` remains blocked
+until a retained build and its reviewed promotion plan exist.
+
+## Single build and promotion
+
+1. Build the Linux deployment image once. Dispatch CI with `wdpa_build_smoke=true`
+   for the small native fixture and deterministic old/new sample only. Record
+   their matching image/source fingerprints in version 3
+   `catalog/wdpa-staged-validation.json`. The complete hosted marine benchmark
+   remains an optional diagnostic, not a prerequisite for this rollout.
+2. After review and merge, use protected `wdpa-processing-validation-deploy.yml`
+   to deploy that image and start **one** complete October build. Never replace
+   or duplicate a pending/running execution. Its fixed limits remain 4 CPU,
+   8 GiB memory, 100 GiB DISK, zero retries and 24 hours.
+3. Each realm's validated FGB, PMTiles, canonical metadata, schema, translation
+   CSV and all six locale sidecars are uploaded create-only to
+   `_scratch/wdpa-builds/{cloud-execution}/{asset-slug}/` before local cleanup.
+   The runtime has only `storage.objects.create` on that prefix. It cannot read,
+   replace, delete or publish canonical dataset objects. Uploads are included in
+   the measured processing phases. The root `build-bundle.json` is committed
+   only after both realms and the full resource/count/contracts checks pass.
+4. Retain the unchanged final Cloud Logging report and verify terminal success,
+   the actual immutable deployed image URI, its configuration digest and every
+   staged object's generation, size and SHA-256. Version 3 acceptance names
+   `build`, not a replay list, and the matching separate compatibility sample.
+   Require kernel peak ≤6.4 GiB, scratch <80 GiB and duration ≤24 hours.
+5. Add `.github/dataset-plans/wdpa-build-{bundle-sha256}.json` and the matching
+   `shared-datasets-publish-plan` fence to the evidence PR. Record that PR number
+   in acceptance. The protected worker workflow checks exact-head approval (or
+   the existing self-authored merged exception), identical head/merge/current
+   document bytes, and the accepted build's real terminal success. See the
+   [owned plan contract](../.github/dataset-plans/README.md#owned-wdpa-build-promotion).
+6. With observer and alert prerequisites ready, promote the accepted image and
+   execute the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`.
+   It downloads the approved object generations, verifies all required files
+   before the first new publication, and passes them to `OwnedGeneratedPublisher`.
+   It never downloads the upstream source, normalizes geometry, rebuilds tiles
+   or regenerates translations. Publication manifests and receipts are finalized
+   with the actual canonical GCS generations; artifact bytes remain unchanged.
+
+Before promotion, both identity baselines and reserved counters must still match
+those used by the build. Existing successful realms are retained only when their
+artifact hashes match. An interrupted publication resumes its original receipt;
+another owner, stale baseline or changed staged bytes stops publication. Never
+reset claims/counters or change the date to bypass recovery. Validation's staging
+permission and the worker's read permission are limited to the noncanonical build
+prefix. Cloud Storage supports object-name conditions and requires delete as well
+as create permission to replace an object ([IAM conditions](https://docs.cloud.google.com/storage/docs/access-control/iam),
+[permissions](https://docs.cloud.google.com/storage/docs/access-control/iam-permissions)).
+
+The earlier execution `wdpa-processing-validation-5q7zp` predates artifact
+retention. Its sampler deletes each realm's outputs after validation, including
+marine files already removed. Its diagnostic progress cannot supply a promotable
+bundle. Let it finish; deploy the retaining image only after no execution is active.
+No second replay of that old image is authorized. Historical reports below remain
+unaltered evidence for their original images and delivery paths.
 
 ## Completed checks
 
@@ -200,7 +253,7 @@ configuration digest
 the Actions run/head and artifact IDs/hashes. Unmodified reports, image metadata
 and container state are retained under `docs/wdpa-processing-evidence/37047953130/`;
 the previous staged document remains intact in the historical directory. The
-production acceptance gate still requires two complete cloud builds, including
+former production gate required two complete cloud builds, including
 terrestrial, with the same image and frozen inputs. No dataset bytes were
 published by these stages.
 
@@ -228,7 +281,7 @@ reports. The same frozen source, baseline and translation inputs and native
 versions were used. The complete report still has `compatibility_verified=false`;
 the separate sampled comparison supplies that proof.
 
-The current [version 2 staged evidence](../catalog/wdpa-staged-validation.json)
+The archived [version 2 staged evidence](wdpa-processing-evidence/37062181850/staged-validation.json)
 records processing fingerprint
 `b197f06928b5874db60574dcc1cca91e30c1be291b24e31bcd045fe16ea81337`
 and configuration digest
@@ -237,8 +290,8 @@ Unmodified raw reports, image metadata and container state are retained under
 `docs/wdpa-processing-evidence/37062181850/`. GitHub report ZIP hashes were
 verified before extracting the original bytes. This permits only isolated
 validation after review and merge, and after the existing cloud execution is
-terminal. Two complete passing cloud builds of the corrected immutable image
-remain required before production deployment; the earlier execution's 7.00 GiB
+terminal. That superseded gate required two complete passing cloud builds; the current
+single-build path requires retained artifacts from its new image instead; the earlier execution's 7.00 GiB
 lifetime peak cannot be reset, subtracted or counted toward acceptance.
 
 [Reviewed public input recipe](wdpa-processing-public-inputs.json) pins the
@@ -282,7 +335,7 @@ bytes and child RSS 96,714,752 bytes. Both probes used the identical frozen
 source and verified baselines at 4 CPU / 8 GiB with no swap and a 100 GiB disk.
 [Diagnostic reports](wdpa-processing-input-probes.json) include the native tool
 versions and image/processing digests. This improvement is not complete-build
-acceptance; both complete runs remain required.
+acceptance; its image predates the retained-artifact build path.
 
 [Superseded complete-build run 36998409031](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36998409031)
 used processing digest
@@ -329,47 +382,24 @@ The replay hashed the 4.8 GB source ZIP before entering its first measured
 phase. Linux file cache from that read therefore accumulated without the
 sampler's cache-pressure control. Input fingerprint verification now runs
 inside `frozen-inputs`, and its time, memory and verification failures are
-included in the report. This changes the processing fingerprint: the previous
-staged evidence remains historical evidence, and fresh small, comparison and
-marine stages are required before another isolated deployment. The corrected
-image still needs two complete passing cloud builds; the resource target and
-lifetime kernel peak remain unchanged.
+included in the report. This changed the processing fingerprint; earlier staged
+reports remain historical. The active diagnostic image incorporates that fix,
+but predates retaining artifacts. The single-build sequence above replaces the
+former two-run rollout. Source downloads, fingerprint reads and staging uploads
+remain profiled; the kernel lifetime peak is never reset or subtracted.
 
-`wdpa-processing-validation-deploy.yml` is a manual protected-main workflow in
-the existing production Terraform queue. It gates deployment on reviewed small
-and marine reports in `catalog/wdpa-staged-validation.json`, including the same
-image/processing digest, complete marine counts/contracts, ≤6.4 GiB peak memory,
-scratch greater than 8 GiB and below 80 GiB, and approved disk quota. Disk use
-above the RAM limit demonstrates why the workload needs disk storage.
+The protected isolated workflow can change only its service account, deployer
+binding, job, two custom staging/read roles and two prefix-conditioned bucket
+bindings. Its reviewed plan may not delete resources, increase limits, grant
+canonical data permissions or create a scheduler. Failed builds may leave
+uncommitted scratch objects; absence of a complete validated root descriptor
+prevents promotion. Scratch existence is not publication authority.
 
-The workflow can change only three validation resources: the empty runtime
-service account, its exact deployer binding, and a Cloud Run job. It cannot target
-the production worker, bucket IAM, claims, receipts or allocation state. The
-validation identity receives **no dataset permissions** and has no scheduler.
-Its image uses public hash/generation-verified frozen inputs and the production
-processing path at 4 CPU / 8 GiB with a 100 GiB disk and 24-hour timeout.
-`wdpa_cloud_validation_report` is emitted to Cloud Logging; no dataset or status
-objects are uploaded. Downloading frozen inputs is also profiled.
-
-A separate read-only production-state plan for these isolated resources contains
-**three creations, zero updates, zero deletions**. The saved plan passed the exact
-resource/configuration allowlist, including the provider's nullable mount
-subdirectory field. No apply was run.
-
-After review, merge and quota/bootstrap verification, deploy this validation
-job. Run the controlled pre-write failure, verify actual alert delivery, then
-start complete October replays asynchronously and follow each to terminal status.
-Two passing reports open the existing final acceptance gate for the production
-worker. Publication ownership checks remain unchanged. A failed validation run
-cannot authorize publication or a resource increase.
-
-The production deploy pulls the immutable validation image recorded in both
-accepted Cloud Run reports. It checks the image configuration digest and the
-processing source fingerprint before tagging those same bytes for
-`wdpa-monthly`. Native-tool and import smoke checks still run before the push,
-and Terraform receives an immutable registry digest. There is no production
-rebuild after acceptance. The image retains its tested executor SHA; the
-deployment SHA identifies the promotion tag without replacing that provenance.
+The production image is the same accepted Cloud Run image, verified by immutable
+registry URI, configuration digest and source fingerprint. Tagging/pushing it
+retains the tested executor SHA. The production execution consumes its retained
+build bundle through the owned publisher; neither the image nor the dataset
+artifacts are rebuilt after acceptance.
 
 ## Infrastructure and failure visibility
 
@@ -391,8 +421,8 @@ The protected Terraform identity already has service-account/custom-role creatio
 permissions. The deployment follow-up adds only `run.jobs.create` to its existing
 scheduled-ingestion custom role through `scheduled-ingestion-deploy-iam-sync.yml`.
 Google checks job creation on the parent project/location, so this permission is
-project-wide; the isolated deploy still validates its exact three-resource plan,
-empty runtime identity and absence of dataset permissions. Job IAM, scheduler
+project-wide; the current isolated deploy validates its exact resource plan,
+prefix-only staging rights and absence of canonical dataset permissions. Job IAM, scheduler
 creation and deletion permissions are not added by this bootstrap. The observer's
 job IAM and scheduler bootstrap remains a prerequisite for the final worker
 rollout after full processing acceptance.
@@ -411,30 +441,14 @@ describes the separate limits and initial regional grant.
 
 ## Remaining acceptance and rollout
 
-1. Review the fresh matching small-fixture, both-realm old/new sample and
-   complete marine reports. These stages passed, including verified
-   counts/contracts and disk scratch above RAM. Merge the staged evidence before
-   isolated deployment; earlier processing digests cannot satisfy this gate.
-2. After review, merge and quota/bootstrap verification, deploy only the isolated
-   cloud validation job. Run the deployment image twice on the complete frozen October inputs and
-   identical verified baseline/translation snapshots. Require peak memory
-   ≤6.4 GiB, scratch <80 GiB, duration ≤24 hours, verified source-derived
-   realm/India counts and valid FGB/metadata/PMTiles contracts. Any ambiguity
-   requires reviewed decisions before outputs can be emitted.
-3. Record two distinct cloud executions, their identical immutable image URI,
-   verified image configuration digest, complete raw reports and separate
-   matching compatibility sample in the reviewed version 2 acceptance document.
-   Sample/genesis runs, missing peak telemetry, mismatched inputs and larger
-   worker sizes cannot satisfy the gate. Promote the accepted image bytes to
-   production after acceptance passes.
-4. The 100 GiB per-instance Preview disk quota and regional allocation are
-   verified. Review/provision the observer bootstrap permissions
-   through protected workflows.
-5. After review and merge, apply monitoring and deploy through protected
-   workflows, including both catalog web and viewer deployments. Verify actual
-   controlled-failure alert delivery before permitting
-   the normal dataset canary. Follow the canary to terminal status and inspect
-   publication ownership, release indexes, generations and artifact metadata.
+The new retaining image needs matching small/sample evidence and one complete
+terminal-success build. Preserve its raw report and immutable references, then
+review and merge the exact build promotion plan. Observer bootstrap approval is
+still a separate prerequisite; the existing proposal does not gain approval from
+this delivery change. Verify actual controlled-failure alert delivery before the
+production promotion. Follow publication to terminal status and independently
+check terrestrial FGB, every sidecar, both release indexes, generations and custom
+metadata. The monitor remains active until terrestrial publication is verified.
 
 ## Intended remote paths
 
