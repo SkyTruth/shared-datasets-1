@@ -86,7 +86,8 @@ def check(plan, *, image, deployer, runtime_inspection=False, staging_probe=Fals
         elif resource["address"] in BINDINGS:
             role, account = BINDINGS[resource["address"]]
             if (
-                after["bucket"] != "skytruth-shared-datasets-1"
+                after["bucket"]
+                not in ("skytruth-shared-datasets-1", "b/skytruth-shared-datasets-1")
                 or after["role"] != "projects/shared-datasets-1/roles/" + role
                 or after["member"]
                 != f"serviceAccount:{account}@shared-datasets-1.iam.gserviceaccount.com"

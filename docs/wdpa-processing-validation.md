@@ -485,6 +485,9 @@ object creation under `objects/_scratch/wdpa-builds/` and folder creation under
 folder rename or deletion. Google supports the full HNS folder resource name in
 [IAM conditions](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes).
 The reader still has only `storage.objects.get` on build objects.
+The Terraform plan guard accepts only this exact bucket, including the provider's
+refreshed `b/skytruth-shared-datasets-1` representation. Role, runtime identity,
+object/folder conditions and deletion refusal remain exact checks.
 
 Before a complete build, the protected workflow temporarily selects a reviewed
 scratch probe command in the same tested image and fixed resources. That command

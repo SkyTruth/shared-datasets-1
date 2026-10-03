@@ -339,6 +339,47 @@ def test_probe_plan_pins_command_identity_and_resources(defect):
         policy.check(probe_plan, image=IMAGE, deployer=DEPLOYER, staging_probe=True)
 
 
+@pytest.mark.parametrize("address", sorted(policy.BINDINGS))
+@pytest.mark.parametrize(
+    "bucket",
+    [
+        "skytruth-shared-datasets-1",
+        "b/skytruth-shared-datasets-1",
+        "b/another-bucket",
+        "another-bucket",
+        "b/b/skytruth-shared-datasets-1",
+    ],
+)
+def test_staging_binding_accepts_only_exact_configured_or_refreshed_bucket_names(
+    address, bucket
+):
+    role, account = policy.BINDINGS[address]
+    resource = {
+        "address": address,
+        "change": {
+            "actions": ["no-op"],
+            "after": {
+                "bucket": bucket,
+                "role": "projects/shared-datasets-1/roles/" + role,
+                "member": f"serviceAccount:{account}@shared-datasets-1.iam.gserviceaccount.com",
+                "condition": [
+                    {
+                        "expression": policy.FOLDER_SCOPE
+                        if address.endswith("wdpa_build_folder_stager")
+                        else policy.OBJECT_SCOPE
+                    }
+                ],
+            },
+        },
+    }
+    plan = {"resource_changes": [resource]}
+    if bucket in ("skytruth-shared-datasets-1", "b/skytruth-shared-datasets-1"):
+        policy.check(plan, image=IMAGE, deployer=DEPLOYER)
+    else:
+        with pytest.raises(ValueError, match="staging scope"):
+            policy.check(plan, image=IMAGE, deployer=DEPLOYER)
+
+
 def test_sample_comparison_precedes_full_marine_and_is_not_resource_evidence():
     workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
     steps = workflow_steps_by_name(workflow, "wdpa-full-benchmark")
