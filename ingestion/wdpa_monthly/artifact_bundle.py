@@ -128,7 +128,7 @@ class BuildStager:
         }
 
     def commit(self, report, workdir):
-        from scripts.wdpa_processing_gate import check_build
+        from scripts.wdpa_processing_gate import check_build, source_digest
 
         p.require(
             not check_build(report, require_bundle=False),
@@ -143,7 +143,7 @@ class BuildStager:
             "report": report,
             "assets": report["staged_assets"],
         }
-        check_bundle(manifest)
+        check_bundle(manifest, producer_source=source_digest())
         path = workdir / "build-bundle.json"
         path.write_bytes(p.canonical(manifest))
         return self.upload("build-bundle.json", path)
@@ -165,12 +165,12 @@ def download(client, ref, target, *, execution=None):
     )
 
 
-def load_bundle(client, ref, workdir):
+def load_bundle(client, ref, workdir, *, producer_source):
     p.require(ref["size"] <= 1024 * 1024, "build descriptor is too large")
     path = workdir / "build-bundle.json"
     download(client, ref, path)
     bundle = p.strict_json(path.read_bytes())
-    check_bundle(bundle)
+    check_bundle(bundle, producer_source=producer_source)
     check_reference(ref, execution=bundle["report"]["cloud_execution"])
     p.require(
         ref["uri"].endswith("/build-bundle.json"),
@@ -179,8 +179,8 @@ def load_bundle(client, ref, workdir):
     return bundle
 
 
-def check_bundle(bundle):
-    from scripts.wdpa_processing_gate import check_build, source_digest
+def check_bundle(bundle, *, producer_source):
+    from scripts.wdpa_processing_gate import check_build
 
     p.require(
         set(bundle) == {"schema_version", "report", "assets"}
@@ -189,7 +189,8 @@ def check_bundle(bundle):
     )
     report = bundle["report"]
     p.require(
-        report["source_tree_sha256"] == source_digest(),
+        re.fullmatch(r"[0-9a-f]{64}", producer_source) is not None
+        and report["source_tree_sha256"] == producer_source,
         "bundle uses a different processing source",
     )
     p.require(
@@ -239,7 +240,12 @@ def promote(client, publisher, ref, workdir):
     """Consume the approved build; owned publication retains recovery semantics."""
     from ingestion.wdpa_monthly import run as wdpa
 
-    bundle = load_bundle(client, ref, workdir)
+    bundle = load_bundle(
+        client,
+        ref,
+        workdir,
+        producer_source=os.environ["WDPA_ACCEPTED_BUILD_SOURCE_SHA256"],
+    )
     report = bundle["report"]
     run_date = wdpa.parse_run_date(report["run_date"])
     # Check every predecessor before the first new canonical write. Existing
@@ -248,16 +254,7 @@ def promote(client, publisher, ref, workdir):
     for asset in wdpa.ASSETS:
         resumed[asset.slug] = publisher.resume(asset)
         committed[asset.slug] = publisher.load_successful_run_record(asset, run_date)
-        if committed[asset.slug]:
-            record, _info = committed[asset.slug]
-            expected = bundle["assets"][asset.slug]["outputs"]["sha256"]
-            p.require(
-                all(
-                    record["sha256"].get(role) == sha for role, sha in expected.items()
-                ),
-                "already committed release differs from retained build",
-            )
-        if resumed[asset.slug] is None and not committed[asset.slug]:
+        if resumed[asset.slug] is None:
             state = publisher.state(asset).value
             p.require(state["active"] is None, "another publication owns the asset")
             facts = bundle["assets"][asset.slug]["outputs"]
@@ -271,7 +268,27 @@ def promote(client, publisher, ref, workdir):
                 == state["reserved_next_feature_id"],
                 "staged build has a stale allocation counter",
             )
-            publisher.assert_no_partial_release(asset, run_date)
+            p.require(
+                facts["previous_release"] == state["current"]["release"],
+                "staged build has a stale predecessor release",
+            )
+            if committed[asset.slug]:
+                record, _info = committed[asset.slug]
+                p.require(
+                    record["release_date"] == run_date.isoformat()
+                    and record["source_version"] == wdpa.source_version_for(run_date)
+                    and record["source"]
+                    == wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, run_date)
+                    and record["identity_contract"]
+                    == facts["identity_contract"]
+                    == wdpa.CONTRACT_ID
+                    and record["row_count"] == facts["row_count"]
+                    and facts["next_generated_feature_id"]
+                    == state["reserved_next_feature_id"],
+                    "committed release differs from the frozen identity/source contract",
+                )
+            else:
+                publisher.assert_no_partial_release(asset, run_date)
     # Verify every needed file before the first new publication. Hashing large
     # files is measured and uses the same scratch cache-pressure control.
     from ingestion.wdpa_monthly.resources import PhaseProfiler

@@ -65,7 +65,7 @@ env:
 
 jobs:
   deploy:
-    name: Promote accepted image and apply wdpa-monthly Terraform
+    name: Prepare publication image and apply wdpa-monthly Terraform
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
@@ -155,7 +155,7 @@ jobs:
               raise SystemExit('Only a terminal successful execution of the accepted image may be promoted')
           PY
 
-      - name: Promote accepted wdpa-monthly image
+      - name: Prepare reviewed WDPA publication image
         run: |
           set -euo pipefail
 
@@ -167,14 +167,19 @@ jobs:
             echo "Accepted WDPA image configuration digest does not match the registry image." >&2
             exit 1
           fi
-          expected_source="$(uv run --no-sync python scripts/wdpa_processing_gate.py --print-source-digest)"
+          expected_source="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["source_tree_sha256"])')"
           actual_source="$(docker run --platform linux/amd64 --rm "${accepted_image}" python scripts/wdpa_processing_gate.py --print-source-digest)"
           if [[ "${actual_source}" != "${expected_source}" ]]; then
-            echo "Accepted WDPA image does not match the reviewed processing source tree." >&2
+            echo "Accepted WDPA image does not match the reviewed producer fingerprint." >&2
             exit 1
           fi
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
-          docker tag "${accepted_image}" "${image_tag}"
+          docker build --platform linux/amd64 \
+            --file ingestion/wdpa_monthly/Dockerfile.promotion \
+            --build-arg "ACCEPTED_IMAGE=${accepted_image}" \
+            --build-arg "ACCEPTED_BUILD_SOURCE_SHA256=${expected_source}" \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
+            --tag "${image_tag}" .
           echo "WDPA_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image
@@ -189,7 +194,7 @@ jobs:
           set -euo pipefail
 
           docker run --platform linux/amd64 --rm "${WDPA_MONTHLY_IMAGE_TAG}" python -c \
-            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.execution_observer; import ingestion.wdpa_monthly.run; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
+            'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.execution_observer; import ingestion.wdpa_monthly.run; import ingestion.wdpa_monthly.publication_only; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
 
       - name: Push wdpa-monthly image
         run: |

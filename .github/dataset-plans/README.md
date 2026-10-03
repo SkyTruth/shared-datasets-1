@@ -102,7 +102,8 @@ output races remain separate work; this document does not claim to fix them.
 The single-build WDPA rollout uses an immutable document at
 `wdpa-build-{build-bundle-sha256}.json` in this directory. It contains
 `schema_version: 1`, `kind: wdpa_owned_build_promotion`, the exact bundle reference
-(URI, generation, size, SHA-256), cloud execution/image, run date and measured
+(URI, generation, size, SHA-256), cloud execution/image, image configuration
+digest, original producer source fingerprint, run date and measured
 realm summaries. The bundle hash transitively binds every staged file reference,
 validated output fact and captured identity baseline. Include its full JSON in a
 `shared-datasets-publish-plan` fence and record the evidence PR number in version
@@ -121,3 +122,10 @@ and release indexes. Their generation expectations are captured by the owned
 publisher after those predecessor checks, preserving the original receipt and
 reservation recovery contract. The immutable dataset files are never rebuilt.
 A dispatch cannot select an unreviewed bundle or a different run date.
+
+The producer fingerprint identifies the code that built the retained files,
+independently of subsequent reviewed publication fixes. The protected deployment
+verifies the producer image's configuration and fingerprint before adding its
+small publication-only software layer. An already-committed realm is checked
+against the frozen predecessor and owned source/identity contract and left
+unchanged; its regenerated candidate hashes do not authorize replacing it.

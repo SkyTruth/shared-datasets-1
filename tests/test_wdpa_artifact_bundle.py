@@ -8,6 +8,7 @@ import pytest
 from ingestion.common.publication import PublicationError
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.wdpa_monthly import artifact_bundle as bundle, run as wdpa
+from ingestion.wdpa_monthly import publication_only
 from scripts import release_feature_model as model, wdpa_processing_gate as gate
 from tests.test_wdpa_execution_observer import accepted_evidence
 
@@ -52,9 +53,15 @@ class Objects:
 
 
 @pytest.fixture
-def built(tmp_path, request):
+def built(tmp_path, request, monkeypatch):
     report = accepted_evidence()["build"]
-    report["memory_peak_bytes"] = getattr(request, "param", 5 * 1024**3)
+    settings = getattr(request, "param", 5 * 1024**3)
+    report["memory_peak_bytes"] = (
+        settings.get("memory", 5 * 1024**3) if isinstance(settings, dict) else settings
+    )
+    monkeypatch.setenv(
+        "WDPA_ACCEPTED_BUILD_SOURCE_SHA256", report["source_tree_sha256"]
+    )
     report["resource_warnings"] = gate.memory_warnings(report)
     report.pop("artifact_bundle")
     store = Objects()
@@ -79,6 +86,11 @@ def built(tmp_path, request):
         hashes = {role: wdpa.sha256_file(path) for role, path in paths.items()}
         hashes["csv"] = hashes["metadata_translations"]
         summary = report["assets"][asset.slug]
+        committed = (
+            isinstance(settings, dict)
+            and settings.get("committed_marine")
+            and asset.slug == "wdpa-marine"
+        )
         outputs = wdpa.AssetOutputs(
             **{role: paths[role] for role in bundle.ROLES},
             localized_metadata={
@@ -89,8 +101,10 @@ def built(tmp_path, request):
             sha256=hashes,
             schema_payload={},
             next_generated_feature_id=summary["next_generated_feature_id"],
-            previous_generated_feature_id=10,
-            previous_release="2026-09-30",
+            previous_generated_feature_id=(
+                summary["next_generated_feature_id"] if committed else 10
+            ),
+            previous_release="2026-10-01" if committed else "2026-09-30",
             identity_baseline_snapshot=snapshot,
             identity_contract=CONTRACT_ID,
             identity_decisions={},
@@ -117,7 +131,10 @@ def publisher_for(report):
         return SimpleNamespace(
             value={
                 "active": None,
-                "current": {"latest_manifest": facts["identity_baseline_snapshot"]},
+                "current": {
+                    "latest_manifest": facts["identity_baseline_snapshot"],
+                    "release": facts["previous_release"],
+                },
                 "reserved_next_feature_id": facts["previous_generated_feature_id"],
             }
         )
@@ -244,7 +261,149 @@ def test_missing_sidecar_prevents_the_final_bundle_commit(built, tmp_path):
 
 
 def test_generation_pinning_prevents_replacement(built, tmp_path):
-    store, ref, _report = built
+    store, ref, report = built
     ref["generation"] += 1
     with pytest.raises(AssertionError):
-        bundle.load_bundle(store, ref, tmp_path / "load")
+        bundle.load_bundle(
+            store, ref, tmp_path / "load", producer_source=report["source_tree_sha256"]
+        )
+
+
+def test_reviewed_consumer_change_preserves_the_approved_producer(
+    built, tmp_path, monkeypatch
+):
+    store, ref, report = built
+    monkeypatch.setattr(gate, "source_digest", lambda: "0" * 64)
+    published = Mock(return_value={"status": "success"})
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+    bundle.promote(store, publisher_for(report), ref, tmp_path / "promotion")
+    assert published.call_count == 2
+    assert report["source_tree_sha256"] != gate.source_digest()
+
+
+def test_wrong_producer_is_refused_before_artifact_downloads(
+    built, tmp_path, monkeypatch
+):
+    store, ref, report = built
+    monkeypatch.setenv("WDPA_ACCEPTED_BUILD_SOURCE_SHA256", "0" * 64)
+    published = Mock()
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+    with pytest.raises(PublicationError, match="processing source"):
+        bundle.promote(store, publisher_for(report), ref, tmp_path / "promotion")
+    published.assert_not_called()
+    assert len(store.calls) == 1
+
+
+def test_publication_image_cannot_fall_back_to_source_processing(monkeypatch):
+    monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
+    monkeypatch.delenv("WDPA_FAIL_BEFORE_WRITES", raising=False)
+    job = Mock()
+    monkeypatch.setattr(wdpa, "run", job)
+    with pytest.raises(PublicationError, match="source rebuilding is disabled"):
+        publication_only.run()
+    job.assert_not_called()
+    monkeypatch.setenv("WDPA_PROMOTION_BUNDLE", "reviewed-reference")
+    publication_only.run()
+    job.assert_called_once_with()
+
+
+def test_publication_image_keeps_the_controlled_prewrite_failure(monkeypatch):
+    monkeypatch.delenv("WDPA_PROMOTION_BUNDLE", raising=False)
+    monkeypatch.setenv("WDPA_FAIL_BEFORE_WRITES", "true")
+    monkeypatch.setattr(wdpa, "prepare_scratch", lambda: None)
+    client = Mock()
+    monkeypatch.setattr(wdpa.storage, "Client", client)
+    with pytest.raises(RuntimeError, match="Controlled WDPA execution failure"):
+        publication_only.run()
+    client.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "built", [{"committed_marine": True, "memory": 7732400128}], indirect=True
+)
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "owner",
+        "baseline",
+        "counter",
+        "predecessor",
+        "period",
+        "source",
+        "identity",
+        "rows",
+    ],
+)
+def test_committed_marine_is_preserved_and_only_retained_terrestrial_is_published(
+    built, tmp_path, monkeypatch, defect
+):
+    store, ref, report = built
+    publisher = publisher_for(report)
+    record = {
+        "release_date": "2026-10-01",
+        "source_version": "Oct2026",
+        "source": wdpa.build_source_url(
+            wdpa.DEFAULT_SOURCE_URL_TEMPLATE, wdpa.parse_run_date(report["run_date"])
+        ),
+        "identity_contract": CONTRACT_ID,
+        "row_count": 17938,
+        # These previously published bytes deliberately differ from the new build.
+        "sha256": {
+            role: "1" * 64
+            for role in report["assets"]["wdpa-marine"]["artifact_sha256"]
+        },
+    }
+    publisher.load_successful_run_record.side_effect = lambda asset, _date: (
+        (record, {}) if asset.slug == "wdpa-marine" else None
+    )
+    original = publisher.state.side_effect
+
+    def state(asset):
+        state = original(asset)
+        if asset.slug == "wdpa-marine":
+            if defect == "owner":
+                state.value["active"] = {"owner": "another-execution"}
+            elif defect == "baseline":
+                state.value["current"]["latest_manifest"] = {"generation": 202}
+            elif defect == "counter":
+                state.value["reserved_next_feature_id"] += 1
+            elif defect == "predecessor":
+                state.value["current"]["release"] = "2026-09-30"
+        return state
+
+    publisher.state.side_effect = state
+    if defect == "period":
+        record["source_version"] = "Sep2026"
+    elif defect == "source":
+        record["source"] = "https://example.org/other-input.zip"
+    elif defect == "identity":
+        record["identity_contract"] = "different-identity-contract"
+    elif defect == "rows":
+        record["row_count"] -= 1
+    published = []
+
+    def publish(*, asset, outputs, **_kwargs):
+        assert asset.slug == "wdpa-terrestrial"
+        assert len(store.calls) == 1 + len(bundle.ROLES) + len(bundle.LOCALES)
+        for role, path in bundle.artifact_paths(outputs).items():
+            assert (
+                wdpa.sha256_file(path)
+                == report["staged_assets"][asset.slug]["artifacts"][role]["sha256"]
+            )
+        published.append(asset.slug)
+        return {"status": "success"}
+
+    monkeypatch.setattr(wdpa, "publish_asset", publish)
+    if defect:
+        with pytest.raises(PublicationError):
+            bundle.promote(store, publisher, ref, tmp_path / "promotion")
+        assert not published and len(store.calls) == 1
+        publisher.record_existing_successful_release.assert_not_called()
+    else:
+        result = bundle.promote(store, publisher, ref, tmp_path / "promotion")
+        assert published == ["wdpa-terrestrial"]
+        assert result[0]["status"] == "skipped"
+        publisher.record_existing_successful_release.assert_called_once_with(
+            wdpa.ASSETS[0], wdpa.parse_run_date(report["run_date"])
+        )

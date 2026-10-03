@@ -207,6 +207,8 @@ def check_promotion_plan(evidence):
         "artifact_bundle": reference,
         "cloud_execution": build.get("cloud_execution"),
         "cloud_image": build.get("cloud_image"),
+        "image_digest": build.get("image_digest"),
+        "source_tree_sha256": build.get("source_tree_sha256"),
         "run_date": build.get("run_date"),
         "assets": build.get("assets"),
     }:
@@ -218,9 +220,11 @@ def check(evidence):
     errors = []
     if (
         evidence.get("schema_version") != 3
-        or evidence.get("source_tree_sha256") != source_digest()
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence.get("source_tree_sha256", ""))
+        )
     ):
-        errors.append("benchmark evidence does not match the processing source tree")
+        errors.append("benchmark evidence is missing its producer source fingerprint")
     if evidence.get("disk_quota_approved") is not True:
         errors.append("100 GiB ephemeral disk per-instance quota has not been approved")
     build = evidence.get("build") or {}
