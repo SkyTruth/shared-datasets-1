@@ -1,0 +1,919 @@
+{
+  "verified_at": "2026-10-03T07:02:24.045710+00:00",
+  "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37104394169",
+  "reviewed_main": "85511c131ac2a6adc5eeab0874c11ba4081218a2",
+  "job": {
+    "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-processing-validation",
+    "uid": "7ef59ea4-0c10-40fb-83db-b6dc008eeb88",
+    "generation": "7",
+    "labels": {
+      "goog-terraform-provisioned": "true"
+    },
+    "createTime": "2026-10-02T17:02:44.233113Z",
+    "updateTime": "2026-10-03T06:59:56.267138Z",
+    "creator": "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+    "lastModifier": "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+    "launchStage": "GA",
+    "template": {
+      "parallelism": 1,
+      "taskCount": 1,
+      "template": {
+        "containers": [
+          {
+            "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff",
+            "command": [
+              "python",
+              "scripts/cloud_wdpa_validation.py"
+            ],
+            "env": [
+              {
+                "name": "TMPDIR",
+                "value": "/work/tmp"
+              },
+              {
+                "name": "WDPA_BUILD_IMAGE_CONFIG_DIGEST",
+                "value": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760"
+              },
+              {
+                "name": "SHARED_DATASETS_WORKDIR",
+                "value": "/work/shared-datasets-1"
+              },
+              {
+                "name": "WDPA_BUILD_IMAGE",
+                "value": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff"
+              }
+            ],
+            "resources": {
+              "limits": {
+                "cpu": "4",
+                "memory": "8Gi"
+              }
+            },
+            "volumeMounts": [
+              {
+                "name": "work",
+                "mountPath": "/work"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "work",
+            "emptyDir": {
+              "medium": "DISK",
+              "sizeLimit": "100Gi"
+            }
+          }
+        ],
+        "maxRetries": 0,
+        "timeout": "86400s",
+        "serviceAccount": "wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+        "executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2"
+      }
+    },
+    "observedGeneration": "7",
+    "terminalCondition": {
+      "type": "Ready",
+      "state": "CONDITION_SUCCEEDED"
+    },
+    "executionCount": 8,
+    "latestCreatedExecution": {
+      "name": "wdpa-processing-validation-cg4bc",
+      "createTime": "2026-10-03T07:00:10.227606Z",
+      "completionStatus": "EXECUTION_RUNNING"
+    },
+    "etag": "\"COzPgtYGENDnsH8/cHJvamVjdHMvc2hhcmVkLWRhdGFzZXRzLTEvbG9jYXRpb25zL3VzLWNlbnRyYWwxL2pvYnMvd2RwYS1wcm9jZXNzaW5nLXZhbGlkYXRpb24\""
+  },
+  "registry_manifest": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+    "config": {
+      "mediaType": "application/vnd.docker.container.image.v1+json",
+      "size": 13323,
+      "digest": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760"
+    },
+    "layers": [
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 29153837,
+        "digest": "sha256:501c3e032d323c5d2ecdc2c3da91ccdf6497a1d8e69fac78ad18322540160970"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 3980839,
+        "digest": "sha256:dbf5e2aa24a0e681a98b3a0196c5f88f5085ff5a3ef596b3f679d5ccb16ca199"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 13678674,
+        "digest": "sha256:faea3286cb6abfea4fdbf739c2057772b9a45ba3ee053190696b5f56aff29665"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 249,
+        "digest": "sha256:59fc966a4f9d30ea2c9c65a11edd7670cfd41fe7f820f39793b2f2679d7bd47f"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 24250982,
+        "digest": "sha256:d1c6b2116586294dab33e627a04b7a0dff4bb9da590247786e5638563e0e121c"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 265452858,
+        "digest": "sha256:9386a1b3767d04e268f8647d0a35bfc4348e35d09315ddc0862191940d0f47da"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 32779451,
+        "digest": "sha256:f5281067ada9ac7ea08144ef32e9522135de2ae723b2b2dc914d63b6dfb1e9c5"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 93,
+        "digest": "sha256:e6e47903e76e6bf0fb17c11a174bc8e802b5833ea8bb66381be5303c30a027f5"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 52843,
+        "digest": "sha256:15b0e6710b328b9854b71b6420d4783a59717ce85a89cba6c9b3a074f5abd03c"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 51192608,
+        "digest": "sha256:29465eace561bd1fb1a81928c3a840bdc641d8ca6704c5bc4e80915d67cf9e80"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 100573,
+        "digest": "sha256:d6b8e12617f0bed4d6238232bef1ac7d5f1aa92674543f99d602b305d8866146"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 6452,
+        "digest": "sha256:3918d8c52100c9a53cff9b886a9ad3dcacf6678a09198288acb897ee705de82e"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 6915,
+        "digest": "sha256:3c5f1edc544cb7b4d2d5344c6d093c56393c3612b8fab65670bb26f07348ae4d"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 1618,
+        "digest": "sha256:395f6e41e3363732fca3411269f578e966f75afa2e3c21ce27e1680568021892"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 4174,
+        "digest": "sha256:65493b26fd47777a1abd1f48c8e3dbb0194c71a62f7ef41ff13bc425a58c3bc4"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 15166,
+        "digest": "sha256:bc220033375f97a09f748283d672264a79a64ae05c5976a626a06a502211ce4f"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 2210,
+        "digest": "sha256:532f2a64ea3632b04408c031da3365ae1824ce361c70f204533543e583511235"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 12031,
+        "digest": "sha256:53d99de3ec632c5b3bcedbff39ae2cbd60f9c4ef991282d29f32418fa1144e31"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 4486,
+        "digest": "sha256:ed25c901685d6b8e3567b51ef98b9d53c3f9ae39f0e458ad40b4d080f5e82ea1"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 6331,
+        "digest": "sha256:36add2763e84b35ad373f4c87dd146e21a7ae1c72e58a7fe738de7a7a763ee41"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 1537,
+        "digest": "sha256:9b2f3ab7cceedfb880fbddd161238964e25ee0647f202ee7592f6c15f95e6315"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 1747,
+        "digest": "sha256:60a025ef02a86fc5c218b88b3ac55d985dce89df11608796a0651e543c6bea96"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 1733,
+        "digest": "sha256:deac1ef90671cd02482985ef35abd47eb9a3ea9d59e263ce3d87ccc6789d8a91"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 1517,
+        "digest": "sha256:c19564cb19edda608e5beee6d4ec4e9143ef1672083c81a22b2ea2003a3fd637"
+      },
+      {
+        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "size": 3700,
+        "digest": "sha256:b06b96ee42b1adb790d96f32735c171e9d2c0266db82afa1d5e5ba0f0daa8d9e"
+      }
+    ]
+  },
+  "registry_manifest_sha256": "sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff",
+  "registry_config_sha256": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760",
+  "stager": {
+    "name": "projects/shared-datasets-1/roles/wdpaBuildStager",
+    "title": "WDPA immutable build stager",
+    "includedPermissions": [
+      "storage.folders.create",
+      "storage.objects.create"
+    ],
+    "stage": "GA",
+    "etag": "BwZc6iDC9Uc="
+  },
+  "runtime_project_roles": [],
+  "terminal_verified_at": "2026-10-03T13:17:45.108757+00:00",
+  "execution": {
+    "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-processing-validation/executions/wdpa-processing-validation-cg4bc",
+    "uid": "ecf622d3-7ace-44fd-a517-8e78c0956bb8",
+    "generation": "1",
+    "createTime": "2026-10-03T07:00:10.227606Z",
+    "completionTime": "2026-10-03T13:12:01.721786Z",
+    "updateTime": "2026-10-03T07:00:10.227606Z",
+    "launchStage": "GA",
+    "job": "wdpa-processing-validation",
+    "parallelism": 1,
+    "taskCount": 1,
+    "template": {
+      "containers": [
+        {
+          "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff",
+          "command": [
+            "python",
+            "scripts/cloud_wdpa_validation.py"
+          ],
+          "env": [
+            {
+              "name": "TMPDIR",
+              "value": "/work/tmp"
+            },
+            {
+              "name": "WDPA_BUILD_IMAGE_CONFIG_DIGEST",
+              "value": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760"
+            },
+            {
+              "name": "SHARED_DATASETS_WORKDIR",
+              "value": "/work/shared-datasets-1"
+            },
+            {
+              "name": "WDPA_BUILD_IMAGE",
+              "value": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff"
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "4",
+              "memory": "8Gi"
+            }
+          },
+          "volumeMounts": [
+            {
+              "name": "work",
+              "mountPath": "/work"
+            }
+          ]
+        }
+      ],
+      "volumes": [
+        {
+          "name": "work",
+          "emptyDir": {
+            "medium": "DISK",
+            "sizeLimit": "100Gi"
+          }
+        }
+      ],
+      "maxRetries": 0,
+      "timeout": "86400s",
+      "serviceAccount": "wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+      "executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2"
+    },
+    "conditions": [
+      {
+        "type": "Started",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Started deployed execution in 1m27.96s.",
+        "lastTransitionTime": "2026-10-03T07:01:39.160713Z"
+      },
+      {
+        "type": "Completed",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Execution completed successfully in 6h11m35.56s.",
+        "lastTransitionTime": "2026-10-03T13:12:01.721786Z"
+      },
+      {
+        "type": "ContainerReady",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Imported container image.",
+        "lastTransitionTime": "2026-10-03T07:00:11.103858Z"
+      },
+      {
+        "type": "ResourcesAvailable",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Provisioned imported containers.",
+        "lastTransitionTime": "2026-10-03T07:00:11.199526Z"
+      }
+    ],
+    "observedGeneration": "1",
+    "succeededCount": 1,
+    "startTime": "2026-10-03T07:00:26.158036Z",
+    "logUri": "https://console.cloud.google.com/logs/viewer?project=shared-datasets-1&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22wdpa-processing-validation%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22wdpa-processing-validation-cg4bc%22",
+    "creator": "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+    "etag": "\"CPrPgtYGEPD7w2w/cHJvamVjdHMvc2hhcmVkLWRhdGFzZXRzLTEvbG9jYXRpb25zL3VzLWNlbnRyYWwxL2pvYnMvd2RwYS1wcm9jZXNzaW5nLXZhbGlkYXRpb24vZXhlY3V0aW9ucy93ZHBhLXByb2Nlc3NpbmctdmFsaWRhdGlvbi1jZzRiYw\""
+  },
+  "retained_objects": [
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/build-bundle.json/1791033114607974",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fbuild-bundle.json",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fbuild-bundle.json?generation=1791033114607974&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/build-bundle.json",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033114607974",
+      "metageneration": "1",
+      "contentType": "application/json",
+      "storageClass": "STANDARD",
+      "size": "81647",
+      "md5Hash": "B5xr548itD7uVkXnbOSICw==",
+      "cacheControl": "no-store",
+      "crc32c": "azdp9Q==",
+      "etag": "COaCz6T2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:54.731Z",
+      "updated": "2026-10-03T13:11:54.731Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:54.731Z",
+      "timeFinalized": "2026-10-03T13:11:54.731Z",
+      "metadata": {
+        "sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.fgb/1791015470509746",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.fgb",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.fgb?generation=1791015470509746&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.fgb",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015470509746",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "1296594616",
+      "md5Hash": "H9WUc6NtShSMBLtBZCG88g==",
+      "cacheControl": "no-store",
+      "crc32c": "7+0e3w==",
+      "etag": "CLLdoMe0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:50.634Z",
+      "updated": "2026-10-03T08:17:50.634Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:50.634Z",
+      "timeFinalized": "2026-10-03T08:17:50.634Z",
+      "metadata": {
+        "sha256": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata-translations.csv/1791015478524175",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata-translations.csv",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata-translations.csv?generation=1791015478524175&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata-translations.csv",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015478524175",
+      "metageneration": "1",
+      "contentType": "text/csv",
+      "storageClass": "STANDARD",
+      "size": "294977613",
+      "md5Hash": "bAMFGNNwndF9Trcdss5qhQ==",
+      "cacheControl": "no-store",
+      "crc32c": "8TrplA==",
+      "etag": "CI/yicu0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:58.580Z",
+      "updated": "2026-10-03T08:17:58.580Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:58.580Z",
+      "timeFinalized": "2026-10-03T08:17:58.580Z",
+      "metadata": {
+        "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.es.ndjson.gz/1791015478826035",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.es.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.es.ndjson.gz?generation=1791015478826035&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.es.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015478826035",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3244949",
+      "md5Hash": "19jsiadPvtU5/+aW9CL82g==",
+      "cacheControl": "no-store",
+      "crc32c": "rCsEkg==",
+      "etag": "CLOonMu0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:58.886Z",
+      "updated": "2026-10-03T08:17:58.886Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:58.886Z",
+      "timeFinalized": "2026-10-03T08:17:58.886Z",
+      "metadata": {
+        "sha256": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.fr.ndjson.gz/1791015479123754",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.fr.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.fr.ndjson.gz?generation=1791015479123754&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.fr.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015479123754",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3241892",
+      "md5Hash": "/51G4FjLowqvZq1exNrs5A==",
+      "cacheControl": "no-store",
+      "crc32c": "eR683Q==",
+      "etag": "CKq+rsu0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:59.177Z",
+      "updated": "2026-10-03T08:17:59.177Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:59.177Z",
+      "timeFinalized": "2026-10-03T08:17:59.177Z",
+      "metadata": {
+        "sha256": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.id.ndjson.gz/1791015479457613",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.id.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.id.ndjson.gz?generation=1791015479457613&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.id.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015479457613",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3236234",
+      "md5Hash": "7Iks2E2IHmqj746aA8P2gg==",
+      "cacheControl": "no-store",
+      "crc32c": "mGqViQ==",
+      "etag": "CM3uwsu0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:59.579Z",
+      "updated": "2026-10-03T08:17:59.579Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:59.579Z",
+      "timeFinalized": "2026-10-03T08:17:59.579Z",
+      "metadata": {
+        "sha256": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.ndjson.gz/1791015473207139",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.ndjson.gz?generation=1791015473207139&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015473207139",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3167213",
+      "md5Hash": "AfKSOz+TIHbHI0zrpdjD6A==",
+      "cacheControl": "no-store",
+      "crc32c": "fyU3Ow==",
+      "etag": "COOuxci0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:53.320Z",
+      "updated": "2026-10-03T08:17:53.320Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:53.320Z",
+      "timeFinalized": "2026-10-03T08:17:53.320Z",
+      "metadata": {
+        "sha256": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt.ndjson.gz/1791015479856640",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.pt.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.pt.ndjson.gz?generation=1791015479856640&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015479856640",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3247584",
+      "md5Hash": "TItUO39A3sgblVApC5EqXA==",
+      "cacheControl": "no-store",
+      "crc32c": "kr0zQg==",
+      "etag": "CICc28u0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:59.973Z",
+      "updated": "2026-10-03T08:17:59.973Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:59.973Z",
+      "timeFinalized": "2026-10-03T08:17:59.973Z",
+      "metadata": {
+        "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt_br.ndjson.gz/1791015480222984",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.pt_br.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.pt_br.ndjson.gz?generation=1791015480222984&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt_br.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015480222984",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3247584",
+      "md5Hash": "TItUO39A3sgblVApC5EqXA==",
+      "cacheControl": "no-store",
+      "crc32c": "kr0zQg==",
+      "etag": "CIjK8cu0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:18:00.265Z",
+      "updated": "2026-10-03T08:18:00.265Z",
+      "timeStorageClassUpdated": "2026-10-03T08:18:00.265Z",
+      "timeFinalized": "2026-10-03T08:18:00.265Z",
+      "metadata": {
+        "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.sw.ndjson.gz/1791015480528611",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.sw.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.metadata.sw.ndjson.gz?generation=1791015480528611&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.sw.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015480528611",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "3242887",
+      "md5Hash": "0//rYiGjS7ZtpY2iCSGYcg==",
+      "cacheControl": "no-store",
+      "crc32c": "Seurxg==",
+      "etag": "COOdhMy0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:18:00.590Z",
+      "updated": "2026-10-03T08:18:00.590Z",
+      "timeStorageClassUpdated": "2026-10-03T08:18:00.590Z",
+      "timeFinalized": "2026-10-03T08:18:00.590Z",
+      "metadata": {
+        "sha256": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.pmtiles/1791015472751148",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.pmtiles",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.pmtiles?generation=1791015472751148&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.pmtiles",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015472751148",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "151243566",
+      "md5Hash": "7ocjjtLN36LJcYsBK6QNUQ==",
+      "cacheControl": "no-store",
+      "crc32c": "MssWcg==",
+      "etag": "CKzEqci0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:52.868Z",
+      "updated": "2026-10-03T08:17:52.868Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:52.868Z",
+      "timeFinalized": "2026-10-03T08:17:52.868Z",
+      "metadata": {
+        "sha256": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.schema.json/1791015473640357",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.schema.json",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-marine%2Fwdpa-marine.schema.json?generation=1791015473640357&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.schema.json",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791015473640357",
+      "metageneration": "1",
+      "contentType": "application/json",
+      "storageClass": "STANDARD",
+      "size": "3858",
+      "md5Hash": "wx5kNp5QwVS5mKe/Qcvx+w==",
+      "cacheControl": "no-store",
+      "crc32c": "VjsKPg==",
+      "etag": "CKXn38i0nZcDEAE=",
+      "timeCreated": "2026-10-03T08:17:53.765Z",
+      "updated": "2026-10-03T08:17:53.765Z",
+      "timeStorageClassUpdated": "2026-10-03T08:17:53.765Z",
+      "timeFinalized": "2026-10-03T08:17:53.765Z",
+      "metadata": {
+        "sha256": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.fgb/1791032900457468",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.fgb",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.fgb?generation=1791032900457468&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.fgb",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791032900457468",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "5816513152",
+      "md5Hash": "8s9k81FDKzq4BAuRfeb2iQ==",
+      "cacheControl": "no-store",
+      "crc32c": "PWiFYA==",
+      "etag": "CPynwL71nZcDEAE=",
+      "timeCreated": "2026-10-03T13:08:20.659Z",
+      "updated": "2026-10-03T13:08:20.659Z",
+      "timeStorageClassUpdated": "2026-10-03T13:08:20.659Z",
+      "timeFinalized": "2026-10-03T13:08:20.659Z",
+      "metadata": {
+        "sha256": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata-translations.csv/1791033105897614",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata-translations.csv",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata-translations.csv?generation=1791033105897614&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata-translations.csv",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033105897614",
+      "metageneration": "1",
+      "contentType": "text/csv",
+      "storageClass": "STANDARD",
+      "size": "8503902895",
+      "md5Hash": "+S0bR+YHMa1XQC5UK4AQIw==",
+      "cacheControl": "no-store",
+      "crc32c": "+8nu4w==",
+      "etag": "CI6xu6D2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:45.984Z",
+      "updated": "2026-10-03T13:11:45.984Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:45.984Z",
+      "timeFinalized": "2026-10-03T13:11:45.984Z",
+      "metadata": {
+        "sha256": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.es.ndjson.gz/1791033107297054",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.es.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.es.ndjson.gz?generation=1791033107297054&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.es.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033107297054",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71525468",
+      "md5Hash": "VFzqTmKbjxso3ppVaCXkLg==",
+      "cacheControl": "no-store",
+      "crc32c": "1aQOhw==",
+      "etag": "CJ7mkKH2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:47.418Z",
+      "updated": "2026-10-03T13:11:47.418Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:47.418Z",
+      "timeFinalized": "2026-10-03T13:11:47.418Z",
+      "metadata": {
+        "sha256": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.fr.ndjson.gz/1791033108567707",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.fr.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.fr.ndjson.gz?generation=1791033108567707&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.fr.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033108567707",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71238392",
+      "md5Hash": "6XWMD4sc5LZwVom0XbxnNw==",
+      "cacheControl": "no-store",
+      "crc32c": "U+M9Tw==",
+      "etag": "CJut3qH2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:48.665Z",
+      "updated": "2026-10-03T13:11:48.665Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:48.665Z",
+      "timeFinalized": "2026-10-03T13:11:48.665Z",
+      "metadata": {
+        "sha256": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.id.ndjson.gz/1791033109801552",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.id.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.id.ndjson.gz?generation=1791033109801552&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.id.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033109801552",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71513142",
+      "md5Hash": "dqpgHccZFe/o5GehAolmIw==",
+      "cacheControl": "no-store",
+      "crc32c": "LLEPaQ==",
+      "etag": "CNDUqaL2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:49.857Z",
+      "updated": "2026-10-03T13:11:49.857Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:49.857Z",
+      "timeFinalized": "2026-10-03T13:11:49.857Z",
+      "metadata": {
+        "sha256": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.ndjson.gz/1791032921458134",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.ndjson.gz?generation=1791032921458134&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791032921458134",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "70215228",
+      "md5Hash": "Kk3SL1mmV2ncM2iin12DyQ==",
+      "cacheControl": "no-store",
+      "crc32c": "SQ3CZg==",
+      "etag": "CNaLwsj1nZcDEAE=",
+      "timeCreated": "2026-10-03T13:08:41.573Z",
+      "updated": "2026-10-03T13:08:41.573Z",
+      "timeStorageClassUpdated": "2026-10-03T13:08:41.573Z",
+      "timeFinalized": "2026-10-03T13:08:41.573Z",
+      "metadata": {
+        "sha256": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt.ndjson.gz/1791033111134053",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.pt.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.pt.ndjson.gz?generation=1791033111134053&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033111134053",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71517792",
+      "md5Hash": "+wj46mjeMCgVpZxPBoDgyw==",
+      "cacheControl": "no-store",
+      "crc32c": "6/TrGA==",
+      "etag": "COX++qL2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:51.188Z",
+      "updated": "2026-10-03T13:11:51.188Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:51.188Z",
+      "timeFinalized": "2026-10-03T13:11:51.188Z",
+      "metadata": {
+        "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt_br.ndjson.gz/1791033112492248",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.pt_br.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.pt_br.ndjson.gz?generation=1791033112492248&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033112492248",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71517792",
+      "md5Hash": "+wj46mjeMCgVpZxPBoDgyw==",
+      "cacheControl": "no-store",
+      "crc32c": "6/TrGA==",
+      "etag": "CNjxzaP2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:52.553Z",
+      "updated": "2026-10-03T13:11:52.553Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:52.553Z",
+      "timeFinalized": "2026-10-03T13:11:52.553Z",
+      "metadata": {
+        "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.sw.ndjson.gz/1791033113809809",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.sw.ndjson.gz",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.metadata.sw.ndjson.gz?generation=1791033113809809&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.sw.ndjson.gz",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791033113809809",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "71475188",
+      "md5Hash": "kJKaZjTI+JHtvZTWqyILMA==",
+      "cacheControl": "no-store",
+      "crc32c": "TGnKRQ==",
+      "etag": "CJGnnqT2nZcDEAE=",
+      "timeCreated": "2026-10-03T13:11:53.857Z",
+      "updated": "2026-10-03T13:11:53.857Z",
+      "timeStorageClassUpdated": "2026-10-03T13:11:53.857Z",
+      "timeFinalized": "2026-10-03T13:11:53.857Z",
+      "metadata": {
+        "sha256": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.pmtiles/1791032919961731",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.pmtiles",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.pmtiles?generation=1791032919961731&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.pmtiles",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791032919961731",
+      "metageneration": "1",
+      "contentType": "application/octet-stream",
+      "storageClass": "STANDARD",
+      "size": "893775735",
+      "md5Hash": "DIuy1WMZ8/QVCQEPwTnYyw==",
+      "cacheControl": "no-store",
+      "crc32c": "Ry/JwA==",
+      "etag": "CIPh5sf1nZcDEAE=",
+      "timeCreated": "2026-10-03T13:08:40.118Z",
+      "updated": "2026-10-03T13:08:40.118Z",
+      "timeStorageClassUpdated": "2026-10-03T13:08:40.118Z",
+      "timeFinalized": "2026-10-03T13:08:40.118Z",
+      "metadata": {
+        "sha256": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    },
+    {
+      "kind": "storage#object",
+      "id": "skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.schema.json/1791032921693754",
+      "selfLink": "https://www.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.schema.json",
+      "mediaLink": "https://storage.googleapis.com/download/storage/v1/b/skytruth-shared-datasets-1/o/_scratch%2Fwdpa-builds%2Fwdpa-processing-validation-cg4bc%2Fwdpa-terrestrial%2Fwdpa-terrestrial.schema.json?generation=1791032921693754&alt=media",
+      "name": "_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.schema.json",
+      "bucket": "skytruth-shared-datasets-1",
+      "generation": "1791032921693754",
+      "metageneration": "1",
+      "contentType": "application/json",
+      "storageClass": "STANDARD",
+      "size": "3862",
+      "md5Hash": "OuHR0rPjcZi63y/A05LkGw==",
+      "cacheControl": "no-store",
+      "crc32c": "dRToeg==",
+      "etag": "CLq80Mj1nZcDEAE=",
+      "timeCreated": "2026-10-03T13:08:41.754Z",
+      "updated": "2026-10-03T13:08:41.754Z",
+      "timeStorageClassUpdated": "2026-10-03T13:08:41.754Z",
+      "timeFinalized": "2026-10-03T13:08:41.754Z",
+      "metadata": {
+        "sha256": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+        "build_execution": "wdpa-processing-validation-cg4bc"
+      }
+    }
+  ],
+  "all_validation_execution_pages_inspected": true,
+  "active_validation_executions": [],
+  "registry_configuration_reference": {
+    "path": "docs/wdpa-processing-evidence/37095105175/image-config.json",
+    "sha256": "ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760"
+  }
+}

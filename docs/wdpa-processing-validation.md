@@ -1,10 +1,11 @@
 # WDPA processing validation and rollout evidence
 
-Readiness is **pending**. The rollout builds the complete October artifacts once,
-retains the validated files, and promotes those exact bytes to the production
-bucket. It does not require a second complete build or regenerate artifacts in
-the production canary. `catalog/wdpa-processing-acceptance.json` remains blocked
-until a retained build and its reviewed promotion plan exist.
+The complete October build and retained artifacts pass validation. Publication
+remains pending review of the exact promotion plan and the protected rollout.
+`catalog/wdpa-processing-acceptance.json` pins that single build, its validated
+files and its immutable promotion plan. Production promotes those exact bytes
+with the original build date; it does not require a second complete build or
+regenerate artifacts in the production canary.
 
 The artifact-retaining image passed its small native fixture and deterministic
 both-realm old/new sample in [run 37095105175](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37095105175)
@@ -34,6 +35,47 @@ artifact hashes, semantic results, baseline identities and allocation counters
 match the preceding sample. These are sampled counts and compatibility evidence,
 not full terrestrial acceptance or publication. After reviewed merge and no
 active execution, this permits one isolated complete retaining build.
+
+## Complete retained October build
+
+The single retaining build `wdpa-processing-validation-cg4bc` reached terminal
+success at 2026-10-03 13:12:01 UTC. Its unchanged
+[raw report](wdpa-processing-evidence/wdpa-processing-validation-cg4bc/report.json)
+and exact [bundle bytes](wdpa-processing-evidence/wdpa-processing-validation-cg4bc/build-bundle.json)
+are retained with actual Cloud Run, registry and object facts. The committed
+root descriptor has generation `1791033114607974`, size 81,647 bytes and SHA-256
+`a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170`.
+
+Native FGB, PMTiles, canonical metadata, schema, translation CSV and all six
+locale contracts passed for both realms. All 22 stored files were independently
+stream-read at their exact generations and SHA-256 verified. The previously
+verified marine files were reused after their descriptor references and current
+object metadata matched; terrestrial verification read all 15,713,198,646 bytes.
+Marine has 17,938 records, including 304 India records, and next generated ID
+17,943. Terrestrial has 497,914 records, including 193,174 India records, and next
+generated ID 497,919. Both independent source counts and identity contracts pass.
+
+Actual kernel lifetime peak, including file cache, is 7,725,993,984 bytes
+(7.20 GiB); the unchanged enforced limit is 8 GiB. The preferred 6.4 GiB margin
+produces the recorded advisory warning. Scratch peaked at 23,677,530,112 bytes
+and final cloud elapsed time is 22,205.078511625 seconds. Configuration remains
+4 CPU / 8 GiB / 100 GiB DISK / zero retries. No cache improvement or second full
+build is required. The complete raw report preserves
+`compatibility_verified: false`; the separately reviewed deterministic old/new
+sample supplies compatibility proof with matching frozen inputs, native tools
+and original producer image/source fingerprints.
+
+All locale files are present and validated. Their localization reports preserve
+existing missing or unconfirmed translation rows and source-language fallback;
+artifact completeness does not claim every field has a confirmed translation.
+
+[PR #199](https://github.com/SkyTruth/shared-datasets-1/pull/199) records version 3
+acceptance and the immutable owned promotion plan. Publication still requires its
+normal exact-head review/merge, protected worker and observer deployment,
+controlled worker failure-alert delivery verification and live ownership checks.
+The existing October marine release remains committed; only the needed
+terrestrial bytes are promoted, with the build's original `2026-10-01` run date.
+This retained bundle is noncanonical staging, not evidence of publication.
 
 ## Single build and promotion
 
@@ -575,12 +617,12 @@ describes the separate limits and initial regional grant.
 
 ## Remaining acceptance and rollout
 
-The new retaining image needs matching small/sample evidence and one complete
-terminal-success build. Preserve its raw report and immutable references, then
-review and merge the exact build promotion plan. Observer bootstrap approval is
-still a separate prerequisite; the existing proposal does not gain approval from
-this delivery change. Verify actual controlled-failure alert delivery before the
-production promotion. Follow publication to terminal status and independently
+The retaining build and matching small/sample evidence are complete. Review and
+merge its exact build promotion plan, then deploy the worker and independent
+observer through the protected workflow. The human-approved temporary observer
+bootstrap grant is applied and expires absolutely at 2026-10-06 00:00:00 UTC;
+remove its binding through a reviewed follow-up after provisioning. Verify actual
+controlled worker failure-alert delivery before production promotion. Follow publication to terminal status and independently
 check terrestrial FGB, every sidecar, both release indexes, generations and custom
 metadata. The monitor remains active until terrestrial publication is verified.
 

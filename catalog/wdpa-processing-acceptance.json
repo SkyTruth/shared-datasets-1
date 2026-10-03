@@ -1,10 +1,3424 @@
 {
   "schema_version": 3,
-  "source_tree_sha256": null,
+  "source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23",
   "disk_quota_approved": true,
-  "compatibility_sample": null,
-  "build": null,
-  "promotion_plan": null,
-  "promotion_pr": null,
-  "blocked_reason": "One complete passing build must retain generation/hash-pinned FGB, PMTiles, metadata, schema and all translations in immutable noncanonical staging. Review its exact artifact bundle and promotion plan, then publish those bytes without a second build. Reports without retained artifacts cannot authorize publication."
+  "compatibility_sample": {
+    "asset_scope": [
+      "wdpa-marine",
+      "wdpa-terrestrial"
+    ],
+    "assets": {
+      "wdpa-marine": {
+        "artifact_sha256": {
+          "csv": "a6caf77bf4c089eac1a929586d1906b4af28e66d9537973f74b0615cc64acf26",
+          "fgb": "22ae7b2b24203b1bb9ef720589126836557216f9138aa3fcdcd433ff4a7b5879",
+          "metadata": "46284acdd12395ebf8d30740b38b6aa9011695258d6eaf6f34a6006f8c98be50",
+          "metadata_es": "50e5a8ce5802d18c3b0275cec219cfbbb8b6b6b3c7e505ec6e1f25e218d584c0",
+          "metadata_fr": "9af53c2e076557cb430be38d7dceaed643dfb801ed6d765de2b271bf71648ee2",
+          "metadata_id": "1c47cc9d40cdda6fb8c067692658795438f2dc31582c6f0d57bfe62a5a10099b",
+          "metadata_pt": "e22625d9379a3c5d17230f199984c132c09dc4c13e2ff8a11f5ff54106a0b8c6",
+          "metadata_pt_br": "e22625d9379a3c5d17230f199984c132c09dc4c13e2ff8a11f5ff54106a0b8c6",
+          "metadata_sw": "3e8bd0cdb2c0162be42eb5e84ea4968ca3cea6d7b7c954a94b81f5c3ee53d9dc",
+          "metadata_translations": "a6caf77bf4c089eac1a929586d1906b4af28e66d9537973f74b0615cc64acf26",
+          "pmtiles": "2904cf6910a87a377c8e5f32477740f3ccdb13be39a9c3ae4b1c86930f14d082",
+          "schema": "7481c3c01f6cc59a44ff56d4a401c141b8bcba0835b2172165ef1267c6778e71"
+        },
+        "baseline": {
+          "generation": 1790866753009809,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+          "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+        },
+        "compatibility_verified": true,
+        "india_rows": 0,
+        "india_sites": 0,
+        "next_generated_feature_id": 17943,
+        "rows": 20,
+        "semantic_sha256": "4e4b296884d58aeba43533126a400a485a75dd33968a24baeaa28db06502bf31",
+        "source_counts": {
+          "india_rows": 0,
+          "india_sites": 0,
+          "raw_rows": 20,
+          "rows": 20
+        }
+      },
+      "wdpa-terrestrial": {
+        "artifact_sha256": {
+          "csv": "deaf0f98401c2fa31eb88d56fe46c668521f3eb3785c77d1b02f4eb31cb1cf6c",
+          "fgb": "a9d8adda25f409d057f11b934ccb121c68c48494242cec842ee524bc8fb0d29c",
+          "metadata": "4da41c053c01f2609db131abfca3cc7236280482ccc17d778346db9cd3cbeab6",
+          "metadata_es": "caaaf4d6f4494b4990ac66a8c36a2c42467165f0ad2d8332932080eeb45a9a85",
+          "metadata_fr": "9c9c7d6ea21cb812d160a445f6185df4b91aa23f23dbb5a44a6d2ff60abff24a",
+          "metadata_id": "5e753bc7735ed22b323fde6b3055cc023d566b56fb358fcfe56512c117c562c0",
+          "metadata_pt": "8b146cc001f3f6c10e712392231429ea37bad8df402f8b86d7431c7670a3f114",
+          "metadata_pt_br": "8b146cc001f3f6c10e712392231429ea37bad8df402f8b86d7431c7670a3f114",
+          "metadata_sw": "0fc8d64535305621ab9644a1d329e39764d4f105235b5d549757ec7711a91cd0",
+          "metadata_translations": "deaf0f98401c2fa31eb88d56fe46c668521f3eb3785c77d1b02f4eb31cb1cf6c",
+          "pmtiles": "ea744f11bd8cac6b3dbe0fc1b8be9b0ff40699deb769f006603cefadbb0e0dae",
+          "schema": "82c6833587f1133beb8f3bf86c36d3f14745a45db1fd51d00cd43977553a1981"
+        },
+        "baseline": {
+          "generation": 1790815952362262,
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+          "sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88"
+        },
+        "compatibility_verified": true,
+        "india_rows": 193,
+        "india_sites": 193,
+        "next_generated_feature_id": 305011,
+        "rows": 499,
+        "semantic_sha256": "81fbf37e4fe611897806dcfcb8ce4171f5950ca6098de7915a0684db86d9250c",
+        "source_counts": {
+          "india_rows": 193,
+          "india_sites": 193,
+          "raw_rows": 499,
+          "rows": 499
+        }
+      }
+    },
+    "baseline_snapshot_sha256": "e65323aecb705d8c1f489404727b7940aed475fc69bfd9345c01db15a0cb4b2f",
+    "compatibility_verified": true,
+    "contracts_verified": true,
+    "cpu_limit": 4.0,
+    "elapsed_seconds": 678.2806736089999,
+    "genesis": false,
+    "memory_limit_bytes": 8589934592,
+    "memory_peak_bytes": 6467153920,
+    "native_versions": {
+      "gdal_python": "3.6.2",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "pmtiles": "pmtiles dev, commit none, built at unknown",
+      "pmtiles_build_version": "v1.30.1",
+      "pmtiles_path": "/usr/local/bin/pmtiles",
+      "tippecanoe": "tippecanoe v2.52.0",
+      "tippecanoe_path": "/usr/bin/tippecanoe"
+    },
+    "phases": [
+      {
+        "artifact_sizes": {
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 66.484,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 42680320,
+          "file": 4282757120,
+          "file_dirty": 876892160,
+          "file_mapped": 0,
+          "kernel": 96251904,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "frozen-inputs",
+        "phase_memory_peak_bytes": 4421955584,
+        "process_rss_peak_bytes": 183136256,
+        "scratch_cache_releases": 2,
+        "scratch_peak_bytes": 9561575424,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 362.371,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 280674304,
+          "file": 3907571712,
+          "file_dirty": 414179328,
+          "file_mapped": 0,
+          "kernel": 107950080,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "translation-index",
+        "phase_memory_peak_bytes": 4296744960,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 1,
+        "scratch_peak_bytes": 7185268736,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 4.015,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270319616,
+          "file": 1861472256,
+          "file_dirty": 613175296,
+          "file_mapped": 0,
+          "kernel": 30175232,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:independent-source-counts",
+        "phase_memory_peak_bytes": 2163707904,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6739496960,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 54.899,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270323712,
+          "file": 4214296576,
+          "file_dirty": 2228224,
+          "file_mapped": 0,
+          "kernel": 10416128,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:legacy-sample",
+        "phase_memory_peak_bytes": 4496695296,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 2,
+        "scratch_peak_bytes": 6742671360,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 4.061,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 281100288,
+          "file": 1863946240,
+          "file_dirty": 405504,
+          "file_mapped": 0,
+          "kernel": 5881856,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:source-count",
+        "phase_memory_peak_bytes": 2152771584,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6742671360,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.filtered.gpkg": 618496,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 46.299,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 366620672,
+          "file": 3932073984,
+          "file_dirty": 507904,
+          "file_mapped": 0,
+          "kernel": 10825728,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:filter",
+        "phase_memory_peak_bytes": 4311388160,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 1,
+        "scratch_peak_bytes": 6743289856,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.identity.sqlite": 32768,
+          "wdpa-marine.normalized.gpkg": 65536,
+          "wdpa-marine.normalized.schema.geojsonseq": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.256,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 2690727936,
+          "file_dirty": 159744,
+          "file_mapped": 0,
+          "kernel": 10674176,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:normalize",
+        "phase_memory_peak_bytes": 2973061120,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6743388160,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.identity.sqlite": 32768,
+          "wdpa-marine.normalized.gpkg": 65536,
+          "wdpa-marine.normalized.schema.geojsonseq": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.004,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 2690109440,
+          "file_dirty": 118784,
+          "file_mapped": 0,
+          "kernel": 10362880,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:allocate",
+        "phase_memory_peak_bytes": 2972254208,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6742769664,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.identity.sqlite": 32768,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.normalized.gpkg": 831488,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.226,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 2690904064,
+          "file_dirty": 897024,
+          "file_mapped": 0,
+          "kernel": 10366976,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:metadata",
+        "phase_memory_peak_bytes": 2973257728,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6743547904,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.fgb": 512312,
+          "wdpa-marine.identity.sqlite": 32768,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.normalized.gpkg": 831488,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.05,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 2691420160,
+          "file_dirty": 1413120,
+          "file_mapped": 0,
+          "kernel": 10694656,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:flatgeobuf",
+        "phase_memory_peak_bytes": 2973913088,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6744064000,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.fgb": 512312,
+          "wdpa-marine.identity.sqlite": 32768,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.normalized.gpkg": 831488,
+          "wdpa-marine.pmtiles": 128368,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.322,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 2691698688,
+          "file_dirty": 1552384,
+          "file_mapped": 0,
+          "kernel": 10702848,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:pmtiles",
+        "phase_memory_peak_bytes": 2974552064,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6744207360,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.fgb": 512312,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.pmtiles": 128368,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 7.861,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270331904,
+          "file": 4041404416,
+          "file_dirty": 684032,
+          "file_mapped": 0,
+          "kernel": 10485760,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:translations",
+        "phase_memory_peak_bytes": 4322787328,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 1,
+        "scratch_peak_bytes": 6743748608,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.fgb": 512312,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.pmtiles": 128368,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.266,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 1824854016,
+          "file_dirty": 565248,
+          "file_mapped": 0,
+          "kernel": 5464064,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:validate",
+        "phase_memory_peak_bytes": 2102497280,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6743748608,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.fgb": 512312,
+          "wdpa-marine.metadata.ndjson.gz": 5924,
+          "wdpa-marine.pmtiles": 128368,
+          "wdpa-marine.schema.json": 3860,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.4,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 270327808,
+          "file": 1824854016,
+          "file_dirty": 565248,
+          "file_mapped": 0,
+          "kernel": 5464064,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-marine:compatibility",
+        "phase_memory_peak_bytes": 2102493184,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6743748608,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 3.691,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 257757184,
+          "file": 1861652480,
+          "file_dirty": 184320,
+          "file_mapped": 0,
+          "kernel": 5099520,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:independent-source-counts",
+        "phase_memory_peak_bytes": 2138263552,
+        "process_rss_peak_bytes": 400576512,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6739537920,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 62.159,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 264151040,
+          "file": 4184072192,
+          "file_dirty": 26771456,
+          "file_mapped": 0,
+          "kernel": 11689984,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:legacy-sample",
+        "phase_memory_peak_bytes": 4472983552,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 2,
+        "scratch_peak_bytes": 6779215872,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 4.074,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 274931712,
+          "file": 1893421056,
+          "file_dirty": 9363456,
+          "file_mapped": 0,
+          "kernel": 7446528,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:source-count",
+        "phase_memory_peak_bytes": 2189213696,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 6779215872,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.filtered.gpkg": 5914624
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 44.793,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 363696128,
+          "file": 3973345280,
+          "file_dirty": 9469952,
+          "file_mapped": 0,
+          "kernel": 12435456,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:filter",
+        "phase_memory_peak_bytes": 4362649600,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 1,
+        "scratch_peak_bytes": 6784495616,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.identity.sqlite": 32768,
+          "wdpa-terrestrial.normalized.gpkg": 65536,
+          "wdpa-terrestrial.normalized.schema.geojsonseq": 0
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 2.412,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 302829568,
+          "file": 16375808,
+          "file_dirty": 2621440,
+          "file_mapped": 0,
+          "kernel": 5271552,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:normalize",
+        "phase_memory_peak_bytes": 337313792,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2010038272,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.identity.sqlite": 147456,
+          "wdpa-terrestrial.normalized.gpkg": 65536,
+          "wdpa-terrestrial.normalized.schema.geojsonseq": 0
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.266,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 265482240,
+          "file": 15884288,
+          "file_dirty": 237568,
+          "file_mapped": 0,
+          "kernel": 4788224,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:allocate",
+        "phase_memory_peak_bytes": 299016192,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2004238336,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.identity.sqlite": 147456,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.normalized.gpkg": 7561216,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 2.599,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 272982016,
+          "file": 23478272,
+          "file_dirty": 7831552,
+          "file_mapped": 0,
+          "kernel": 5033984,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:metadata",
+        "phase_memory_peak_bytes": 314204160,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2011832320,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5730216,
+          "wdpa-terrestrial.identity.sqlite": 147456,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.normalized.gpkg": 7561216,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.072,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 272982016,
+          "file": 29208576,
+          "file_dirty": 13561856,
+          "file_mapped": 0,
+          "kernel": 5562368,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:flatgeobuf",
+        "phase_memory_peak_bytes": 320667648,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2017562624,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5730216,
+          "wdpa-terrestrial.identity.sqlite": 147456,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.normalized.gpkg": 7561216,
+          "wdpa-terrestrial.pmtiles": 1072947,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 2.294,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 373145600,
+          "file": 29990912,
+          "file_dirty": 14344192,
+          "file_mapped": 0,
+          "kernel": 6111232,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:pmtiles",
+        "phase_memory_peak_bytes": 422522880,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2025091072,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5730216,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.pmtiles": 1072947,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 6.015,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 272986112,
+          "file": 1854869504,
+          "file_dirty": 16429056,
+          "file_mapped": 0,
+          "kernel": 5419008,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:translations",
+        "phase_memory_peak_bytes": 2146340864,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2020474880,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5730216,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.pmtiles": 1072947,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 0.282,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 272982016,
+          "file": 1854877696,
+          "file_dirty": 16429056,
+          "file_mapped": 0,
+          "kernel": 5423104,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:validate",
+        "phase_memory_peak_bytes": 2146533376,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2020474880,
+        "state": "succeeded"
+      },
+      {
+        "artifact_sizes": {
+          "compatibility-comparison.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-legacy-comparison.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-legacy-comparison.log": 0,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5730216,
+          "wdpa-terrestrial.metadata.ndjson.gz": 90991,
+          "wdpa-terrestrial.pmtiles": 1072947,
+          "wdpa-terrestrial.schema.json": 3863
+        },
+        "cgroup_memory_peak_bytes": 6467153920,
+        "elapsed_seconds": 2.062,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 366678016,
+          "file": 1860706304,
+          "file_dirty": 16429056,
+          "file_mapped": 0,
+          "kernel": 6066176,
+          "shmem": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:compatibility",
+        "phase_memory_peak_bytes": 2246344704,
+        "process_rss_peak_bytes": 500699136,
+        "scratch_cache_releases": 0,
+        "scratch_peak_bytes": 2020474880,
+        "state": "succeeded"
+      }
+    ],
+    "run_date": "2026-10-01",
+    "sample_fraction": 0.001,
+    "sample_seed": 7919,
+    "schema_version": 1,
+    "scratch_peak_bytes": 9561575424,
+    "source_counts_verified": true,
+    "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
+    "source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23",
+    "state": "succeeded",
+    "translation_index_built": true,
+    "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
+    "translation_memory_sha256": "07c363536c65e577f54d1d1eb146192387f1dd22fcf1ef1a26aeb3c1e2ad0eb9",
+    "image_digest": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760",
+    "workflow_run_url": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37095105175",
+    "head_sha": "1d67e856dda11e936abad95d6a92c5e421660857",
+    "artifact_id": 11264102579,
+    "github_artifact_sha256": "sha256:0c8fd9d414d178151cbe6bd9a60b6af4ab129c80d56074acf42bdb716745552c",
+    "report_path": "docs/wdpa-processing-evidence/37095105175/compatibility.json",
+    "report_sha256": "b1daa67061998fbbbac8be644b6a8a9ef092f8f53f0b51da902cd30c701204c2",
+    "image_metadata_path": "docs/wdpa-processing-evidence/37095105175/image.json",
+    "image_metadata_sha256": "84482226644ea697b2e3579248b3e5a391023983f5b1839c0fff3859b0a95eee"
+  },
+  "build": {
+    "source_sha256": "36181f18bfa2caaa3c62721f2438107c40411b1d995c60a3fc5835665a8d8fd9",
+    "cloud_execution": "wdpa-processing-validation-cg4bc",
+    "run_date": "2026-10-01",
+    "translation_index_built": true,
+    "memory_peak_bytes": 7725993984,
+    "cloud_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff",
+    "genesis": false,
+    "native_versions": {
+      "tippecanoe": "tippecanoe v2.52.0",
+      "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+      "ogr2ogr_path": "/usr/bin/ogr2ogr",
+      "tippecanoe_path": "/usr/bin/tippecanoe",
+      "pmtiles": "pmtiles dev, commit none, built at unknown",
+      "gdal_python": "3.6.2",
+      "pmtiles_build_version": "v1.30.1",
+      "pmtiles_path": "/usr/local/bin/pmtiles"
+    },
+    "resource_warnings": [
+      "kernel lifetime peak 7725993984 bytes (7.20 GiB) exceeds the preferred 6.4 GiB headroom target; the enforced limit remains 8 GiB and this warning does not reject validated artifacts"
+    ],
+    "schema_version": 1,
+    "source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23",
+    "state": "succeeded",
+    "compatibility_verified": false,
+    "baseline_snapshot_sha256": "e65323aecb705d8c1f489404727b7940aed475fc69bfd9345c01db15a0cb4b2f",
+    "translation_inputs_snapshot_sha256": "36bbbbf9c9a843c20c91788373d303ceb3e24770bd9a2214abc55a31e658fced",
+    "image_digest": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760",
+    "asset_scope": [
+      "wdpa-marine",
+      "wdpa-terrestrial"
+    ],
+    "source_counts_verified": true,
+    "staged_assets": {
+      "wdpa-marine": {
+        "outputs": {
+          "localization_report": {
+            "input_sha256": {
+              "/work/shared-datasets-1/cloud-validation/replay/translation-memory.sqlite": "d589c348d44838449a025c5728a8c7717973365e07a539a35773aeff60fa4d3b",
+              "/work/shared-datasets-1/cloud-validation/replay/wdpa-marine.metadata.ndjson.gz": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+              "/work/shared-datasets-1/cloud-validation/replay/wdpa-marine.schema.json": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3"
+            },
+            "valid": true,
+            "schema_version": 1,
+            "release": "2026-10-01",
+            "asset_slug": "wdpa-marine",
+            "unique_pending_tasks": 1224,
+            "by_locale": {
+              "es": {
+                "missing_translation": 716,
+                "same_feature_rows": 304230
+              },
+              "pt": {
+                "same_feature_rows": 304230,
+                "missing_translation": 716
+              },
+              "sw": {
+                "same_feature_rows": 304230,
+                "missing_translation": 716
+              },
+              "pt_br": {
+                "same_feature_rows": 304230,
+                "missing_translation": 716
+              },
+              "fr": {
+                "missing_translation": 716,
+                "same_feature_rows": 304230
+              },
+              "id": {
+                "same_feature_rows": 304230,
+                "missing_translation": 716
+              }
+            },
+            "source_key_fields": [
+              "SITE_PID"
+            ],
+            "publication_status": "local_candidate_only",
+            "locales": [
+              "es",
+              "fr",
+              "id",
+              "pt",
+              "pt_br",
+              "sw"
+            ],
+            "output_sha256": {
+              "wdpa-marine.metadata-translations.csv": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+              "wdpa-marine.metadata.id.ndjson.gz": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d",
+              "wdpa-marine.metadata.pt_br.ndjson.gz": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+              "wdpa-marine.metadata.pt.ndjson.gz": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+              "wdpa-marine.metadata.fr.ndjson.gz": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+              "wdpa-marine.metadata.es.ndjson.gz": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+              "wdpa-marine.metadata.sw.ndjson.gz": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71"
+            },
+            "requested_rows_complete": false,
+            "feature_count": 17938,
+            "source_bundles": [
+              {
+                "asset_slug": "wdpa-marine",
+                "unconfirmed_or_failed_rows": 4296,
+                "feature_count": 17938,
+                "accepted_rows": 1825380,
+                "input_rows": 1829676,
+                "provenance": {
+                  ".metadata-translations.csv": {
+                    "generation": 1790866713092413,
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata-translations.csv",
+                    "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f"
+                  },
+                  ".metadata.ndjson.gz": {
+                    "generation": 1790866699087905,
+                    "sha256": "0d8263e527b1bcecc0835c894397677d8bc6e834631508d3b1cce16c898c5383",
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.ndjson.gz"
+                  }
+                },
+                "release": "2026-10-01"
+              },
+              {
+                "provenance": {
+                  ".metadata-translations.csv": {
+                    "sha256": "b841513659a12e17008578138ed38273eabd291c053339c2b7376bf68c15206c",
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-30/wdpa-terrestrial.metadata-translations.csv",
+                    "generation": 1790815733675462
+                  },
+                  ".metadata.ndjson.gz": {
+                    "sha256": "0680dfa193ef30382fe6e113da4cc0f37fe4b7c19e722cbd783d9a864dfc3b76",
+                    "generation": 1790815623057097,
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-30/wdpa-terrestrial.metadata.ndjson.gz"
+                  }
+                },
+                "input_rows": 31091304,
+                "feature_count": 304817,
+                "release": "2026-09-30",
+                "accepted_rows": 31091304,
+                "asset_slug": "wdpa-terrestrial"
+              }
+            ],
+            "fields": [
+              "NAME_ENG",
+              "DESIG_ENG",
+              "DESIG_TYPE",
+              "GOV_TYPE",
+              "OWN_TYPE",
+              "NO_TAKE",
+              "STATUS",
+              "IUCN_CAT",
+              "VERIF",
+              "OECM_ASMT",
+              "DESIG",
+              "MANG_PLAN",
+              "CONS_OBJ",
+              "SUPP_INFO",
+              "INLND_WTRS",
+              "GOVSUBTYPE",
+              "OWNSUBTYPE"
+            ],
+            "pending_tasks": "/work/shared-datasets-1/cloud-validation/replay/wdpa-marine-localized/pending-translations.ndjson"
+          },
+          "schema_payload": {
+            "schema_version": 2,
+            "release": "2026-10-01",
+            "fields": [
+              {
+                "projectable": true,
+                "type": "Integer",
+                "nullable": false,
+                "name": "SITE_ID"
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "name": "SITE_PID",
+                "projectable": true
+              },
+              {
+                "name": "SITE_TYPE",
+                "nullable": false,
+                "type": "String",
+                "projectable": true
+              },
+              {
+                "name": "NAME_ENG",
+                "nullable": false,
+                "projectable": true,
+                "type": "String"
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "name": "NAME",
+                "projectable": true
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "DESIG"
+              },
+              {
+                "name": "DESIG_ENG",
+                "projectable": true,
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "projectable": true,
+                "name": "DESIG_TYPE",
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "IUCN_CAT"
+              },
+              {
+                "nullable": false,
+                "type": "String",
+                "name": "INT_CRIT",
+                "projectable": true
+              },
+              {
+                "name": "REALM",
+                "type": "String",
+                "projectable": true,
+                "nullable": false
+              },
+              {
+                "nullable": false,
+                "name": "REP_M_AREA",
+                "type": "Real",
+                "projectable": true
+              },
+              {
+                "nullable": false,
+                "type": "Real",
+                "name": "REP_AREA",
+                "projectable": true
+              },
+              {
+                "projectable": true,
+                "name": "NO_TAKE",
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "projectable": true,
+                "name": "NO_TK_AREA",
+                "nullable": false,
+                "type": "Real"
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "name": "STATUS",
+                "projectable": true
+              },
+              {
+                "nullable": false,
+                "type": "Integer",
+                "projectable": true,
+                "name": "STATUS_YR"
+              },
+              {
+                "projectable": true,
+                "name": "GOV_TYPE",
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "type": "String",
+                "projectable": true,
+                "nullable": false,
+                "name": "GOVSUBTYPE"
+              },
+              {
+                "projectable": true,
+                "type": "String",
+                "name": "OWN_TYPE",
+                "nullable": false
+              },
+              {
+                "nullable": false,
+                "type": "String",
+                "projectable": true,
+                "name": "OWNSUBTYPE"
+              },
+              {
+                "name": "MANG_AUTH",
+                "nullable": false,
+                "type": "String",
+                "projectable": true
+              },
+              {
+                "type": "String",
+                "name": "MANG_PLAN",
+                "nullable": false,
+                "projectable": true
+              },
+              {
+                "projectable": true,
+                "type": "String",
+                "name": "VERIF",
+                "nullable": false
+              },
+              {
+                "nullable": false,
+                "type": "Integer",
+                "projectable": true,
+                "name": "METADATAID"
+              },
+              {
+                "type": "String",
+                "name": "PRNT_ISO3",
+                "nullable": false,
+                "projectable": true
+              },
+              {
+                "name": "ISO3",
+                "nullable": false,
+                "type": "String",
+                "projectable": true
+              },
+              {
+                "name": "SUPP_INFO",
+                "type": "String",
+                "projectable": true,
+                "nullable": false
+              },
+              {
+                "name": "CONS_OBJ",
+                "type": "String",
+                "projectable": true,
+                "nullable": false
+              },
+              {
+                "projectable": true,
+                "name": "INLND_WTRS",
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "projectable": true,
+                "nullable": false,
+                "name": "OECM_ASMT",
+                "type": "String"
+              },
+              {
+                "type": "Real",
+                "projectable": true,
+                "nullable": true,
+                "name": "GIS_M_AREA"
+              },
+              {
+                "projectable": true,
+                "nullable": true,
+                "type": "Real",
+                "name": "GIS_AREA"
+              }
+            ],
+            "asset_slug": "wdpa-marine"
+          },
+          "next_generated_feature_id": 17943,
+          "identity_baseline_snapshot": {
+            "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616",
+            "generation": 1790866753009809,
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json"
+          },
+          "previous_generated_feature_id": 17943,
+          "row_count": 17938,
+          "identity_contract": "generated-2026-v1",
+          "identity_decisions": {
+            "auto_resolved_key_corroborated": 988,
+            "reviewed_decisions_applied": 0,
+            "policy": "identity_key_corroboration_v1",
+            "schema_version": 1,
+            "escalated_for_review": 0,
+            "ambiguities_detected": 988
+          },
+          "sha256": {
+            "metadata_fr": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+            "fgb": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+            "metadata_sw": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71",
+            "schema": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+            "metadata_pt": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+            "metadata_es": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+            "metadata_translations": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+            "csv": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+            "metadata_pt_br": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+            "metadata": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+            "pmtiles": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+            "metadata_id": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d"
+          },
+          "previous_release": "2026-10-01"
+        },
+        "source_fields": [
+          {
+            "name": "SITE_ID",
+            "type": "Integer",
+            "subtype": ""
+          },
+          {
+            "name": "SITE_PID",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "name": "SITE_TYPE",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "subtype": "",
+            "name": "NAME_ENG",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "NAME",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "DESIG"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "DESIG_ENG"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "DESIG_TYPE"
+          },
+          {
+            "type": "String",
+            "name": "IUCN_CAT",
+            "subtype": ""
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "INT_CRIT"
+          },
+          {
+            "type": "String",
+            "name": "REALM",
+            "subtype": ""
+          },
+          {
+            "subtype": "",
+            "type": "Real",
+            "name": "REP_M_AREA"
+          },
+          {
+            "type": "Real",
+            "subtype": "",
+            "name": "REP_AREA"
+          },
+          {
+            "name": "NO_TAKE",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "name": "NO_TK_AREA",
+            "subtype": "",
+            "type": "Real"
+          },
+          {
+            "name": "STATUS",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "STATUS_YR",
+            "type": "Integer"
+          },
+          {
+            "name": "GOV_TYPE",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "name": "GOVSUBTYPE",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "subtype": "",
+            "name": "OWN_TYPE",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "OWNSUBTYPE",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "MANG_AUTH"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "MANG_PLAN"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "VERIF"
+          },
+          {
+            "subtype": "",
+            "type": "Integer",
+            "name": "METADATAID"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "PRNT_ISO3"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "ISO3"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "SUPP_INFO"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "CONS_OBJ"
+          },
+          {
+            "subtype": "",
+            "name": "INLND_WTRS",
+            "type": "String"
+          },
+          {
+            "name": "OECM_ASMT",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "GIS_M_AREA",
+            "type": "Real"
+          },
+          {
+            "subtype": "",
+            "name": "GIS_AREA",
+            "type": "Real"
+          }
+        ],
+        "artifacts": {
+          "metadata_id": {
+            "size": 3236234,
+            "generation": 1791015479457613,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.id.ndjson.gz",
+            "sha256": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d"
+          },
+          "metadata": {
+            "generation": 1791015473207139,
+            "size": 3167213,
+            "sha256": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.ndjson.gz"
+          },
+          "pmtiles": {
+            "sha256": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+            "generation": 1791015472751148,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.pmtiles",
+            "size": 151243566
+          },
+          "metadata_translations": {
+            "generation": 1791015478524175,
+            "size": 294977613,
+            "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata-translations.csv"
+          },
+          "metadata_pt_br": {
+            "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt_br.ndjson.gz",
+            "generation": 1791015480222984,
+            "size": 3247584
+          },
+          "metadata_es": {
+            "sha256": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+            "size": 3244949,
+            "generation": 1791015478826035,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.es.ndjson.gz"
+          },
+          "metadata_pt": {
+            "generation": 1791015479856640.0,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt.ndjson.gz",
+            "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+            "size": 3247584
+          },
+          "schema": {
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.schema.json",
+            "size": 3858,
+            "sha256": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+            "generation": 1791015473640357
+          },
+          "metadata_sw": {
+            "generation": 1791015480528611,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.sw.ndjson.gz",
+            "size": 3242887,
+            "sha256": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71"
+          },
+          "metadata_fr": {
+            "size": 3241892,
+            "sha256": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+            "generation": 1791015479123754,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.fr.ndjson.gz"
+          },
+          "fgb": {
+            "size": 1296594616,
+            "generation": 1791015470509746,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.fgb",
+            "sha256": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03"
+          }
+        }
+      },
+      "wdpa-terrestrial": {
+        "artifacts": {
+          "pmtiles": {
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.pmtiles",
+            "generation": 1791032919961731,
+            "size": 893775735,
+            "sha256": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad"
+          },
+          "metadata_pt_br": {
+            "size": 71517792,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+            "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+            "generation": 1791033112492248
+          },
+          "metadata_fr": {
+            "sha256": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+            "size": 71238392,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.fr.ndjson.gz",
+            "generation": 1791033108567707
+          },
+          "schema": {
+            "sha256": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+            "generation": 1791032921693754,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.schema.json",
+            "size": 3862
+          },
+          "metadata_sw": {
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.sw.ndjson.gz",
+            "generation": 1791033113809809,
+            "sha256": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+            "size": 71475188
+          },
+          "fgb": {
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.fgb",
+            "generation": 1791032900457468,
+            "size": 5816513152,
+            "sha256": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8"
+          },
+          "metadata": {
+            "generation": 1791032921458134,
+            "sha256": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.ndjson.gz",
+            "size": 70215228
+          },
+          "metadata_pt": {
+            "generation": 1791033111134053,
+            "size": 71517792,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt.ndjson.gz",
+            "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f"
+          },
+          "metadata_es": {
+            "generation": 1791033107297054,
+            "size": 71525468,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.es.ndjson.gz",
+            "sha256": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f"
+          },
+          "metadata_id": {
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.id.ndjson.gz",
+            "generation": 1791033109801552,
+            "size": 71513142,
+            "sha256": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c"
+          },
+          "metadata_translations": {
+            "size": 8503902895,
+            "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata-translations.csv",
+            "sha256": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+            "generation": 1791033105897614
+          }
+        },
+        "source_fields": [
+          {
+            "name": "SITE_ID",
+            "subtype": "",
+            "type": "Integer"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "SITE_PID"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "SITE_TYPE"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "NAME_ENG"
+          },
+          {
+            "subtype": "",
+            "name": "NAME",
+            "type": "String"
+          },
+          {
+            "name": "DESIG",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "name": "DESIG_ENG",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "DESIG_TYPE",
+            "type": "String"
+          },
+          {
+            "name": "IUCN_CAT",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "INT_CRIT"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "REALM"
+          },
+          {
+            "type": "Real",
+            "subtype": "",
+            "name": "REP_M_AREA"
+          },
+          {
+            "type": "Real",
+            "subtype": "",
+            "name": "REP_AREA"
+          },
+          {
+            "type": "String",
+            "name": "NO_TAKE",
+            "subtype": ""
+          },
+          {
+            "type": "Real",
+            "name": "NO_TK_AREA",
+            "subtype": ""
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "STATUS"
+          },
+          {
+            "subtype": "",
+            "type": "Integer",
+            "name": "STATUS_YR"
+          },
+          {
+            "name": "GOV_TYPE",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "name": "GOVSUBTYPE",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "name": "OWN_TYPE",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "OWNSUBTYPE",
+            "type": "String"
+          },
+          {
+            "name": "MANG_AUTH",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "name": "MANG_PLAN",
+            "type": "String",
+            "subtype": ""
+          },
+          {
+            "name": "VERIF",
+            "subtype": "",
+            "type": "String"
+          },
+          {
+            "subtype": "",
+            "name": "METADATAID",
+            "type": "Integer"
+          },
+          {
+            "type": "String",
+            "name": "PRNT_ISO3",
+            "subtype": ""
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "ISO3"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "SUPP_INFO"
+          },
+          {
+            "subtype": "",
+            "type": "String",
+            "name": "CONS_OBJ"
+          },
+          {
+            "type": "String",
+            "subtype": "",
+            "name": "INLND_WTRS"
+          },
+          {
+            "type": "String",
+            "name": "OECM_ASMT",
+            "subtype": ""
+          },
+          {
+            "type": "Real",
+            "subtype": "",
+            "name": "GIS_M_AREA"
+          },
+          {
+            "type": "Real",
+            "subtype": "",
+            "name": "GIS_AREA"
+          }
+        ],
+        "outputs": {
+          "identity_decisions": {
+            "escalated_for_review": 0,
+            "reviewed_decisions_applied": 0,
+            "schema_version": 1,
+            "ambiguities_detected": 6942,
+            "policy": "identity_key_corroboration_v1",
+            "auto_resolved_key_corroborated": 6942
+          },
+          "sha256": {
+            "fgb": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+            "metadata_es": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+            "metadata_pt": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+            "metadata": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+            "metadata_id": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+            "csv": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+            "pmtiles": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+            "metadata_translations": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+            "metadata_fr": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+            "schema": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+            "metadata_pt_br": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+            "metadata_sw": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680"
+          },
+          "localization_report": {
+            "source_bundles": [
+              {
+                "provenance": {
+                  ".metadata-translations.csv": {
+                    "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+                    "generation": 1790866713092413,
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata-translations.csv"
+                  },
+                  ".metadata.ndjson.gz": {
+                    "generation": 1790866699087905,
+                    "sha256": "0d8263e527b1bcecc0835c894397677d8bc6e834631508d3b1cce16c898c5383",
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.ndjson.gz"
+                  }
+                },
+                "release": "2026-10-01",
+                "feature_count": 17938,
+                "unconfirmed_or_failed_rows": 4296,
+                "accepted_rows": 1825380,
+                "asset_slug": "wdpa-marine",
+                "input_rows": 1829676
+              },
+              {
+                "provenance": {
+                  ".metadata-translations.csv": {
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-30/wdpa-terrestrial.metadata-translations.csv",
+                    "generation": 1790815733675462,
+                    "sha256": "b841513659a12e17008578138ed38273eabd291c053339c2b7376bf68c15206c"
+                  },
+                  ".metadata.ndjson.gz": {
+                    "sha256": "0680dfa193ef30382fe6e113da4cc0f37fe4b7c19e722cbd783d9a864dfc3b76",
+                    "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-09-30/wdpa-terrestrial.metadata.ndjson.gz",
+                    "generation": 1790815623057097
+                  }
+                },
+                "release": "2026-09-30",
+                "accepted_rows": 31091304,
+                "feature_count": 304817,
+                "asset_slug": "wdpa-terrestrial",
+                "input_rows": 31091304
+              }
+            ],
+            "input_sha256": {
+              "/work/shared-datasets-1/cloud-validation/replay/wdpa-terrestrial.schema.json": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+              "/work/shared-datasets-1/cloud-validation/replay/translation-memory.sqlite": "d589c348d44838449a025c5728a8c7717973365e07a539a35773aeff60fa4d3b",
+              "/work/shared-datasets-1/cloud-validation/replay/wdpa-terrestrial.metadata.ndjson.gz": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6"
+            },
+            "by_locale": {
+              "sw": {
+                "same_feature_rows": 5181163,
+                "shared_text_rows": 2860723,
+                "conflicting_translations": 1,
+                "missing_translation": 422646,
+                "empty_or_missing_fields": 5
+              },
+              "pt": {
+                "empty_or_missing_fields": 5,
+                "shared_text_rows": 2860723,
+                "conflicting_translations": 1,
+                "missing_translation": 422646,
+                "same_feature_rows": 5181163
+              },
+              "es": {
+                "missing_translation": 422646,
+                "same_feature_rows": 5181163,
+                "shared_text_rows": 2860723,
+                "conflicting_translations": 1,
+                "empty_or_missing_fields": 5
+              },
+              "pt_br": {
+                "same_feature_rows": 5181163,
+                "empty_or_missing_fields": 5,
+                "shared_text_rows": 2860723,
+                "missing_translation": 422646,
+                "conflicting_translations": 1
+              },
+              "fr": {
+                "missing_translation": 422646,
+                "shared_text_rows": 2860723,
+                "empty_or_missing_fields": 5,
+                "conflicting_translations": 1,
+                "same_feature_rows": 5181163
+              },
+              "id": {
+                "conflicting_translations": 1,
+                "missing_translation": 422646,
+                "empty_or_missing_fields": 5,
+                "same_feature_rows": 5181163,
+                "shared_text_rows": 2860723
+              }
+            },
+            "publication_status": "local_candidate_only",
+            "release": "2026-10-01",
+            "fields": [
+              "NAME_ENG",
+              "DESIG_ENG",
+              "DESIG_TYPE",
+              "GOV_TYPE",
+              "OWN_TYPE",
+              "NO_TAKE",
+              "STATUS",
+              "IUCN_CAT",
+              "VERIF",
+              "OECM_ASMT",
+              "DESIG",
+              "MANG_PLAN",
+              "CONS_OBJ",
+              "SUPP_INFO",
+              "INLND_WTRS",
+              "GOVSUBTYPE",
+              "OWNSUBTYPE"
+            ],
+            "asset_slug": "wdpa-terrestrial",
+            "source_key_fields": [
+              "SITE_PID"
+            ],
+            "output_sha256": {
+              "wdpa-terrestrial.metadata-translations.csv": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+              "wdpa-terrestrial.metadata.pt_br.ndjson.gz": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+              "wdpa-terrestrial.metadata.id.ndjson.gz": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+              "wdpa-terrestrial.metadata.sw.ndjson.gz": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+              "wdpa-terrestrial.metadata.fr.ndjson.gz": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+              "wdpa-terrestrial.metadata.pt.ndjson.gz": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+              "wdpa-terrestrial.metadata.es.ndjson.gz": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f"
+            },
+            "valid": true,
+            "feature_count": 497914,
+            "requested_rows_complete": false,
+            "pending_tasks": "/work/shared-datasets-1/cloud-validation/replay/wdpa-terrestrial-localized/pending-translations.ndjson",
+            "locales": [
+              "es",
+              "fr",
+              "id",
+              "pt",
+              "pt_br",
+              "sw"
+            ],
+            "unique_pending_tasks": 1051170,
+            "schema_version": 1
+          },
+          "previous_release": "2026-09-30",
+          "identity_baseline_snapshot": {
+            "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+            "sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88",
+            "generation": 1790815952362262
+          },
+          "schema_payload": {
+            "asset_slug": "wdpa-terrestrial",
+            "fields": [
+              {
+                "nullable": false,
+                "name": "SITE_ID",
+                "projectable": true,
+                "type": "Integer"
+              },
+              {
+                "projectable": true,
+                "nullable": false,
+                "type": "String",
+                "name": "SITE_PID"
+              },
+              {
+                "nullable": false,
+                "type": "String",
+                "projectable": true,
+                "name": "SITE_TYPE"
+              },
+              {
+                "name": "NAME_ENG",
+                "type": "String",
+                "projectable": true,
+                "nullable": false
+              },
+              {
+                "projectable": true,
+                "name": "NAME",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "type": "String",
+                "projectable": true,
+                "nullable": false,
+                "name": "DESIG"
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "DESIG_ENG"
+              },
+              {
+                "nullable": false,
+                "name": "DESIG_TYPE",
+                "type": "String",
+                "projectable": true
+              },
+              {
+                "projectable": true,
+                "name": "IUCN_CAT",
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "type": "String",
+                "projectable": true,
+                "nullable": false,
+                "name": "INT_CRIT"
+              },
+              {
+                "name": "REALM",
+                "nullable": false,
+                "type": "String",
+                "projectable": true
+              },
+              {
+                "name": "REP_M_AREA",
+                "nullable": false,
+                "projectable": true,
+                "type": "Real"
+              },
+              {
+                "projectable": true,
+                "type": "Real",
+                "name": "REP_AREA",
+                "nullable": false
+              },
+              {
+                "projectable": true,
+                "type": "String",
+                "nullable": false,
+                "name": "NO_TAKE"
+              },
+              {
+                "name": "NO_TK_AREA",
+                "projectable": true,
+                "type": "Real",
+                "nullable": false
+              },
+              {
+                "nullable": false,
+                "type": "String",
+                "name": "STATUS",
+                "projectable": true
+              },
+              {
+                "type": "Integer",
+                "name": "STATUS_YR",
+                "projectable": true,
+                "nullable": false
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "GOV_TYPE"
+              },
+              {
+                "name": "GOVSUBTYPE",
+                "projectable": true,
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "projectable": true,
+                "nullable": false,
+                "type": "String",
+                "name": "OWN_TYPE"
+              },
+              {
+                "nullable": false,
+                "type": "String",
+                "name": "OWNSUBTYPE",
+                "projectable": true
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "MANG_AUTH"
+              },
+              {
+                "name": "MANG_PLAN",
+                "projectable": true,
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "type": "String",
+                "projectable": true,
+                "nullable": true,
+                "name": "VERIF"
+              },
+              {
+                "projectable": true,
+                "type": "Integer",
+                "name": "METADATAID",
+                "nullable": false
+              },
+              {
+                "type": "String",
+                "projectable": true,
+                "nullable": false,
+                "name": "PRNT_ISO3"
+              },
+              {
+                "type": "String",
+                "nullable": false,
+                "projectable": true,
+                "name": "ISO3"
+              },
+              {
+                "projectable": true,
+                "type": "String",
+                "nullable": false,
+                "name": "SUPP_INFO"
+              },
+              {
+                "nullable": false,
+                "projectable": true,
+                "name": "CONS_OBJ",
+                "type": "String"
+              },
+              {
+                "name": "INLND_WTRS",
+                "projectable": true,
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "OECM_ASMT",
+                "projectable": true,
+                "type": "String",
+                "nullable": false
+              },
+              {
+                "type": "Real",
+                "nullable": true,
+                "name": "GIS_M_AREA",
+                "projectable": true
+              },
+              {
+                "nullable": true,
+                "type": "Real",
+                "projectable": true,
+                "name": "GIS_AREA"
+              }
+            ],
+            "schema_version": 2,
+            "release": "2026-10-01"
+          },
+          "next_generated_feature_id": 497919,
+          "identity_contract": "generated-2026-v1",
+          "previous_generated_feature_id": 304818,
+          "row_count": 497914
+        }
+      }
+    },
+    "scratch_peak_bytes": 23677530112,
+    "elapsed_seconds": 22205.078511625,
+    "sample_fraction": 1,
+    "phases": [
+      {
+        "cgroup_memory_peak_bytes": 4338446336,
+        "phase_memory_peak_bytes": 4338446336,
+        "state": "succeeded",
+        "phase": "cloud-input-download",
+        "scratch_cache_releases": 2,
+        "artifact_sizes": {},
+        "event": "wdpa_phase_resources",
+        "scratch_peak_bytes": 5189582848,
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "gdal_python": "3.6.2",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0"
+        },
+        "elapsed_seconds": 173.186,
+        "process_rss_peak_bytes": 93356032,
+        "memory_breakdown_at_sampled_peak": {
+          "rss": 71614464,
+          "cache": 4229931008,
+          "swap": 0,
+          "dirty": 8192,
+          "mapped_file": 51482624,
+          "shmem": 6070272
+        }
+      },
+      {
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0"
+        },
+        "scratch_cache_releases": 5,
+        "scratch_peak_bytes": 14241677312,
+        "state": "succeeded",
+        "memory_breakdown_at_sampled_peak": {
+          "rss": 84721664,
+          "shmem": 6258688,
+          "cache": 4610301952,
+          "dirty": 736137216,
+          "mapped_file": 54095872,
+          "swap": 0
+        },
+        "phase": "frozen-inputs",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "elapsed_seconds": 62.834,
+        "phase_memory_peak_bytes": 4771872768,
+        "process_rss_peak_bytes": 180338688,
+        "event": "wdpa_phase_resources",
+        "artifact_sizes": {
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536
+        }
+      },
+      {
+        "phase": "translation-index",
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02"
+        },
+        "state": "succeeded",
+        "memory_breakdown_at_sampled_peak": {
+          "dirty": 449662976,
+          "mapped_file": 54521856,
+          "cache": 2885259264,
+          "swap": 0,
+          "rss": 389660672,
+          "shmem": 6258688
+        },
+        "phase_memory_peak_bytes": 3351699456,
+        "elapsed_seconds": 614.296,
+        "process_rss_peak_bytes": 397611008,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "scratch_peak_bytes": 12284551168,
+        "scratch_cache_releases": 0,
+        "event": "wdpa_phase_resources",
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536
+        }
+      },
+      {
+        "scratch_peak_bytes": 11929157632,
+        "phase_memory_peak_bytes": 2933608448,
+        "phase": "wdpa-marine:independent-source-counts",
+        "state": "succeeded",
+        "scratch_cache_releases": 0,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "event": "wdpa_phase_resources",
+        "native_versions": {
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "gdal_python": "3.6.2"
+        },
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "elapsed_seconds": 7.481,
+        "process_rss_peak_bytes": 397611008,
+        "memory_breakdown_at_sampled_peak": {
+          "mapped_file": 55418880,
+          "cache": 2555228160,
+          "dirty": 450371584,
+          "swap": 0,
+          "rss": 312197120,
+          "shmem": 6258688
+        }
+      },
+      {
+        "artifact_sizes": {
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "process_rss_peak_bytes": 397611008,
+        "memory_breakdown_at_sampled_peak": {
+          "swap": 0,
+          "shmem": 6258688,
+          "rss": 323104768,
+          "mapped_file": 56016896,
+          "dirty": 450359296,
+          "cache": 2555207680
+        },
+        "event": "wdpa_phase_resources",
+        "phase_memory_peak_bytes": 2944950272,
+        "elapsed_seconds": 6.342,
+        "phase": "wdpa-marine:source-count",
+        "scratch_peak_bytes": 11929137152,
+        "state": "succeeded",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "scratch_cache_releases": 0,
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        }
+      },
+      {
+        "process_rss_peak_bytes": 397611008,
+        "event": "wdpa_phase_resources",
+        "scratch_peak_bytes": 13230923776,
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.filtered.gpkg": 1301786624,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "swap": 0,
+          "mapped_file": 59985920,
+          "dirty": 221036544,
+          "cache": 3803598848,
+          "shmem": 6258688,
+          "rss": 447389696
+        },
+        "elapsed_seconds": 76.036,
+        "scratch_cache_releases": 2,
+        "phase_memory_peak_bytes": 4326998016,
+        "phase": "wdpa-marine:filter",
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0"
+        },
+        "state": "succeeded",
+        "cgroup_memory_peak_bytes": 5920559104
+      },
+      {
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "gdal_python": "3.6.2",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "phase": "wdpa-marine:normalize",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "state": "succeeded",
+        "elapsed_seconds": 1216.305,
+        "process_rss_peak_bytes": 1502490624,
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6258688,
+          "rss": 1282203648,
+          "mapped_file": 60981248,
+          "cache": 2985226240,
+          "dirty": 16838656,
+          "swap": 0
+        },
+        "phase_memory_peak_bytes": 4312846336,
+        "scratch_peak_bytes": 14479937536,
+        "event": "wdpa_phase_resources",
+        "artifact_sizes": {
+          "wdpa-marine.normalized.gpkg": 1249714176,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.normalized.schema.geojsonseq": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.identity.sqlite": 32768
+        },
+        "scratch_cache_releases": 1
+      },
+      {
+        "elapsed_seconds": 1.887,
+        "scratch_cache_releases": 0,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "state": "succeeded",
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6258688,
+          "swap": 0,
+          "mapped_file": 59682816,
+          "rss": 1152720896,
+          "dirty": 4005888,
+          "cache": 617984000
+        },
+        "native_versions": {
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "phase": "wdpa-marine:allocate",
+        "artifact_sizes": {
+          "wdpa-marine.normalized.gpkg": 1249714176,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.normalized.schema.geojsonseq": 0,
+          "wdpa-marine.identity.sqlite": 4018176,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "translation-memory.sqlite": 1822765056
+        },
+        "event": "wdpa_phase_resources",
+        "phase_memory_peak_bytes": 1792901120,
+        "process_rss_peak_bytes": 1502490624,
+        "scratch_peak_bytes": 13182861312
+      },
+      {
+        "scratch_peak_bytes": 13290680320,
+        "process_rss_peak_bytes": 1940254720,
+        "phase": "wdpa-marine:metadata",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "state": "succeeded",
+        "event": "wdpa_phase_resources",
+        "artifact_sizes": {
+          "wdpa-marine.schema.json": 3858,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.identity.sqlite": 4018176,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "wdpa-marine.normalized.gpkg": 1354334208
+        },
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "gdal_python": "3.6.2",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "cache": 1497669632,
+          "dirty": 4096,
+          "rss": 1910521856,
+          "shmem": 6258688,
+          "mapped_file": 59809792,
+          "swap": 0
+        },
+        "elapsed_seconds": 1024.571,
+        "phase_memory_peak_bytes": 3456364544,
+        "scratch_cache_releases": 0
+      },
+      {
+        "process_rss_peak_bytes": 1940254720,
+        "scratch_peak_bytes": 14587265024,
+        "native_versions": {
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "gdal_python": "3.6.2",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "rss": 1462407168,
+          "dirty": 565104640,
+          "mapped_file": 61386752,
+          "cache": 2884931584,
+          "swap": 0,
+          "shmem": 6258688
+        },
+        "elapsed_seconds": 10.07,
+        "event": "wdpa_phase_resources",
+        "phase": "wdpa-marine:flatgeobuf",
+        "scratch_cache_releases": 2,
+        "state": "succeeded",
+        "phase_memory_peak_bytes": 4438200320,
+        "artifact_sizes": {
+          "wdpa-marine.schema.json": 3858,
+          "wdpa-marine.normalized.gpkg": 1354334208,
+          "wdpa-marine.identity.sqlite": 4018176,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.fgb": 1296594616,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "cgroup_memory_peak_bytes": 5920559104
+      },
+      {
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.schema.json": 3858,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.pmtiles": 151243566,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.normalized.gpkg": 1354334208,
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "wdpa-marine.fgb": 1296594616,
+          "wdpa-marine.identity.sqlite": 4018176
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "dirty": 35643392,
+          "cache": 1745993728,
+          "mapped_file": 61833216,
+          "swap": 0,
+          "rss": 3135709184,
+          "shmem": 6258688
+        },
+        "process_rss_peak_bytes": 1940254720,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "phase_memory_peak_bytes": 4942442496,
+        "event": "wdpa_phase_resources",
+        "scratch_peak_bytes": 15073083392,
+        "native_versions": {
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles_build_version": "v1.30.1"
+        },
+        "state": "succeeded",
+        "scratch_cache_releases": 40,
+        "phase": "wdpa-marine:pmtiles",
+        "elapsed_seconds": 1265.346
+      },
+      {
+        "scratch_peak_bytes": 13695422464,
+        "artifact_sizes": {
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.schema.json": 3858,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine.pmtiles": 151243566,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.fgb": 1296594616
+        },
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "mapped_file": 60067840,
+          "rss": 501981184,
+          "shmem": 6258688,
+          "cache": 2448867328,
+          "dirty": 31698944,
+          "swap": 0
+        },
+        "scratch_cache_releases": 0,
+        "phase_memory_peak_bytes": 2976489472,
+        "phase": "wdpa-marine:translations",
+        "native_versions": {
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "gdal_python": "3.6.2",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "state": "succeeded",
+        "process_rss_peak_bytes": 1940254720,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "elapsed_seconds": 70.021
+      },
+      {
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6258688,
+          "cache": 3746103296,
+          "dirty": 20480,
+          "swap": 0,
+          "rss": 501989376,
+          "mapped_file": 60067840
+        },
+        "scratch_peak_bytes": 13695422464,
+        "artifact_sizes": {
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.fgb": 1296594616,
+          "wdpa-marine.pmtiles": 151243566,
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.schema.json": 3858,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "process_rss_peak_bytes": 1940254720,
+        "event": "wdpa_phase_resources",
+        "state": "succeeded",
+        "phase": "wdpa-marine:validate",
+        "native_versions": {
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "elapsed_seconds": 8.18,
+        "scratch_cache_releases": 0,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "phase_memory_peak_bytes": 4276600832
+      },
+      {
+        "phase": "wdpa-marine:stage",
+        "state": "succeeded",
+        "phase_memory_peak_bytes": 4382183424,
+        "scratch_peak_bytes": 13695422464,
+        "scratch_cache_releases": 1,
+        "memory_breakdown_at_sampled_peak": {
+          "mapped_file": 61190144,
+          "cache": 3746516992,
+          "dirty": 24576,
+          "rss": 606871552,
+          "shmem": 6270976,
+          "swap": 0
+        },
+        "cgroup_memory_peak_bytes": 5920559104,
+        "artifact_sizes": {
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.metadata.ndjson.gz": 3167213,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.pmtiles": 151243566,
+          "wdpa-marine.schema.json": 3858,
+          "wdpa-marine.fgb": 1296594616,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "elapsed_seconds": 33.747,
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "process_rss_peak_bytes": 1940254720,
+        "event": "wdpa_phase_resources"
+      },
+      {
+        "artifact_sizes": {
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-marine-normalization.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "phase_memory_peak_bytes": 706932736,
+        "scratch_cache_releases": 0,
+        "event": "wdpa_phase_resources",
+        "phase": "wdpa-terrestrial:independent-source-counts",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "state": "succeeded",
+        "native_versions": {
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1"
+        },
+        "scratch_peak_bytes": 11929964544,
+        "elapsed_seconds": 50.992,
+        "memory_breakdown_at_sampled_peak": {
+          "swap": 0,
+          "mapped_file": 61198336,
+          "dirty": 0,
+          "cache": 197275648,
+          "rss": 502009856,
+          "shmem": 6275072
+        },
+        "process_rss_peak_bytes": 1940254720
+      },
+      {
+        "event": "wdpa_phase_resources",
+        "cgroup_memory_peak_bytes": 5920559104,
+        "memory_breakdown_at_sampled_peak": {
+          "mapped_file": 61747200,
+          "rss": 512954368,
+          "shmem": 6275072,
+          "swap": 0,
+          "dirty": 0,
+          "cache": 197255168
+        },
+        "process_rss_peak_bytes": 1940254720,
+        "phase_memory_peak_bytes": 718471168,
+        "scratch_peak_bytes": 11929944064,
+        "native_versions": {
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "gdal_python": "3.6.2",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "scratch_cache_releases": 0,
+        "elapsed_seconds": 6.044,
+        "phase": "wdpa-terrestrial:source-count",
+        "artifact_sizes": {
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0
+        },
+        "state": "succeeded"
+      },
+      {
+        "scratch_peak_bytes": 17763954688,
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6275072,
+          "swap": 0,
+          "rss": 605769728,
+          "mapped_file": 62255104,
+          "cache": 3664236544,
+          "dirty": 265089024
+        },
+        "event": "wdpa_phase_resources",
+        "process_rss_peak_bytes": 1940254720,
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.filtered.gpkg": 5892612096
+        },
+        "cgroup_memory_peak_bytes": 5920559104,
+        "elapsed_seconds": 95.899,
+        "scratch_cache_releases": 3,
+        "phase": "wdpa-terrestrial:filter",
+        "state": "succeeded",
+        "phase_memory_peak_bytes": 4341329920,
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02"
+        }
+      },
+      {
+        "elapsed_seconds": 4886.211,
+        "phase": "wdpa-terrestrial:normalize",
+        "state": "succeeded",
+        "process_rss_peak_bytes": 1965174784,
+        "artifact_sizes": {
+          "wdpa-terrestrial.normalized.gpkg": 6101995520,
+          "wdpa-terrestrial.identity.sqlite": 43761664,
+          "wdpa-terrestrial.normalized.schema.geojsonseq": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6275072,
+          "mapped_file": 62521344,
+          "rss": 2742218752,
+          "swap": 0,
+          "cache": 1572704256,
+          "dirty": 10477568
+        },
+        "cgroup_memory_peak_bytes": 5920559104,
+        "native_versions": {
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1"
+        },
+        "scratch_peak_bytes": 19192598528,
+        "event": "wdpa_phase_resources",
+        "scratch_cache_releases": 5,
+        "phase_memory_peak_bytes": 4349997056
+      },
+      {
+        "elapsed_seconds": 60.113,
+        "cgroup_memory_peak_bytes": 5920559104,
+        "phase_memory_peak_bytes": 2932269056,
+        "scratch_cache_releases": 0,
+        "event": "wdpa_phase_resources",
+        "artifact_sizes": {
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.identity.sqlite": 115388416,
+          "wdpa-terrestrial.normalized.gpkg": 6101995520,
+          "wdpa-terrestrial.normalized.schema.geojsonseq": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial-normalization.log": 0
+        },
+        "memory_breakdown_at_sampled_peak": {
+          "mapped_file": 61198336,
+          "swap": 0,
+          "shmem": 6275072,
+          "rss": 1410531328,
+          "dirty": 110731264,
+          "cache": 1477234688
+        },
+        "native_versions": {
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "process_rss_peak_bytes": 1965174784,
+        "scratch_peak_bytes": 13372129280,
+        "state": "succeeded",
+        "phase": "wdpa-terrestrial:allocate"
+      },
+      {
+        "elapsed_seconds": 5671.823,
+        "process_rss_peak_bytes": 2251763712,
+        "phase": "wdpa-terrestrial:metadata",
+        "state": "succeeded",
+        "memory_breakdown_at_sampled_peak": {
+          "shmem": 6275072,
+          "rss": 1945559040,
+          "swap": 0,
+          "mapped_file": 61198336,
+          "cache": 2303229952,
+          "dirty": 9883648
+        },
+        "native_versions": {
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_build_version": "v1.30.1",
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "artifact_sizes": {
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-terrestrial.identity.sqlite": 115388416,
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "wdpa-terrestrial.normalized.gpkg": 6624284672,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-marine-normalization.log": 0
+        },
+        "cgroup_memory_peak_bytes": 5920559104,
+        "scratch_cache_releases": 3,
+        "event": "wdpa_phase_resources",
+        "phase_memory_peak_bytes": 4317671424,
+        "scratch_peak_bytes": 14184345600
+      },
+      {
+        "memory_breakdown_at_sampled_peak": {
+          "dirty": 487571456,
+          "cache": 5775826944,
+          "mapped_file": 61485056,
+          "swap": 0,
+          "rss": 1826885632,
+          "shmem": 6275072
+        },
+        "process_rss_peak_bytes": 2251763712,
+        "phase": "wdpa-terrestrial:flatgeobuf",
+        "scratch_peak_bytes": 20475883520,
+        "state": "succeeded",
+        "scratch_cache_releases": 135,
+        "event": "wdpa_phase_resources",
+        "phase_memory_peak_bytes": 7722098688,
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02"
+        },
+        "cgroup_memory_peak_bytes": 7725993984,
+        "elapsed_seconds": 83.641,
+        "artifact_sizes": {
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.normalized.gpkg": 6624284672,
+          "wdpa-terrestrial.identity.sqlite": 115388416,
+          "wdpa-terrestrial.fgb": 5816513152,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "translation-memory.sqlite": 1822765056
+        }
+      },
+      {
+        "process_rss_peak_bytes": 2251763712,
+        "scratch_peak_bytes": 23677530112,
+        "phase": "wdpa-terrestrial:pmtiles",
+        "state": "succeeded",
+        "artifact_sizes": {
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-terrestrial.normalized.gpkg": 6624284672,
+          "wdpa-terrestrial.identity.sqlite": 115388416,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.fgb": 5816513152,
+          "wdpa-terrestrial.pmtiles": 893775735,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "elapsed_seconds": 4490.883,
+        "native_versions": {
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "gdal_python": "3.6.2",
+          "pmtiles_build_version": "v1.30.1"
+        },
+        "phase_memory_peak_bytes": 7698878464,
+        "scratch_cache_releases": 7642,
+        "event": "wdpa_phase_resources",
+        "cgroup_memory_peak_bytes": 7725993984,
+        "memory_breakdown_at_sampled_peak": {
+          "cache": 5729161216,
+          "rss": 1800744960,
+          "dirty": 71409664,
+          "swap": 0,
+          "shmem": 6275072,
+          "mapped_file": 64770048
+        }
+      },
+      {
+        "memory_breakdown_at_sampled_peak": {
+          "rss": 1401470976,
+          "swap": 0,
+          "dirty": 0,
+          "cache": 3025117184,
+          "shmem": 6275072,
+          "mapped_file": 59846656
+        },
+        "elapsed_seconds": 1836.56,
+        "scratch_peak_bytes": 23239880704,
+        "scratch_cache_releases": 12,
+        "native_versions": {
+          "pmtiles_build_version": "v1.30.1",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "gdal_python": "3.6.2",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown"
+        },
+        "artifact_sizes": {
+          "wdpa-terrestrial.pmtiles": 893775735,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-marine-normalization.log": 0,
+          "wdpa-terrestrial.baseline.sqlite": 133713920,
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.fgb": 5816513152,
+          "wdpa-marine.baseline.sqlite": 7745536
+        },
+        "event": "wdpa_phase_resources",
+        "state": "succeeded",
+        "phase": "wdpa-terrestrial:translations",
+        "process_rss_peak_bytes": 2251763712,
+        "phase_memory_peak_bytes": 4442640384,
+        "cgroup_memory_peak_bytes": 7725993984
+      },
+      {
+        "phase_memory_peak_bytes": 4586352640,
+        "native_versions": {
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "gdal_python": "3.6.2",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_path": "/usr/local/bin/pmtiles"
+        },
+        "event": "wdpa_phase_resources",
+        "elapsed_seconds": 82.129,
+        "process_rss_peak_bytes": 2309312512,
+        "memory_breakdown_at_sampled_peak": {
+          "dirty": 0,
+          "cache": 2318704640,
+          "mapped_file": 59846656,
+          "swap": 0,
+          "rss": 2252988416,
+          "shmem": 6275072
+        },
+        "scratch_peak_bytes": 23239880704,
+        "cgroup_memory_peak_bytes": 7725993984,
+        "artifact_sizes": {
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-terrestrial.pmtiles": 893775735,
+          "wdpa-marine-normalization.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-terrestrial.fgb": 5816513152,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        },
+        "state": "succeeded",
+        "scratch_cache_releases": 9,
+        "phase": "wdpa-terrestrial:validate"
+      },
+      {
+        "phase_memory_peak_bytes": 4415930368,
+        "native_versions": {
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "pmtiles_build_version": "v1.30.1",
+          "gdal_python": "3.6.2",
+          "tippecanoe_path": "/usr/bin/tippecanoe",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr"
+        },
+        "process_rss_peak_bytes": 2309312512,
+        "phase": "wdpa-terrestrial:stage",
+        "elapsed_seconds": 342.533,
+        "state": "succeeded",
+        "memory_breakdown_at_sampled_peak": {
+          "rss": 1401470976,
+          "shmem": 6275072,
+          "dirty": 0,
+          "swap": 0,
+          "cache": 2999648256,
+          "mapped_file": 59904000
+        },
+        "scratch_peak_bytes": 23239880704,
+        "event": "wdpa_phase_resources",
+        "cgroup_memory_peak_bytes": 7725993984,
+        "scratch_cache_releases": 10,
+        "artifact_sizes": {
+          "wdpa-terrestrial.metadata.ndjson.gz": 70215228,
+          "wdpa-terrestrial-normalization.log": 0,
+          "wdpa-marine-normalization.log": 0,
+          "translation-memory.sqlite": 1822765056,
+          "wdpa-marine.baseline.sqlite": 7745536,
+          "wdpa-terrestrial.pmtiles": 893775735,
+          "wdpa-terrestrial.schema.json": 3862,
+          "wdpa-terrestrial.fgb": 5816513152,
+          "wdpa-terrestrial.baseline.sqlite": 133713920
+        }
+      }
+    ],
+    "memory_limit_bytes": 8589934592,
+    "cpu_limit": 3.944,
+    "artifact_bundle": {
+      "generation": 1791033114607974,
+      "sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170",
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/build-bundle.json",
+      "size": 81647
+    },
+    "sample_seed": 7919,
+    "assets": {
+      "wdpa-marine": {
+        "source_counts": {
+          "rows": 17938,
+          "raw_rows": 17938,
+          "india_rows": 304,
+          "india_sites": 304
+        },
+        "semantic_sha256": "abc81213f8db78942ba71d0027356816c932b7e53c530686f8b9acae1290218b",
+        "baseline": {
+          "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616",
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+          "generation": 1790866753009809
+        },
+        "india_sites": 304,
+        "next_generated_feature_id": 17943,
+        "compatibility_verified": false,
+        "artifact_sha256": {
+          "metadata_fr": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+          "schema": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+          "metadata_sw": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71",
+          "fgb": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+          "metadata_pt": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+          "metadata_translations": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "metadata_es": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+          "metadata": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+          "metadata_pt_br": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+          "pmtiles": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+          "csv": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "metadata_id": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d"
+        },
+        "rows": 17938,
+        "india_rows": 304
+      },
+      "wdpa-terrestrial": {
+        "artifact_sha256": {
+          "metadata_id": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+          "schema": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+          "fgb": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+          "metadata_pt": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "metadata_pt_br": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "pmtiles": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+          "metadata_es": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+          "metadata_sw": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+          "csv": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+          "metadata_translations": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+          "metadata_fr": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+          "metadata": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6"
+        },
+        "compatibility_verified": false,
+        "india_sites": 193174,
+        "rows": 497914,
+        "india_rows": 193174,
+        "semantic_sha256": "3389cf10f6d91cfcd20fda2e4805c8d3e510be60bd251a64cb87c893fb183c6b",
+        "source_counts": {
+          "india_sites": 193174,
+          "india_rows": 193174,
+          "rows": 497914,
+          "raw_rows": 497914
+        },
+        "baseline": {
+          "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+          "sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88",
+          "generation": 1790815952362262
+        },
+        "next_generated_feature_id": 497919
+      }
+    },
+    "contracts_verified": true,
+    "translation_memory_sha256": "d589c348d44838449a025c5728a8c7717973365e07a539a35773aeff60fa4d3b"
+  },
+  "promotion_plan": ".github/dataset-plans/wdpa-build-a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170.json",
+  "promotion_pr": 199,
+  "evidence_files": {
+    "build-bundle.json": {
+      "path": "docs/wdpa-processing-evidence/wdpa-processing-validation-cg4bc/build-bundle.json",
+      "sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170"
+    },
+    "cloud-facts.json": {
+      "path": "docs/wdpa-processing-evidence/wdpa-processing-validation-cg4bc/cloud-facts.json",
+      "sha256": "c54824b6674010b910cb935a36f5b184720ad71e14516fdc29d2d70d80af5233"
+    },
+    "marine-byte-verification.json": {
+      "path": "docs/wdpa-processing-evidence/wdpa-processing-validation-cg4bc/marine-byte-verification.json",
+      "sha256": "cb87c5daf75b2292fc6c0d115ca2fa7fb6c6509b00a76046868e02330ba9bd6d"
+    },
+    "report.json": {
+      "path": "docs/wdpa-processing-evidence/wdpa-processing-validation-cg4bc/report.json",
+      "sha256": "89eca13eedd81e5c18b0294448497b3c02ecf64b0d171b5e2309d3ab813e3f8d"
+    },
+    "terrestrial-byte-verification.json": {
+      "path": "docs/wdpa-processing-evidence/wdpa-processing-validation-cg4bc/terrestrial-byte-verification.json",
+      "sha256": "a6ddb7f7d68f995152ca133f8f13186b94d112fc5ef20d96a8d2eade2d0f6262"
+    }
+  }
 }
