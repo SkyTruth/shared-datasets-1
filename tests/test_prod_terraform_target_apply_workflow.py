@@ -94,6 +94,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml",
                 REUSABLE_PATH_ENTRY,
                 "terraform/envs/prod/main.tf",
+                "terraform/envs/prod/monitoring.tf",
                 "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
                 "terraform/envs/prod/wdpa_observer_bootstrap_iam.tf",
                 "terraform/envs/prod/wdpa_reset_iam.tf",
@@ -102,6 +103,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "terraform/envs/prod/versions.tf",
             },
             sync_name="Scheduled ingestion deploy IAM sync",
+            expected_needs="bootstrap",
             refusal_prefix="Refusing automatic scheduled ingestion deploy IAM sync",
             expected_targets={
                 "google_project_iam_custom_role.scheduled_ingestion_deployer",
@@ -121,6 +123,28 @@ class TargetApplyCallerTests(unittest.TestCase):
                 "eamlis_monthly_image=unused-by-scheduled-ingestion-deploy-iam-sync",
             },
         )
+
+    def test_translation_notice_bootstrap_precedes_secret_reads_and_job_deploys(self):
+        workflow = load_workflow(SCHEDULED_INGESTION)
+        self.assertIn("workflow_call", workflow_triggers(workflow))
+        bootstrap = workflow["jobs"]["bootstrap"]
+        self.assertNotIn("needs", bootstrap)
+        self.assertNotIn("concurrency", bootstrap)
+        self.assertEqual(bootstrap["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
+        inputs = bootstrap["with"]
+        expected = {
+            "google_project_iam_custom_role.translation_notice_iam_manager",
+            "google_project_iam_member.github_actions_translation_notice_iam_manager",
+        }
+        self.assertEqual(set(inputs["targets"].split()), expected)
+        self.assertEqual(set(inputs["allowed_exact"].split()), expected)
+        self.assertEqual(inputs["post_apply_wait_seconds"], 30)
+        for name in ("eamlis-monthly-deploy.yml", "wdpa-monthly-deploy.yml"):
+            with self.subTest(workflow=name):
+                jobs = load_workflow(REPO_ROOT / ".github/workflows" / name)["jobs"]
+                self.assertEqual(jobs["iam"]["uses"], "./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml")
+                self.assertNotIn("concurrency", jobs["iam"])
+                self.assertEqual(jobs["deploy"]["needs"], "iam")
 
 
     def test_preview_terraform_iam_sync_caller_blocks_deletes(self):

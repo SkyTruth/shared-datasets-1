@@ -151,6 +151,11 @@ owned publisher, preserving claims, counters, generation preconditions and
 recovery. It does not run source processing again. A different canary date is
 rejected. Observer and controlled-failure alert prerequisites remain required.
 
+The deploy job waits for the protected ingestion IAM sync to bootstrap access
+management on the one Slack secret and install runtime translation-notice
+permissions. This prerequisite does not replace the retained-build acceptance
+and promotion gates.
+
 Later scheduled monthly refreshes still process each new source once and publish
 through the same owned publisher. Do not deploy this job with a local Terraform
 apply or hand-built production image. See the

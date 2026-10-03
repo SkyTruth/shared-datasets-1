@@ -143,6 +143,9 @@ const test = base.extend({
       await use(state);
     } finally {
       state.release();
+      // Stop new requests, then finish handlers while their fetch responses remain alive.
+      await page.close();
+      await context.unrouteAll({ behavior: 'wait' });
       await testInfo.attach('requests.json', { body: JSON.stringify(requests, null, 2), contentType: 'application/json' });
       await testInfo.attach('browser-errors.json', { body: JSON.stringify(errors, null, 2), contentType: 'application/json' });
       expect(forbidden, 'All data/auth/CDN boundaries must be explicitly served').toEqual([]);

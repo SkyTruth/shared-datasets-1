@@ -65,6 +65,25 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         secret = terraform_resource_block(text, "google_secret_manager_secret_iam_member", "translation_notice")
         self.assertIn('role      = "roles/secretmanager.secretAccessor"', secret)
         self.assertIn("google_secret_manager_secret.slack_webhook_url.secret_id", secret)
+        self.assertIn("google_project_iam_member.github_actions_translation_notice_iam_manager", secret)
+
+    def test_translation_notice_deployer_manages_only_existing_secret_metadata_and_iam(self):
+        text = (PROD_TF_DIR / "scheduled_ingestion_deploy_iam.tf").read_text()
+        role = terraform_resource_block(text, "google_project_iam_custom_role", "translation_notice_iam_manager")
+        permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.S).group(1)
+        self.assertEqual(set(re.findall(r'"([^"]+)"', permissions)), {
+            "secretmanager.secrets.get",
+            "secretmanager.secrets.getIamPolicy",
+            "secretmanager.secrets.setIamPolicy",
+        })
+        binding = terraform_resource_block(text, "google_project_iam_member", "github_actions_translation_notice_iam_manager")
+        self.assertIn("google_project_iam_custom_role.translation_notice_iam_manager.name", binding)
+        self.assertIn("serviceAccount:${var.github_actions_terraform_service_account_email}", binding)
+        self.assertIn("resource.name == 'projects/${var.project_id}/secrets/${local.slack_webhook_secret_id}'", binding)
+        self.assertIn("resource.name == 'projects/${data.google_project.current.number}/secrets/${local.slack_webhook_secret_id}'", binding)
+        self.assertNotIn("startsWith", binding)
+        # The bootstrap plan must not need permission to read the secret it unlocks.
+        self.assertNotIn("google_secret_manager_secret.", binding)
 
     def test_shared_bucket_conditions_cover_hns_folder_resources(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()

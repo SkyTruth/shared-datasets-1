@@ -1,4 +1,6 @@
 locals {
+  slack_webhook_secret_id = "shared-datasets-slack-webhook-url"
+
   cron_alert_created_slack_channel = (
     var.cron_alert_slack_channel_name == null
     ? []
@@ -64,7 +66,7 @@ resource "terraform_data" "cron_alert_channel_configured" {
 
 resource "google_secret_manager_secret" "slack_webhook_url" {
   project   = var.project_id
-  secret_id = "shared-datasets-slack-webhook-url"
+  secret_id = local.slack_webhook_secret_id
 
   replication {
     auto {}

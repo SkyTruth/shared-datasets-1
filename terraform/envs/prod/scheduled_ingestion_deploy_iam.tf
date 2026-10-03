@@ -31,3 +31,31 @@ resource "google_project_iam_member" "github_actions_scheduled_ingestion_deploye
   role    = google_project_iam_custom_role.scheduled_ingestion_deployer.name
   member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
 }
+
+# Bootstrap separately: planning the runtime grants already reads the secret.
+resource "google_project_iam_custom_role" "translation_notice_iam_manager" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsTranslationNoticeIamManager"
+  title       = "Shared Datasets Translation Notice IAM Manager"
+  description = "Read Slack secret metadata and manage its runtime accessor bindings."
+  permissions = [
+    "secretmanager.secrets.get",
+    "secretmanager.secrets.getIamPolicy",
+    "secretmanager.secrets.setIamPolicy",
+  ]
+}
+
+resource "google_project_iam_member" "github_actions_translation_notice_iam_manager" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.translation_notice_iam_manager.name
+  member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"
+
+  condition {
+    title       = "translation_notice_secret_iam"
+    description = "Manage accessor bindings only on the existing shared datasets Slack secret."
+    expression = join(" || ", [
+      "resource.name == 'projects/${var.project_id}/secrets/${local.slack_webhook_secret_id}'",
+      "resource.name == 'projects/${data.google_project.current.number}/secrets/${local.slack_webhook_secret_id}'",
+    ])
+  }
+}

@@ -54,8 +54,12 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  iam:
+    uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
+
   deploy:
     name: Build image and apply eamlis-monthly Terraform
+    needs: iam
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production

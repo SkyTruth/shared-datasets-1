@@ -18,6 +18,8 @@ resource "google_secret_manager_secret_iam_member" "translation_notice" {
   secret_id = google_secret_manager_secret.slack_webhook_url.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = each.value.member
+
+  depends_on = [google_project_iam_member.github_actions_translation_notice_iam_manager]
 }
 
 resource "google_storage_bucket_iam_member" "translation_debt_writer" {
