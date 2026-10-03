@@ -578,6 +578,40 @@ def batch_report_payload(
     }
 
 
+def update_release_manifest(
+    manifest_path: Path, *, canonical_sidecar: Path, translation_source: Path,
+    reports: Sequence[LocalizationReport], expected: Sequence[translation_local_io.FileSnapshot] = (),
+) -> None:
+    """Add locally verified language artifacts to the existing release bundle."""
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifacts = release_feature_model.validate_release_manifest(payload)
+    validation = validate_sidecar(canonical_sidecar, expected_asset_slug=payload["asset_slug"], expected_release=payload["release"])
+    if not validation.valid:
+        raise FeatureMetadataLocalizationError("manifest/canonical release mismatch: " + "; ".join(validation.errors))
+    canonical = artifacts["metadata"]
+    if not canonical["path"].endswith(".metadata.ndjson.gz"):
+        raise FeatureMetadataLocalizationError("manifest canonical metadata path has an invalid suffix")
+    if str(canonical["sha256"]).removeprefix("sha256:") != translation_local_io.file_sha256(canonical_sidecar):
+        raise FeatureMetadataLocalizationError("manifest canonical metadata hash differs from localization input")
+    prefix = canonical["path"].removesuffix(".metadata.ndjson.gz")
+    inputs = [canonical_sidecar, translation_source, *(Path(report.output_sidecar) for report in reports)]
+    translation_local_io.validate_paths(inputs=inputs, outputs=[manifest_path])
+    snapshots = translation_local_io.snapshots([*inputs, manifest_path], observed=expected)
+    language_paths = {prefix + ".metadata-translations.csv"}
+    locale_pattern = re.compile(re.escape(prefix) + r"\.metadata\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*\.ndjson\.gz$")
+    payload["artifacts"] = [artifact for artifact in payload["artifacts"]
+                            if artifact["path"] not in language_paths and not locale_pattern.fullmatch(artifact["path"])]
+    for role, suffix, path in [
+        ("metadata-translations", ".metadata-translations.csv", translation_source),
+        *((f"metadata-{report.locale}", f".metadata.{report.locale}.ndjson.gz", Path(report.output_sidecar)) for report in reports),
+    ]:
+        payload["artifacts"].append({"role": role, "format": "metadata", "path": prefix + suffix,
+                                     "sha256": translation_local_io.file_sha256(path), "size": path.stat().st_size})
+    payload["translations"] = translations_payload(reports)
+    release_feature_model.validate_translation_bundle_manifest(payload, [report.locale for report in reports])
+    translation_local_io.write_json(manifest_path, payload, protected=inputs, expected=snapshots)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--canonical-sidecar", required=True, type=Path)
@@ -597,6 +631,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--release", help="Expected release date for sidecar validation.")
     parser.add_argument("--report", type=Path, help="Optional JSON report path. Prints to stdout when omitted.")
     parser.add_argument("--report-dir", type=Path, help="Optional directory for one JSON report per generated locale.")
+    parser.add_argument("--manifest", type=Path, help="Update the prepared release manifest with coverage and language artifact hashes.")
     parser.add_argument("--fail-on-stale", action="store_true", help="Refuse replacement if stale translations were detected.")
     return parser
 
@@ -606,6 +641,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         report_expected = translation_local_io.snapshots([args.report]) if args.report else ()
+        manifest_expected = translation_local_io.snapshots([args.manifest]) if args.manifest else ()
         input_expected = translation_local_io.snapshots([args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else [])])
         output_expected = translation_local_io.FileSnapshot.capture(args.output_sidecar) if args.output_sidecar else None
         fields = resolved_translatable_fields(schema=args.schema, fields=args.translatable_field)
@@ -625,7 +661,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 fail_on_stale=args.fail_on_stale,
                 report_dir=args.report_dir,
                 protected_inputs=[args.schema] if args.schema else [],
-                reserved_outputs=[args.report] if args.report else [],
+                reserved_outputs=[*([args.report] if args.report else []), *([args.manifest] if args.manifest else [])],
                 input_snapshots=input_expected,
             )
             payload_obj: dict[str, Any] = batch_report_payload(
@@ -641,7 +677,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise FeatureMetadataLocalizationError("exactly one --locale is required for single-locale generation")
             translation_local_io.validate_paths(
                 inputs=[args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else [])],
-                outputs=[args.output_sidecar, debt_file_path(args.output_sidecar, locales[0]), *([args.report] if args.report else [])],
+                outputs=[args.output_sidecar, debt_file_path(args.output_sidecar, locales[0]), *([args.report] if args.report else []), *([args.manifest] if args.manifest else [])],
             )
             report = materialize_locale_sidecar(
                 canonical_sidecar=args.canonical_sidecar,
@@ -657,6 +693,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_output=output_expected,
             )
             payload_obj = report.to_dict()
+        if args.manifest:
+            update_release_manifest(args.manifest, canonical_sidecar=args.canonical_sidecar,
+                                    translation_source=args.translation_source, reports=reports if batch_mode else [report],
+                                    expected=[*input_expected, *manifest_expected])
         if args.report:
             protected = [args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else [])]
             if batch_mode:

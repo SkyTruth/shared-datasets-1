@@ -1669,6 +1669,23 @@ def validate_release_manifest(
     return artifacts_by_role
 
 
+def validate_translation_bundle_manifest(manifest: Mapping[str, Any], locales: Sequence[str]) -> None:
+    """A maintained release inventories one CSV and exactly its declared locales."""
+    artifacts = validate_release_manifest(manifest)
+    if set(manifest.get("translations", {}).get("locales", {})) != set(locales):
+        raise ReleaseFeatureModelError("manifest coverage must include exactly the declared locales")
+    prefix = str(artifacts["metadata"]["path"])
+    if not prefix.endswith(".metadata.ndjson.gz"):
+        raise ReleaseFeatureModelError("invalid canonical metadata artifact path")
+    prefix = prefix.removesuffix(".metadata.ndjson.gz")
+    expected = {prefix + suffix for suffix in (".metadata-translations.csv", *(f".metadata.{locale}.ndjson.gz" for locale in locales))}
+    language_paths = [entry["path"] for entry in manifest["artifacts"]
+                      if entry["path"].endswith(".metadata-translations.csv")
+                      or re.search(r"\.metadata\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*\.ndjson\.gz$", entry["path"])]
+    if len(language_paths) != len(expected) or set(language_paths) != expected:
+        raise ReleaseFeatureModelError("manifest must inventory exactly the maintained language artifacts")
+
+
 def build_release_manifest(
     *,
     asset_slug: str,

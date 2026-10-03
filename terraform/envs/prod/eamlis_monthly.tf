@@ -50,6 +50,10 @@ module "eamlis_monthly_job" {
   timeout               = "14400s"
   max_retries           = 0
 
+  secret_env = {
+    SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id
+  }
+
   env = {
     GOOGLE_CLOUD_PROJECT   = var.project_id
     SHARED_DATASETS_BUCKET = var.bucket_name
@@ -62,6 +66,8 @@ module "eamlis_monthly_job" {
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_storage_bucket_iam_member.eamlis_job_object_user,
+    google_secret_manager_secret_iam_member.translation_notice["eamlis"],
+    google_storage_bucket_iam_member.translation_debt_writer["eamlis"],
   ]
 }
 

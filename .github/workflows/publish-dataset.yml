@@ -262,6 +262,9 @@ jobs:
 
       - name: Promote approved staged objects
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
         run: |
           set -euo pipefail
           uv run python scripts/publish_workflow.py promote --plan-json publish-plan.json
@@ -280,6 +283,13 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/publish_workflow.py rebuild-release-index --plan-json publish-plan.json
+
+      - name: Report release translation debt
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        continue-on-error: true
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: uv run python scripts/publish_workflow.py translation-notice --plan-json publish-plan.json
 
       - name: Send breaking change alert
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}

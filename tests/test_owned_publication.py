@@ -67,6 +67,27 @@ def publish(publisher, asset, outputs, date=DATE):
                                    source=sea_ice.AvailableSource(filename_date=source_date, source_url="https://example.test/ims.tif.gz", source_filename=sea_ice.ims_filename_for_day(source_date)))
 
 
+def translation_plan(store, asset):
+    prefix = f"gs://bucket/{asset.root}/releases/{DATE.isoformat()}/{asset.slug}"
+    manifest = store.read_json(prefix + ".manifest.json").value
+    plan = {"asset_slug": asset.slug, "promotions": []}
+    for suffix in (".metadata-translations.csv", *(f".metadata.{locale}.ndjson.gz" for locale in wdpa.translations.LOCALES), ".manifest.json"):
+        uri = prefix + suffix
+        if suffix == ".manifest.json":
+            data = p.canonical(manifest)
+        else:
+            data = ("reviewed " + suffix).encode()
+            artifact = next(entry for entry in manifest["artifacts"] if entry["path"] == uri)
+            artifact.update(sha256=p.digest(data), size=len(data))
+            artifact.pop("generation")
+            artifact.pop("latest_generation")
+        source = store.write_bytes(f"gs://bucket/_scratch/pending-publishes/edit/{asset.slug}{suffix}", data, 0, {}, "application/octet-stream", "")
+        for target in (uri, uri.replace(f"/releases/{DATE.isoformat()}/", "/latest/")):
+            plan["promotions"].append({"source_uri": source.path, "source_generation": str(source.generation),
+                "destination_uri": target, "destination_generation": str(store.head(target).generation)})
+    return plan
+
+
 class OwnedPublicationTests(unittest.TestCase):
     def setUp(self):
         native = mock.patch("ingestion.common.owned_publication.vector_asset.validate_metadata_lookup_bundle", return_value=SimpleNamespace(valid=True, errors=()))
@@ -286,7 +307,87 @@ class OwnedPublicationTests(unittest.TestCase):
             publish(publisher, asset, outputs_fixture(Path(temporary), asset))
             versions = publisher.committed_artifacts(asset, suffixes=wdpa.translations.SUFFIXES)
             for suffix, version in versions.items():
-                self.assertEqual(version, store.inspect(f"gs://bucket/{asset.release_object(DATE, suffix)}"))
+                self.assertEqual(version.identity(), store.inspect(f"gs://bucket/{asset.release_object(DATE, suffix)}").identity())
+
+    def test_translation_edit_preserves_identity_and_becomes_next_build_input(self):
+        asset = wdpa.ASSETS[0]
+        with publication_temp_directory() as temporary:
+            publisher, store = publisher_fixture(asset)
+            publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+            before = store.read_json(publisher.context(asset).state_uri).value
+            base = store.inspect(f"gs://bucket/{asset.release_object(DATE, '.metadata.ndjson.gz')}")
+            plan = translation_plan(store, asset)
+            editor, _ = publisher_fixture(asset, execution="reviewed-edit", store=store)
+            record = editor.publish_translation_update(asset=asset, plan=plan)
+            after = store.read_json(editor.context(asset).state_uri).value
+            self.assertEqual(after["reserved_next_feature_id"], before["reserved_next_feature_id"])
+            self.assertEqual(after["current"]["release"], before["current"]["release"])
+            self.assertNotEqual(after["current"]["receipt_uri"], before["current"]["receipt_uri"])
+            self.assertEqual(store.inspect(base.path), base)
+            self.assertIsNone(after["active"])
+            self.assertEqual(editor.load_successful_run_record(asset, DATE)[0], record)
+            versions = editor.committed_artifacts(asset, suffixes=wdpa.translations.SUFFIXES)
+            csv = versions[".metadata-translations.csv"]
+            self.assertEqual(csv.identity(), store.inspect(csv.path).identity())
+            self.assertEqual(csv.sha256, p.digest(b"reviewed .metadata-translations.csv"))
+            self.assertEqual(len(record["release_paths"]), 12)
+            before_retry = list(store.events)
+            self.assertEqual(editor.publish_translation_update(asset=asset, plan=plan), record)
+            self.assertEqual(store.events, before_retry)
+
+    def test_translation_edit_resumes_after_every_durable_write(self):
+        asset = wdpa.ASSETS[0]
+        with publication_temp_directory() as temporary:
+            outputs = outputs_fixture(Path(temporary), asset)
+            def setup():
+                publisher, store = publisher_fixture(asset)
+                publish(publisher, asset, outputs)
+                plan = translation_plan(store, asset)
+                editor, _ = publisher_fixture(asset, execution="reviewed-edit", store=store)
+                store.events.clear()
+                return editor, store, plan
+            editor, store, plan = setup()
+            editor.publish_translation_update(asset=asset, plan=plan)
+            for position in range(1, len(store.events) + 1):
+                with self.subTest(position=position):
+                    editor, store, plan = setup()
+                    store.fail_after = position
+                    with self.assertRaises(LostResponse):
+                        editor.publish_translation_update(asset=asset, plan=plan)
+                    store.fail_after = None
+                    self.assertEqual(editor.resume(asset)["status"], "success")
+                    state = store.read_json(editor.context(asset).state_uri).value
+                    self.assertIsNone(state["active"])
+                    self.assertEqual(state["reserved_next_feature_id"], 3)
+
+    def test_translation_edit_rejects_incomplete_or_changed_bundle_before_claim(self):
+        asset = wdpa.ASSETS[0]
+        for bad in ("missing-locale", "old-generation", "changed-source", "identity", "wrong-release"):
+            with self.subTest(bad=bad), publication_temp_directory() as temporary:
+                publisher, store = publisher_fixture(asset)
+                publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+                plan = translation_plan(store, asset)
+                if bad == "missing-locale":
+                    plan["promotions"].pop(0)
+                elif bad == "old-generation":
+                    plan["promotions"][-1]["destination_generation"] = "1"
+                elif bad == "wrong-release":
+                    for item in plan["promotions"]:
+                        item["destination_uri"] = item["destination_uri"].replace(DATE.isoformat(), "2026-09-01")
+                else:
+                    item = plan["promotions"][-1]
+                    staged = store.read_json(item["source_uri"])
+                    if bad == "identity":
+                        staged.value["identity"]["next_generated_feature_id_after_release"] = 999
+                    version = store.write_json(item["source_uri"], staged.value, staged.version.generation)
+                    if bad == "identity":
+                        for item in plan["promotions"][-2:]:
+                            item["source_generation"] = str(version.generation)
+                editor, _ = publisher_fixture(asset, execution="reviewed-edit", store=store)
+                store.events.clear()
+                with self.assertRaises(p.PublicationError):
+                    editor.publish_translation_update(asset=asset, plan=plan)
+                self.assertEqual(store.events, [])
 
     def test_runtime_requires_execution_identity_and_pinned_executor(self):
         publisher, _ = publisher_fixture(sea_ice.ASSET)

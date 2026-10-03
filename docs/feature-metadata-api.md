@@ -194,12 +194,13 @@ the canonical sidecar and `{asset-slug}.metadata-translations.csv`. Translation
 rows are keyed by `feature_id`, property field, locale, and source-value hash.
 Rows whose hash no longer matches the canonical property value are stale; the
 generator reports and skips them so the localized view falls back to canonical
-properties for that field. After an approved publish plan promotes a new
-translation source CSV, `.github/workflows/metadata-localization.yml` reruns
-the materialization pipeline for that source and writes generated localized
-sidecars with generation preconditions from the approved publisher environment.
-Catalog web deployment is chained after this materialization step so catalog
-release metadata is rebuilt from the post-localization release indexes.
+properties for that field. Prepare the CSV, every maintained locale sidecar, and
+the coverage manifest together before staging a reviewed publish plan. The local
+materializer's `--manifest` option records their hashes and coverage. The approved
+mutation workflow rejects incomplete bundles; catalog deployment follows that
+workflow directly. WDPA uses its existing publication owner for current-release
+translation edits, preserving base artifact snapshots and the feature-ID counter.
+The committed manifest supplies the next scheduled build's translation inputs.
 
 Asset documents can declare maintained `translation_locales` and
 `translation_fields` together. The generated catalog exposes both lists; CSV
@@ -292,3 +293,41 @@ available when feature-ID contracts differ. Localization
 is excluded from source changes. Identity incompatibility withholds authoritative
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
+
+### Translation maintenance notices
+
+After a successful publication, scheduled WDPA/e-AMLIS jobs and reviewed manual
+publishes use one shared completion hook. A notice is due when any maintained
+locale has a positive denominator and
+`100 * (stale + missing) >= translatable_values`. The comparison is inclusive and
+uses integer counts. One message combines all locales; orphan/removed-field
+history and pending expert review do not trigger it.
+
+The hook reads generation-pinned localized sidecars from the committed manifest.
+Their `fallback_fields` retain current source values, which are streamed into
+`gs://{bucket}/_scratch/translation-debt/{asset}/{release}/{locale}.csv` with
+`feature_id,field,locale,source_value_hash,source_value`. Only unresolved values
+are exported; these files are noncanonical maintenance evidence. Public notices
+include a copyable prompt with the full worklist references and up to 25 complete
+CSV sample rows, bounded by Slack's message limit. The prompt requests the
+existing seven-column translation CSV, preserves IDs and source hashes, and
+marks generated values `machine_placeholder` with `awaiting human review` notes.
+Proper names use known official target-language forms or remain unchanged.
+Oversized rows and rows containing a code fence stay in the full export; source
+values are never truncated. Internal/private notices show counts and GCS
+references only.
+
+A create-only `{asset-root}/runs/{release}.translation-notice.json` claim prevents
+repeat attempts, including concurrent jobs and reviewed edits. Its status starts
+as `claimed`, becomes `delivered` only after a confirmed webhook response, or
+`delivery_unknown` after an unconfirmed attempt. A crash/export failure can leave
+`claimed`; neither state is a delivery receipt. The hook intentionally does not
+retry a claimed attempt because Slack webhooks do not offer exactly-once delivery.
+Notification failures never roll back or fail a published release. Unconfirmed
+delivery is logged as a warning for operators, with automatic retry suppressed.
+
+Runtime credentials need access to the existing Slack secret and create-only
+access to their own debt-export prefixes. The protected Scheduled ingestion
+deploy IAM sync owns those narrow grants. After its reviewed main changes apply,
+use the existing protected WDPA/e-AMLIS deploy workflows to update job images and
+secret references. No local production apply is part of this rollout.

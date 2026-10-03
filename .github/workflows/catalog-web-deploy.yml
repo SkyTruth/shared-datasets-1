@@ -3,7 +3,7 @@ name: Catalog web deploy
 on:
   workflow_run:
     workflows:
-      - Feature metadata localization materialization
+      - Approved dataset mutation
       - Release index rebuild
     branches:
       - main

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,6 +197,45 @@ class PublishReleaseTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._vector_validator.stop()
+
+    def test_maintained_language_bundle_is_required_hashed_and_published_with_manifest(self):
+        from scripts import feature_metadata_localization as loc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            catalog = write_catalog(directory, available_formats="fgb;pmtiles")
+            with catalog.open() as handle:
+                rows = list(csv.DictReader(handle))
+            rows[0].update(translation_locales="es;fr", translation_fields="name")
+            with catalog.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+            publish_dir = directory / "publish"
+            publish_dir.mkdir()
+            paths = write_vector_bundle(publish_dir)
+            client = FakeClient(FakeBucket())
+            def prepare():
+                return publish_release.build_publish_plan(asset_slug="example-asset", release_date="2026-05-01",
+                    publish_dir=publish_dir, catalog_path=catalog, client=client,
+                    schema_reader=lambda _path: [], schema_compatibility_checker=skip_schema_compatibility)
+            with self.assertRaisesRegex(publish_release.PublishReleaseError, "whole bundle"):
+                prepare()
+            source = publish_dir / "example-asset.metadata-translations.csv"
+            source.write_text(",".join(loc.REQUIRED_TRANSLATION_COLUMNS) + "\n")
+            reports = loc.materialize_locale_sidecars(canonical_sidecar=paths["metadata"], translation_source=source,
+                output_dir=publish_dir, locales=["es", "fr"], translatable_fields={"name"})
+            loc.update_release_manifest(paths["manifest"], canonical_sidecar=paths["metadata"], translation_source=source, reports=reports)
+            plan = prepare()
+            self.assertTrue({"metadata-translations", "metadata-es", "metadata-fr"} <= {item.format for item in plan.artifacts})
+            result = publish_release.execute_publish_plan(plan, client=client, notify=False, update_schema_snapshot=False)
+            self.assertEqual(len(result.release_objects), 8)
+            manifest = json.loads(client.bucket(plan.bucket).blob(f"{plan.asset_root}/releases/2026-05-01/example-asset.manifest.json").data)
+            self.assertEqual(manifest["translations"]["locales"]["fr"]["missing"], 1)
+            for artifact in manifest["artifacts"]:
+                if artifact["role"].startswith("metadata-"):
+                    self.assertIn("generation", artifact)
+                    self.assertIn("latest_generation", artifact)
 
     def test_plan_derives_release_and_latest_paths_from_catalog(self):
         with tempfile.TemporaryDirectory() as tmp:

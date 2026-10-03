@@ -81,15 +81,20 @@ The PMTiles artifact is built by writing GDAL MBTiles at zooms 0 through 8 and
 then converting that archive with `pmtiles convert`. The canonical FGB remains
 the analytical source.
 
-Spanish metadata is maintained as a derived localization layer outside the core
-job output. When a repair release changes `feature_id` shape, migrate
-`eamlis-abandoned-mine-land-inventory.metadata-translations.csv` keys from
-legacy `src:OBJECTID:<value>` to plain `<value>`, then materialize
-`eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz` from the new
-canonical sidecar and schema with `scripts/feature_metadata_localization.py`.
-Promote the migrated CSV and generated Spanish sidecar through the reviewed
-dataset mutation workflow, or rely on the feature metadata localization
-materialization workflow after a reviewed translation-source publish plan.
+The asset's declared Spanish `PA_NAME` translation is rebuilt within every
+changed release. The job reads the observed generation of the current CSV,
+materializes the new release's Spanish sidecar, and records coverage in its
+manifest before uploading any release artifact. A missing initial CSV starts
+with a header-only source and explicit translation debt. Other download or CSV
+validation failures stop before publication. Unchanged-source/output skips do
+not create new artifacts. Gaps retain source text and do not block publication.
+
+Reviewed translation edits stage the CSV, rebuilt Spanish sidecar, and coverage
+manifest together. The normal reviewed mutation workflow publishes this bundle;
+there is no separate after-publish localization workflow. Completion may send
+one translation-debt notice per release using the shared helper. Runtime secret
+and export permissions are managed by the protected ingestion IAM sync before
+the ordinary job deployment.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the observed generation. If release objects exist without a run

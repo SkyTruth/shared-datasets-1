@@ -49,7 +49,8 @@ states and notes. Usable machine translations and `needs_review` rows are curren
 editorial review is reported separately from availability.
 
 The job downloads the exact canonical metadata and translation CSV generations
-recorded in its last committed publication receipt. While either asset is in the
+recorded in its committed release manifest, including reviewed translation edits.
+Persisted v1 receipts remain the source only for extras omitted by their old manifests. While either asset is in the
 explicit first-reset state, both assets use the verified June 9 legacy source
 bundles pinned in `translations.py`. Keeping that pair fixed across retries
 preserves translations for protected areas that move between marine and terrestrial.

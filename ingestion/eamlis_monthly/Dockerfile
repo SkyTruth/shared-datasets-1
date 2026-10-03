@@ -40,6 +40,10 @@ COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir google-cloud-storage
 
 COPY ingestion ./ingestion
+COPY catalog/shared-datasets-catalog.csv ./catalog/shared-datasets-catalog.csv
+COPY scripts/catalog_csv.py ./scripts/catalog_csv.py
+COPY scripts/feature_metadata_localization.py ./scripts/feature_metadata_localization.py
+COPY scripts/translation_local_io.py ./scripts/translation_local_io.py
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py
 COPY scripts/release_feature_model.py ./scripts/release_feature_model.py
 COPY scripts/slack_notify.py ./scripts/slack_notify.py

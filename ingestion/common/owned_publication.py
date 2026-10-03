@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import os
+import re
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -17,10 +18,21 @@ from typing import Any, Mapping
 
 from ingestion.common import feature_metadata, publication as p, release_index
 from ingestion.common.gcs import GcsPublisher
-from ingestion.common.identity_reset import ASSET_ROOTS, CONTRACT_ID, load_reset_candidate
+from ingestion.common.identity_reset import ASSET_ROOTS, CONTRACT_ID, load_reset_candidate, translation_update_release
 from ingestion.common.publication_gcs import GcsStore
 from ingestion.common.runtime import content_type_for
 from scripts import release_feature_model as model, vector_asset
+
+
+def validate_translation_template(payload, baseline, locales):
+    model.validate_translation_bundle_manifest(payload, locales)
+    p.require({key: value for key, value in payload.items() if key not in {"artifacts", "translations"}} ==
+              {key: value for key, value in baseline.items() if key not in {"artifacts", "translations"}},
+              "translation update cannot change release identity, schema, or source metadata")
+    def base_artifacts(manifest):
+        return [entry for entry in manifest["artifacts"] if not entry["path"].endswith(".metadata-translations.csv")
+                and not re.search(r"\.metadata\.[a-z]{2,3}(?:_[a-z0-9]{2,8})*\.ndjson\.gz$", entry["path"])]
+    p.require(base_artifacts(payload) == base_artifacts(baseline), "translation update cannot change base artifact snapshots")
 
 
 def blob_info(version: p.ObjectVersion) -> dict[str, Any]:
@@ -42,6 +54,25 @@ def derive(parameters: dict[str, Any], results: Mapping[str, p.ObjectVersion]) -
             release_blob_info_by_role={role: blob_info(results[f"release-{role}"]) for role in ("fgb", "pmtiles", "metadata", "schema")},
             latest_blob_info_by_role={role: blob_info(results[f"latest-{role}"]) for role in ("fgb", "pmtiles", "metadata", "schema")},
         )
+    elif kind == "translation-manifest-v1":
+        payload = {**parameters["payload"], "artifacts": []}
+        by_path = {version.path: version for version in results.values()}
+        for original in parameters["payload"]["artifacts"]:
+            artifact = dict(original)
+            if version := by_path.get(artifact["path"]):
+                artifact.update(blob_info(version), sha256=version.sha256)
+                latest_path = artifact["path"].replace(f"/releases/{payload['release']}/", "/latest/")
+                artifact.update(latest_path=latest_path, latest_generation=by_path[latest_path].generation)
+            payload["artifacts"].append(artifact)
+        model.validate_release_manifest(payload, require_generations=True)
+    elif kind == "translation-run-v1":
+        payload = dict(parameters["payload"])
+        for field, prefix in (("release_paths", "release-"), ("latest_paths", "latest-")):
+            paths = {entry["path"]: entry for entry in payload[field]}
+            paths.update({results[key].path: blob_info(results[key]) for key in parameters["artifact_operations"] if key.startswith(prefix)})
+            payload[field] = list(paths.values())
+        payload["sha256"] = {**payload["sha256"], "manifest": results["release-manifest"].sha256,
+                             **{role: results[key].sha256 for role, key in parameters["hash_roles"].items()}}
     elif kind == "run":
         payload = {**parameters["payload"],
                    "release_paths": [blob_info(results[key]) for key in parameters["release_operations"]],
@@ -138,7 +169,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
         return record, record["run_record"]
 
     def committed_artifacts(self, asset, *, suffixes):
-        """Read build inputs from the owned receipt, never mutable latest aliases."""
+        """Read the committed manifest, including reviewed translation edits."""
         state = self.state(asset).value
         p.require(state["active"] is None, "cannot load translation inputs during an incomplete publication")
         current = state["current"]
@@ -146,8 +177,21 @@ class OwnedGeneratedPublisher(GcsPublisher):
             return None
         receipt = self.store.read_json(current["receipt_uri"])
         prefix = f"gs://{self.bucket.name}/{asset.root}/releases/{current['release']}/{asset.slug}"
-        results = {version.path: version for version in (p.ObjectVersion.parse(value) for value in receipt.value["results"].values())}
-        p.require(all(prefix + suffix in results for suffix in suffixes), "committed translation source bundle is incomplete")
+        manifest = self.store.read_json(current["release_manifest"]["path"])
+        p.require(manifest is not None and manifest.version.identity() == current["release_manifest"], "committed manifest snapshot changed")
+        model.validate_release_manifest(manifest.value, require_generations=True)
+        artifacts = {entry["path"]: entry for entry in manifest.value["artifacts"]}
+        results = {}
+        # Persisted v1 manifests omitted extras; their receipt is the only
+        # recorded source for those files. New manifests must be complete.
+        legacy = any(op["source"].get("parameters", {}).get("kind") == "manifest" for op in receipt.value["intent"]["operations"])
+        old_results = {value["path"]: value for value in receipt.value["results"].values()} if legacy else {}
+        for suffix in suffixes:
+            path = prefix + suffix
+            entry = artifacts.get(path) or old_results.get(path)
+            p.require(entry is not None, "committed translation source bundle is incomplete")
+            # The downloader verifies these captured bytes once, while streaming.
+            results[path] = p.ObjectVersion(path, entry["generation"], str(entry["sha256"]).removeprefix("sha256:"), entry["size"])
         return {suffix: results[prefix + suffix] for suffix in suffixes}
 
     def reset_translation_supplement(self, asset):
@@ -206,6 +250,15 @@ class OwnedGeneratedPublisher(GcsPublisher):
         if value["mode"] == "object_repair":
             p.require(set(operations) == {"release-index"} and operations["release-index"]["source"]["parameters"]["kind"] == "skip-index", "only run-index skips are supported without a release")
             return
+        if value["mode"] == "metadata_update":
+            parameters = operations["release-manifest"]["source"]["parameters"]
+            p.require(parameters["kind"] == "translation-manifest-v1", "unsupported metadata derivation")
+            validate_translation_template(parameters["payload"], parameters["baseline"], parameters["locales"])
+            translation_update_release({"asset_slug": context.asset_slug, "promotions": [
+                {"destination_uri": op["destination"]} for op in value["operations"] if op["phase"] in {"data", "commit"}
+            ]}, bucket=context.bucket, locales=parameters["locales"])
+            p.require("run-record" in operations and "release-index" in operations, "metadata update requires run and index effects")
+            return
         p.require(value["mode"] == "complete_release", "unsupported generated publication mode")
         parameters = operations["release-manifest"]["source"]["parameters"]
         identity = parameters["payload"]["identity"]
@@ -215,6 +268,89 @@ class OwnedGeneratedPublisher(GcsPublisher):
         for role in ("fgb", "pmtiles", "metadata", "schema"):
             p.require(f"release-{role}" in operations and f"latest-{role}" in operations, "incomplete vector bundle")
         p.require("run-record" in operations and "release-index" in operations, "publication must include run and release-index effects")
+
+    def publish_translation_update(self, *, asset, plan):
+        """Apply a reviewed current-release language bundle using the same owner."""
+        from scripts import catalog_csv
+
+        context = self.context(asset)
+        existing = self.resume(asset)
+        if existing is not None:
+            return existing
+        state = self.state(asset).value
+        current = state["current"]
+        p.require(state["active"] is None, "another publication owns the asset")
+        p.require(current["receipt_uri"] != state["adoption_receipt"], "translation updates require a completed new-contract release")
+        row = catalog_csv.catalog_row(asset.slug)
+        locales = row["translation_locales"].split(";")
+        release = translation_update_release(plan, bucket=context.bucket, locales=locales)
+        p.require(release == current["release"], "translation update must target the current release")
+        promotions = {item["destination_uri"]: item for item in plan["promotions"]}
+        baseline = self.store.read_json(current["release_manifest"]["path"])
+        p.require(baseline is not None and baseline.version.identity() == current["release_manifest"], "current release manifest changed")
+        for snapshot in (current["release_manifest"], current["latest_manifest"]):
+            p.require(int(promotions[snapshot["path"]]["destination_generation"] or 0) == snapshot["generation"], "reviewed manifest generation is no longer current")
+
+        # Validate the prepared manifest and every pinned source before claiming
+        # ownership. The executor captures the exact bytes for crash recovery.
+        sources = {}
+        for target, promotion in promotions.items():
+            version = self.store.inspect(promotion["source_uri"], int(promotion["source_generation"]))
+            p.require(version is not None, "reviewed translation source is missing")
+            sources[target] = version
+        manifest_source = sources[current["release_manifest"]["path"]]
+        staged = self.store.read_json(manifest_source.path)
+        p.require(staged is not None and staged.version.identity() == manifest_source.identity(), "reviewed manifest source changed")
+        p.require(sources[current["latest_manifest"]["path"]].sha256 == manifest_source.sha256, "release and latest must use the same prepared manifest")
+        template = staged.value
+        validate_translation_template(template, baseline.value, locales)
+        artifacts = {entry["path"]: entry for entry in template["artifacts"]}
+        suffixes = [("translation-source", ".metadata-translations.csv"), *((f"metadata-{locale.replace('_', '-')}", f".metadata.{locale}.ndjson.gz") for locale in locales)]
+        operations = []
+        hash_roles = {}
+        for role, suffix in suffixes:
+            uri = f"gs://{context.bucket}/{asset.root}/releases/{release}/{asset.slug}{suffix}"
+            source = sources[uri]
+            entry = artifacts.get(uri)
+            p.require(entry is not None and str(entry["sha256"]).removeprefix("sha256:") == source.sha256 and entry["size"] == source.size, "prepared artifact differs from reviewed source")
+            latest_uri = uri.replace(f"/releases/{release}/", "/latest/")
+            p.require(sources[latest_uri].sha256 == source.sha256, "release and latest translation bytes must agree")
+            for prefix, target in (("release", uri), ("latest", latest_uri)):
+                promotion = promotions[target]
+                captured = {"kind": "gcs", "path": source.path, "generation": source.generation, "sha256": source.sha256, "size": source.size} if prefix == "release" else {"kind": "result", "operation": f"release-{role}"}
+                operations.append(self.operation(f"{prefix}-{role}", "data", target, captured, int(promotion["destination_generation"] or 0), asset.slug))
+            hash_roles["metadata_translations" if role == "translation-source" else role.replace("-", "_")] = f"release-{role}"
+        data_ids = [op["id"] for op in operations]
+        parameters = {"kind": "translation-manifest-v1", "payload": template, "baseline": baseline.value, "locales": locales}
+        operations.append(self.operation("release-manifest", "commit", current["release_manifest"]["path"],
+            {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": parameters, "dependencies": data_ids}, current["release_manifest"]["generation"], asset.slug))
+        operations.append(self.operation("latest-manifest", "commit", current["latest_manifest"]["path"],
+            {"kind": "result", "operation": "release-manifest"}, current["latest_manifest"]["generation"], asset.slug))
+        for operation in operations:
+            promotion = promotions[operation["destination"]]
+            for field in ("content_type", "cache_control"):
+                if promotion.get(field):
+                    operation[field] = promotion[field]
+        dependencies = [op["id"] for op in operations]
+        run_uri = f"gs://{context.bucket}/{asset.run_record_object(dt.date.fromisoformat(release))}"
+        run = self.store.read_json(run_uri)
+        p.require(run is not None, "current release run record is missing")
+        record = {**run.value, "localization": {"translation_locales": locales, "translation_fields": row["translation_fields"].split(";"), "translations": template["translations"]}}
+        run_parameters = {"kind": "translation-run-v1", "payload": record, "hash_roles": hash_roles, "artifact_operations": dependencies}
+        operations.append(self.operation("run-record", "asset_derived", run_uri,
+            {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": run_parameters, "dependencies": dependencies}, run.version.generation, asset.slug))
+        index_uri = release_index.release_index_uri(context.bucket, asset.slug)
+        index = self.store.read_json(index_uri)
+        p.require(index is not None, "current release index is missing")
+        now = dt.datetime.now(dt.UTC).isoformat()
+        parameters = {"kind": "index", "run_parameters": run_parameters, "index": index.value, "updated_at": now}
+        operations.append(self.operation("release-index", "asset_derived", index_uri,
+            {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": parameters, "dependencies": [*dependencies, "run-record"]}, index.version.generation, asset.slug))
+        high_water = state["reserved_next_feature_id"]
+        intent = p.Intent.build({"schema_version": 1, "context": asdict(context), "mode": "metadata_update", "release": release,
+            "predecessor": current["latest_manifest"], "reservation": {"start": high_water, "next": high_water},
+            "prepared_at": now, "operations": operations, "notification": None})
+        return self.result(self.engine.run(context, prepare=lambda: intent, local_sources={}))
 
     def publish_generated(self, *, asset, run_date, outputs, identity, object_metadata, source_inputs, record, extra_suffix_paths=(), asset_readme: Path | None = None, translations=None):
         context = self.context(asset)

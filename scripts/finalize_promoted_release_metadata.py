@@ -281,6 +281,11 @@ def finalized_run_record_payload(
 
 
 def finalize_promoted_release_metadata(plan: Mapping[str, Any], *, client: Any) -> dict[str, Any]:
+    from ingestion.common.identity_reset import ASSET_ROOTS
+    if plan["asset_slug"] in ASSET_ROOTS:
+        # The owner finalized these snapshots while holding the asset claim.
+        # A second write here would invalidate its committed receipt.
+        return {"finalized_manifests": [], "finalized_run_records": [], "publication_owner": plan["asset_slug"]}
     manifest_infos: dict[str, BlobInfo] = {}
     finalized_manifests: list[dict[str, Any]] = []
     for uri in manifest_destination_uris(plan):

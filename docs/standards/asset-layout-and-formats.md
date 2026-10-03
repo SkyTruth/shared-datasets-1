@@ -280,15 +280,14 @@ and restore damaged hashes or retranslate. Manifest and in-memory task size
 grow with feature/field/locale combinations; workbook sharding does not bound
 the current pipeline's total memory use.
 
-Use `--all-locales` during publish/build preparation to materialize every
-locale present in the translation source. After a reviewed publish plan promotes
-a new `{asset-slug}.metadata-translations.csv`, the
-`Feature metadata localization materialization` workflow regenerates sibling
-localized metadata sidecars from the promoted CSV, canonical sidecar, and
-schema, then uploads the derived sidecars with current-generation
-preconditions from the approved publisher environment. Catalog web deployment
-runs after this materialization workflow so release-index-backed catalog
-metadata reflects the localized sidecars before publication.
+During publish/build preparation, explicitly materialize every maintained
+`translation_locales` entry using only the declared `translation_fields`.
+A locale with no CSV rows still produces a source-text fallback sidecar.
+`--all-locales` only discovers locales already present in a CSV and is insufficient
+for maintained releases. Use `--manifest` to include coverage and language artifact
+hashes, then stage the CSV, all locale sidecars, and the manifest together. The
+approved mutation workflow rejects incomplete bundles and finalizes the release
+index before catalog deployment. There is no subsequent localization writer.
 
 Catalog and app consumers must not fetch or merge a translation overlay. A
 browser or resolver requests one metadata sidecar for the active locale; if the

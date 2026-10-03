@@ -197,6 +197,12 @@ def run_job_main(
     except Exception:
         logger.exception(failure_message)
         raise
+    if isinstance(records, list) and any(record.get("localization") for record in records):
+        from ingestion.common.translation_notices import notify_records
+        try:
+            notify_records(records)
+        except Exception:
+            logger.warning("Translation notices failed after publication", exc_info=True)
     json.dump(records, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
 

@@ -353,6 +353,14 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual(state["current"], baseline["current"])
                 self.assertIsNone(state["active"])
 
+    def test_metadata_manifest_update_cannot_reserve_new_ids(self):
+        store = MemoryStore()
+        seed(store)
+        value = make_intent(store).value
+        value.update(mode="metadata_update", release="2026-09-01")
+        with self.assertRaisesRegex(p.PublicationError, "cannot allocate IDs"):
+            p.Intent.build(value)
+
     def test_genesis_claim_rechecks_existing_allocation_objects(self):
         for existing in (False, True):
             with self.subTest(existing=existing):

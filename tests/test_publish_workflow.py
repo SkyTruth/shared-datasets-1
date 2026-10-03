@@ -9,6 +9,7 @@ from unittest import mock
 from temp_workspace import workspace
 
 from scripts import catalog_csv, publish_workflow
+from ingestion.common.publication import PublicationError
 
 
 BUCKET = "skytruth-shared-datasets-1"
@@ -32,6 +33,60 @@ def make_promotion(**overrides) -> dict:
 
 
 class IsSchemaTargetTests(unittest.TestCase):
+    def test_invalid_prepared_manifest_refuses_all_generic_copies(self):
+        from scripts import gcs_asset, release_feature_model as model
+        root = CANONICAL_PATH.rsplit("/", 1)[0]
+        plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=f"{root}/demo-asset{suffix}")
+            for suffix in (".metadata-translations.csv", ".metadata.es.ndjson.gz", ".metadata.fr.ndjson.gz", ".manifest.json")]}
+        with mock.patch.dict(os.environ, {"SHARED_DATASETS_BUCKET": BUCKET}), mock.patch.object(publish_workflow, "load_plan", return_value=plan), mock.patch.object(publish_workflow, "catalog_row", return_value={"translation_locales": "es;fr"}), mock.patch.object(publish_workflow.subprocess, "run") as process, mock.patch.object(gcs_asset, "get_client") as client:
+            client.return_value.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"{}"
+            with self.assertRaises(model.ReleaseFeatureModelError):
+                publish_workflow.main(["promote", "--plan-json", "unused.json"])
+            process.assert_not_called()
+
+    def test_owned_translation_adapter_requires_protected_immutable_authority(self):
+        from scripts import dataset_mutation_authorization as auth
+        plan = {"asset_slug": "wdpa-marine", "promotions": []}
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch("google.auth.default") as credentials:
+            with self.assertRaisesRegex(PublicationError, "protected main workflow"):
+                publish_workflow.promote_owned_translations(plan)
+            credentials.assert_not_called()
+        env = {"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+               "GITHUB_WORKFLOW_REF": "SkyTruth/shared-datasets-1/.github/workflows/publish-dataset.yml@refs/heads/main", "EXPECTED_SHA256": "a" * 64}
+        envelope = {"outcome": "mutation", "document": {"publish": {**plan, "promotions": ["different reviewed bytes"]}}}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(auth, "verified_envelope", return_value=envelope) as verify, mock.patch("google.auth.default") as credentials:
+            with self.assertRaisesRegex(PublicationError, "immutable approved"):
+                publish_workflow.promote_owned_translations(plan)
+            verify.assert_called_once()
+            credentials.assert_not_called()
+
+    def test_owned_translation_bundle_never_uses_generic_copy_or_finalizer(self):
+        from scripts import finalize_promoted_release_metadata as finalizer
+        slug = "wdpa-marine"
+        locales = publish_workflow.catalog_row(slug)["translation_locales"].split(";")
+        prefix = f"gs://{BUCKET}/{publish_workflow.ASSET_ROOTS[slug]}"
+        plan = {"asset_slug": slug, "promotions": [make_promotion(destination_uri=f"{prefix}/{directory}/{slug}{suffix}")
+            for directory in ("latest", "releases/2026-10-01")
+            for suffix in (".manifest.json", ".metadata-translations.csv", *(f".metadata.{locale}.ndjson.gz" for locale in locales))]}
+        with mock.patch.dict(os.environ, {"SHARED_DATASETS_BUCKET": BUCKET}), mock.patch.object(publish_workflow, "load_plan", return_value=plan), mock.patch.object(publish_workflow, "promote_owned_translations") as owner, mock.patch.object(publish_workflow.subprocess, "run") as process:
+            self.assertEqual(publish_workflow.main(["promote", "--plan-json", "unused.json"]), 0)
+            owner.assert_called_once_with(plan)
+            self.assertEqual(publish_workflow.main(["rebuild-release-index", "--plan-json", "unused.json"]), 0)
+            process.assert_not_called()
+        client = mock.Mock()
+        self.assertEqual(finalizer.finalize_promoted_release_metadata(plan, client=client)["publication_owner"], slug)
+        client.bucket.assert_not_called()
+
+    def test_translation_promotions_require_every_maintained_locale_and_manifest(self):
+        root = CANONICAL_PATH.rsplit("/", 1)[0]
+        row = {"translation_locales": "es;fr"}
+        plan = {"asset_slug": "demo-asset", "promotions": [make_promotion(destination_uri=f"{root}/demo-asset.metadata-translations.csv")]}
+        with self.assertRaisesRegex(PublicationError, "bundle is incomplete"):
+            publish_workflow.validate_translation_bundles(plan, row)
+        for suffix in (".metadata.es.ndjson.gz", ".metadata.fr.ndjson.gz", ".manifest.json"):
+            plan["promotions"].append(make_promotion(destination_uri=f"{root}/demo-asset{suffix}"))
+        publish_workflow.validate_translation_bundles(plan, row)
+
     row = {"asset_slug": "demo-asset", "canonical_path": CANONICAL_PATH}
 
     def check(self, destination_uri: str, *, row=None, asset_slug: str = "demo-asset") -> bool:

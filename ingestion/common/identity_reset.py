@@ -8,6 +8,7 @@ does not write remote objects or infer any historical allocation ceiling.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from ingestion.common import publication as p
@@ -21,6 +22,23 @@ ASSET_ROOTS = {
     "ims-sea-ice-extent": "200-imagery-derived/250-weather-climate/ims-sea-ice-extent",
 }
 BASE_SUFFIXES = (".fgb", ".pmtiles", ".metadata.ndjson.gz", ".schema.json", ".manifest.json")
+
+
+def translation_update_release(plan, *, bucket, locales):
+    """Constrain the reviewed adapter to one current-release language bundle."""
+    slug = plan["asset_slug"]
+    p.require(slug in ASSET_ROOTS and bool(locales), "asset does not support owned translation updates")
+    prefix = f"gs://{bucket}/{ASSET_ROOTS[slug]}"
+    targets = [item["destination_uri"] for item in plan["promotions"]]
+    dates = {match[1] for target in targets if (match := re.fullmatch(re.escape(prefix) + r"/releases/(\d{4}-\d{2}-\d{2})/[^/]+", target))}
+    p.require(len(dates) == 1, "translation update requires one concrete release")
+    release = dates.pop()
+    p.require(p.valid_date(release), "invalid translation update release")
+    suffixes = [".metadata-translations.csv", ".manifest.json", *(f".metadata.{locale}.ndjson.gz" for locale in locales)]
+    expected = {f"{prefix}/{directory}/{slug}{suffix}" for directory in (f"releases/{release}", "latest") for suffix in suffixes}
+    p.require(len(targets) == len(expected) and set(targets) == expected, "owned translation update requires exactly the CSV, declared locales, and both manifests")
+    return release
+
 
 
 def require_unmanaged_target(name: str) -> None:

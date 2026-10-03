@@ -428,7 +428,6 @@ class RepoGuardrailsTests(unittest.TestCase):
     def test_real_immutable_bootstrap_guards_execute_before_checkout(self):
         for filename, job_name in (
             ("publish-dataset.yml", "reviewed_pr_plans"),
-            ("metadata-localization.yml", "materialize"),
         ):
             path = repo_guardrails.REPO_ROOT / ".github/workflows" / filename
             workflow = yaml.safe_load(path.read_text())

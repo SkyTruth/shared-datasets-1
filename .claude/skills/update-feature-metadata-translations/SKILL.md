@@ -148,6 +148,7 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
   --translatable-field name --translatable-field designation \
   --output-dir "$WORK_ROOT/vector-assets/example-asset/publish" \
   --report-dir "$WORK_ROOT/vector-assets/example-asset/reports" \
+  --manifest "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.manifest.json" \
   --asset-slug example-asset \
   --release YYYY-MM-DD \
   --report "$WORK_ROOT/vector-assets/example-asset/reports/localization-summary.json"
@@ -191,10 +192,13 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
    but do not lock out arbitrary editors. These local checks do not establish
    remote generation freshness or authorize uploads.
 7. Publish translation updates through the reviewed dataset publish workflow.
-   Include the translation CSV and generated localized sidecars in staged
-   publish candidates, or rely on the
-   `Feature metadata localization materialization` workflow after a reviewed
-   publish plan promotes a new translation CSV.
+   Stage the CSV, every maintained locale sidecar, and the coverage manifest
+   together for the release and `latest/`. CSV-only promotion is rejected; there
+   is no after-publish materialization workflow. WDPA current-release edits use
+   its existing publication owner, preserving IDs and base artifact snapshots.
+   Missing/stale translations are nonblocking source-text fallbacks. The shared
+   completion hook reports debt at the inclusive 1% threshold once per release;
+   see `docs/feature-metadata-api.md` for privacy and claim/delivery semantics.
 
 ## Frontend Contract
 

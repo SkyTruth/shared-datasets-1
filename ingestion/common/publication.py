@@ -293,7 +293,7 @@ def validate_intent(value: Any) -> None:
         require(context.identity_contract is not None, "generated reservation requires an identity contract")
         keys(reservation, {"start", "next"}, "reservation")
         require(integer(reservation["start"], 1) and integer(reservation["next"], 1) and reservation["start"] <= reservation["next"] <= 10**64, "invalid generated sequence range")
-        require(value["mode"] == "complete_release", "repairs/metadata cannot allocate IDs")
+        require(value["mode"] == "complete_release" or value["mode"] == "metadata_update" and reservation["start"] == reservation["next"], "repairs/metadata cannot allocate IDs")
     require(value["notification"] is None or isinstance(value["notification"], dict), "notification payload must be an immutable object or null")
     operations = value["operations"]
     require(isinstance(operations, list) and bool(operations), "operations must be a nonempty list")
@@ -320,7 +320,7 @@ def validate_intent(value: Any) -> None:
             relative = operation["destination"].split(context.asset_root + "/", 1)[1].split("/")
             require((len(relative) == 2 and relative[0] == "latest") or (len(relative) == 3 and relative[:2] == ["releases", value["release"]]), "data target must be in this release or latest")
             if relative[-1].endswith(".manifest.json"):
-                require(operation["phase"] == "commit" and value["mode"] == "complete_release", "manifest activation requires complete_release")
+                require(operation["phase"] == "commit" and value["mode"] in {"complete_release", "metadata_update"}, "manifest activation requires a release or metadata update")
             else:
                 require(operation["phase"] == "data", "data bytes must precede manifest commit")
         if value["mode"] == "metadata_update" and classification == "asset" and operation["phase"] == "data":
@@ -348,11 +348,11 @@ def validate_intent(value: Any) -> None:
         seen.add(operation["id"])
         destinations.add(operation["destination"])
     commits = {operation["destination"] for operation in operations if operation["phase"] == "commit"}
-    if value["mode"] == "complete_release":
+    if value["mode"] == "complete_release" or value["mode"] == "metadata_update" and commits:
         expected = {f"gs://{context.bucket}/{context.asset_root}/{part}/{context.asset_slug}.manifest.json" for part in (f"releases/{value['release']}", "latest")}
         require(commits == expected, "complete release requires release/latest manifests as final data commits")
     else:
-        require(not commits, "repair/metadata/catalog modes cannot activate a new manifest")
+        require(not commits, "repair/catalog modes cannot activate a new manifest")
 
 
 def operation_tags(intent: Intent, operation: dict[str, Any], sha256: str) -> dict[str, str]:
@@ -486,7 +486,7 @@ def validate_state_references(store: Store, state: dict[str, Any], context: Cont
             require((committed_context.bucket, committed_context.asset_root, committed_context.asset_slug) == (context.bucket, context.asset_root, context.asset_slug) and committed_context.receipt_uri == current["receipt_uri"], "foreign current receipt")
             require(committed_context.identity_contract == context.identity_contract, "current receipt belongs to another identity contract")
             intent, results = parse_receipt(committed.value, committed_context)
-            require(committed.value["phase"] in {"committed", "derived_complete"} and intent.value["mode"] == "complete_release" and intent.transaction_id == current["transaction_id"] and intent.value["release"] == current["release"], "state current lacks a committed activation receipt")
+            require(committed.value["phase"] in {"committed", "derived_complete"} and intent.value["mode"] in {"complete_release", "metadata_update"} and intent.transaction_id == current["transaction_id"] and intent.value["release"] == current["release"], "state current lacks a committed activation receipt")
             allocation = intent.value["reservation"]
             require((allocation is None) == (state["reserved_next_feature_id"] is None), "current allocation strategy differs from state")
             if allocation is not None:
@@ -558,7 +558,7 @@ class Executor:
         else:
             require(current is not None and value["release"] == current["release"], "repair/metadata requires current committed release")
         reservation = value["reservation"]
-        if value["mode"] == "complete_release":
+        if value["mode"] == "complete_release" or value["mode"] == "metadata_update" and any(op["phase"] == "commit" for op in value["operations"]):
             require((reservation is None) == (state.value["reserved_next_feature_id"] is None), "generated asset requires an explicit reservation")
         if reservation:
             require(reservation["start"] == state.value["reserved_next_feature_id"], "reservation does not match persisted generated high-water")
@@ -607,12 +607,13 @@ class Executor:
             return
         self._assert_owner(context, intent)
         value = intent.value
-        if value["mode"] == "complete_release":
+        if value["mode"] == "complete_release" or value["mode"] == "metadata_update" and any(op["phase"] == "commit" for op in value["operations"]):
             versions = [ObjectVersion.parse(results[op["id"]]) for op in value["operations"] if op["phase"] == "commit"]
             current = {"release": value["release"], "transaction_id": intent.transaction_id, "receipt_uri": context.receipt_uri,
                        "release_manifest": next(item.identity() for item in versions if "/releases/" in item.path),
                        "latest_manifest": next(item.identity() for item in versions if "/latest/" in item.path)}
-        # Metadata/repair operations do not replace the activation authority.
+        # Legacy metadata intents without manifests retain their old behavior.
+        # A manifest-bearing update advances the snapshot, never the release/IDs.
         next_state = {**state.value, "current": current, "active": None if clear else state.value["active"]}
         if next_state != state.value:
             self.store.write_json(context.state_uri, next_state, state.version.generation)

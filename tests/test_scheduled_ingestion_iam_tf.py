@@ -53,6 +53,18 @@ def terraform_resource_blocks(text: str, resource_type: str) -> list[str]:
 
 
 class ScheduledIngestionIamTerraformTests(unittest.TestCase):
+    def test_translation_notice_permissions_only_create_scoped_exports_and_read_existing_secret(self):
+        text = (PROD_TF_DIR / "translation_notices.tf").read_text()
+        for name in ("translation_debt_writer", "publisher_translation_debt_writer"):
+            block = terraform_resource_block(text, "google_storage_bucket_iam_member", name)
+            self.assertIn('role   = "roles/storage.objectCreator"', block)
+            self.assertIn("shared_bucket_object_resource_prefix}_scratch/translation-debt/", block)
+            self.assertIn("shared_bucket_folder_resource_prefix}_scratch/translation-debt/", block)
+            self.assertNotIn("objectUser", block)
+        secret = terraform_resource_block(text, "google_secret_manager_secret_iam_member", "translation_notice")
+        self.assertIn('role      = "roles/secretmanager.secretAccessor"', secret)
+        self.assertIn("google_secret_manager_secret.slack_webhook_url.secret_id", secret)
+
     def test_shared_bucket_conditions_cover_hns_folder_resources(self):
         iam_tf = (PROD_TF_DIR / "canonical_mutation_iam.tf").read_text()
 

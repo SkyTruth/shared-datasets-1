@@ -1,6 +1,7 @@
 """Release coverage is a partition of eligible values, not CSV history rows."""
 
 import csv
+import json
 from copy import deepcopy
 from unittest import mock
 
@@ -110,3 +111,37 @@ def test_batch_refuses_debt_report_alias_before_writing(tmp_path):
                                        output_dir=tmp_path, locales=["es"], translatable_fields={"name"},
                                        reserved_outputs=[loc.debt_file_path(output, "es")])
     assert not output.exists()
+
+
+def test_prepared_manifest_contains_coverage_and_exact_language_artifacts(tmp_path):
+    from ingestion.common import feature_metadata
+
+    canonical = tmp_path / "example-asset.metadata.ndjson.gz"
+    source = tmp_path / "example-asset.metadata-translations.csv"
+    manifest = tmp_path / "example-asset.manifest.json"
+    model.write_metadata_sidecar([sidecar_record("1", VALID_HASH_A, {"name": "Alpha"})], canonical)
+    write_translation_source(source, [translation("name", "Alpha", "Alfa")])
+    payload = feature_metadata.manifest_payload(
+        asset_slug="example-asset", release="2026-05-01", bucket_name="bucket", asset_root="category/group/example-asset",
+        sha256_by_role={"fgb": "a" * 64, "pmtiles": "b" * 64, "metadata": translation_local_io.file_sha256(canonical), "schema": "d" * 64},
+        schema=feature_metadata.schema_from_records(asset_slug="example-asset", release="2026-05-01", records=[]),
+        source_inputs=[], identity=model.build_identity_metadata(strategy="source_field", source_fields=["name"]), feature_count=1,
+    )
+    manifest.write_text(json.dumps(payload))
+    assert loc.main(["--canonical-sidecar", str(canonical), "--translation-source", str(source),
+                     "--output-dir", str(tmp_path), "--locale", "es", "--locale", "fr",
+                     "--translatable-field", "name", "--manifest", str(manifest)]) == 0
+    updated = json.loads(manifest.read_text())
+    assert updated["identity"] == payload["identity"]
+    assert updated["translations"]["locales"]["es"]["current"] == 1
+    assert updated["translations"]["locales"]["fr"]["missing"] == 1
+    for artifact in updated["artifacts"][5:]:
+        local = tmp_path / artifact["path"].rsplit("/", 1)[1]
+        assert artifact["sha256"] == translation_local_io.file_sha256(local)
+    model.validate_release_manifest(updated)
+    model.validate_translation_bundle_manifest(updated, ["es", "fr"])
+    with pytest.raises(model.ReleaseFeatureModelError, match="declared locales"):
+        model.validate_translation_bundle_manifest(updated, ["es"])
+    updated["artifacts"].pop()
+    with pytest.raises(model.ReleaseFeatureModelError, match="inventory"):
+        model.validate_translation_bundle_manifest(updated, ["es", "fr"])

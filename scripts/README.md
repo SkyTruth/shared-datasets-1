@@ -246,7 +246,9 @@ uv run python scripts/feature_metadata_localization.py \
   --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
   --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
   --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
-  --all-locales \
+  --locale es --locale fr \
+  --translatable-field name \
+  --manifest "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.manifest.json" \
   --output-dir "$WORK_ROOT/vector-assets/example-asset/publish" \
   --report-dir "$WORK_ROOT/vector-assets/example-asset/reports" \
   --asset-slug example-asset \
@@ -261,18 +263,18 @@ values canonical, rejects duplicate keys, and writes deterministic gzip NDJSON.
 The catalog viewer resolver serves one localized sidecar for the active locale
 when available and falls back to the canonical sidecar when it is not.
 
-`feature_metadata_translation_pipeline.py` is the GitHub Actions pipeline entry
-point for reviewed translation-source updates. The
-`Feature metadata localization materialization` workflow runs after the
-approved dataset mutation workflow succeeds, verifies its exact repository,
-workflow/run identity and immutable authorization artifact, then extracts promoted
-`{asset-slug}.metadata-translations.csv` objects from the reviewed publish
-plan, downloads the sibling canonical sidecar and schema, materializes all
-available locale sidecars, and uploads those generated sidecars with current
-generation preconditions from the approved publisher environment. Catalog web
-deployment runs after this workflow, which lets the catalog bundle read release
-indexes that include generated localized sidecars. Manual dispatch can run the
-same pipeline for an explicit canonical translation-source URI.
+For a maintained asset, pass explicit `--locale` and `--translatable-field`
+arguments from its catalog row, plus `--manifest` pointing to its prepared
+release manifest. The local materializer adds coverage and exact CSV/sidecar
+hashes to that manifest. Stage the CSV, every declared locale, and the manifest
+in one reviewed publish plan, including release and `latest/` copies. CSV-only
+promotion is rejected. The approved mutation workflow finalizes the bundle and
+release index; catalog deployment follows it directly.
+
+`scripts/publish_workflow.py translation-notice --plan-json ...` is the existing
+publish workflow's best-effort completion hook. It reads committed release
+manifests, exports unresolved current values, and uses the same notice helper as
+the scheduled jobs. It never generates translations or republishes data.
 
 ## Localized metadata sidecars
 
