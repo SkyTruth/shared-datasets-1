@@ -149,7 +149,7 @@ the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
 copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
 owned publisher, preserving claims, counters, generation preconditions and
 recovery. It does not run source processing again. A different canary date is
-rejected. Observer and controlled-failure alert prerequisites remain required.
+rejected. The independent observer and unattended failure alerts remain enabled.
 
 The deploy job waits for the protected ingestion IAM sync to bootstrap access
 management on the one Slack secret and install runtime translation-notice
@@ -342,19 +342,18 @@ image through `catalog-viewer-deploy.yml` before the web bundle through
 `catalog-web-deploy.yml`, both protected workflows. Verify status on the static
 and protected catalog pages after deployment.
 
-Before the normal rollout canary, execute a controlled failure with the
-`WDPA_FAIL_BEFORE_WRITES=true` execution override, after checking existing
-executions/publication ownership and applying monitoring through the protected
-cron alert-policy workflow. The failure occurs before a publisher is created.
-Verify the terminal failed execution, observer JSON and actual alert delivery;
-then run the normal canary without that override, follow its terminal state,
-and inspect release indexes and generation/hash metadata when it publishes.
-The protected workflow starts only a controlled probe on its first attempt and
-stops before a dataset canary. After verifying actual alert delivery, dispatch
-with `failure_alert_verified_execution` naming that failed probe; it verifies
-the probe flag and terminal failure before starting the normal canary.
-If delivery has not been verified, stop before the normal canary. Do not grant
-the observer write access to worker data to repair missing execution status.
+Routine rollout does not inject a deliberate failure or require a previous
+Slack notification as an input. Monitoring delivery is tested separately with
+`cron-alert-delivery-test.yml` from reviewed `main`, using the pre-write failure
+overrides. Verify the terminal failed execution, observer JSON (for the worker),
+and actual Slack delivery before declaring an alert-policy change verified.
+
+The multi-hour validation run and the worker canary remain unmarked and alertable:
+they run asynchronously, and the worker workflow watches only the first ten
+minutes. Synchronous staging preflight failures are reported by their failed
+GitHub workflow. Follow every detached execution to its terminal state and inspect
+release indexes and generation/hash metadata when it publishes. Do not grant the
+observer write access to worker data to repair missing execution status.
 
 ## Generated-ID publication
 

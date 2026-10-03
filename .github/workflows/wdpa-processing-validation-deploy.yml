@@ -4,13 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       run_validation:
-        description: Build and retain the frozen October artifact bundle after alert verification
+        description: Build and retain the frozen October artifact bundle
         type: boolean
         default: false
-      failure_alert_verified_execution:
-        description: Failed validation probe whose actual alert delivery has been verified
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -197,6 +193,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --update-env-vars="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}" \
             --wait --format=json > "$RUNNER_TEMP/staging-probe-execution.json"
           python - "$RUNNER_TEMP/staging-probe-execution.json" <<'PYPROBE'
           import json, sys
@@ -232,10 +229,8 @@ jobs:
           uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/restore-processing-plan.json" \
             --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT"
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/restore-processing.tfplan"
-      - name: Start validation only after controlled alert verification
+      - name: Start the unattended validation execution
         if: inputs.run_validation
-        env:
-          VERIFIED_EXECUTION: ${{ inputs.failure_alert_verified_execution }}
         run: |
           set -euo pipefail
           gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
@@ -245,22 +240,6 @@ jobs:
           for execution in json.load(open(sys.argv[1])):
               if not execution.get('status', {}).get('completionTime'):
                   raise SystemExit('A validation execution is already pending or running; wait for terminal status')
-          PY
-          if [[ -z "$VERIFIED_EXECUTION" ]]; then
-            probe="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
-              --update-env-vars=WDPA_FAIL_BEFORE_DATASET_WRITES=1 --async --format='value(metadata.name)')"
-            echo "Verify actual alert delivery for controlled probe ${probe}; dispatch again with its execution ID. No source replay started."
-            exit 1
-          fi
-          [[ "$VERIFIED_EXECUTION" =~ ^wdpa-processing-validation-[a-z0-9-]+$ ]] || exit 1
-          gcloud run jobs executions describe "$VERIFIED_EXECUTION" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
-            --format=json > "$RUNNER_TEMP/wdpa-validation-probe.json"
-          python - "$RUNNER_TEMP/wdpa-validation-probe.json" <<'PY'
-          import json, sys
-          execution = json.load(open(sys.argv[1]))
-          env = {e['name']: e.get('value') for e in execution['spec']['template']['spec']['containers'][0].get('env', [])}
-          if env.get('WDPA_FAIL_BEFORE_DATASET_WRITES') != '1' or int(execution['status'].get('failedCount', 0)) != 1:
-              raise SystemExit('Expected a terminal controlled failure before any dataset writes')
           PY
           execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
             --async --format='value(metadata.name)')"

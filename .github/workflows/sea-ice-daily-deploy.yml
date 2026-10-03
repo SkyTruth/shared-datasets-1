@@ -341,14 +341,15 @@ jobs:
           set -euo pipefail
 
           execute_args=("${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --wait)
+          execution_env="SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL=${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
           if [[ -n "${CANARY_RUN_DATE}" ]]; then
             if [[ ! "${CANARY_RUN_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
               echo "canary_run_date must be YYYY-MM-DD, got: ${CANARY_RUN_DATE}" >&2
               exit 1
             fi
-            execute_args+=("--update-env-vars=RUN_DATE=${CANARY_RUN_DATE}")
+            execution_env+=",RUN_DATE=${CANARY_RUN_DATE}"
           fi
-          gcloud run jobs execute "${execute_args[@]}"
+          gcloud run jobs execute "${execute_args[@]}" --update-env-vars="${execution_env}"
 
       - name: Validate latest IMS release contract
         run: |

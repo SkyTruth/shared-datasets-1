@@ -34,11 +34,6 @@ on:
         required: false
         type: boolean
         default: false
-      failure_alert_verified_execution:
-        description: "Controlled failure execution whose actual alert delivery you verified. Required before a canary may write datasets."
-        required: false
-        type: string
-        default: ""
       canary_run_date:
         description: "Optional RUN_DATE (YYYY-MM-DD) execution override for the post-deploy canary, e.g. a deliberate metadata-contract repair or backfill publish."
         required: false
@@ -374,41 +369,6 @@ jobs:
 
           echo "run_canary=false" >> "${GITHUB_OUTPUT}"
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
-
-      - name: Verify failure visibility before dataset writes
-        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
-        env:
-          VERIFIED_EXECUTION: ${{ inputs.failure_alert_verified_execution }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${VERIFIED_EXECUTION}" ]]; then
-            probe="$(gcloud run jobs execute "${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
-              --update-env-vars=WDPA_FAIL_BEFORE_WRITES=true --async --format='value(metadata.name)')"
-            echo "Controlled failure probe: ${probe}"
-            for _ in $(seq 1 20); do
-              failed="$(gcloud run jobs executions describe "${probe}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" --format='value(status.failedCount)')"
-              if [[ "${failed}" == 1 ]]; then
-                echo "::error::Verify actual alert delivery for ${probe}, then dispatch with failure_alert_verified_execution=${probe}. No dataset canary has started."
-                exit 1
-              fi
-              sleep 15
-            done
-            echo "Controlled failure did not reach terminal failure within five minutes." >&2
-            exit 1
-          fi
-          if [[ ! "${VERIFIED_EXECUTION}" =~ ^wdpa-monthly-[a-z0-9-]+$ ]]; then
-            echo "Expected a WDPA execution ID" >&2
-            exit 1
-          fi
-          gcloud run jobs executions describe "${VERIFIED_EXECUTION}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
-            --format=json > "${RUNNER_TEMP}/wdpa-verified-failure.json"
-          python - "${RUNNER_TEMP}/wdpa-verified-failure.json" <<'PY'
-          import json, sys
-          execution = json.load(open(sys.argv[1]))
-          flags = {item["name"]: item.get("value") for item in execution["spec"]["template"]["spec"]["containers"][0].get("env", [])}
-          if flags.get("WDPA_FAIL_BEFORE_WRITES") != "true" or int(execution["status"].get("failedCount", 0)) != 1:
-              raise SystemExit("Alert-delivery evidence must name a failed controlled probe before dataset writes")
-          PY
 
       - name: Execute wdpa-monthly canary
         if: ${{ steps.inflight.outputs.run_canary == 'true' }}

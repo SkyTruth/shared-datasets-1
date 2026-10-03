@@ -467,14 +467,34 @@ Production Terraform defines log-based Cloud Monitoring alerts for scheduled
 ingestion failures. The alerts cover two cases:
 
 - Cloud Scheduler cannot start a configured ingestion job.
-- A Cloud Run Job execution exits failed, including a manual deploy canary.
+- An unattended Cloud Run Job execution exits failed, including a detached canary.
 
-The Cloud Run alert filter covers all job execution failures in the configured
-project and region; it does not restrict the execution creator to a Scheduler
-service account. Verify the deployed filter and notification channel when
-checking live alert delivery. Configure Slack delivery by changing Terraform in
-a reviewed PR and letting the protected production workflow apply it after
-merge. A local review plan can pass the existing Cloud Monitoring Slack
+The Cloud Run filter covers future jobs throughout the configured project and
+region. A synchronous GitHub deployment test is quiet only when the execution
+creator is the configured Terraform deployment identity and its execution env
+contains `SHARED_DATASETS_GITHUB_ACTIONS_RUN_URL`. The workflow passes its run URL
+with `gcloud run jobs execute --update-env-vars`, waits with `--wait`, and fails
+when Cloud Run fails. The marker must never be installed on a persistent job
+template or added to an asynchronous run. Missing metadata remains alertable;
+Scheduler executions, manual unmarked runs, and detached WDPA runs retain Slack
+coverage. PR CI and supervised build failures remain visible in GitHub.
+
+`unattended-workflow-alert.yml` reports failed scheduled maintenance and automatic
+catalog/CDN follow-ups through the existing GitHub Slack webhook secret. Manual
+dispatches and PR/push checks do not send failure messages. A regression test
+requires every scheduled workflow to be included in its subscriptions.
+
+Routine WDPA deployment no longer deliberately fails a job to produce an alert.
+Use `cron-alert-delivery-test.yml` from reviewed `main` when testing monitoring:
+it refuses active executions and uses the existing pre-write failure override.
+Verify actual Slack delivery for the reported execution; a failed job alone is
+not delivery evidence. See [alert routing verification](docs/alert-routing.md).
+
+The WDPA observer may write only its expected status object without an unapproved
+writer alert. Other writes by that identity remain alertable. The protected
+`cron-alert-policy-sync.yml` covers this policy and watches its identity inputs.
+Configure monitoring changes in a reviewed PR and let that workflow apply them
+after merge. A local review plan can pass the existing Cloud Monitoring Slack
 notification channel:
 
 ```bash

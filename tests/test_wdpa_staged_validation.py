@@ -192,7 +192,7 @@ def test_scratch_probe_precedes_processing_and_restores_only_after_terminal():
     assert (
         names.index("Verify a real upload before processing")
         < names.index("Restore the processing command after the terminal probe")
-        < names.index("Start validation only after controlled alert verification")
+        < names.index("Start the unattended validation execution")
     )
     probe = steps["Plan the scratch upload probe with unchanged image and resources"][
         "run"

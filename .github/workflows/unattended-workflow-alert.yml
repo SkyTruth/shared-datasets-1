@@ -1,0 +1,36 @@
+name: Unattended workflow failure alert
+
+on:
+  workflow_run:
+    workflows:
+      - Bucket hygiene audit
+      - Scratch cleanup audit
+      - Catalog web deploy
+      - Catalog viewer deploy
+      - PMTiles CDN sync
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    if: >-
+      github.event.workflow_run.event == 'schedule' ||
+      github.event.workflow_run.event == 'workflow_run'
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run is privileged: use trusted main code, never the source
+      # run's checkout, caches, or artifacts. Event text is parsed as data.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Notify unattended failures
+        env:
+          SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
+        run: python scripts/workflow_failure_alert.py --event-path "$GITHUB_EVENT_PATH"
