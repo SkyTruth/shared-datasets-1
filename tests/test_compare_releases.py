@@ -420,6 +420,9 @@ def test_colocated_objects_keep_independent_map_status(
             row["feature_id"]: row["change"]
             for row in engine.map_features(side, list(expected[side]))
         } == expected[side]
+        assert {
+            feature_id: change for feature_id, change, _ in engine.iter_map_index(side)
+        } == expected[side]
     assert engine.inspect("1")["classification"] == "unchanged"
     assert engine.inspect("1")["property_changes"] == []
     for color in ("novel", "removed", "metadata_changed", "unchanged"):

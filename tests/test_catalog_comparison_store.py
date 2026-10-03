@@ -129,6 +129,9 @@ def test_other_instance_and_restart_serve_same_pages_map_and_properties(
             assert result["summary"] == original["summary"]
             assert result["page"] == original["page"]
             for side in ("baseline", "target"):
+                assert comparison_fixtures.map_index(
+                    reading, job_id, side
+                ) == comparison_fixtures.map_index(local, job_id, side)
                 status, result = call(
                     reading,
                     path=f"/api/comparisons/{job_id}/map",
@@ -157,6 +160,59 @@ def test_other_instance_and_restart_serve_same_pages_map_and_properties(
         len([name for name in transport.objects if name.endswith("comparison.sqlite")])
         == 1
     )
+
+
+def test_completed_results_can_be_evicted_and_rehydrated_between_authorization_and_use(
+    distributed,
+):
+    local, remote, _, _ = distributed
+    ids = []
+    for _ in range(comparisons.MAX_JOBS + 1):
+        status, started = call(local)
+        assert status == 202
+        ids.append(started["job_id"])
+        assert complete(local, ids[-1])["state"] == "complete"
+        local[1].jobs[ids[-1]].future.result(timeout=2)
+        assert call(remote, "GET", f"/api/comparisons/{ids[-1]}")[0] == 200
+    assert len(remote[1].jobs) == comparisons.MAX_JOBS
+    assert ids[0] not in remote[1].jobs
+    selected = remote[1].get(ids[0], local[1].jobs[ids[-1]].owner)
+    # Force eviction after the authorized snapshot, before its request reads files.
+    with remote[1].lock:
+        assert remote[1]._discard(remote[1].jobs[ids[0]])
+    with remote[1].prepare(selected):
+        assert (
+            selected.comparison.inspect("1")["after"]["properties"]["name"] == "changed"
+        )
+    assert len(remote[1].jobs) <= comparisons.MAX_JOBS
+
+
+def test_remote_cancel_of_queued_job_frees_worker_capacity_before_it_runs(distributed):
+    local, remote, _, _ = distributed
+    gate, entered = threading.Event(), threading.Event()
+    original = local[1].reader
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert gate.wait(5)
+        return original(*args, **kwargs)
+
+    local[1].reader = held
+    try:
+        _, first = call(local)
+        assert entered.wait(1)
+        _, queued = call(local)
+        old = local[1].jobs[queued["job_id"]]
+        assert old.future.running() is False
+        assert call(remote, "POST", f"/api/comparisons/{old.id}/cancel")[0] == 200
+        status, replacement = call(local)
+        assert status == 202 and replacement["progress"]["phase"] == "queued"
+        assert old.future.cancelled()
+        gate.set()
+        assert complete(local, first["job_id"])["state"] == "complete"
+        assert complete(local, replacement["job_id"])["state"] == "complete"
+    finally:
+        gate.set()
 
 
 def test_remote_running_poll_and_cancellation_find_worker(distributed):

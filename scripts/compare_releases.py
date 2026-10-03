@@ -878,7 +878,7 @@ class Comparison:
             "schema_changes": schema_changes(af, bf),
             "limits": asdict(self.limits),
             "method": "Complete canonical sidecars; match compatible feature_id; compare geometry_hash/properties_hash. Historical v1 geometry hashes come from the exact canonical FGB, with legacy bookkeeping excluded from source properties. No spatial matching or tile-derived counts. Provenance and localization excluded.",
-            "map_method": "Comparable feature IDs use their own classification: additions and new positions green, removals and old positions red, stationary metadata edits yellow, unchanged gray. Incompatible identities use exact geometry_hash sets; yellow means contents differ here, without pairing objects. All loaded features use bounded per-release lookups independently of table pagination.",
+            "map_method": "Comparable feature IDs use their own classification: additions and new positions green, removals and old positions red, stationary metadata edits yellow, unchanged gray. Incompatible identities use exact geometry_hash sets; yellow means contents differ here, without pairing objects. Complete compressed per-release classification indexes color all loaded features independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
                 | set(
@@ -942,6 +942,17 @@ class Comparison:
             }
             for feature_id, change, geometry in rows
         ]
+
+    def iter_map_index(self, side):
+        """Stream the complete compact index, never geometry or metadata records."""
+        if self.summary is None or side not in {"baseline", "target"}:
+            raise ComparisonError("Select one completed release side")
+        with self.checked_connection(started=time.monotonic()) as db:
+            db.execute("PRAGMA cache_size=-8192")
+            for feature_id, change, geometry in db.execute(
+                f"SELECT id, color, geometry FROM ({self.map_rows_sql(side)}) ORDER BY id COLLATE BINARY"
+            ):
+                yield [feature_id, change, "sha256:" + geometry.hex()]
 
     def page(
         self,

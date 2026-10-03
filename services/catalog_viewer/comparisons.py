@@ -8,7 +8,9 @@ import shutil
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+import zlib
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from http import HTTPStatus
 from pathlib import Path
@@ -25,11 +27,16 @@ from services.http_base import (
 )
 
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
-MAX_JOBS = 8
-MAX_RUNNING = 2
+MAX_JOBS = 2
+MAX_RUNNING = 1
+VIEWER_LIMITS = engine.Limits(
+    max_rows=1_000_000,
+    max_expanded_bytes=1024 * 1024 * 1024,
+    max_disk_bytes=512 * 1024 * 1024,
+)
 JOB_TTL_SECONDS = 900
 JOB_PATH = re.compile(
-    r"^/api/comparisons/(?P<id>[a-f0-9]{32})(?:/(?P<action>cancel|report|map))?$"
+    r"^/api/comparisons/(?P<id>[a-f0-9]{32})(?:/(?P<action>cancel|report|map|map-index))?$"
 )
 
 
@@ -44,7 +51,7 @@ class Job:
     accessed: float = field(default_factory=time.time)
     cancel: threading.Event = field(default_factory=threading.Event)
     state: str = "running"
-    phase: str = "downloading"
+    phase: str = "queued"
     rows: int = 0
     error: str | None = None
     lock: threading.RLock = field(default_factory=threading.RLock)
@@ -56,6 +63,7 @@ class Job:
     generation: int = 0
     published: float = 0
     cancel_checked: float = 0
+    future: Future | None = field(default=None, repr=False)
 
     def update(self, phase, rows):
         with self.lock:
@@ -94,7 +102,7 @@ class ComparisonJobs:
         self,
         *,
         root: Path | None = None,
-        limits=engine.Limits(),
+        limits=VIEWER_LIMITS,
         reader=None,
         geometry_opener=None,
         store=None,
@@ -113,21 +121,7 @@ class ComparisonJobs:
 
     def start(self, owner, slug, inputs, bucket_name):
         with self.lock:
-            self._prune()
-            if len(self.jobs) >= MAX_JOBS:
-                raise engine.ComparisonLimit(
-                    "Eight retained comparison jobs are in use; retry after the 15-minute TTL or use the local CLI"
-                )
-            if (
-                sum(
-                    j.state == "running" and (self.store is None or j.generation)
-                    for j in self.jobs.values()
-                )
-                >= MAX_RUNNING
-            ):
-                raise engine.ComparisonLimit(
-                    "Comparison capacity reached; cancel or wait for an active comparison"
-                )
+            self._make_room()
             job_id = uuid.uuid4().hex
             comparison = engine.Comparison(self.root / job_id, limits=self.limits)
             job = Job(job_id, owner, slug, inputs, comparison)
@@ -135,17 +129,51 @@ class ComparisonJobs:
             comparison.progress = lambda phase, rows: self._progress(job, phase, rows)
             self._publish(job)
             self.jobs[job_id] = job
-            self.pool.submit(self._run, job, bucket_name)
+            job.future = self.pool.submit(self._run, job, bucket_name)
             return job
 
+    def _discard(self, job):
+        # The caller owns self.lock; streams pin the same per-job lock.
+        if (job.future and not job.future.done()) or not job.lock.acquire(
+            blocking=False
+        ):
+            return False
+        try:
+            shutil.rmtree(job.comparison.directory)
+            del self.jobs[job.id]
+            return True
+        finally:
+            job.lock.release()
+
     def _prune(self):
-        for key, job in list(self.jobs.items()):
+        for job in list(self.jobs.values()):
             reader_copy = self.store is not None and not job.generation
-            if (
-                job.state != "running" or reader_copy
-            ) and time.time() - job.accessed > JOB_TTL_SECONDS:
-                shutil.rmtree(job.comparison.directory)
-                del self.jobs[key]
+            if job.cancel.is_set() or (
+                (job.state != "running" or reader_copy)
+                and time.time() - job.accessed > JOB_TTL_SECONDS
+            ):
+                self._discard(job)
+
+    def _make_room(self):
+        if self.store:
+            for job in self.jobs.values():
+                if (
+                    job.future
+                    and not job.future.running()
+                    and not job.future.done()
+                    and self.store.cancelled(job.id)
+                ):
+                    job.cancel.set()
+                    self._cancel_queued(job)
+        self._prune()
+        if self.store and len(self.jobs) >= MAX_JOBS:
+            for old in sorted(self.jobs.values(), key=lambda j: j.accessed):
+                if old.state != "running" and self._discard(old):
+                    break
+        if len(self.jobs) >= MAX_JOBS:
+            raise engine.ComparisonLimit(
+                "Comparison queue is full; close an unused comparison or wait for its worker"
+            )
 
     def _publish(self, job):
         if not self.store:
@@ -190,9 +218,22 @@ class ComparisonJobs:
         if self.store:
             self.store.cancel(job.id)
         job.cancel.set()
+        with self.lock:
+            local = self.jobs.get(job.id)
+            if local:
+                local.cancel.set()
+                self._cancel_queued(local)
+
+    def _cancel_queued(self, job):
+        if job.future and job.future.cancel():
+            with job.lock:
+                job.state, job.error = "cancelled", "Comparison cancelled"
+                self._publish(job)
 
     def _run(self, job, bucket_name):
         try:
+            job.comparison.started = time.monotonic()
+            self._progress(job, "downloading", 0)
             paths = []
             for side in ("baseline", "target"):
                 local = {}
@@ -292,11 +333,7 @@ class ComparisonJobs:
                     self.store.touch(job_id, now, generation)
                 job = self.jobs.get(job_id)
                 if job is None:
-                    self._prune()
-                    if len(self.jobs) >= MAX_JOBS:
-                        raise engine.ComparisonLimit(
-                            "Comparison cache capacity reached; close an unused comparison"
-                        )
+                    self._make_room()
                     job = Job(
                         job_id,
                         owner,
@@ -356,17 +393,32 @@ class ComparisonJobs:
             job.accessed = time.time()
             return job
 
+    @contextmanager
     def prepare(self, job):
-        """Hydrate a published result only after fresh catalog authorization."""
-        if job.state != "complete":
-            return
+        """Pin a local result for a request after fresh catalog authorization."""
         with self.lock:
-            if job.comparison.summary is None:
+            local = self.jobs.get(job.id)
+            if local is None:
+                # A shared result can be evicted between authorization and use.
+                self._make_room()
+                job.comparison = engine.Comparison(
+                    self.root / job.id, limits=self.limits
+                )
+                job.comparison.cancelled = lambda: self._cancelled(job)
+                self.jobs[job.id] = job
+            else:
+                job.comparison, job.lock = local.comparison, local.lock
+            job.lock.acquire()
+        try:
+            if job.state == "complete" and job.comparison.summary is None:
                 self.store.restore_files(job.id, job.files, job.comparison)
                 restore_comparison(
                     job.comparison,
                     {"summary": job.result_summary, "metadata_refs": job.metadata_refs},
                 )
+            yield
+        finally:
+            job.lock.release()
 
 
 def open_geometry(ref, *, bucket_name):
@@ -471,6 +523,58 @@ def bounded_response(status, payload):
     return json_response(status, payload)
 
 
+class MapIndexResponse:
+    """A pinned read lease and bounded-memory, gzip-compressed NDJSON stream."""
+
+    status = 200
+    headers = {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Content-Encoding": "gzip",
+        "Transfer-Encoding": "chunked",
+        "Connection": "close",
+    }
+
+    def __init__(self, job, side):
+        self.job, self.side, self.closed = job, side, False
+        job.lock.acquire()
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
+            self.job.lock.release()
+
+    def chunks(self):
+        compressor = zlib.compressobj(wbits=31)
+        count = 0
+        header = {
+            "schema_version": 1,
+            "side": self.side,
+            "inputs": self.job.inputs,
+            "rows": self.job.comparison.summary["feature_counts"][self.side],
+        }
+        pending = bytearray((json.dumps(header) + "\n").encode())
+        try:
+            for row in self.job.comparison.iter_map_index(self.side):
+                pending.extend((json.dumps(row, separators=(",", ":")) + "\n").encode())
+                count += 1
+                if len(pending) >= 64 * 1024:
+                    yield compressor.compress(pending) + compressor.flush(
+                        zlib.Z_SYNC_FLUSH
+                    )
+                    pending.clear()
+            if count != header["rows"]:
+                raise engine.ComparisonError(
+                    "Map index differs from the validated release count"
+                )
+            pending.extend(
+                (json.dumps({"complete": True, "rows": count}) + "\n").encode()
+            )
+            yield compressor.compress(pending) + compressor.flush()
+        finally:
+            self.close()
+
+
 def handle_request(
     method,
     path,
@@ -503,6 +607,7 @@ def handle_request(
                     "limits": asdict(jobs.limits),
                     "max_page_size": 100,
                     "job_ttl_seconds": JOB_TTL_SECONDS,
+                    "map_index_version": 1,
                     "max_report_bytes": MAX_RESPONSE_BYTES,
                 },
             )
@@ -585,77 +690,8 @@ def handle_request(
                     "state": "cancelling" if job.state == "running" else job.state,
                 },
             )
-        jobs.prepare(job)
-        result = job.payload()
-        if match["action"] == "map":
-            if method != "POST":
-                return json_response(405, {"error": "Use POST for map feature lookups"})
-            if len(body) > 16 * 1024:
-                return json_response(413, {"error": "Map request exceeds 16 KiB"})
-            if result["state"] != "complete":
-                return json_response(409, {"error": "Comparison is not complete"})
-            payload = json.loads(body)
-            if not isinstance(payload, dict) or set(payload) != {"side", "feature_ids"}:
-                raise engine.ComparisonError(
-                    "Select a release side and map feature IDs"
-                )
-            return bounded_response(
-                200,
-                {
-                    "inputs": job.inputs,
-                    "map_features": job.comparison.map_features(
-                        payload["side"], payload["feature_ids"]
-                    ),
-                },
-            )
-        if method != "GET":
-            return json_response(405, {"error": "Use GET for comparison results"})
-        if result["state"] != "complete":
-            return json_response(200, result)
-        if match["action"] == "report":
-            report = job.comparison.directory / "report.json"
-            # Report contains all classifications; never silently export only a page.
-            with job.lock:
-                job.comparison.export(report)
-                if report.stat().st_size > MAX_RESPONSE_BYTES:
-                    return json_response(
-                        413,
-                        {
-                            "error": "Complete report exceeds 10 MiB; use scripts/compare_releases.py"
-                        },
-                    )
-                from services.http_base import Response, api_headers
-
-                return Response(
-                    200,
-                    {
-                        **api_headers(),
-                        "Content-Disposition": f'attachment; filename="{slug}-comparison.json"',
-                    },
-                    report.read_bytes(),
-                )
-        params = parse_qs(url.query, keep_blank_values=True)
-        if any(len(v) != 1 for v in params.values()) or set(params) - {
-            "offset",
-            "limit",
-            "query",
-            "classification",
-            "geometry_change",
-            "feature_id",
-        }:
-            raise engine.ComparisonError("Invalid comparison page parameters")
-        if result["summary"]["identity"]["compatible"]:
-            if "feature_id" in params:
-                result["feature"] = job.comparison.inspect(params["feature_id"][0])
-            else:
-                result["page"] = job.comparison.page(
-                    offset=int(params.get("offset", [0])[0]),
-                    limit=int(params.get("limit", [50])[0]),
-                    query=params.get("query", [""])[0],
-                    classification=params.get("classification", [""])[0],
-                    geometry_change=params.get("geometry_change", [""])[0],
-                )
-        return bounded_response(200, result)
+        with jobs.prepare(job):
+            return result_response(job, method, url, match, body)
     except viewer.DownloadResolutionError as exc:
         return json_response(exc.status, {"error": exc.message})
     except engine.ComparisonLimit as exc:
@@ -672,3 +708,84 @@ def handle_request(
         return json_response(
             503, {"error": "Catalog comparison inputs or authorization are unavailable"}
         )
+
+
+def result_response(job, method, url, match, body):
+    result = job.payload()
+    if match["action"] == "map-index":
+        params = parse_qs(url.query, keep_blank_values=True)
+        if (
+            method != "GET"
+            or set(params) != {"side"}
+            or params["side"] not in (["baseline"], ["target"])
+        ):
+            raise engine.ComparisonError("Use GET with one map index side")
+        if result["state"] != "complete":
+            return json_response(409, {"error": "Comparison is not complete"})
+        return MapIndexResponse(job, params["side"][0])
+    if match["action"] == "map":
+        if method != "POST":
+            return json_response(405, {"error": "Use POST for map feature lookups"})
+        if len(body) > 16 * 1024:
+            return json_response(413, {"error": "Map request exceeds 16 KiB"})
+        if result["state"] != "complete":
+            return json_response(409, {"error": "Comparison is not complete"})
+        payload = json.loads(body)
+        if not isinstance(payload, dict) or set(payload) != {"side", "feature_ids"}:
+            raise engine.ComparisonError("Select a release side and map feature IDs")
+        return bounded_response(
+            200,
+            {
+                "inputs": job.inputs,
+                "map_features": job.comparison.map_features(
+                    payload["side"], payload["feature_ids"]
+                ),
+            },
+        )
+    if method != "GET":
+        return json_response(405, {"error": "Use GET for comparison results"})
+    if result["state"] != "complete":
+        return json_response(200, result)
+    if match["action"] == "report":
+        report = job.comparison.directory / "report.json"
+        # Report contains all classifications; never silently export only a page.
+        job.comparison.export(report)
+        if report.stat().st_size > MAX_RESPONSE_BYTES:
+            return json_response(
+                413,
+                {
+                    "error": "Complete report exceeds 10 MiB; use scripts/compare_releases.py"
+                },
+            )
+        from services.http_base import Response, api_headers
+
+        return Response(
+            200,
+            {
+                **api_headers(),
+                "Content-Disposition": f'attachment; filename="{job.slug}-comparison.json"',
+            },
+            report.read_bytes(),
+        )
+    params = parse_qs(url.query, keep_blank_values=True)
+    if any(len(v) != 1 for v in params.values()) or set(params) - {
+        "offset",
+        "limit",
+        "query",
+        "classification",
+        "geometry_change",
+        "feature_id",
+    }:
+        raise engine.ComparisonError("Invalid comparison page parameters")
+    if result["summary"]["identity"]["compatible"]:
+        if "feature_id" in params:
+            result["feature"] = job.comparison.inspect(params["feature_id"][0])
+        else:
+            result["page"] = job.comparison.page(
+                offset=int(params.get("offset", [0])[0]),
+                limit=int(params.get("limit", [50])[0]),
+                query=params.get("query", [""])[0],
+                classification=params.get("classification", [""])[0],
+                geometry_change=params.get("geometry_change", [""])[0],
+            )
+    return bounded_response(200, result)

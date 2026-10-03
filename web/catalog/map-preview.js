@@ -1867,13 +1867,13 @@ function normalizedBounds(minLon, minLat, maxLon, maxLat) {
 }
 
 // Comparison owns the same primary map slot and release-scoped feature states.
-export async function renderComparisonMap({container, status, baseline, target, signal, onFeatureSelect, lookupGeometry, onError, basemap = "map", viewport = null, category = ""}) {
+export async function renderComparisonMap({container, status, baseline, target, signal, onFeatureSelect, onProgress, onError, basemap = "map", viewport = null, category = ""}) {
   const previousViewport = viewport || captureViewport();
   const renderSerial = ++activeRenderSerial;
   clearActiveMap();
-  let map = null, disposed = false, ready = false, refreshPromise = null, rerun = false, focusAbort = null;
+  let map = null, disposed = false, known = null, refreshPromise = null, rerun = false, focusAbort = null;
   const sources = [], colors = {novel: "#168153", removed: "#c33b3b", metadata_changed: "#e3bd20", unchanged: MISSING_COLOR};
-  const known = [new Map(), new Map()], applied = new Set(), categoryBounds = new Map();
+  const applied = new Set(), categoryBounds = new Map();
   const change = ["coalesce", ["feature-state", "comparisonChange"], "pending"];
   const opacityRules = new Map();
   const isCurrent = () => !disposed && !signal.aborted && renderIsCurrent(renderSerial);
@@ -1887,7 +1887,7 @@ export async function renderComparisonMap({container, status, baseline, target, 
   signal.addEventListener("abort", dispose, {once: true});
   container.replaceChildren(status); status.hidden = false; status.textContent = "Loading release union…";
   function refresh() {
-    if (!ready || !isCurrent()) return Promise.resolve();
+    if (!known || !isCurrent()) return Promise.resolve();
     if (refreshPromise) { rerun = true; return refreshPromise; }
     refreshPromise = (async () => {
       do {
@@ -1896,20 +1896,20 @@ export async function renderComparisonMap({container, status, baseline, target, 
           const layers = source.sourceLayers.map(layer => ({layer, features: map.querySourceFeatures(source.sourceId, {sourceLayer: layer.sourceLayer})}));
           const ids = [...new Set(layers.flatMap(item => item.features.map(feature => String(feature.properties?.feature_id ?? ""))))];
           if (ids.includes("")) throw new Error("Display tiles lack feature IDs; geometry colors are unavailable.");
-          const missing = ids.filter(id => !known[index].has(id));
-          for (let offset = 0; offset < missing.length; offset += 200) {
-            const batch = missing.slice(offset, offset + 200), rows = await lookupGeometry(index === 0 ? "baseline" : "target", batch);
-            check();
-            if (rows.length !== batch.length || rows.some(row => !batch.includes(row.feature_id) || !Object.hasOwn(colors, row.change) || !/^sha256:[0-9a-f]{64}$/.test(row.geometry_hash)) || new Set(rows.map(row => row.feature_id)).size !== rows.length) throw new Error("Geometry lookup does not match the displayed release features.");
-            rows.forEach(row => known[index].set(row.feature_id, row));
-          }
+          if (ids.some(id => !known[index].has(id))) throw new Error("Display feature is absent from the complete selected release input.");
+          let colored = 0;
           for (const {layer, features} of layers) for (const feature of features) {
+            check();
             const id = String(feature.properties.feature_id), row = known[index].get(id);
             categoryBounds.set(row.change, combineTwoBounds(categoryBounds.get(row.change), boundsFromFeatureGeometry(feature.geometry)));
             const key = `${source.sourceId}/${layer.sourceLayer}/${id}`;
             if (applied.has(key)) continue;
             map.setFeatureState({source: source.sourceId, sourceLayer: layer.sourceLayer, id}, {comparisonChange: row.change});
             applied.add(key);
+            if (++colored % 1000 === 0) {
+              onProgress({phase: "coloring", total: null});
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
           }
         }
       } while (rerun && isCurrent());
@@ -2008,15 +2008,21 @@ export async function renderComparisonMap({container, status, baseline, target, 
     map.on("error", event => { if (isCurrent()) onError(event.error || new Error("Selected tile generation unavailable; this map is incomplete.")); });
     enableFeatureInspection(map, sources, features => onFeatureSelect(features.map(feature => {
       const index = feature.comparisonSide === "Before" ? 0 : 1;
-      const row = known[index].get(String(feature.properties.feature_id));
+      const row = known?.[index].get(String(feature.properties.feature_id));
       return row ? {...feature, comparisonChange: row.change, geometryHash: row.geometry_hash, color: colors[row.change]} : feature;
     })), feature => {
       const index = sources.findIndex(source => source.sourceId === feature.source);
-      const row = known[index].get(String(feature.properties.feature_id));
+      const row = known?.[index].get(String(feature.properties.feature_id));
       return !category || row?.change === category;
     });
     return {dispose, viewport: () => isCurrent() ? captureViewport() : null,
-      refreshGeometry() { ready = true; refreshInBackground(); },
+      async refreshGeometry(index) {
+        known = index;
+        await refresh();
+        // Feature states must reach the renderer before filters become usable.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        check();
+      },
       setCategory(next) {
         if (!isCurrent()) return;
         focusAbort?.abort();
