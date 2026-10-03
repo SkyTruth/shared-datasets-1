@@ -1,4 +1,4 @@
-# Proposed WDPA observer deployment bootstrap
+# Approved WDPA observer deployment bootstrap
 
 The production Terraform identity can create/update Cloud Run jobs but cannot
 set job IAM or create/update Scheduler jobs. The observer needs two job bindings
@@ -33,14 +33,15 @@ proposal does not pretend to have one. Cloud Run does support
 [job-level IAM](https://docs.cloud.google.com/run/docs/securing/managing-access),
 which the actual observer runtime and scheduler grants continue to use.
 
-This is a proposal pending explicit approval, not an applied grant. AGENTS.md
-requires human input before broad write permissions. After approval and green
-PR checks, merge through the normal path; `scheduled-ingestion-deploy-iam-sync.yml`
+The operator explicitly approved this exact temporary project-wide grant on
+October 3, 2026. Approval does not itself apply the grant. After refreshed
+review and green exact-head PR checks, merge through the normal path;
+`scheduled-ingestion-deploy-iam-sync.yml`
 uses the protected production environment and queue. Its allowlist adds only the
 bootstrap custom role and conditional binding. Inspect the saved plan, then
 verify the live permission set and expiry after the protected apply.
 
-The refreshed October 2 read-only plan contains two creations (custom role and
+The refreshed October 3 read-only plan contains two creations (custom role and
 conditional binding), one update (add the read-only job IAM permission to the
 deployer role) and zero deletions. It changes no worker, observer job, Scheduler,
 runtime identity or dataset permissions. Terraform 1.8.5 formatting/validation
