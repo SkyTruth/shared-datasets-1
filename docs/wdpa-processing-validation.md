@@ -650,9 +650,10 @@ publication is verified.
 
 The observer writes only
 `gs://skytruth-shared-datasets-1/_catalog/wdpa-monthly-execution.json`.
-The catalog deployment includes `_catalog/web/app.js`, `index.html` and the new
-`execution-status.js`; the protected catalog viewer image serves the module and
-the same status document through its existing static route. Normal WDPA publication paths remain
+The catalog deployment includes `_catalog/web/app.js`, `index.html` and
+`release-reference.js`, which carries execution formatting within the existing
+viewer module allowlist. The viewer serves the same status document through its
+existing static route. Normal WDPA publication paths remain
 `100-geographic-reference/130-protected-areas/{wdpa-marine,wdpa-terrestrial}/`
 with the existing `releases/`, `latest/`, run records and release indexes.
 Existing allocation, claim and receipt ownership governs the retained-artifact
