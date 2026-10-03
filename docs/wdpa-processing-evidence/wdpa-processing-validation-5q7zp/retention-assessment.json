@@ -1,0 +1,104 @@
+{
+  "read_at": "2026-10-03T03:52:06.026824+00:00",
+  "bucket": "skytruth-shared-datasets-1",
+  "prefix": "_scratch/wdpa-builds/wdpa-processing-validation-5q7zp/",
+  "objects": [],
+  "execution": {
+    "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-processing-validation/executions/wdpa-processing-validation-5q7zp",
+    "uid": "a835e0c9-ddf7-4bae-94b5-8cf79ab47994",
+    "generation": "1",
+    "createTime": "2026-10-02T22:36:32.675990Z",
+    "updateTime": "2026-10-02T22:36:32.675990Z",
+    "launchStage": "GA",
+    "job": "wdpa-processing-validation",
+    "parallelism": 1,
+    "taskCount": 1,
+    "template": {
+      "containers": [
+        {
+          "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:1726e970b5b8dbcb8f73194bcce78b5439c53d77bf874977b3633e1b4dc3ad19",
+          "command": [
+            "python",
+            "scripts/cloud_wdpa_validation.py"
+          ],
+          "env": [
+            {
+              "name": "TMPDIR",
+              "value": "/work/tmp"
+            },
+            {
+              "name": "SHARED_DATASETS_WORKDIR",
+              "value": "/work/shared-datasets-1"
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "4",
+              "memory": "8Gi"
+            }
+          },
+          "volumeMounts": [
+            {
+              "name": "work",
+              "mountPath": "/work"
+            }
+          ]
+        }
+      ],
+      "volumes": [
+        {
+          "name": "work",
+          "emptyDir": {
+            "medium": "DISK",
+            "sizeLimit": "100Gi"
+          }
+        }
+      ],
+      "maxRetries": 0,
+      "timeout": "86400s",
+      "serviceAccount": "wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+      "executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2"
+    },
+    "reconciling": true,
+    "conditions": [
+      {
+        "type": "Started",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Started deployed execution in 4m13.03s.",
+        "lastTransitionTime": "2026-10-02T22:41:36.071114Z"
+      },
+      {
+        "type": "Retry",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "System will retry after 30:00 from lastTransitionTime for polling interval",
+        "lastTransitionTime": "2026-10-02T23:30:51.393775Z",
+        "severity": "INFO",
+        "reason": "WAITING_FOR_OPERATION"
+      },
+      {
+        "type": "Completed",
+        "state": "CONDITION_RECONCILING",
+        "message": "Waiting for execution to complete.",
+        "lastTransitionTime": "2026-10-02T22:41:39.520105Z"
+      },
+      {
+        "type": "ContainerReady",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Imported container image in 50.25s.",
+        "lastTransitionTime": "2026-10-02T22:37:22.931055Z"
+      },
+      {
+        "type": "ResourcesAvailable",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Provisioned imported containers.",
+        "lastTransitionTime": "2026-10-02T22:37:23.040976Z"
+      }
+    ],
+    "observedGeneration": "1",
+    "runningCount": 1,
+    "startTime": "2026-10-02T22:37:43.536034Z",
+    "logUri": "https://console.cloud.google.com/logs/viewer?project=shared-datasets-1&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22wdpa-processing-validation%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22wdpa-processing-validation-5q7zp%22",
+    "creator": "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+    "etag": "\"CPDjgNYGEPCTq8IC/cHJvamVjdHMvc2hhcmVkLWRhdGFzZXRzLTEvbG9jYXRpb25zL3VzLWNlbnRyYWwxL2pvYnMvd2RwYS1wcm9jZXNzaW5nLXZhbGlkYXRpb24vZXhlY3V0aW9ucy93ZHBhLXByb2Nlc3NpbmctdmFsaWRhdGlvbi01cTd6cA\""
+  }
+}

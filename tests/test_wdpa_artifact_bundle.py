@@ -52,8 +52,10 @@ class Objects:
 
 
 @pytest.fixture
-def built(tmp_path):
+def built(tmp_path, request):
     report = accepted_evidence()["build"]
+    report["memory_peak_bytes"] = getattr(request, "param", 5 * 1024**3)
+    report["resource_warnings"] = gate.memory_warnings(report)
     report.pop("artifact_bundle")
     store = Objects()
     stager = bundle.BuildStager(store, report["cloud_execution"])
@@ -124,6 +126,7 @@ def publisher_for(report):
     return publisher
 
 
+@pytest.mark.parametrize("built", [5 * 1024**3, 7732400128], indirect=True)
 def test_one_build_survives_local_cleanup_and_promotes_identical_bytes(
     built, tmp_path, monkeypatch
 ):
@@ -148,6 +151,8 @@ def test_one_build_survives_local_cleanup_and_promotes_identical_bytes(
     result = bundle.promote(store, publisher, ref, tmp_path / "promotion")
     assert published == [asset.slug for asset in wdpa.ASSETS]
     assert len(result) == 2
+    if report["memory_peak_bytes"] > gate.PREFERRED_MEMORY_PEAK_BYTES:
+        assert report["resource_warnings"]
 
 
 def test_changed_staged_file_fails_before_any_publication(built, tmp_path, monkeypatch):
@@ -202,7 +207,7 @@ def test_single_build_acceptance_does_not_accept_missing_or_unverified_bytes(def
     run = accepted_evidence()["build"]
     assert gate.check_build(run) == []
     if defect == "memory":
-        run["memory_peak_bytes"] = 7 * 1024**3
+        run["memory_peak_bytes"] = 8 * 1024**3 + 1
     elif defect == "partial":
         run["assets"].pop("wdpa-terrestrial")
     elif defect == "missing_bundle":
