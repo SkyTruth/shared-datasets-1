@@ -1,0 +1,692 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-10-03T14:41:19.391108+00:00",
+  "canonical_publication_verified": true,
+  "build_execution": "wdpa-processing-validation-cg4bc",
+  "accepted_bundle": {
+    "generation": 1791033114607974,
+    "sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170",
+    "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/build-bundle.json",
+    "size": 81647
+  },
+  "producer_source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23",
+  "producer_executor_sha": "1d67e856dda11e936abad95d6a92c5e421660857",
+  "publication_executor_sha": "8ec80965e5b2b89953d40df2fdb412a88b0f8fe4",
+  "execution": {
+    "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-monthly/executions/wdpa-monthly-f2xnm",
+    "createTime": "2026-10-03T13:59:37.597003Z",
+    "startTime": "2026-10-03T14:00:02.594501Z",
+    "completionTime": "2026-10-03T14:27:15.893723Z",
+    "succeededCount": 1,
+    "failedCount": null,
+    "conditions": [
+      {
+        "type": "Started",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Started deployed execution in 4m26.61s.",
+        "lastTransitionTime": "2026-10-03T14:04:06.415116Z"
+      },
+      {
+        "type": "Completed",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Execution completed successfully in 27m13.29s.",
+        "lastTransitionTime": "2026-10-03T14:27:15.893723Z"
+      },
+      {
+        "type": "ContainerReady",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Imported container image in 2.1s.",
+        "lastTransitionTime": "2026-10-03T13:59:39.695197Z"
+      },
+      {
+        "type": "ResourcesAvailable",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Provisioned imported containers.",
+        "lastTransitionTime": "2026-10-03T13:59:39.798271Z"
+      }
+    ]
+  },
+  "publication_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-monthly@sha256:5b5161c60743c47c8b604171435991eedf6031b884fdad6b8bad1ab987433486",
+  "configuration": {
+    "cpu": 4,
+    "memory": "8Gi",
+    "disk": "100Gi",
+    "mount": "/work",
+    "max_retries": 0,
+    "timeout_seconds": 86400,
+    "run_date": "2026-10-01"
+  },
+  "worker_execution_pages": 1,
+  "active_worker_executions": [],
+  "verification_method": "Accepted terrestrial byte SHA proofs and runtime generation-pinned download verification; canonical release/latest generation, size, publication SHA/transaction metadata, actual GCS MD5/CRC32C compared to accepted stored objects. Existing marine generation/receipt/manifest preserved, without comparing unused candidate bytes.",
+  "realms": {
+    "wdpa-marine": {
+      "row_count": 17938,
+      "next_generated_feature_id": 17943,
+      "state_generation": "1790866758580574",
+      "receipt_generation": "1790866756907944",
+      "transaction_id": "01881a135d248866ec485819a8738f2968e917db0de1a41bcf5d0b6a042a33e3",
+      "receipt_phase": "derived_complete",
+      "manifest": {
+        "generation": 1790866753009809,
+        "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+      },
+      "release_manifest": {
+        "generation": 1790866751841894,
+        "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+      },
+      "release_index": {
+        "generation": 1790866756553341,
+        "sha256": "b96f094f7fcbe8ab81196b55f50e7f2dcf1c8afe6aae11e90278137dbc946a18",
+        "latest_run": {
+          "date": "2026-10-01",
+          "release_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/",
+          "rows": 17938,
+          "run_record_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/runs/2026-10-01.json",
+          "source_version": "Oct2026",
+          "status": "success"
+        }
+      },
+      "files": [
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata-translations.csv",
+          "generation": 1790866713092413,
+          "size": 294977613,
+          "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "md5": "bAMFGNNwndF9Trcdss5qhQ==",
+          "crc32c": "8TrplA==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata-translations.csv",
+          "generation": 1790866750636069,
+          "size": 294977613,
+          "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+          "md5": "bAMFGNNwndF9Trcdss5qhQ==",
+          "crc32c": "8TrplA==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.fgb",
+          "generation": 1790866695066557,
+          "size": 1296594176,
+          "sha256": "a4204a1613d44c9825f7589d048f9163aca0fbc4c5614ccc14a1f203a8a5c096",
+          "md5": "QMtNHR0bCy9Ult8/GgOshw==",
+          "crc32c": "jLX8og==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.fgb",
+          "generation": 1790866733101887,
+          "size": 1296594176,
+          "sha256": "a4204a1613d44c9825f7589d048f9163aca0fbc4c5614ccc14a1f203a8a5c096",
+          "md5": "QMtNHR0bCy9Ult8/GgOshw==",
+          "crc32c": "jLX8og==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.es.ndjson.gz",
+          "generation": 1790866701749816,
+          "size": 3245532,
+          "sha256": "e33661691099a01c11ced51e808d8a2f9c75905e8393aa21d2579527836b4234",
+          "md5": "gC5VQ4b1ZUKTwQP0YtO6qg==",
+          "crc32c": "WntVPw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.es.ndjson.gz",
+          "generation": 1790866739500834,
+          "size": 3245532,
+          "sha256": "e33661691099a01c11ced51e808d8a2f9c75905e8393aa21d2579527836b4234",
+          "md5": "gC5VQ4b1ZUKTwQP0YtO6qg==",
+          "crc32c": "WntVPw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.fr.ndjson.gz",
+          "generation": 1790866703042008,
+          "size": 3242592,
+          "sha256": "2d5d7dd61976ab9592b43f0c7c8573de137d7532c4df9feb3f4100fc41965ed9",
+          "md5": "F/fznsFPLSGMxpKwUIBcRA==",
+          "crc32c": "XgWiBw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.fr.ndjson.gz",
+          "generation": 1790866740738797,
+          "size": 3242592,
+          "sha256": "2d5d7dd61976ab9592b43f0c7c8573de137d7532c4df9feb3f4100fc41965ed9",
+          "md5": "F/fznsFPLSGMxpKwUIBcRA==",
+          "crc32c": "XgWiBw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.id.ndjson.gz",
+          "generation": 1790866704330268,
+          "size": 3236322,
+          "sha256": "54c78d191ac0f060a830c74a5d4a590b9e6ab8f2f7fab791a7f42405dff8e6ca",
+          "md5": "7jYLy3e+07lOvJguPqqi3Q==",
+          "crc32c": "dWRrUQ==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.id.ndjson.gz",
+          "generation": 1790866742084021,
+          "size": 3236322,
+          "sha256": "54c78d191ac0f060a830c74a5d4a590b9e6ab8f2f7fab791a7f42405dff8e6ca",
+          "md5": "7jYLy3e+07lOvJguPqqi3Q==",
+          "crc32c": "dWRrUQ==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.ndjson.gz",
+          "generation": 1790866699087905,
+          "size": 3167832,
+          "sha256": "0d8263e527b1bcecc0835c894397677d8bc6e834631508d3b1cce16c898c5383",
+          "md5": "VytArDefaPEEdsrYwi4+JA==",
+          "crc32c": "gWqudw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.ndjson.gz",
+          "generation": 1790866737083959,
+          "size": 3167832,
+          "sha256": "0d8263e527b1bcecc0835c894397677d8bc6e834631508d3b1cce16c898c5383",
+          "md5": "VytArDefaPEEdsrYwi4+JA==",
+          "crc32c": "gWqudw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.pt.ndjson.gz",
+          "generation": 1790866705560905,
+          "size": 3248176,
+          "sha256": "cab0f140a43c10a99f25797ddaa75c104c175e14c1cc4897f3a2555e3862e3ef",
+          "md5": "BfIcN5WdVLKpsZGDr/QnfQ==",
+          "crc32c": "MLXDkg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt.ndjson.gz",
+          "generation": 1790866743361895,
+          "size": 3248176,
+          "sha256": "cab0f140a43c10a99f25797ddaa75c104c175e14c1cc4897f3a2555e3862e3ef",
+          "md5": "BfIcN5WdVLKpsZGDr/QnfQ==",
+          "crc32c": "MLXDkg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.pt_br.ndjson.gz",
+          "generation": 1790866707061368,
+          "size": 3248176,
+          "sha256": "cab0f140a43c10a99f25797ddaa75c104c175e14c1cc4897f3a2555e3862e3ef",
+          "md5": "BfIcN5WdVLKpsZGDr/QnfQ==",
+          "crc32c": "MLXDkg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt_br.ndjson.gz",
+          "generation": 1790866744610544,
+          "size": 3248176,
+          "sha256": "cab0f140a43c10a99f25797ddaa75c104c175e14c1cc4897f3a2555e3862e3ef",
+          "md5": "BfIcN5WdVLKpsZGDr/QnfQ==",
+          "crc32c": "MLXDkg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.sw.ndjson.gz",
+          "generation": 1790866708296071,
+          "size": 3243402,
+          "sha256": "263b1c765850d41efed6a31bdc6c840d7c53dab336caae938b63991e38b91511",
+          "md5": "OHUJG3++meVT+prcYkzUZA==",
+          "crc32c": "2RcqUA==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.sw.ndjson.gz",
+          "generation": 1790866745955228,
+          "size": 3243402,
+          "sha256": "263b1c765850d41efed6a31bdc6c840d7c53dab336caae938b63991e38b91511",
+          "md5": "OHUJG3++meVT+prcYkzUZA==",
+          "crc32c": "2RcqUA==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.pmtiles",
+          "generation": 1790866697801285,
+          "size": 151243565,
+          "sha256": "27f1e2c52b2711960ba40446f0a12e1376813848ed290fdd59cf4f103f61493f",
+          "md5": "w+OZ3/kK6StSLCfdJute8A==",
+          "crc32c": "+lw8uw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.pmtiles",
+          "generation": 1790866735788221,
+          "size": 151243565,
+          "sha256": "27f1e2c52b2711960ba40446f0a12e1376813848ed290fdd59cf4f103f61493f",
+          "md5": "w+OZ3/kK6StSLCfdJute8A==",
+          "crc32c": "+lw8uw==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.schema.json",
+          "generation": 1790866700408941,
+          "size": 3858,
+          "sha256": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+          "md5": "wx5kNp5QwVS5mKe/Qcvx+w==",
+          "crc32c": "VjsKPg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.schema.json",
+          "generation": 1790866738273875,
+          "size": 3858,
+          "sha256": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+          "md5": "wx5kNp5QwVS5mKe/Qcvx+w==",
+          "crc32c": "VjsKPg==",
+          "matches_accepted_stored_checksums": false,
+          "preserved_existing_generation": true
+        }
+      ],
+      "india_records": 304
+    },
+    "wdpa-terrestrial": {
+      "row_count": 497914,
+      "next_generated_feature_id": 497919,
+      "state_generation": "1791037630135945",
+      "receipt_generation": "1791037628608549",
+      "transaction_id": "97f6784c2f45b9d7fb0941927042611741e13bc8e662f76d83228315e845ca16",
+      "receipt_phase": "derived_complete",
+      "manifest": {
+        "generation": 1791037624842824,
+        "sha256": "0955927bc654abaf64c75bdefbec050c4878a5634657b37475f328df6499dbd8"
+      },
+      "release_manifest": {
+        "generation": 1791037623675818,
+        "sha256": "0955927bc654abaf64c75bdefbec050c4878a5634657b37475f328df6499dbd8"
+      },
+      "release_index": {
+        "generation": 1791037628293864,
+        "sha256": "6711fe78ef21ffaaaeb4abc47068602ccece2c2fc9488449fd778a0e677c7cdd",
+        "latest_run": {
+          "date": "2026-10-01",
+          "release_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/",
+          "rows": 497914,
+          "run_record_path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/runs/2026-10-01.json",
+          "source_version": "Oct2026",
+          "status": "success"
+        }
+      },
+      "files": [
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata-translations.csv",
+          "generation": 1791037328887445,
+          "size": 8503902895,
+          "sha256": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+          "md5": "+S0bR+YHMa1XQC5UK4AQIw==",
+          "crc32c": "+8nu4w==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata-translations.csv",
+          "generation": 1791037622559938,
+          "size": 8503902895,
+          "sha256": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+          "md5": "+S0bR+YHMa1XQC5UK4AQIw==",
+          "crc32c": "+8nu4w==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.fgb",
+          "generation": 1791037142062116,
+          "size": 5816513152,
+          "sha256": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+          "md5": "8s9k81FDKzq4BAuRfeb2iQ==",
+          "crc32c": "PWiFYA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.fgb",
+          "generation": 1791037434965988,
+          "size": 5816513152,
+          "sha256": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+          "md5": "8s9k81FDKzq4BAuRfeb2iQ==",
+          "crc32c": "PWiFYA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.es.ndjson.gz",
+          "generation": 1791037163117609,
+          "size": 71525468,
+          "sha256": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+          "md5": "VFzqTmKbjxso3ppVaCXkLg==",
+          "crc32c": "1aQOhw==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.es.ndjson.gz",
+          "generation": 1791037456340584,
+          "size": 71525468,
+          "sha256": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+          "md5": "VFzqTmKbjxso3ppVaCXkLg==",
+          "crc32c": "1aQOhw==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.fr.ndjson.gz",
+          "generation": 1791037165030275,
+          "size": 71238392,
+          "sha256": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+          "md5": "6XWMD4sc5LZwVom0XbxnNw==",
+          "crc32c": "U+M9Tw==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.fr.ndjson.gz",
+          "generation": 1791037458193305,
+          "size": 71238392,
+          "sha256": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+          "md5": "6XWMD4sc5LZwVom0XbxnNw==",
+          "crc32c": "U+M9Tw==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.id.ndjson.gz",
+          "generation": 1791037166893041,
+          "size": 71513142,
+          "sha256": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+          "md5": "dqpgHccZFe/o5GehAolmIw==",
+          "crc32c": "LLEPaQ==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.id.ndjson.gz",
+          "generation": 1791037460002012,
+          "size": 71513142,
+          "sha256": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+          "md5": "dqpgHccZFe/o5GehAolmIw==",
+          "crc32c": "LLEPaQ==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.ndjson.gz",
+          "generation": 1791037160099462,
+          "size": 70215228,
+          "sha256": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+          "md5": "Kk3SL1mmV2ncM2iin12DyQ==",
+          "crc32c": "SQ3CZg==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.ndjson.gz",
+          "generation": 1791037453154331,
+          "size": 70215228,
+          "sha256": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+          "md5": "Kk3SL1mmV2ncM2iin12DyQ==",
+          "crc32c": "SQ3CZg==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.pt.ndjson.gz",
+          "generation": 1791037168690766,
+          "size": 71517792,
+          "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "md5": "+wj46mjeMCgVpZxPBoDgyw==",
+          "crc32c": "6/TrGA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt.ndjson.gz",
+          "generation": 1791037461842077,
+          "size": 71517792,
+          "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "md5": "+wj46mjeMCgVpZxPBoDgyw==",
+          "crc32c": "6/TrGA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+          "generation": 1791037170698285,
+          "size": 71517792,
+          "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "md5": "+wj46mjeMCgVpZxPBoDgyw==",
+          "crc32c": "6/TrGA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+          "generation": 1791037463808352,
+          "size": 71517792,
+          "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+          "md5": "+wj46mjeMCgVpZxPBoDgyw==",
+          "crc32c": "6/TrGA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.sw.ndjson.gz",
+          "generation": 1791037172635830,
+          "size": 71475188,
+          "sha256": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+          "md5": "kJKaZjTI+JHtvZTWqyILMA==",
+          "crc32c": "TGnKRQ==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.sw.ndjson.gz",
+          "generation": 1791037465648765,
+          "size": 71475188,
+          "sha256": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+          "md5": "kJKaZjTI+JHtvZTWqyILMA==",
+          "crc32c": "TGnKRQ==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.pmtiles",
+          "generation": 1791037158122002,
+          "size": 893775735,
+          "sha256": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+          "md5": "DIuy1WMZ8/QVCQEPwTnYyw==",
+          "crc32c": "Ry/JwA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.pmtiles",
+          "generation": 1791037451286474,
+          "size": 893775735,
+          "sha256": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+          "md5": "DIuy1WMZ8/QVCQEPwTnYyw==",
+          "crc32c": "Ry/JwA==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.schema.json",
+          "generation": 1791037161207403,
+          "size": 3862,
+          "sha256": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+          "md5": "OuHR0rPjcZi63y/A05LkGw==",
+          "crc32c": "dRToeg==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        },
+        {
+          "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.schema.json",
+          "generation": 1791037454303090,
+          "size": 3862,
+          "sha256": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+          "md5": "OuHR0rPjcZi63y/A05LkGw==",
+          "crc32c": "dRToeg==",
+          "matches_accepted_stored_checksums": true,
+          "preserved_existing_generation": false
+        }
+      ],
+      "india_records": 193174
+    }
+  },
+  "observer": {
+    "generation": 1791038051510682,
+    "sha256": "d778ab345c15ce3e396098ec3ab24bd9db0dcf37a43016c4a4171995f36eb026",
+    "cache_control": "public, max-age=0, must-revalidate",
+    "document": {
+      "job_name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-monthly",
+      "latest_completed_execution": {
+        "completed_at": "2026-10-03T14:27:15.893723Z",
+        "created_at": "2026-10-03T13:59:37.597003Z",
+        "id": "wdpa-monthly-f2xnm",
+        "reason_code": "UNSPECIFIED",
+        "started_at": "2026-10-03T14:00:02.594501Z",
+        "state": "succeeded"
+      },
+      "latest_execution": {
+        "completed_at": "2026-10-03T14:27:15.893723Z",
+        "created_at": "2026-10-03T13:59:37.597003Z",
+        "id": "wdpa-monthly-f2xnm",
+        "reason_code": "UNSPECIFIED",
+        "started_at": "2026-10-03T14:00:02.594501Z",
+        "state": "succeeded"
+      },
+      "observed_at": "2026-10-03T14:34:11.107736+00:00",
+      "schema_version": 1
+    }
+  },
+  "worker_failure_alert": {
+    "execution": "wdpa-monthly-hbdjm",
+    "completion_time": "2026-10-03T13:52:10.326487Z",
+    "delivery_time": "2026-10-03T13:53:03Z",
+    "url": "https://skytruth.slack.com/archives/C0B12LDMB1A/p1791035583550649"
+  },
+  "observer_bootstrap_retirement": {
+    "pull_request": 200,
+    "merge_sha": "5fe1289b6c22210335c5f763756b97fc7e6598f6",
+    "workflow": "https://github.com/SkyTruth/shared-datasets-1/actions/runs/37129181296",
+    "changes": {
+      "add": 0,
+      "change": 0,
+      "delete": 1
+    },
+    "live_project_bindings": []
+  },
+  "browser_verification": {
+    "url": "https://tiles.skytruth.org/_catalog/web/index.html",
+    "partial_publication_verified": true,
+    "final_terrestrial_rows": 497914,
+    "final_marine_rows": 17938,
+    "final_release_date": "2026-10-01",
+    "final_execution_state": "succeeded",
+    "terrestrial_fgb_generation": 1791037142062116,
+    "terrestrial_pmtiles_generation": 1791037158122002
+  },
+  "dataset_upload_announcement": "uncertain; no custom or duplicate Slack send",
+  "promotion_resource_records": [
+    {
+      "timestamp": "2026-10-03T14:08:56.947367Z",
+      "measurement": {
+        "artifact_sizes": {
+          "build-bundle.json": 81647
+        },
+        "cgroup_memory_peak_bytes": 4448198656,
+        "elapsed_seconds": 281.339,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "cache": 4298788864,
+          "dirty": 400805888,
+          "mapped_file": 20713472,
+          "rss": 41353216,
+          "shmem": 6279168,
+          "swap": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "promotion:download",
+        "phase_memory_peak_bytes": 4401033216,
+        "process_rss_peak_bytes": 62046208,
+        "scratch_cache_releases": 7,
+        "scratch_peak_bytes": 15713316864,
+        "state": "succeeded"
+      }
+    },
+    {
+      "timestamp": "2026-10-03T14:27:10.363505Z",
+      "measurement": {
+        "artifact_sizes": {
+          "build-bundle.json": 81647
+        },
+        "cgroup_memory_peak_bytes": 7748005888,
+        "elapsed_seconds": 1092.726,
+        "event": "wdpa_phase_resources",
+        "memory_breakdown_at_sampled_peak": {
+          "cache": 7555813376,
+          "dirty": 150953984,
+          "mapped_file": 15888384,
+          "rss": 119791616,
+          "shmem": 6279168,
+          "swap": 0
+        },
+        "native_versions": {
+          "gdal_python": "3.6.2",
+          "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+          "ogr2ogr_path": "/usr/bin/ogr2ogr",
+          "pmtiles": "pmtiles dev, commit none, built at unknown",
+          "pmtiles_build_version": "v1.30.1",
+          "pmtiles_path": "/usr/local/bin/pmtiles",
+          "tippecanoe": "tippecanoe v2.52.0",
+          "tippecanoe_path": "/usr/bin/tippecanoe"
+        },
+        "phase": "wdpa-terrestrial:promote",
+        "phase_memory_peak_bytes": 7745515520,
+        "process_rss_peak_bytes": 953860096,
+        "scratch_cache_releases": 583,
+        "scratch_peak_bytes": 24217227264,
+        "state": "succeeded"
+      }
+    }
+  ]
+}
