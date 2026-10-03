@@ -1,7 +1,8 @@
 # WDPA processing validation and rollout evidence
 
-The complete October build and retained artifacts pass validation. Publication
-remains pending review of the exact promotion plan and the protected rollout.
+The October terrestrial release is published and independently verified.
+The single retained build passed validation, and the protected rollout promoted
+its exact terrestrial bytes while preserving the existing October marine release.
 `catalog/wdpa-processing-acceptance.json` pins that single build, its validated
 files and its immutable promotion plan. Production promotes those exact bytes
 with the original build date; it does not require a second complete build or
@@ -69,13 +70,14 @@ All locale files are present and validated. Their localization reports preserve
 existing missing or unconfirmed translation rows and source-language fallback;
 artifact completeness does not claim every field has a confirmed translation.
 
-[PR #199](https://github.com/SkyTruth/shared-datasets-1/pull/199) records version 3
-acceptance and the immutable owned promotion plan. Publication still requires its
-normal exact-head review/merge, protected worker and observer deployment,
-controlled worker failure-alert delivery verification and live ownership checks.
-The existing October marine release remains committed; only the needed
-terrestrial bytes are promoted, with the build's original `2026-10-01` run date.
-This retained bundle is noncanonical staging, not evidence of publication.
+[PR #199](https://github.com/SkyTruth/shared-datasets-1/pull/199) merged version 3
+acceptance and the immutable owned promotion plan after all exact-head checks.
+The protected deployment, controlled worker failure-alert delivery and live
+ownership checks completed before publication. Only the needed terrestrial bytes
+were promoted, with the build's original `2026-10-01` run date. The staging bundle
+remains noncanonical; the separate
+[publication verification](wdpa-processing-evidence/wdpa-monthly-f2xnm/publication-verification.json)
+records terminal success and actual canonical generations.
 
 ## Single build and promotion
 
@@ -91,7 +93,8 @@ This retained bundle is noncanonical staging, not evidence of publication.
 3. Each realm's validated FGB, PMTiles, canonical metadata, schema, translation
    CSV and all six locale sidecars are uploaded create-only to
    `_scratch/wdpa-builds/{cloud-execution}/{asset-slug}/` before local cleanup.
-   The runtime has only `storage.objects.create` on that prefix. It cannot read,
+   The runtime has `storage.objects.create` on that object prefix and
+   `storage.folders.create` on its matching hierarchical folder prefix. It cannot read,
    replace, delete or publish canonical dataset objects. Uploads are included in
    the measured processing phases. The root `build-bundle.json` is committed
    only after both realms and the full resource/count/contracts checks pass.
@@ -579,7 +582,7 @@ source processing when a scheduler or manual execution omits the bundle.
 
 ## Infrastructure and failure visibility
 
-The read-only worker/observer plan contains **eight creations, one update, zero
+The initial worker/observer plan contained **eight creations, one update, zero
 deletions**: the observer service account, custom execution-reader role, four
 narrow IAM bindings, observer job and scheduler; the worker changes to 4 CPU /
 8 GiB and a 100 GiB DISK at `/work` with Preview launch stage. Immutable production
@@ -600,8 +603,8 @@ Google checks job creation on the parent project/location, so this permission is
 project-wide; the current isolated deploy validates its exact resource plan,
 prefix-only staging rights and absence of canonical dataset permissions. Job IAM, scheduler
 creation and deletion permissions are not added by this bootstrap. The observer's
-job IAM and scheduler bootstrap remains a prerequisite for the final worker
-rollout after full processing acceptance.
+job IAM and scheduler bootstrap was reviewed and applied after full processing
+acceptance, then its temporary project binding was retired after provisioning.
 
 Google approved case `9d926638-b024-4866-8b94-898801ecdf6c` on October 2.
 An authenticated Service Usage API read verifies **107,374,182,400 bytes
@@ -633,18 +636,56 @@ arrived at 13:53:03 UTC. The independent observer then wrote a generation-pinned
 schema 1 status document carrying that terminal result. The deployment workflow
 stopped at the alert-verification gate before launching a dataset canary.
 
-The observer is provisioned, so the follow-up removes the temporary project-wide
-bootstrap binding through the existing protected ingestion IAM sync. Its original
-absolute expiry was 2026-10-06 00:00:00 UTC; it is not renewed or expanded. The
-unbound role definition retains the three approved provisioning permissions for
-auditability. The removal plan changes only that binding.
+[PR #200](https://github.com/SkyTruth/shared-datasets-1/pull/200) retired the
+temporary project-wide bootstrap binding. Protected
+[IAM sync 37129181296](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37129181296)
+completed at 14:22:56 UTC with zero additions, zero changes and one deletion:
+that exact binding. A subsequent live project-policy read confirms the role has
+no binding. Its original absolute expiry was 2026-10-06 00:00:00 UTC; it was not
+renewed or expanded. The unbound role definition retains the three approved
+provisioning permissions for auditability.
 
 [Promotion 37127874500](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37127874500)
 was dispatched once from reviewed main with that verified worker probe and the
-original build date `2026-10-01`. Follow publication to terminal status and
-independently check terrestrial FGB, every sidecar, both release indexes,
-generations and custom metadata. The monitor remains active until terrestrial
-publication is verified.
+original build date `2026-10-01`. Its sole execution `wdpa-monthly-f2xnm` reached
+terminal success at **2026-10-03 14:27:15.893723 UTC**, with no failed task or
+active worker execution. The worker used 4 CPU / 8 GiB / 100 GiB DISK at `/work`,
+zero retries and the publication-only entrypoint. Its software image inherited
+the accepted producer and pinned the original processing source independently
+of the reviewed consumer executor `8ec80965e5b2b89953d40df2fdb412a88b0f8fe4`.
+No source processing or dataset artifact rebuild occurred.
+
+Read-only verification at 14:41:19 UTC checked all eleven terrestrial files in
+both `releases/2026-10-01/` and `latest/`: actual generations, sizes, publication
+SHA-256 and transaction metadata, plus GCS MD5 and CRC32C checksums matching the
+accepted stored objects. The accepted files already had independent actual-byte
+SHA-256 proof, and the worker verified them at approved generations before new
+canonical writes. Both manifest bytes were read at pinned generations and
+matched SHA-256 `0955927bc654abaf64c75bdefbec050c4878a5634657b37475f328df6499dbd8`.
+The latest manifest generation is `1791037624842824`; the release manifest
+generation is `1791037623675818`.
+
+The terrestrial receipt is `derived_complete`; active ownership is clear, the
+current release is `2026-10-01`, and the reserved next ID is 497,919. Its manifest
+and release index report 497,914 features; exact promoted bytes retain the
+validated 193,174 India records. Marine remains at 17,938 features, next ID
+17,943, and its prior state, receipt, manifests and all eleven release/latest
+artifact generations are unchanged. No unused candidate marine file was
+downloaded or published.
+
+The completed terrestrial promotion phase recorded kernel peak 7,748,005,888
+bytes including cache and scratch 24,217,227,264 bytes. These promotion
+measurements are separate from the unchanged original build report. Both remain
+within enforced limits; exceeding the preferred memory margin is advisory.
+
+The schema 1 observer document reports `wdpa-monthly-f2xnm` succeeded, with a
+fresh observation and revalidation headers. Live browser verification showed
+October terrestrial with 497,914 rows and generation-pinned FGB/PMTiles links,
+October marine with 17,938 rows, and the successful overall execution. Earlier
+browser verification showed September terrestrial alongside the running
+promotion, preserving the distinction between partial publication and job state.
+The publication monitor can stop after this verified outcome. Dataset upload
+announcement state is uncertain; no custom or duplicate Slack message was sent.
 
 ## Intended remote paths
 
@@ -658,7 +699,8 @@ existing static route. Normal WDPA publication paths remain
 with the existing `releases/`, `latest/`, run records and release indexes.
 Existing allocation, claim and receipt ownership governs the retained-artifact
 promotion. Protected infrastructure changes and publication evidence are recorded
-above; canonical artifact generations are verified after terminal publication.
+above; canonical artifact generations were verified after terminal publication
+and are retained in the linked publication evidence.
 
 Diagnostic benchmark inputs were staged privately, with `if_generation_match=0`,
 at `gs://skytruth-shared-datasets-1/_scratch/wdpa-processing-benchmarks/20261002T040200Z/october-frozen-snapshot.tar`,
