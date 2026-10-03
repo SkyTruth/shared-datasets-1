@@ -445,9 +445,7 @@ an explicit height. Restricted examples use your application's authenticated
 [`authorizeSnapshotArtifact`](../api/typescript/README.md#exact-portable-snapshots).
 The server checks current entitlement and indexed artifact identity before signing.
 
-**Copy credit** copies a small `Data: Source · SkyTruth` credit suitable for a
-corner of your interface; link it to the original source. Full citation,
-license, lifecycle guidance, and source caveats remain in the dataset's Source
+Full citation, license, lifecycle guidance, and source caveats remain in the dataset's Source
 section and documentation. Follow any additional attribution required by those terms.
 
 Advanced snapshot APIs remain available for programmatic workflows; the catalog

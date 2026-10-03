@@ -27,7 +27,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -66,6 +66,7 @@ const test = base.extend({
           state.holdComparison = false; state.comparisonHeld = true;
           await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
         }
+        if (state.progress && (url.pathname === '/api/comparisons' || /^\/api\/comparisons\/[a-f0-9]{32}$/.test(url.pathname))) return json({...await response.json(), state:'running', progress:state.progress});
         return route.fulfill({response});
       }
       if (url.origin === baseURL && url.pathname.endsWith('.js') && !url.pathname.startsWith('/sdk/')) {
@@ -344,7 +345,26 @@ test('comparison table updates preserve a denied historical map error and select
 });
 
 test('automatic comparison rejects delayed starts and closing cancels pending work', async ({page, transport}) => {
-  await select(page, 'public'); transport.holdComparison = true;
+  await select(page, 'public');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await page.locator('#compare-open').click();
+  const progress = page.locator('#compare-progress'), bar = page.locator('#compare-progress-bar');
+  await expect(progress).toBeVisible();
+  transport.progress = {phase:'baseline', rows:38500};
+  await expect(bar).not.toHaveAttribute('value');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await expect(page.locator('#compare-progress-label')).toHaveText('Validating Before');
+  await expect(bar).toHaveAttribute('value','38500');
+  await expect(bar).toHaveAttribute('max','128786');
+  const rowBox = await page.locator('#version-path-row').boundingBox(), barBox = await bar.boundingBox();
+  expect(barBox.width).toBeGreaterThan(rowBox.width - 35);
+  expect(barBox.y + barBox.height).toBeLessThan(rowBox.y + rowBox.height);
+  await test.info().attach('comparison-progress.png', {body:await progress.screenshot(),contentType:'image/png'});
+  transport.progress = null;
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  await expect(progress).toBeHidden();
+  await page.locator('#compare-open').click();
+  transport.holdComparison = true;
   await page.locator('#compare-open').click();
   await expect.poll(() => transport.comparisonHeld).toBe(true);
   await page.locator('#compare-before').selectOption('2026-09-22');
@@ -444,7 +464,7 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
 });
 
-test('category focus filters clicks, zooms and keeps overlapping changes above gray', async ({page, transport}, testInfo) => {
+test('category filters preserve the camera, extents zoom explicitly and changes draw above gray', async ({page, transport}, testInfo) => {
   await select(page, 'overlap'); await expect(page.locator('#map-status')).toBeHidden();
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
@@ -465,9 +485,12 @@ test('category focus filters clicks, zooms and keeps overlapping changes above g
   });
   const union = await viewport(), hits = page.locator('#feature-inspector .feature-hit');
   for (const [category, count, side, longitude] of [['novel',1,'After',1], ['removed',1,'Before',-1], ['metadata_changed',2,'',.1]]) {
+    const beforeFilter = await viewport();
     await legend.locator(`[data-change="${category}"]`).click();
     await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(1);
     await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
+    expect(await viewport()).toEqual(beforeFilter);
+    await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
     await expect.poll(async () => {
       const view = await viewport();
       return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
@@ -486,8 +509,11 @@ test('category focus filters clicks, zooms and keeps overlapping changes above g
     expect(nearColor(image, colors[selected])).toBe(true);
     expect(colors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
   }
+  const beforeUnchanged = await viewport();
   await legend.locator('[data-change="unchanged"]').click();
   await expect(page.locator('#compare-page')).toHaveText('1–3 of 3');
+  expect(await viewport()).toEqual(beforeUnchanged);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => (await viewport()).zoom).toBeLessThan(union.zoom + 1);
   await canvas.screenshot();
   {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
@@ -497,9 +523,12 @@ test('category focus filters clicks, zooms and keeps overlapping changes above g
   await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(4);
   {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
   // Clicking the selected category restores all geometry and table rows.
+  const beforeUnfilter = await viewport();
   await legend.locator('[data-change="unchanged"]').click();
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
   await expect(page.locator('#compare-page')).toHaveText('1–6 of 6');
+  expect(await viewport()).toEqual(beforeUnfilter);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => {const image=await sample();return colors.every(color=>nearColor(image,color));}).toBe(true);
   await legend.locator('[data-change="novel"]').click();
   await legend.locator('[data-change="removed"]').click();
@@ -564,10 +593,8 @@ test('inline dataset examples are short, copyable and execute a real map integra
   expect(code.split('\n').length).toBe(5);
   expect(code).toContain('showDataset');
   expect(code).toContain('#201'); expect(code).toContain('#202');
-  await page.locator('#use-copy-attribution').click();
-  const credit = await page.evaluate(() => navigator.clipboard.readText());
-  expect(credit).toBe(await page.locator('#use-attribution').textContent());
-  expect(credit.split('\n')).toHaveLength(1);
+  await expect(page.locator('#use-attribution, #use-copy-attribution')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Zoom to extents',exact:true})).toBeVisible();
   await testInfo.attach('inline-use-desktop.png', {body: await section.screenshot(), contentType: 'image/png'});
   await testInfo.attach('generated-python.py', {body: python, contentType: 'text/x-python'});
   await testInfo.attach('generated-typescript.ts', {body: code, contentType: 'text/plain'});

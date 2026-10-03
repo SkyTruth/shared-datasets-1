@@ -116,6 +116,8 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
+              "google_storage_bucket.preview_comparisons",
+              "google_storage_bucket_iam_member.preview_comparisons_worker",
               "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
@@ -161,6 +163,10 @@ jobs:
                   values = planned_values(resource)
                   if address == "google_storage_bucket.preview_bucket":
                       require_value(value_violations, address, values, "name", expected["bucket"])
+                  elif address == "google_storage_bucket.preview_comparisons":
+                      require_value(value_violations, address, values, "name", expected["bucket"] + "-comparisons")
+                  elif address == "google_storage_bucket_iam_member.preview_comparisons_worker":
+                      require_value(value_violations, address, values, "bucket", expected["bucket"] + "-comparisons")
                   elif address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
                   elif address == "google_cloud_run_v2_service.feature_preview_catalog_viewer":

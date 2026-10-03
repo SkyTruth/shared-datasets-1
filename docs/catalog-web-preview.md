@@ -469,7 +469,8 @@ route. See [comparison semantics, authorization, budgets and CLI](compare-releas
 
 **Use this dataset** is an inline section immediately above the canonical paths. Its
 Python/TypeScript tabs show 3–5 line examples and a single Copy code action.
-A small source link and Copy credit action provide corner-sized attribution.
+Citation, source and licensing remain in Source and terms; this section only
+provides integration code and an SDK setup link.
 Setup lives in the consumer guide; the UI has no integration dialog, Save
 workspace action, lockfile download, artifact identity dump, or provenance output.
 Dataset descriptions span the detail header independently of its action buttons.
