@@ -81,10 +81,12 @@ both pinned releases across ID resets, preserve identical overlapping hits, and
 discard delayed metadata after a selection change. `comparison_server.py`
 uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
 The overlapping-point scenario checks actual red, green and yellow pixels above
-unchanged gray neighbors. It clicks all four category buttons, verifies filtered
+unchanged gray objects at exactly the same coordinates, verifies only matched
+edited IDs receive field highlights, and preserves all overlapping hits. It clicks all four category buttons, verifies filtered
 hits and table membership, verifies toggles preserve the camera and the separate
 extents button zooms, and checks basemap persistence and release
-reset. Polygon map inspection and paired table inspection also assert yellow
+reset. Geometry-only polygon inspection withholds field highlights across identity
+resets. Comparable point inspection and paired table inspection assert yellow
 source-property cells, including absent versus explicit null.
 
 Each scenario has its own real comparison job store, retaining the production

@@ -30,6 +30,8 @@ def approved(tmp_path, monkeypatch):
                 "artifact_bundle",
                 "cloud_execution",
                 "cloud_image",
+                "image_digest",
+                "source_tree_sha256",
                 "run_date",
                 "assets",
             )

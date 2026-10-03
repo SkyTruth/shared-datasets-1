@@ -7,7 +7,7 @@ its immediate predecessor as defaults. Comparison starts automatically and
 reruns when either selection changes. The same button becomes **Close comparison**;
 closing restores ordinary browsing. There is no second run button or map-mode
 selector. The union occupies the primary map at the top of the detail view,
-retaining its viewport. Before is red and After green. The selections, Close comparison, and right-aligned
+retaining its viewport. Removals and old positions are red; additions and new positions are green. The selections, Close comparison, and right-aligned
 **Details** affordance share one row. Details start collapsed and contain compact
 release, change, and schema tables; progress and failures remain visible. Selecting
 a map feature shows its property details below the map, independently of the
@@ -63,7 +63,7 @@ they legitimately have no generated contract field. Legacy/missing identity
 evidence, contract resets and incompatible semantics withhold feature counts,
 matching and paired table inspection. Individual map hits remain inspectable
 from their own pinned release sidecars. They still allow geometry colors and
-schema/publication comparison; geometry lookups never join feature IDs across releases.
+schema/publication comparison; geometry-only lookups never join feature IDs across releases.
 There is no inferred identity continuity from similar geometry or numeric IDs.
 Generated IDs must be below the declared next allocation. Each record must match
 its declared assignment-key strategy. The publisher owns reviewed identity
@@ -91,19 +91,23 @@ source-property changes. No feature counts come from PMTiles.
 
 ## Union map
 
-The primary map displays the union of Before and After geometry. New geometry
-is green, removed geometry red, and identical geometry with altered source
-metadata yellow. Unchanged geometry is gray with faint fill and outline opacity.
+The primary map displays the union of Before and After geometry. When identity
+contracts are compatible, each object uses its own feature-ID classification:
+additions and new positions are green, removals and old positions red, and
+stationary objects with altered source metadata yellow. Unchanged objects are
+gray with faint fill and outline opacity. Distinct objects sharing exact geometry
+keep independent statuses; an addition, removal or edit does not change its
+neighbors' statuses.
 Changed fills, outlines, lines and points draw above all unchanged geometry from
 both releases, so later gray layers cannot obscure the red, green or yellow marks.
 
-Click **New geometry**, **Removed geometry**, **Metadata changed** or **Unchanged**
+Click **Added / moved here**, **Removed / moved away**, **Metadata changed** or **Unchanged**
 in the legend to show only that category. Filtering and unfiltering preserve the
 map's center, zoom, bearing and pitch. Use **Zoom to extents** beside the map's +/−
 controls to fit the selected category, or the full union when unfiltered. The
 selected button is pressed; click it again to restore the full union. Map clicks
 ignore hidden categories, including transparent overlapping gray points. The
-feature table also filters by geometry membership when feature IDs are comparable;
+feature table uses the same per-object map status when feature IDs are comparable;
 a moved ID can belong to both the new and removed categories. Category selection
 survives a basemap change and resets when either release changes or comparison closes.
 
@@ -114,21 +118,24 @@ the comparison disk budget. Overview tiles may omit fine features; if no matchin
 display geometry is available, the viewer explains that finer tiles need inspection.
 An empty category hides all features without moving the map.
 
-A moved feature has a red old footprint and green new footprint. Exact shared
-geometry renders once from the After source to avoid doubling its opacity.
+A moved feature has a red old footprint and green new footprint, including when
+its metadata also changed. A matched stationary object renders once from the
+After source to avoid doubling its opacity. Its Before record remains inspectable.
 
-Geometry membership uses exact canonical `geometry_hash` sets, independently of
-feature identity. For a shared geometry, differing sets of canonical
-`properties_hash` values produce yellow. An exact shared geometry can be yellow
-even if an identity edit is correctly an addition/removal in the table. This
-geometric membership is not an invented feature match. Duplicate records on the
-same geometry contribute a set of distinct source-property hashes. These display
-annotations are computed from complete sidecars, never tile geometry.
+When identity contracts are incompatible, the map explicitly describes a
+**geometry-only comparison**. Its legend is **New geometry**, **Removed geometry**,
+**Contents differ here** and **Unchanged geometry**. Exact canonical
+`geometry_hash` sets determine membership. For a shared geometry, differing sets
+of canonical `properties_hash` values produce yellow; that describes the
+collection at that geometry, not a matched object's metadata edit. Duplicate
+records contribute a set of distinct property hashes, without multiplicity.
+Shared geometry renders once from After, but both releases remain inspectable.
+These annotations use complete sidecars, never tile geometry.
 
-Every loaded map feature receives a release-scoped geometry color, independently
+Every loaded map feature receives a release-scoped color, independently
 of the table page, search, or feature-ID compatibility. After computation, the
 browser reads two gzip-compressed NDJSON streams from the complete SQLite index,
-one for each release. Each record contains only an ID, geometry category and
+one for each release. Each record contains only an ID, map category and
 geometry hash. Header inputs, sorted unique IDs, counts and a terminal record are
 validated before the map uses either index. Filters stay disabled and the progress
 bar stays visible until both indexes arrive and the initial colors are applied.
@@ -136,8 +143,9 @@ An interrupted or malformed stream leaves filters disabled with a visible error.
 Panning, paging, filtering and changing basemaps reuse the indexes without further
 classification requests. IDs remain scoped to their own release: an ID reused after
 a reset can correctly be red in Before and green in After. Paging or inspecting
-records does not replace these colors. Geometry summary counts describe unique
-geometry hashes; they are not feature-ID classifications.
+records does not replace these colors. The report's separate `geometry_counts`
+still describe unique geometry hashes; they do not determine per-object colors
+or filters when IDs are compatible.
 
 Map inspection retains every overlapping release layer, including transparent
 Before geometry when an exact shared polygon is drawn from After. Identical
@@ -146,18 +154,22 @@ metadata using its captured path and generation, without joining a reused ID to
 another release. Map clicks remain available while the comparison runs and on
 static viewers without comparison jobs. Clicking empty space, changing either
 release, closing comparison or rebuilding the map clears the selection; delayed
-metadata cannot restore a superseded inspector. Once both clicked hits load source
-metadata, changed fields and their values are highlighted yellow. Pairing uses
-identical canonical geometry hashes across the two releases, including historical
-v1 geometry recovered by the engine; it never assumes reset IDs identify the same
-feature. Missing fields differ from explicit nulls; object key order does not
-create a change. Hash-excluded operational fields stay unhighlighted. Paired table
-inspection also highlights its source-property changes.
+metadata cannot restore a superseded inspector. When identity contracts are
+compatible, changed fields and their values are highlighted only between
+already-loaded opposite-release hits with the same asset and feature ID.
+Geometry never establishes object identity. Incompatible contracts show each
+release's properties without changed-field highlights, even if numeric IDs match.
+The map inspector makes no additional counterpart requests: if a moved object's
+counterpart is outside the selection, use paired table inspection for its complete
+property comparison. Missing fields differ from explicit nulls; object key order
+does not create a change. Hash-excluded operational fields stay unhighlighted.
 
 Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
 historical tile generations produce visible errors. Map signer and comparison
 responses must match the selected paths/generations before use. Comparison report
-schema version 3 also pins optional canonical FGB input for historical v1 readers.
+schema version 4 defines identity-aware map statuses and retains optional pinned
+canonical FGB input for historical v1 readers. Older retained results require a
+new comparison; the viewer rejects older result semantics.
 
 ## Published historical v1 releases
 

@@ -1,10 +1,11 @@
 import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
 
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
-const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Metadata changed", unchanged: "Unchanged geometry"};
+const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Contents differ here", unchanged: "Unchanged geometry"};
+const FEATURE_MAP_LABELS = {novel: "Added / moved here", removed: "Removed / moved away", metadata_changed: "Metadata changed", unchanged: "Unchanged"};
 
 async function loadMapIndex(session, onProgress) {
-  const hashes = new Map(), loaded = [0, 0];
+  const descriptors = new Map(), loaded = [0, 0];
   const abort = new AbortController(), cancel = () => abort.abort();
   session.abort.signal.addEventListener("abort", cancel, {once: true});
   try { return await Promise.all(["baseline", "target"].map(async (side, index) => {
@@ -24,9 +25,9 @@ async function loadMapIndex(session, onProgress) {
       if (Array.isArray(value)) {
         const [id, change, hash] = value;
         if (value.length !== 3 || typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(id) || id <= previous || !Object.hasOwn(GEOMETRY_LABELS, change) || typeof hash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(hash) || rows.size >= header.rows) throw new Error("Invalid map classification stream record.");
-        let geometry = hashes.get(hash);
-        if (geometry && geometry.change !== change) throw new Error("A geometry has conflicting map classifications.");
-        if (!geometry) { geometry = {change, geometry_hash: hash}; hashes.set(hash, geometry); }
+        const key = `${change}/${hash}`;
+        let geometry = descriptors.get(key);
+        if (!geometry) { geometry = {change, geometry_hash: hash}; descriptors.set(key, geometry); }
         rows.set(id, geometry); previous = id; loaded[index]++;
       } else {
         if (value.complete !== true || value.rows !== header.rows || rows.size !== header.rows) throw new Error("Map classification stream is incomplete.");
@@ -136,7 +137,9 @@ export function createComparisonController({loadMapModule = () => import("./map-
     ui.details.textContent = expanded ? "▾ Details" : "▸ Details";
   }
   function mapNote(session) {
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.mapReady ? "Preparing comparison map… Filters become available when colors are ready." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.mapReady ? "Preparing comparison map… Filters become available when colors are ready."
+      : session.summary.identity.compatible ? "Colors describe each object's changes, independently of table pages. Unchanged objects are faint. Display detail varies with zoom."
+      : "Geometry-only comparison: object identities cannot be matched. Yellow means contents differ at this geometry; individual metadata changes are unknown.";
   }
   async function cancelJob(id) {
     if (!id) return;
@@ -192,6 +195,8 @@ export function createComparisonController({loadMapModule = () => import("./map-
     return payload;
   }
   function renderSummary(summary) {
+    const labels = summary.identity.compatible ? FEATURE_MAP_LABELS : GEOMETRY_LABELS;
+    for (const button of ui.legend.querySelectorAll("button")) button.textContent = labels[button.dataset.change];
     const rows = [["Release", summary.inputs.baseline.release, summary.inputs.target.release], ["Features", summary.feature_counts.baseline.toLocaleString(), summary.feature_counts.target.toLocaleString()]];
     ui.summary.replaceChildren(table(["Selection", "Before", "After"], rows, "Releases"));
     const matching = element("details", undefined, "compare-method");
@@ -264,7 +269,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       const module = await loadMapModule(); if (!isCurrent()) return;
       const map = await module.renderComparisonMap({container: mapContainer, status: mapStatus, baseline: session.refs.baseline, target: session.refs.target,
         signal: mapAbort.signal, basemap: getBasemap(), viewport, category: session.geometryFilter,
-        onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features.map(feature => ({...feature, comparisonExcludedProperties: session.summary?.property_hash_exclusions}))); },
+        onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features.map(feature => ({...feature, comparisonExcludedProperties: session.summary?.property_hash_exclusions, comparisonIdentityCompatible: session.summary?.identity.compatible === true}))); },
         onProgress: value => { if (isCurrent() && !session.mapReady) progress(value); },
         onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
       });
@@ -310,6 +315,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
         if (!current(session)) return;
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
+      if (response.summary.result_schema_version !== 4) throw new Error("Comparison result version changed; reload the catalog and compare again.");
       session.summary = response.summary; renderSummary(response.summary);
       status(""); mapNote(session);
       session.geometryIndex = await loadMapIndex(session, value => { if (current(session)) progress(value); });

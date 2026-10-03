@@ -95,6 +95,21 @@ def distributed(context, tmp_path):
     reader.pool.shutdown(wait=True)
 
 
+def test_old_result_version_requires_rerun_without_loading_cached_files(distributed):
+    local, remote, shared, transport = distributed
+    _, started = call(local)
+    job_id = started["job_id"]
+    assert complete(local, job_id)["state"] == "complete"
+    state, generation = shared.read_json(job_id, "state.json")
+    state["summary"]["result_schema_version"] = comparisons.engine.RESULT_VERSION - 1
+    shared.write_json(job_id, "state.json", state, generation)
+    transport.downloads.clear()
+    status, result = call(remote, "GET", f"/api/comparisons/{job_id}")
+    assert status == 400
+    assert "run the selected releases again" in result["error"]
+    assert not any(name.endswith("comparison.sqlite") for name in transport.downloads)
+
+
 def test_other_instance_and_restart_serve_same_pages_map_and_properties(
     distributed, tmp_path
 ):

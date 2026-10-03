@@ -2420,9 +2420,9 @@ function renderFeatureInspector(features) {
 
   for (const feature of selectedFeatures) {
     const changedFields = new Set();
-    if (feature.metadataLoaded && feature.comparisonChange === "metadata_changed") {
+    if (feature.metadataLoaded && feature.comparisonIdentityCompatible) {
       for (const other of selectedFeatures) {
-        if (other.metadataLoaded && other.assetSlug === feature.assetSlug && other.comparisonSide !== feature.comparisonSide && other.geometryHash === feature.geometryHash) {
+        if (other.metadataLoaded && other.assetSlug === feature.assetSlug && other.comparisonSide !== feature.comparisonSide && featureIdFor(other) === featureIdFor(feature)) {
           for (const field of changedPropertyFields(feature.properties, other.properties, feature.comparisonExcludedProperties)) changedFields.add(field);
         }
       }

@@ -129,6 +129,13 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
   matching publish fence, and exact-head approval verified by
   `scripts/wdpa_build_authorization.py`. Publication uses the existing owned
   publisher, verifying every needed staged file and both live predecessors first.
+  Preserve an already-committed realm after verifying its frozen predecessor,
+  owned receipt, source/identity contract and allocation sequence; do not require
+  unused candidate hashes to equal its published artifacts. The plan pins the
+  original producer fingerprint and configuration independently of reviewed
+  publication fixes. A publication-only software layer can inherit that verified
+  producer image and copy only the approved consumer/gate/entrypoint; it must
+  never regenerate dataset files or fall back to source processing.
   Follow `docs/wdpa-processing-validation.md` for the single-build sequence.
 - Observe terminal status through the independent execution observer and verify
   actual alert delivery from a controlled failure before a dataset canary.
