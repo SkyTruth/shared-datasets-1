@@ -276,6 +276,22 @@ states and all needed file bytes before starting new canonical writes. Manifests
 run records and release indexes are finalized by the owned publisher with actual
 canonical object generations. Existing owned recovery semantics are unchanged.
 
+Already-committed realms retain their successful receipts and published bytes.
+Promotion checks their frozen manifest, predecessor release, allocation counter,
+source period/URL, identity contract and row count; it does not compare unused
+rebuilt files with canonical hashes. Only the needed realm's retained files are
+downloaded and published at exact generations and hashes.
+
+The reviewed promotion plan also pins the producer configuration and original
+source fingerprint. Publication code can change without invalidating those
+build facts. `Dockerfile.promotion` inherits the verified producer image's native
+tools and dependencies and adds only the reviewed consumer/gate/entrypoint.
+`WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the expected producer at the bundle
+boundary. The publication-only entrypoint refuses a missing bundle before
+source processing; the controlled pre-write failure probe remains available.
+No source download, normalization, tile build or translation rebuild is part
+of this image layer or publication.
+
 ## Execution observations and failure recovery
 
 `wdpa-execution-observer` uses 1 CPU / 512 MiB, a 120-second timeout and a

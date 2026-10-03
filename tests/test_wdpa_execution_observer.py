@@ -210,6 +210,8 @@ def reviewed_plan(tmp_path, monkeypatch):
                 "artifact_bundle",
                 "cloud_execution",
                 "cloud_image",
+                "image_digest",
+                "source_tree_sha256",
                 "run_date",
                 "assets",
             )
@@ -258,10 +260,15 @@ def test_memory_peak_must_be_measured_and_within_the_enforced_limit(peak):
     assert any("kernel lifetime peak" in error for error in gate.check_build(build))
 
 
-@pytest.mark.parametrize("peak,warns", [
-    (int(6.4 * 1024**3), False), (int(6.4 * 1024**3) + 1, True),
-    (7732400128, True), (8 * 1024**3, True),
-])
+@pytest.mark.parametrize(
+    "peak,warns",
+    [
+        (int(6.4 * 1024**3), False),
+        (int(6.4 * 1024**3) + 1, True),
+        (7732400128, True),
+        (8 * 1024**3, True),
+    ],
+)
 def test_advisory_boundary_does_not_change_acceptance(peak, warns):
     build = accepted_evidence()["build"]
     build["memory_peak_bytes"] = peak
@@ -287,6 +294,12 @@ def test_build_must_match_the_reviewed_processing_tree():
     evidence = accepted_evidence()
     evidence["build"]["source_tree_sha256"] = "0" * 64
     assert any("processing source tree" in error for error in gate.check(evidence))
+
+
+def test_reviewed_producer_is_independent_of_new_publication_code(monkeypatch):
+    evidence = accepted_evidence()
+    monkeypatch.setattr(gate, "source_digest", lambda: "0" * 64)
+    assert gate.check(evidence) == []
 
 
 def test_complete_resource_reports_do_not_claim_a_legacy_comparison():

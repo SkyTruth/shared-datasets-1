@@ -99,7 +99,7 @@ class PublicationDeploymentTests(unittest.TestCase):
             self.assertNotIn("continue-on-error", step)
             self.assertEqual(step["run"], f"uv run --no-sync python scripts/publication_rollout_gate.py --job {job}")
             self.assertLess(names.index("Authenticate to Google Cloud"), names.index(gate_name))
-            image_step = "Promote accepted wdpa-monthly image" if job == "wdpa-monthly" else f"Build {job} image"
+            image_step = "Prepare reviewed WDPA publication image" if job == "wdpa-monthly" else f"Build {job} image"
             self.assertLess(names.index(gate_name), names.index(image_step))
             self.assertLess(names.index(gate_name), names.index("Terraform plan"))
 
