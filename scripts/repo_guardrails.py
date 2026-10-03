@@ -215,7 +215,10 @@ def has_label(labels: set[str], kind: str) -> bool:
 def parse_catalog_rows(text: str | None) -> dict[str, dict[str, str]]:
     if text is None:
         return {}
-    return {row["asset_slug"]: row for row in csv.DictReader(text.splitlines()) if row.get("asset_slug")}
+    # Adding an optional empty column does not change an asset's metadata.
+    # Populated additions/removals still require the matching source doc edit.
+    return {row["asset_slug"]: {key: value for key, value in row.items() if value != ""}
+            for row in csv.DictReader(text.splitlines()) if row.get("asset_slug")}
 
 
 def changed_catalog_slugs(base_text: str | None, head_text: str | None) -> set[str]:

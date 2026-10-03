@@ -131,6 +131,15 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('pmtiles-cdn-sync.yml', 'sync'),
         })
 
+    def test_catalog_comparison_distinguishes_empty_columns_from_metadata_changes(self):
+        before = "asset_slug,title\none,One\ntwo,Two\n"
+        empty = "asset_slug,title,translation_locales\none,One,\ntwo,Two,\n"
+        configured = "asset_slug,title,translation_locales\none,One,es\ntwo,Two,\n"
+        self.assertEqual(repo_guardrails.changed_catalog_slugs(before, empty), set())
+        self.assertEqual(repo_guardrails.changed_catalog_slugs(before, configured), {"one"})
+        self.assertEqual(repo_guardrails.changed_catalog_slugs(configured, before), {"one"})
+        self.assertEqual(repo_guardrails.changed_catalog_slugs(before, "asset_slug,title\none,One\n"), {"two"})
+
     def test_catalog_csv_changes_require_matching_asset_doc_change(self):
         changes = [repo_guardrails.ChangedFile("M", repo_guardrails.CATALOG_PATH)]
 
