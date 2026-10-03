@@ -470,17 +470,54 @@ former two-run rollout. Source downloads, fingerprint reads and staging uploads
 remain profiled; the kernel lifetime peak is never reset or subtracted.
 
 The protected isolated workflow can change only its service account, deployer
-binding, job, two custom staging/read roles and two prefix-conditioned bucket
+binding, job, two custom staging/read roles and three prefix-conditioned bucket
 bindings. Its reviewed plan may not delete resources, increase limits, grant
 canonical data permissions or create a scheduler. Failed builds may leave
 uncommitted scratch objects; absence of a complete validated root descriptor
 prevents promotion. Scratch existence is not publication authority.
 
+The shared bucket has hierarchical namespace enabled. Uploading to a missing
+folder requires `storage.folders.create` as well as `storage.objects.create`
+([HNS operations](https://docs.cloud.google.com/storage/docs/hns-overview)).
+The build stager has exactly those two permissions. Separate conditions grant
+object creation under `objects/_scratch/wdpa-builds/` and folder creation under
+`folders/_scratch/wdpa-builds/`; neither permits canonical writes, replacement,
+folder rename or deletion. Google supports the full HNS folder resource name in
+[IAM conditions](https://docs.cloud.google.com/iam/docs/conditions-resource-attributes).
+The reader still has only `storage.objects.get` on build objects.
+
+Before a complete build, the protected workflow temporarily selects a reviewed
+scratch probe command in the same tested image and fixed resources. That command
+uses the actual runtime identity and `BuildStager.upload` to create one tiny
+no-clobber object in each realm folder. It never commits a build descriptor.
+Only a terminal successful probe permits processing; the workflow restores the
+processing command after verifying no execution remains active. Failed probes
+block a complete build. Probe objects are diagnostic scratch, not publication
+artifacts or acceptance evidence.
+
+Retaining execution `wdpa-processing-validation-kncf9` failed at
+`2026-10-03T06:00:10.404328Z` (2:00 AM Eastern) during its first marine FGB upload.
+Marine native validation had passed, but the HNS folder creation check denied
+the old stager role. Object creation was allowed and object deletion remained
+denied. The actual kernel peak was 5,732,749,312 bytes and scratch peaked at
+15,196,237,824 bytes. This was a storage permission failure, separate from memory
+headroom. Terrestrial processing had not started. A completed read-only listing
+found zero retained objects for that execution, so all 22 artifact files and
+the root descriptor are missing. The [unchanged failed report](wdpa-processing-evidence/wdpa-processing-validation-kncf9/failed-report.json)
+and [derived audit/recovery assessment](wdpa-processing-evidence/wdpa-processing-validation-kncf9/retention-assessment.json)
+record the failure. One complete retaining build is necessary after the upload
+preflight succeeds because there is no complete retained bundle to promote.
+
 The accepted producer image is verified by immutable registry URI, configuration
 digest and its original source fingerprint. That fingerprint remains bound to
 the raw build and comparison reports and the immutable reviewed promotion plan;
 it is not replaced with the current publication code's fingerprint. The
-pre-cloud gate still requires the current processing tree for a new build.
+pre-cloud gate runs inside the original tested producer image against the
+reviewed staged document mounted read-only. Its source fingerprint and image
+configuration must match that document. Consumer, workflow or IAM repairs can
+therefore reuse the tested producer without rebuilding its image or relabeling
+the staged evidence. A newly tested producer still needs matching new staged
+evidence before deployment.
 Publication fixes can therefore consume a valid retained bundle without
 repeating source processing or rewriting its evidence.
 
