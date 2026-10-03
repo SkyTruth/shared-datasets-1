@@ -1,0 +1,109 @@
+{
+  "execution": "wdpa-processing-validation-cg4bc",
+  "realm": "wdpa-marine",
+  "verified_at": "2026-10-03T08:21:40.232508+00:00",
+  "object_metadata_snapshot": "cloud-retaining-cg4bc-stage-20261003T081945Z.json",
+  "files": [
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.schema.json",
+      "generation": 1791015473640357,
+      "size": 3858,
+      "sha256": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.3432150829976308
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.ndjson.gz",
+      "generation": 1791015473207139,
+      "size": 3167213,
+      "sha256": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.3234133749974717
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.id.ndjson.gz",
+      "generation": 1791015479457613,
+      "size": 3236234,
+      "sha256": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.24266850000276463
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.fr.ndjson.gz",
+      "generation": 1791015479123754,
+      "size": 3241892,
+      "sha256": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.26090333300089696
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.sw.ndjson.gz",
+      "generation": 1791015480528611,
+      "size": 3242887,
+      "sha256": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.24039420800181688
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.es.ndjson.gz",
+      "generation": 1791015478826035,
+      "size": 3244949,
+      "sha256": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.239244125001278
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt.ndjson.gz",
+      "generation": 1791015479856640,
+      "size": 3247584,
+      "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.25100179099899833
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata.pt_br.ndjson.gz",
+      "generation": 1791015480222984,
+      "size": 3247584,
+      "sha256": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 0.2972649580005964
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.pmtiles",
+      "generation": 1791015472751148,
+      "size": 151243566,
+      "sha256": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 4.196768208999856
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.metadata-translations.csv",
+      "generation": 1791015478524175,
+      "size": 294977613,
+      "sha256": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 8.15717529199901
+    },
+    {
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-marine/wdpa-marine.fgb",
+      "generation": 1791015470509746,
+      "size": 1296594616,
+      "sha256": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+      "matches_stager_metadata": true,
+      "read_at_exact_generation": true,
+      "elapsed_seconds": 35.507221500000014
+    }
+  ],
+  "complete_realm_byte_verification": true,
+  "whole_build_acceptance": false
+}

@@ -1,0 +1,83 @@
+{
+  "artifact_bundle": {
+    "generation": 1791033114607974,
+    "sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170",
+    "size": 81647,
+    "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/build-bundle.json"
+  },
+  "assets": {
+    "wdpa-marine": {
+      "artifact_sha256": {
+        "csv": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+        "fgb": "5eb75fdc04a6bb0d32289dfdf832dea7bedeaf48200e7d68e0ac1316c76a7e03",
+        "metadata": "71878a5c9aee1dfa126777f6ec6a1dee642e45049f01d8644d43494242548bf7",
+        "metadata_es": "8842641f11527ad131941479ea55218b1446f02b04303d4c17307bc8b18e6ae1",
+        "metadata_fr": "f626008b4a56c1301b6c893ef15c8db61c763bb221a37a643400de4041286992",
+        "metadata_id": "b26ef081f3365801e530cf08619752deac0e1c3e480afb0482691155f4c3388d",
+        "metadata_pt": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+        "metadata_pt_br": "62a2f8ad5f36f654e6c241094dd66580d3943de2d0295803df9910a04135ae13",
+        "metadata_sw": "050aa2844d769987765ed3150dd5aeab57ea3211ab4657c949b7b91fe2b0aa71",
+        "metadata_translations": "31f6e6c16ffa9cc0334459368d7265aba30afee399cc36636f0207799d2fe31f",
+        "pmtiles": "68dee6f64f688e2480a46d2cf3db58a974eb226f686c4d510d03fdd844f58a1a",
+        "schema": "88bd088f3ac178812cdc49d062dd2cb7525b76ffd69b5a4763fe9eec15b31bf3"
+      },
+      "baseline": {
+        "generation": 1790866753009809,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+        "sha256": "b7a63165a08205b2454cfea61c81d08c93ef399cce32183bd2958201a960b616"
+      },
+      "compatibility_verified": false,
+      "india_rows": 304,
+      "india_sites": 304,
+      "next_generated_feature_id": 17943,
+      "rows": 17938,
+      "semantic_sha256": "abc81213f8db78942ba71d0027356816c932b7e53c530686f8b9acae1290218b",
+      "source_counts": {
+        "india_rows": 304,
+        "india_sites": 304,
+        "raw_rows": 17938,
+        "rows": 17938
+      }
+    },
+    "wdpa-terrestrial": {
+      "artifact_sha256": {
+        "csv": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+        "fgb": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+        "metadata": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+        "metadata_es": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+        "metadata_fr": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+        "metadata_id": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+        "metadata_pt": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+        "metadata_pt_br": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+        "metadata_sw": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+        "metadata_translations": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+        "pmtiles": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+        "schema": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da"
+      },
+      "baseline": {
+        "generation": 1790815952362262,
+        "path": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
+        "sha256": "0471a19c3fb7a905a502ada6eb9b4b4f314f1eacb6488b5c7f4b169b4b29ca88"
+      },
+      "compatibility_verified": false,
+      "india_rows": 193174,
+      "india_sites": 193174,
+      "next_generated_feature_id": 497919,
+      "rows": 497914,
+      "semantic_sha256": "3389cf10f6d91cfcd20fda2e4805c8d3e510be60bd251a64cb87c893fb183c6b",
+      "source_counts": {
+        "india_rows": 193174,
+        "india_sites": 193174,
+        "raw_rows": 497914,
+        "rows": 497914
+      }
+    }
+  },
+  "cloud_execution": "wdpa-processing-validation-cg4bc",
+  "cloud_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:f72002f4a6d627bab367e28304797a2da4927dd1648cc2efe405660fa19849ff",
+  "image_digest": "sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760",
+  "kind": "wdpa_owned_build_promotion",
+  "run_date": "2026-10-01",
+  "schema_version": 1,
+  "source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23"
+}
