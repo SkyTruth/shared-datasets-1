@@ -615,16 +615,36 @@ Run disk-backed WDPA executions sequentially. Google's
 [disk documentation](https://docs.cloud.google.com/run/docs/configuring/jobs/ephemeral-disk)
 describes the separate limits and initial regional grant.
 
-## Remaining acceptance and rollout
+## Protected rollout
 
-The retaining build and matching small/sample evidence are complete. Review and
-merge its exact build promotion plan, then deploy the worker and independent
-observer through the protected workflow. The human-approved temporary observer
-bootstrap grant is applied and expires absolutely at 2026-10-06 00:00:00 UTC;
-remove its binding through a reviewed follow-up after provisioning. Verify actual
-controlled worker failure-alert delivery before production promotion. Follow publication to terminal status and independently
-check terrestrial FGB, every sidecar, both release indexes, generations and custom
-metadata. The monitor remains active until terrestrial publication is verified.
+[PR #199](https://github.com/SkyTruth/shared-datasets-1/pull/199) merged the exact
+retained-build acceptance and promotion authority. Protected
+[deployment 37127094721](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37127094721)
+applied eight observer additions and one worker update with no deletions. Live
+worker resources are 4 CPU / 8 GiB / 100 GiB DISK at `/work`; the observer is
+1 CPU / 512 MiB / 120 seconds / zero retries, scheduled every five minutes.
+Its live execution-reader role is job-scoped, and its storage binding matches
+only `_catalog/wdpa-monthly-execution.json`. It has no project runtime binding.
+
+Controlled worker probe `wdpa-monthly-hbdjm` reached terminal failure at
+2026-10-03 13:52:10 UTC with the explicit failure before any dataset writes.
+Its [actual Monitoring Slack delivery](https://skytruth.slack.com/archives/C0B12LDMB1A/p1791035583550649)
+arrived at 13:53:03 UTC. The independent observer then wrote a generation-pinned
+schema 1 status document carrying that terminal result. The deployment workflow
+stopped at the alert-verification gate before launching a dataset canary.
+
+The observer is provisioned, so the follow-up removes the temporary project-wide
+bootstrap binding through the existing protected ingestion IAM sync. Its original
+absolute expiry was 2026-10-06 00:00:00 UTC; it is not renewed or expanded. The
+unbound role definition retains the three approved provisioning permissions for
+auditability. The removal plan changes only that binding.
+
+[Promotion 37127874500](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37127874500)
+was dispatched once from reviewed main with that verified worker probe and the
+original build date `2026-10-01`. Follow publication to terminal status and
+independently check terrestrial FGB, every sidecar, both release indexes,
+generations and custom metadata. The monitor remains active until terrestrial
+publication is verified.
 
 ## Intended remote paths
 
@@ -635,8 +655,9 @@ The catalog deployment includes `_catalog/web/app.js`, `index.html` and the new
 the same status document through its existing static route. Normal WDPA publication paths remain
 `100-geographic-reference/130-protected-areas/{wdpa-marine,wdpa-terrestrial}/`
 with the existing `releases/`, `latest/`, run records and release indexes.
-Existing allocation, claim and receipt ownership is unchanged. No canonical
-dataset objects or production infrastructure were changed during implementation.
+Existing allocation, claim and receipt ownership governs the retained-artifact
+promotion. Protected infrastructure changes and publication evidence are recorded
+above; canonical artifact generations are verified after terminal publication.
 
 Diagnostic benchmark inputs were staged privately, with `if_generation_match=0`,
 at `gs://skytruth-shared-datasets-1/_scratch/wdpa-processing-benchmarks/20261002T040200Z/october-frozen-snapshot.tar`,

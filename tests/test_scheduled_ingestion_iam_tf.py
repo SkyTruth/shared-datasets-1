@@ -305,19 +305,21 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             binding_block,
         )
 
-    def test_observer_bootstrap_writes_have_an_explicit_project_lease(self):
+    def test_provisioned_observer_bootstrap_role_has_no_project_grant(self):
         text = (PROD_TF_DIR / "wdpa_observer_bootstrap_iam.tf").read_text()
         role = terraform_resource_block(text, "google_project_iam_custom_role", "wdpa_observer_bootstrap")
         permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.S).group(1)
         self.assertEqual(set(re.findall(r'"([^"]+)"', permissions)), {
             "cloudscheduler.jobs.create", "cloudscheduler.jobs.update", "run.jobs.setIamPolicy"})
-        binding = terraform_resource_block(text, "google_project_iam_member", "github_actions_wdpa_observer_bootstrap")
-        self.assertIn('project = var.project_id', binding)
-        self.assertIn('role    = google_project_iam_custom_role.wdpa_observer_bootstrap.name', binding)
-        self.assertIn('member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"', binding)
-        self.assertIn('expression  = "request.time < timestamp(\'2026-10-06T00:00:00Z\')"', binding)
-        self.assertNotIn("resource.name", binding)
-        self.assertNotIn("timestamp()", binding)
+        all_terraform = "\n".join(path.read_text() for path in PROD_TF_DIR.glob("*.tf"))
+        self.assertNotIn(
+            'resource "google_project_iam_member" "github_actions_wdpa_observer_bootstrap"',
+            all_terraform,
+        )
+        self.assertNotRegex(
+            all_terraform,
+            r"role\s*=\s*google_project_iam_custom_role\.wdpa_observer_bootstrap\.name",
+        )
 
     def test_wdpa_reset_reader_matches_only_the_approved_supplement(self):
         block = terraform_resource_block(
