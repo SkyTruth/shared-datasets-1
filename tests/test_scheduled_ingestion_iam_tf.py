@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -247,6 +248,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             "run.executions.list",
             "run.jobs.create",
             "run.jobs.get",
+            "run.jobs.getIamPolicy",
             "run.jobs.list",
             "run.jobs.run",
             "run.jobs.runWithOverrides",
@@ -261,6 +263,7 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         self.assertNotIn("run.jobs.setIamPolicy", role_block)
         self.assertNotIn("run.jobs.delete", role_block)
         self.assertNotIn("cloudscheduler.jobs.create", role_block)
+        self.assertNotIn("cloudscheduler.jobs.update", role_block)
         self.assertNotIn("cloudscheduler.jobs.delete", role_block)
         self.assertIn(
             "role    = google_project_iam_custom_role.scheduled_ingestion_deployer.name",
@@ -270,6 +273,20 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
             'member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"',
             binding_block,
         )
+
+    def test_observer_bootstrap_writes_have_an_explicit_project_lease(self):
+        text = (PROD_TF_DIR / "wdpa_observer_bootstrap_iam.tf").read_text()
+        role = terraform_resource_block(text, "google_project_iam_custom_role", "wdpa_observer_bootstrap")
+        permissions = re.search(r"permissions\s*=\s*\[(.*?)\]", role, re.S).group(1)
+        self.assertEqual(set(re.findall(r'"([^"]+)"', permissions)), {
+            "cloudscheduler.jobs.create", "cloudscheduler.jobs.update", "run.jobs.setIamPolicy"})
+        binding = terraform_resource_block(text, "google_project_iam_member", "github_actions_wdpa_observer_bootstrap")
+        self.assertIn('project = var.project_id', binding)
+        self.assertIn('role    = google_project_iam_custom_role.wdpa_observer_bootstrap.name', binding)
+        self.assertIn('member  = "serviceAccount:${var.github_actions_terraform_service_account_email}"', binding)
+        self.assertIn('expression  = "request.time < timestamp(\'2026-10-06T00:00:00Z\')"', binding)
+        self.assertNotIn("resource.name", binding)
+        self.assertNotIn("timestamp()", binding)
 
     def test_wdpa_reset_reader_matches_only_the_approved_supplement(self):
         block = terraform_resource_block(

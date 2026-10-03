@@ -14,6 +14,7 @@ resource "google_project_iam_custom_role" "scheduled_ingestion_deployer" {
     # not grant additional runtime, dataset, job IAM or deletion permissions.
     "run.jobs.create",
     "run.jobs.get",
+    "run.jobs.getIamPolicy",
     "run.jobs.list",
     "run.jobs.run",
     "run.jobs.runWithOverrides",
