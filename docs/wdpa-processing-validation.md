@@ -66,7 +66,7 @@ active execution, this permits one isolated complete retaining build.
    the existing self-authored merged exception), identical head/merge/current
    document bytes, and the accepted build's real terminal success. See the
    [owned plan contract](../.github/dataset-plans/README.md#owned-wdpa-build-promotion).
-6. With observer and alert prerequisites ready, promote the accepted image and
+6. With observer and alert prerequisites ready, prepare the publication image and
    execute the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`.
    It downloads the approved object generations, verifies all required files
    before the first new publication, and passes them to `OwnedGeneratedPublisher`.
@@ -74,9 +74,14 @@ active execution, this permits one isolated complete retaining build.
    or regenerates translations. Publication manifests and receipts are finalized
    with the actual canonical GCS generations; artifact bytes remain unchanged.
 
-Before promotion, both identity baselines and reserved counters must still match
-those used by the build. Existing successful realms are retained only when their
-artifact hashes match. An interrupted publication resumes its original receipt;
+Before promotion, both identity baselines, predecessor releases and reserved
+counters must still match those used by the build. An already-successful realm
+is preserved when its owned current receipt matches the source period, URL,
+identity contract, record count and unchanged allocation sequence. Its rebuilt
+artifact hashes need not equal previously published bytes: those candidate files
+are not downloaded or published. This permits the existing October marine
+release to remain committed while terrestrial's retained bytes are promoted.
+An interrupted publication resumes its original receipt;
 another owner, stale baseline or changed staged bytes stops publication. Never
 reset claims/counters or change the date to bypass recovery. Validation's staging
 permission and the worker's read permission are limited to the noncanonical build
@@ -471,11 +476,24 @@ canonical data permissions or create a scheduler. Failed builds may leave
 uncommitted scratch objects; absence of a complete validated root descriptor
 prevents promotion. Scratch existence is not publication authority.
 
-The production image is the same accepted Cloud Run image, verified by immutable
-registry URI, configuration digest and source fingerprint. Tagging/pushing it
-retains the tested executor SHA. The production execution consumes its retained
-build bundle through the owned publisher; neither the image nor the dataset
-artifacts are rebuilt after acceptance.
+The accepted producer image is verified by immutable registry URI, configuration
+digest and its original source fingerprint. That fingerprint remains bound to
+the raw build and comparison reports and the immutable reviewed promotion plan;
+it is not replaced with the current publication code's fingerprint. The
+pre-cloud gate still requires the current processing tree for a new build.
+Publication fixes can therefore consume a valid retained bundle without
+repeating source processing or rewriting its evidence.
+
+`Dockerfile.promotion` starts from that verified producer image and copies only
+the reviewed bundle consumer, acceptance gate and publication-only entrypoint.
+It inherits the producer's native tools and dependencies without installation
+or conversion commands, pins `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` to the accepted
+producer and records the reviewed publication executor SHA separately from the
+original build executor. The protected workflow smoke-checks the resulting image
+and deploys its immutable digest. This small software image layer does not
+rebuild dataset artifacts. The publication-only entrypoint requires a reviewed
+bundle, except for the explicit pre-write failure probe; it cannot fall back to
+source processing when a scheduler or manual execution omits the bundle.
 
 ## Infrastructure and failure visibility
 
