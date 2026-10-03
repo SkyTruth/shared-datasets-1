@@ -53,8 +53,6 @@ jobs:
         with:
           version: "0.11.8"
       - run: uv sync --locked --all-groups
-      - name: Require small and sampled checks plus disk quota
-        run: uv run --no-sync python scripts/wdpa_processing_gate.py --pre-cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -90,6 +88,7 @@ jobs:
               raise SystemExit('Unexpected staged image artifact origin')
           print('run_id=' + match[1])
           print('config_digest=' + sample['image_digest'])
+          print('source_digest=' + evidence['source_tree_sha256'])
           PY
       - name: Download the tested deployment image
         uses: actions/download-artifact@v4
@@ -98,15 +97,20 @@ jobs:
           run-id: ${{ steps.staged-image.outputs.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/wdpa-tested-image
-      - name: Publish the tested immutable validation image
+      - name: Require small and sampled checks plus disk quota
         run: |
           set -euo pipefail
           gzip -dc "$RUNNER_TEMP/wdpa-tested-image/image.tar.gz" | docker load
           config="$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')"
           [[ "$config" == '${{ steps.staged-image.outputs.config_digest }}' ]]
           actual_source="$(docker run --rm wdpa-processing-benchmark:local python scripts/wdpa_processing_gate.py --print-source-digest)"
-          expected_source="$(uv run --no-sync python scripts/wdpa_processing_gate.py --print-source-digest)"
+          expected_source='${{ steps.staged-image.outputs.source_digest }}'
           [[ "$actual_source" == "$expected_source" ]]
+          docker run --rm --volume "$PWD/catalog/wdpa-staged-validation.json:/app/catalog/wdpa-staged-validation.json:ro" \
+            wdpa-processing-benchmark:local python scripts/wdpa_processing_gate.py --pre-cloud
+      - name: Publish the tested immutable validation image
+        run: |
+          set -euo pipefail
           gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
           tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/shared-datasets-jobs/wdpa-validation:${GITHUB_SHA}-${GITHUB_RUN_ID}"
           docker tag wdpa-processing-benchmark:local "$tag"
@@ -123,7 +127,7 @@ jobs:
         run: |
           set -euo pipefail
           terraform -chdir=terraform/envs/prod init -input=false
-          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false \
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false -refresh=true \
             -out="$RUNNER_TEMP/wdpa-validation.tfplan" \
             -target=module.wdpa_validation_service_account.google_service_account.this \
             -target=google_service_account_iam_member.wdpa_validation_deployer \
@@ -131,6 +135,7 @@ jobs:
             -target=google_project_iam_custom_role.wdpa_build_stager \
             -target=google_project_iam_custom_role.wdpa_build_reader \
             -target=google_storage_bucket_iam_member.wdpa_build_stager \
+            -target=google_storage_bucket_iam_member.wdpa_build_folder_stager \
             -target=google_storage_bucket_iam_member.wdpa_build_reader \
             -var="wdpa_validation_image=${VALIDATION_IMAGE}" \
             -var="wdpa_validation_image_config_digest=${{ steps.staged-image.outputs.config_digest }}" \
@@ -147,6 +152,7 @@ jobs:
             google_project_iam_custom_role.wdpa_build_stager
             google_project_iam_custom_role.wdpa_build_reader
             google_storage_bucket_iam_member.wdpa_build_stager
+            google_storage_bucket_iam_member.wdpa_build_folder_stager
             google_storage_bucket_iam_member.wdpa_build_reader
         run: |
           uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/wdpa-validation-plan.json" \
@@ -161,6 +167,71 @@ jobs:
           set -euo pipefail
           actual="$(gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(spec.template.spec.template.spec.containers[0].image)')"
           [[ "$actual" == "$VALIDATION_IMAGE" ]]
+      - name: Plan the scratch upload probe with unchanged image and resources
+        if: inputs.run_validation
+        run: |
+          set -euo pipefail
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false -refresh=true \
+            -out="$RUNNER_TEMP/staging-probe.tfplan" \
+            -target=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            -var="wdpa_validation_image=$VALIDATION_IMAGE" \
+            -var="wdpa_validation_image_config_digest=${{ steps.staged-image.outputs.config_digest }}" \
+            -var=wdpa_validation_staging_probe=true \
+            -var=wdpa_monthly_image=unused-by-staging-probe \
+            -var=sea_ice_daily_image=unused-by-staging-probe \
+            -var=eamlis_monthly_image=unused-by-staging-probe
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/staging-probe.tfplan" > "$RUNNER_TEMP/staging-probe-plan.json"
+          uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/staging-probe-plan.json" \
+            --allowed-exact=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            --block-deletes --refusal-prefix='Refusing WDPA scratch upload probe'
+          uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/staging-probe-plan.json" \
+            --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT" --staging-probe
+      - name: Apply the saved scratch probe command
+        if: inputs.run_validation
+        run: |
+          set -euo pipefail
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/staging-probe.tfplan"
+          echo STAGING_PROBE_DEPLOYED=true >> "$GITHUB_ENV"
+      - name: Verify a real upload before processing
+        if: inputs.run_validation
+        run: |
+          set -euo pipefail
+          gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --wait --format=json > "$RUNNER_TEMP/staging-probe-execution.json"
+          python - "$RUNNER_TEMP/staging-probe-execution.json" <<'PYPROBE'
+          import json, sys
+          execution = json.load(open(sys.argv[1]))
+          status = execution['status']
+          if not status.get('completionTime') or status.get('succeededCount') != 1 or status.get('failedCount', 0):
+              raise SystemExit('The scratch upload probe did not succeed; no full build may start')
+          print('Scratch upload probe succeeded: ' + execution['metadata']['name'])
+          PYPROBE
+      - name: Restore the processing command after the terminal probe
+        if: always() && env.STAGING_PROBE_DEPLOYED == 'true'
+        run: |
+          set -euo pipefail
+          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/probe-active-executions.json"
+          python - "$RUNNER_TEMP/probe-active-executions.json" <<'PYPROBE'
+          import json, sys
+          if any(not execution.get('status', {}).get('completionTime') for execution in json.load(open(sys.argv[1]))):
+              raise SystemExit('The probe is still active; do not replace its command')
+          PYPROBE
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false -refresh=true \
+            -out="$RUNNER_TEMP/restore-processing.tfplan" \
+            -target=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            -var="wdpa_validation_image=$VALIDATION_IMAGE" \
+            -var="wdpa_validation_image_config_digest=${{ steps.staged-image.outputs.config_digest }}" \
+            -var=wdpa_monthly_image=unused-by-restore-processing \
+            -var=sea_ice_daily_image=unused-by-restore-processing \
+            -var=eamlis_monthly_image=unused-by-restore-processing
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/restore-processing.tfplan" > "$RUNNER_TEMP/restore-processing-plan.json"
+          uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/restore-processing-plan.json" \
+            --allowed-exact=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            --block-deletes --refusal-prefix='Refusing WDPA processing command restoration'
+          uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/restore-processing-plan.json" \
+            --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT"
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/restore-processing.tfplan"
       - name: Start validation only after controlled alert verification
         if: inputs.run_validation
         env:

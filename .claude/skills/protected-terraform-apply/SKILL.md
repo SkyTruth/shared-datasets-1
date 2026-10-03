@@ -55,8 +55,9 @@ terraform -chdir=terraform/envs/prod plan -input=false ...
 - Isolated WDPA artifact build:
   `.github/workflows/wdpa-processing-validation-deploy.yml` after reviewed small
   and sampled checks, merge and quota approval. Its exact allowlist covers the
-  isolated identity/deployer/job plus two custom roles and two bucket bindings.
-  Build access is create-only under `_scratch/wdpa-builds/`; the worker can read
+  isolated identity/deployer/job plus two custom roles and three bucket bindings.
+  Build access is create-only for objects and HNS folders under
+  `_scratch/wdpa-builds/`; a real upload probe precedes processing. The worker can read
   that prefix. Canonical data permissions, deletes, production worker changes and
   resource increases are refused. One retained complete build is then promoted
   through the reviewed protected worker workflow without rebuilding artifacts.

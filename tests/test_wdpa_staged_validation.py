@@ -149,7 +149,7 @@ def test_cloud_build_workflow_is_protected_and_limits_staging_permissions():
     ) < names.index("Apply the saved protected plan")
     tf = (ROOT / "terraform/envs/prod/wdpa_processing_validation.tf").read_text()
     assert "_scratch/wdpa-builds/" in tf and "scheduler" not in tf
-    assert 'permissions = ["storage.objects.create"]' in tf
+    assert 'permissions = ["storage.folders.create", "storage.objects.create"]' in tf
     assert 'permissions = ["storage.objects.get"]' in tf
 
 
@@ -162,8 +162,13 @@ def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
     assert download["with"]["name"] == "wdpa-benchmark-image"
     assert "run-id" in download["with"] and "github-token" in download["with"]
     publish = steps["Publish the tested immutable validation image"]["run"]
-    assert "docker load" in publish and "docker tag" in publish
-    assert "config_digest" in publish and "--print-source-digest" in publish
+    require = steps["Require small and sampled checks plus disk quota"]["run"]
+    assert "docker load" in require and "docker tag" in publish
+    assert "config_digest" in require and "--print-source-digest" in require
+    assert "steps.staged-image.outputs.source_digest" in require
+    assert "/app/catalog/wdpa-staged-validation.json:ro" in require
+    assert "docker run" in require and "--pre-cloud" in require
+    assert "uv run" not in require
     assert "docker build" not in publish.replace("docker buildx imagetools", "inspect")
     names = list(steps)
     assert names.index(
@@ -173,6 +178,165 @@ def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
         "completionTime"
         in steps["Refuse to replace an active validation execution"]["run"]
     )
+
+
+def test_scratch_probe_precedes_processing_and_restores_only_after_terminal():
+    workflow = load_workflow(
+        ROOT / ".github/workflows/wdpa-processing-validation-deploy.yml"
+    )
+    steps = workflow_steps_by_name(workflow, "deploy")
+    names = list(steps)
+    assert names.index("Apply the saved protected plan") < names.index(
+        "Verify a real upload before processing"
+    )
+    assert (
+        names.index("Verify a real upload before processing")
+        < names.index("Restore the processing command after the terminal probe")
+        < names.index("Start validation only after controlled alert verification")
+    )
+    probe = steps["Plan the scratch upload probe with unchanged image and resources"][
+        "run"
+    ]
+    restore = steps["Restore the processing command after the terminal probe"]
+    assert terraform_targets(probe) == {policy.JOB}
+    assert terraform_targets(restore["run"]) == {policy.JOB}
+    assert "--staging-probe" in probe and "--block-deletes" in probe
+    assert "always()" in restore["if"] and "STAGING_PROBE_DEPLOYED" in restore["if"]
+    assert "completionTime" in restore["run"]
+    assert "--wait" in steps["Verify a real upload before processing"]["run"]
+    assert "succeededCount" in steps["Verify a real upload before processing"]["run"]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_scratch_probe_uses_actual_stager_for_both_realms_and_never_commits(
+    tmp_path, monkeypatch, capsys, fails
+):
+    from ingestion.wdpa_monthly.artifact_bundle import BuildStager
+    from ingestion.wdpa_monthly import resources
+
+    uploaded = []
+
+    def upload(_self, name, path):
+        uploaded.append(name)
+        assert path.read_bytes() == b"WDPA scratch upload preflight\n"
+        if fails:
+            raise PermissionError("storage.folders.create")
+        return {
+            "uri": name,
+            "generation": 1,
+            "size": path.stat().st_size,
+            "sha256": "0" * 64,
+        }
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(resources, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(
+        BuildStager, "from_runtime", lambda: BuildStager.__new__(BuildStager)
+    )
+    monkeypatch.setattr(BuildStager, "upload", upload)
+    monkeypatch.setattr(
+        BuildStager, "commit", lambda *_: pytest.fail("probe committed a build")
+    )
+    recipe = json.loads((ROOT / "catalog/wdpa-staging-probe.json").read_text())
+    assert recipe["command"][:2] == ["python", "-c"]
+    if fails:
+        with pytest.raises(PermissionError):
+            exec(recipe["command"][2], {})
+        assert not capsys.readouterr().out
+        assert uploaded == ["wdpa-marine/staging-probe.txt"]
+    else:
+        exec(recipe["command"][2], {})
+        assert uploaded == [
+            "wdpa-marine/staging-probe.txt",
+            "wdpa-terrestrial/staging-probe.txt",
+        ]
+        result = json.loads(capsys.readouterr().out)
+        assert result["state"] == "succeeded"
+        assert result["scope"] == "scratch-permission-probe-not-acceptance"
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "delete",
+        "rename",
+        "object_root",
+        "folder_root",
+        "canonical",
+        "wrong_identity",
+    ],
+)
+def test_hierarchical_staging_grants_only_folder_creation_in_build_prefix(defect):
+    role = {
+        "address": "google_project_iam_custom_role.wdpa_build_stager",
+        "change": {
+            "actions": ["update"],
+            "after": {
+                "project": "shared-datasets-1",
+                "role_id": "wdpaBuildStager",
+                "permissions": ["storage.folders.create", "storage.objects.create"],
+            },
+        },
+    }
+    binding = {
+        "address": "google_storage_bucket_iam_member.wdpa_build_folder_stager",
+        "change": {
+            "actions": ["create"],
+            "after": {
+                "bucket": "skytruth-shared-datasets-1",
+                "role": "projects/shared-datasets-1/roles/wdpaBuildStager",
+                "member": "serviceAccount:wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+                "condition": [{"expression": policy.FOLDER_SCOPE}],
+            },
+        },
+    }
+    if defect in ("delete", "rename"):
+        role["change"]["after"]["permissions"].append("storage.folders." + defect)
+    elif defect in ("object_root", "folder_root", "canonical"):
+        binding["change"]["after"]["condition"][0]["expression"] = {
+            "object_root": policy.OBJECT_SCOPE.replace("_scratch/wdpa-builds/", ""),
+            "folder_root": policy.FOLDER_SCOPE.replace("_scratch/wdpa-builds/", ""),
+            "canonical": policy.FOLDER_SCOPE.replace(
+                "_scratch/wdpa-builds/", "biodiversity/"
+            ),
+        }[defect]
+    elif defect == "wrong_identity":
+        binding["change"]["after"]["member"] = (
+            "serviceAccount:other@shared-datasets-1.iam.gserviceaccount.com"
+        )
+    plan = {"resource_changes": [role, binding]}
+    if defect:
+        with pytest.raises(ValueError, match="staging"):
+            policy.check(plan, image=IMAGE, deployer=DEPLOYER)
+    else:
+        policy.check(plan, image=IMAGE, deployer=DEPLOYER)
+
+
+@pytest.mark.parametrize("defect", [None, "command", "cpu", "inspection"])
+def test_probe_plan_pins_command_identity_and_resources(defect):
+    probe_plan = plan()
+    task = probe_plan["resource_changes"][0]["change"]["after"]["template"][0][
+        "template"
+    ][0]
+    task["containers"][0]["command"] = json.loads(
+        (ROOT / "catalog/wdpa-staging-probe.json").read_text()
+    )["command"]
+    if defect == "command":
+        task["containers"][0]["command"] = ["python", "-c", "print('wrong')"]
+    elif defect == "cpu":
+        task["containers"][0]["resources"][0]["limits"]["cpu"] = "8"
+    if defect:
+        with pytest.raises(ValueError):
+            policy.check(
+                probe_plan,
+                image=IMAGE,
+                deployer=DEPLOYER,
+                staging_probe=True,
+                runtime_inspection=defect == "inspection",
+            )
+    else:
+        policy.check(probe_plan, image=IMAGE, deployer=DEPLOYER, staging_probe=True)
 
 
 def test_sample_comparison_precedes_full_marine_and_is_not_resource_evidence():
@@ -253,7 +417,9 @@ def test_successful_cloud_build_retains_actual_peak_and_advisory_in_final_report
 
     monkeypatch.setattr(cloud, "PhaseProfiler", Profiler)
     monkeypatch.setattr(cloud.subprocess, "run", run)
-    monkeypatch.setattr(BuildStager, "from_runtime", lambda: SimpleNamespace(commit=commit))
+    monkeypatch.setattr(
+        BuildStager, "from_runtime", lambda: SimpleNamespace(commit=commit)
+    )
     cloud.main()
     report = json.loads((tmp_path / "cloud-validation/benchmark.json").read_text())
     assert report["state"] == "succeeded"

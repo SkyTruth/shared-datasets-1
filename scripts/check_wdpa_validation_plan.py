@@ -15,15 +15,19 @@ ALLOWED = {SA, JOB, IAM}
 STAGING = {
     "google_project_iam_custom_role.wdpa_build_stager": (
         "wdpaBuildStager",
-        "storage.objects.create",
+        {"storage.folders.create", "storage.objects.create"},
     ),
     "google_project_iam_custom_role.wdpa_build_reader": (
         "wdpaBuildReader",
-        "storage.objects.get",
+        {"storage.objects.get"},
     ),
 }
 BINDINGS = {
     "google_storage_bucket_iam_member.wdpa_build_stager": (
+        "wdpaBuildStager",
+        "wdpa-processing-validation",
+    ),
+    "google_storage_bucket_iam_member.wdpa_build_folder_stager": (
         "wdpaBuildStager",
         "wdpa-processing-validation",
     ),
@@ -33,15 +37,21 @@ BINDINGS = {
     ),
 }
 ALLOWED |= set(STAGING) | set(BINDINGS)
+OBJECT_SCOPE = "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1/objects/_scratch/wdpa-builds/')"
+FOLDER_SCOPE = "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1/folders/_scratch/wdpa-builds/')"
 
 
-def check(plan, *, image, deployer, runtime_inspection=False):
+def check(plan, *, image, deployer, runtime_inspection=False, staging_probe=False):
+    if runtime_inspection and staging_probe:
+        raise ValueError("Inspection and staging probe are distinct commands")
     command = ["python", "scripts/cloud_wdpa_validation.py"]
-    if runtime_inspection:
+    if runtime_inspection or staging_probe:
+        recipe_name = (
+            "wdpa-runtime-inspection" if runtime_inspection else "wdpa-staging-probe"
+        )
         recipe = json.loads(
             (
-                Path(__file__).resolve().parents[1]
-                / "catalog/wdpa-runtime-inspection.json"
+                Path(__file__).resolve().parents[1] / f"catalog/{recipe_name}.json"
             ).read_text()
         )
         if recipe["schema_version"] != 1:
@@ -70,7 +80,7 @@ def check(plan, *, image, deployer, runtime_inspection=False):
             if (
                 after["project"] != "shared-datasets-1"
                 or after["role_id"] != role
-                or after["permissions"] != [permission]
+                or set(after["permissions"]) != permission
             ):
                 raise ValueError("Unexpected staging role permissions")
         elif resource["address"] in BINDINGS:
@@ -82,7 +92,12 @@ def check(plan, *, image, deployer, runtime_inspection=False):
                 != f"serviceAccount:{account}@shared-datasets-1.iam.gserviceaccount.com"
                 or len(after["condition"]) != 1
                 or after["condition"][0]["expression"]
-                != "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1/objects/_scratch/wdpa-builds/')"
+                != (
+                    FOLDER_SCOPE
+                    if resource["address"]
+                    == "google_storage_bucket_iam_member.wdpa_build_folder_stager"
+                    else OBJECT_SCOPE
+                )
             ):
                 raise ValueError("Unexpected staging scope or identity")
         elif resource["address"] == SA:
@@ -149,6 +164,7 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--deployer", required=True)
     parser.add_argument("--runtime-inspection", action="store_true")
+    parser.add_argument("--staging-probe", action="store_true")
     args = parser.parse_args()
     with open(args.plan) as source:
         check(
@@ -156,6 +172,7 @@ def main():
             image=args.image,
             deployer=args.deployer,
             runtime_inspection=args.runtime_inspection,
+            staging_probe=args.staging_probe,
         )
 
 

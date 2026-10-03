@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "assessment": "failed before retaining any artifact; no complete bundle to promote",
+  "cloud_execution": "wdpa-processing-validation-kncf9",
+  "completion_time": "2026-10-03T06:00:10.404328Z",
+  "failed_report_sha256": "7e5cf509fa5f1b881c7d8fee9f39dfb3e05400ceda363ea9d9e6e5252ad31aaf",
+  "audit_evidence": {
+    "timestamp": "2026-10-03T06:00:06.129914820Z",
+    "insert_id": "1klwhh6e9r00k",
+    "method": "storage.folders.create",
+    "status": {
+      "code": 7,
+      "message": "wd...n@sh...m does not have storage.folders.create access to the Google Cloud Storage bucket. Permission 'storage.folders.create' denied on resource '//storage.googleapis.com/projects/_/buckets/skytruth-shared-datasets-1/folders/_scratch/wdpa-builds/' (or it may not exist)."
+    },
+    "principal": "wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+    "authorization_info": [
+      {
+        "resource": "projects/_/buckets/skytruth-shared-datasets-1/objects/_scratch/wdpa-builds/wdpa-processing-validation-kncf9/wdpa-marine/wdpa-marine.fgb",
+        "permission": "storage.objects.create",
+        "granted": true,
+        "resourceAttributes": {}
+      },
+      {
+        "resource": "projects/_/buckets/skytruth-shared-datasets-1/objects/_scratch/wdpa-builds/wdpa-processing-validation-kncf9/wdpa-marine/wdpa-marine.fgb",
+        "permission": "storage.objects.delete",
+        "granted": false,
+        "resourceAttributes": {}
+      },
+      {
+        "resource": "projects/_/buckets/skytruth-shared-datasets-1/folders/_scratch/wdpa-builds/",
+        "permission": "storage.folders.create",
+        "granted": false,
+        "resourceAttributes": {}
+      },
+      {
+        "resource": "projects/_/buckets/skytruth-shared-datasets-1/folders/_scratch/wdpa-builds/wdpa-processing-validation-kncf9/",
+        "permission": "storage.folders.create",
+        "granted": false,
+        "resourceAttributes": {}
+      },
+      {
+        "resource": "projects/_/buckets/skytruth-shared-datasets-1/folders/_scratch/wdpa-builds/wdpa-processing-validation-kncf9/wdpa-marine/",
+        "permission": "storage.folders.create",
+        "granted": false,
+        "resourceAttributes": {}
+      }
+    ]
+  },
+  "recovery_api_evidence": [
+    {}
+  ],
+  "missing_artifacts": "all eleven files per realm and root build-bundle.json; terrestrial processing did not start",
+  "raw_sources_local": [
+    "cloud-retaining-run-1-alert-20261003T061204Z.json",
+    "cloud-retaining-run-1-storage_denial.json",
+    "cloud-retaining-run-1-recovery-assessment-20261003T0620Z.json"
+  ],
+  "minimum_next_work": "repair scoped HNS folder creation, verify upload preflight, then one complete retaining build using the same tested producer; not a matching second build"
+}

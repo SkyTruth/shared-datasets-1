@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "command": [
+    "python",
+    "-c",
+    "import json, os\nfrom pathlib import Path\nfrom ingestion.wdpa_monthly.artifact_bundle import BuildStager\nfrom ingestion.wdpa_monthly.resources import prepare_scratch\nprepare_scratch()\npath = Path(os.environ['TMPDIR']) / 'wdpa-staging-probe.txt'\npath.write_bytes(b'WDPA scratch upload preflight\\n')\nstager = BuildStager.from_runtime()\nrefs = {slug: stager.upload(slug + '/staging-probe.txt', path) for slug in ('wdpa-marine', 'wdpa-terrestrial')}\nprint(json.dumps({'event': 'wdpa_staging_probe', 'scope': 'scratch-permission-probe-not-acceptance', 'state': 'succeeded', 'artifacts': refs}, sort_keys=True), flush=True)\n"
+  ]
+}

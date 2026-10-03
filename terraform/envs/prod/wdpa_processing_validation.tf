@@ -10,6 +10,12 @@ variable "wdpa_validation_runtime_inspection" {
   default     = false
 }
 
+variable "wdpa_validation_staging_probe" {
+  description = "Verify create-only scratch uploads with the build identity before processing."
+  type        = bool
+  default     = false
+}
+
 variable "wdpa_validation_image_config_digest" {
   description = "Verified Docker configuration digest of the tested build image."
   type        = string
@@ -21,7 +27,7 @@ resource "google_project_iam_custom_role" "wdpa_build_stager" {
   project     = var.project_id
   role_id     = "wdpaBuildStager"
   title       = "WDPA immutable build stager"
-  permissions = ["storage.objects.create"]
+  permissions = ["storage.folders.create", "storage.objects.create"]
 }
 
 resource "google_project_iam_custom_role" "wdpa_build_reader" {
@@ -38,6 +44,17 @@ resource "google_storage_bucket_iam_member" "wdpa_build_stager" {
   condition {
     title      = "wdpa_noncanonical_builds_only"
     expression = "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/objects/_scratch/wdpa-builds/')"
+  }
+  depends_on = [google_project_iam_custom_role.wdpa_build_stager]
+}
+
+resource "google_storage_bucket_iam_member" "wdpa_build_folder_stager" {
+  bucket = var.bucket_name
+  role   = "projects/${var.project_id}/roles/wdpaBuildStager"
+  member = module.wdpa_validation_service_account.member
+  condition {
+    title      = "wdpa_noncanonical_build_folders_only"
+    expression = "resource.name.startsWith('projects/_/buckets/${var.bucket_name}/folders/_scratch/wdpa-builds/')"
   }
   depends_on = [google_project_iam_custom_role.wdpa_build_stager]
 }
@@ -80,7 +97,7 @@ module "wdpa_processing_validation_job" {
   location              = var.region
   name                  = "wdpa-processing-validation"
   image                 = var.wdpa_validation_image
-  command               = var.wdpa_validation_runtime_inspection ? jsondecode(file("${path.module}/../../../catalog/wdpa-runtime-inspection.json")).command : ["python", "scripts/cloud_wdpa_validation.py"]
+  command               = var.wdpa_validation_runtime_inspection ? jsondecode(file("${path.module}/../../../catalog/wdpa-runtime-inspection.json")).command : var.wdpa_validation_staging_probe ? jsondecode(file("${path.module}/../../../catalog/wdpa-staging-probe.json")).command : ["python", "scripts/cloud_wdpa_validation.py"]
   service_account_email = local.wdpa_validation_account_email
   cpu                   = "4"
   memory                = "8Gi"
