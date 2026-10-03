@@ -1,0 +1,235 @@
+{
+  "read_at": "2026-10-03T03:31:09.588120Z",
+  "execution": {
+    "name": "projects/shared-datasets-1/locations/us-central1/jobs/wdpa-processing-validation/executions/wdpa-processing-validation-5q7zp",
+    "uid": "a835e0c9-ddf7-4bae-94b5-8cf79ab47994",
+    "generation": "1",
+    "createTime": "2026-10-02T22:36:32.675990Z",
+    "updateTime": "2026-10-02T22:36:32.675990Z",
+    "launchStage": "GA",
+    "job": "wdpa-processing-validation",
+    "parallelism": 1,
+    "taskCount": 1,
+    "template": {
+      "containers": [
+        {
+          "image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:1726e970b5b8dbcb8f73194bcce78b5439c53d77bf874977b3633e1b4dc3ad19",
+          "command": [
+            "python",
+            "scripts/cloud_wdpa_validation.py"
+          ],
+          "env": [
+            {
+              "name": "TMPDIR",
+              "value": "/work/tmp"
+            },
+            {
+              "name": "SHARED_DATASETS_WORKDIR",
+              "value": "/work/shared-datasets-1"
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "4",
+              "memory": "8Gi"
+            }
+          },
+          "volumeMounts": [
+            {
+              "name": "work",
+              "mountPath": "/work"
+            }
+          ]
+        }
+      ],
+      "volumes": [
+        {
+          "name": "work",
+          "emptyDir": {
+            "medium": "DISK",
+            "sizeLimit": "100Gi"
+          }
+        }
+      ],
+      "maxRetries": 0,
+      "timeout": "86400s",
+      "serviceAccount": "wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+      "executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2"
+    },
+    "reconciling": true,
+    "conditions": [
+      {
+        "type": "Started",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Started deployed execution in 4m13.03s.",
+        "lastTransitionTime": "2026-10-02T22:41:36.071114Z"
+      },
+      {
+        "type": "Retry",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "System will retry after 30:00 from lastTransitionTime for polling interval",
+        "lastTransitionTime": "2026-10-02T23:30:51.393775Z",
+        "severity": "INFO",
+        "reason": "WAITING_FOR_OPERATION"
+      },
+      {
+        "type": "Completed",
+        "state": "CONDITION_RECONCILING",
+        "message": "Waiting for execution to complete.",
+        "lastTransitionTime": "2026-10-02T22:41:39.520105Z"
+      },
+      {
+        "type": "ContainerReady",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Imported container image in 50.25s.",
+        "lastTransitionTime": "2026-10-02T22:37:22.931055Z"
+      },
+      {
+        "type": "ResourcesAvailable",
+        "state": "CONDITION_SUCCEEDED",
+        "message": "Provisioned imported containers.",
+        "lastTransitionTime": "2026-10-02T22:37:23.040976Z"
+      }
+    ],
+    "observedGeneration": "1",
+    "runningCount": 1,
+    "startTime": "2026-10-02T22:37:43.536034Z",
+    "logUri": "https://console.cloud.google.com/logs/viewer?project=shared-datasets-1&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22wdpa-processing-validation%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22wdpa-processing-validation-5q7zp%22",
+    "creator": "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com",
+    "etag": "\"CPDjgNYGEPCTq8IC/cHJvamVjdHMvc2hhcmVkLWRhdGFzZXRzLTEvbG9jYXRpb25zL3VzLWNlbnRyYWwxL2pvYnMvd2RwYS1wcm9jZXNzaW5nLXZhbGlkYXRpb24vZXhlY3V0aW9ucy93ZHBhLXByb2Nlc3NpbmctdmFsaWRhdGlvbi01cTd6cA\""
+  },
+  "logging_filter": "resource.type=\"cloud_run_job\" AND resource.labels.project_id=\"shared-datasets-1\" AND resource.labels.location=\"us-central1\" AND resource.labels.job_name=\"wdpa-processing-validation\" AND labels.\"run.googleapis.com/execution_name\"=\"wdpa-processing-validation-5q7zp\" AND timestamp>=\"2026-10-03T01:23:00Z\" AND timestamp<=\"2026-10-03T03:31:09.588120Z\" AND (severity>=WARNING OR textPayload:\"wdpa_phase_\" OR textPayload:\"wdpa_cloud_validation_report\" OR jsonPayload.event=\"wdpa_phase_started\" OR jsonPayload.event=\"wdpa_phase_resources\" OR jsonPayload.event=\"wdpa_cloud_validation_report\")",
+  "logging_pages": [
+    {
+      "entries": [
+        {
+          "textPayload": "2026-10-03 01:23:05,834 INFO ingestion.wdpa_monthly.resources {\"artifact_sizes\": {\"translation-memory.sqlite\": 1822765056, \"wdpa-marine-normalization.log\": 0, \"wdpa-marine.baseline.sqlite\": 7745536, \"wdpa-terrestrial-normalization.log\": 0, \"wdpa-terrestrial.baseline.sqlite\": 133713920, \"wdpa-terrestrial.identity.sqlite\": 115388416, \"wdpa-terrestrial.normalized.gpkg\": 6101995520, \"wdpa-terrestrial.normalized.schema.geojsonseq\": 0}, \"cgroup_memory_peak_bytes\": 6375014400, \"elapsed_seconds\": 55.755, \"event\": \"wdpa_phase_resources\", \"memory_breakdown_at_sampled_peak\": {\"cache\": 1471516672, \"dirty\": 67710976, \"mapped_file\": 59322368, \"rss\": 1393557504, \"shmem\": 6066176, \"swap\": 0}, \"native_versions\": {\"gdal_python\": \"3.6.2\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\", \"pmtiles_build_version\": \"v1.30.1\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\"}, \"phase\": \"wdpa-terrestrial:allocate\", \"phase_memory_peak_bytes\": 2909204480, \"process_rss_peak_bytes\": 1961816064, \"scratch_cache_releases\": 0, \"scratch_peak_bytes\": 13372084224, \"state\": \"succeeded\"}",
+          "insertId": "6ac058f9000cbfab33c51100",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "project_id": "shared-datasets-1",
+              "location": "us-central1",
+              "job_name": "wdpa-processing-validation"
+            }
+          },
+          "timestamp": "2026-10-03T01:23:05.835499Z",
+          "labels": {
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp",
+            "run.googleapis.com/task_attempt": "0",
+            "run.googleapis.com/task_index": "0",
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T01:23:05.850634015Z"
+        },
+        {
+          "textPayload": "2026-10-03 01:23:05,834 INFO ingestion.wdpa_monthly.resources {\"event\": \"wdpa_phase_started\", \"phase\": \"wdpa-terrestrial:metadata\", \"native_versions\": {\"gdal_python\": \"3.6.2\", \"pmtiles_build_version\": \"v1.30.1\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\"}}",
+          "insertId": "6ac058f9000cbfc55f2c01d2",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "project_id": "shared-datasets-1",
+              "location": "us-central1",
+              "job_name": "wdpa-processing-validation"
+            }
+          },
+          "timestamp": "2026-10-03T01:23:05.835525Z",
+          "labels": {
+            "run.googleapis.com/task_attempt": "0",
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp",
+            "run.googleapis.com/task_index": "0",
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T01:23:05.850634015Z"
+        },
+        {
+          "textPayload": "2026-10-03 02:50:46,243 INFO ingestion.wdpa_monthly.resources {\"artifact_sizes\": {\"translation-memory.sqlite\": 1822765056, \"wdpa-marine-normalization.log\": 0, \"wdpa-marine.baseline.sqlite\": 7745536, \"wdpa-terrestrial-normalization.log\": 0, \"wdpa-terrestrial.baseline.sqlite\": 133713920, \"wdpa-terrestrial.identity.sqlite\": 115388416, \"wdpa-terrestrial.metadata.ndjson.gz\": 70215228, \"wdpa-terrestrial.normalized.gpkg\": 6624284672, \"wdpa-terrestrial.schema.json\": 3862}, \"cgroup_memory_peak_bytes\": 6375014400, \"elapsed_seconds\": 5260.409, \"event\": \"wdpa_phase_resources\", \"memory_breakdown_at_sampled_peak\": {\"cache\": 2618396672, \"dirty\": 0, \"mapped_file\": 59322368, \"rss\": 1611390976, \"shmem\": 6066176, \"swap\": 0}, \"native_versions\": {\"gdal_python\": \"3.6.2\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\", \"pmtiles_build_version\": \"v1.30.1\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\"}, \"phase\": \"wdpa-terrestrial:metadata\", \"phase_memory_peak_bytes\": 4307423232, \"process_rss_peak_bytes\": 2248429568, \"scratch_cache_releases\": 3, \"scratch_peak_bytes\": 14184308736, \"state\": \"succeeded\"}",
+          "insertId": "6ac06d860003bc3e4188f4ec",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "location": "us-central1",
+              "job_name": "wdpa-processing-validation",
+              "project_id": "shared-datasets-1"
+            }
+          },
+          "timestamp": "2026-10-03T02:50:46.244798Z",
+          "labels": {
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp",
+            "run.googleapis.com/task_attempt": "0",
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a",
+            "run.googleapis.com/task_index": "0"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T02:50:46.255355517Z"
+        },
+        {
+          "textPayload": "2026-10-03 02:50:46,243 INFO ingestion.wdpa_monthly.resources {\"event\": \"wdpa_phase_started\", \"phase\": \"wdpa-terrestrial:flatgeobuf\", \"native_versions\": {\"gdal_python\": \"3.6.2\", \"pmtiles_build_version\": \"v1.30.1\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\"}}",
+          "insertId": "6ac06d860003bc54f4945796",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "project_id": "shared-datasets-1",
+              "location": "us-central1",
+              "job_name": "wdpa-processing-validation"
+            }
+          },
+          "timestamp": "2026-10-03T02:50:46.244820Z",
+          "labels": {
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a",
+            "run.googleapis.com/task_attempt": "0",
+            "run.googleapis.com/task_index": "0",
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T02:50:46.255355517Z"
+        },
+        {
+          "textPayload": "2026-10-03 02:52:01,598 INFO ingestion.wdpa_monthly.resources {\"artifact_sizes\": {\"translation-memory.sqlite\": 1822765056, \"wdpa-marine-normalization.log\": 0, \"wdpa-marine.baseline.sqlite\": 7745536, \"wdpa-terrestrial-normalization.log\": 0, \"wdpa-terrestrial.baseline.sqlite\": 133713920, \"wdpa-terrestrial.fgb\": 5816513152, \"wdpa-terrestrial.identity.sqlite\": 115388416, \"wdpa-terrestrial.metadata.ndjson.gz\": 70215228, \"wdpa-terrestrial.normalized.gpkg\": 6624284672, \"wdpa-terrestrial.schema.json\": 3862}, \"cgroup_memory_peak_bytes\": 7732400128, \"elapsed_seconds\": 75.354, \"event\": \"wdpa_phase_resources\", \"memory_breakdown_at_sampled_peak\": {\"cache\": 5716930560, \"dirty\": 183214080, \"mapped_file\": 61206528, \"rss\": 1883664384, \"shmem\": 6066176, \"swap\": 0}, \"native_versions\": {\"gdal_python\": \"3.6.2\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\", \"pmtiles_build_version\": \"v1.30.1\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\"}, \"phase\": \"wdpa-terrestrial:flatgeobuf\", \"phase_memory_peak_bytes\": 7718240256, \"process_rss_peak_bytes\": 2248429568, \"scratch_cache_releases\": 123, \"scratch_peak_bytes\": 20475838464, \"state\": \"succeeded\"}",
+          "insertId": "6ac06dd1000925f18ab1a4c1",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "job_name": "wdpa-processing-validation",
+              "location": "us-central1",
+              "project_id": "shared-datasets-1"
+            }
+          },
+          "timestamp": "2026-10-03T02:52:01.599537Z",
+          "labels": {
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp",
+            "run.googleapis.com/task_attempt": "0",
+            "run.googleapis.com/task_index": "0",
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T02:52:01.610987598Z"
+        },
+        {
+          "textPayload": "2026-10-03 02:52:01,598 INFO ingestion.wdpa_monthly.resources {\"event\": \"wdpa_phase_started\", \"phase\": \"wdpa-terrestrial:pmtiles\", \"native_versions\": {\"gdal_python\": \"3.6.2\", \"pmtiles_build_version\": \"v1.30.1\", \"ogr2ogr_path\": \"/usr/bin/ogr2ogr\", \"tippecanoe_path\": \"/usr/bin/tippecanoe\", \"pmtiles_path\": \"/usr/local/bin/pmtiles\", \"ogr2ogr\": \"GDAL 3.6.2, released 2023/01/02\", \"tippecanoe\": \"tippecanoe v2.52.0\", \"pmtiles\": \"pmtiles dev, commit none, built at unknown\"}}",
+          "insertId": "6ac06dd10009260a22d68fff",
+          "resource": {
+            "type": "cloud_run_job",
+            "labels": {
+              "location": "us-central1",
+              "job_name": "wdpa-processing-validation",
+              "project_id": "shared-datasets-1"
+            }
+          },
+          "timestamp": "2026-10-03T02:52:01.599562Z",
+          "labels": {
+            "run.googleapis.com/task_index": "0",
+            "run.googleapis.com/execution_name": "wdpa-processing-validation-5q7zp",
+            "instanceId": "0010dd860700728d123f73e5a02ff40727f4983c4bd168938e7b50b7882788f4212e0fcca02c839c939a5837ee5a47c76767986ff2748d7422b691f85d74cc1aa605b692f56bc31260d7710a26fab42019364fb5c2c0363a",
+            "run.googleapis.com/task_attempt": "0"
+          },
+          "logName": "projects/shared-datasets-1/logs/run.googleapis.com%2Fstderr",
+          "receiveTimestamp": "2026-10-03T02:52:01.610987598Z"
+        }
+      ]
+    }
+  ],
+  "logging_more": false
+}

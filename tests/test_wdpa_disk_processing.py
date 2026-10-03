@@ -2,9 +2,11 @@
 
 from contextlib import closing, contextmanager
 import errno
+import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 
 import pytest
@@ -270,6 +272,80 @@ def test_cache_advice_failure_fails_measurement(monkeypatch, tmp_path):
     with pytest.raises(PermissionError, match="owned scratch"):
         with profiler.phase("normalization"):
             pytest.fail("processing must not start after sampler failure")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux open-file cache contract")
+@pytest.mark.parametrize("mode", ["preserve", "advice-failure", "descriptor-reuse"])
+def test_deleted_native_temporary_cache_is_scoped_and_preserves_bytes(
+    monkeypatch, tmp_path, mode
+):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    owned, outside = scratch / "native-temp.fgb", tmp_path / "outside.bin"
+    payload = b"native geometry bytes\x00" * 4096
+    child_code = """
+import hashlib, json, os, pathlib, sys
+files = []
+for value in sys.argv[1:]:
+    path = pathlib.Path(value)
+    stream = path.open('w+b')
+    stream.write(b'native geometry bytes\\x00' * 4096)
+    stream.flush()
+    path.unlink()
+    files.append(stream)
+print(json.dumps({'pid': os.getpid(), 'fds': [f.fileno() for f in files],
+                  'inodes': [os.fstat(f.fileno()).st_ino for f in files]}), flush=True)
+sys.stdin.readline()
+result = []
+for stream in files:
+    stream.seek(0)
+    data = stream.read()
+    result.append({'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+    stream.close()
+print(json.dumps(result), flush=True)
+"""
+    # The native writer is a grandchild, so only checking immediate children
+    # would miss the same open/unlinked scratch file.
+    launcher = "import subprocess,sys; raise SystemExit(subprocess.call(sys.argv[1:]))"
+    with subprocess.Popen(
+        [sys.executable, "-c", launcher, sys.executable, "-c", child_code,
+         str(owned), str(outside)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    ) as child:
+        info = json.loads(child.stdout.readline())
+        assert not owned.exists() and not outside.exists()
+        real_advice, real_open = os.posix_fadvise, os.open
+        calls = []
+
+        def advise(fd, offset, length, advice):
+            calls.append(os.fstat(fd).st_ino)
+            if mode == "advice-failure":
+                raise PermissionError("cache advice denied")
+            real_advice(fd, offset, length, advice)
+
+        def open_reused(entry, flags):
+            if str(entry) == f"/proc/{info['pid']}/fd/{info['fds'][0]}":
+                entry = f"/proc/{info['pid']}/fd/{info['fds'][1]}"
+            return real_open(entry, flags)
+
+        monkeypatch.setattr(os, "posix_fadvise", advise)
+        if mode == "descriptor-reuse":
+            monkeypatch.setattr(os, "open", open_reused)
+        try:
+            if mode == "advice-failure":
+                with pytest.raises(PermissionError, match="cache advice denied"):
+                    resources.release_file_cache(scratch)
+            else:
+                resources.release_file_cache(scratch)
+            assert calls == ([] if mode == "descriptor-reuse" else [info["inodes"][0]])
+        finally:
+            child.stdin.write("verify\n")
+            child.stdin.flush()
+        verified = json.loads(child.stdout.readline())
+        assert verified == [
+            {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        ] * 2
+        assert child.wait(timeout=5) == 0
 
 
 @pytest.mark.parametrize("failed_input", [

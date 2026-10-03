@@ -60,6 +60,34 @@ bundle. Let it finish; deploy the retaining image only after no execution is act
 No second replay of that old image is authorized. Historical reports below remain
 unaltered evidence for their original images and delivery paths.
 
+## Terrestrial export cache control
+
+The same diagnostic built terrestrial metadata (70,215,228 bytes) and indexed
+FGB (5,816,513,152 bytes). Metadata took 5,260.409 seconds and FGB export took
+75.354 seconds, finishing at `2026-10-03T02:52:01Z`. During FGB export, the real
+kernel lifetime peak rose to **7,732,400,128 bytes (7.20 GiB)**. This fails the
+6.4 GiB target even though the export completed. It is not an accepted retained
+build or a published release. Its unchanged API and raw phase events are in
+[terrestrial export evidence](wdpa-processing-evidence/wdpa-processing-validation-5q7zp/terrestrial-export-logs.json).
+
+Pinned [GDAL 3.6.2's FlatGeobuf writer](https://github.com/OSGeo/gdal/blob/v3.6.2/ogr/ogrsf_frmts/flatgeobuf/ogrflatgeobuflayer.cpp#L2272)
+opens its temporary file and immediately unlinks its directory entry on Unix.
+The former directory scan therefore missed that open temporary file. The
+sampled export peak included 5,716,930,560 bytes of file cache; this identifies
+a cache-control gap, not proof that a corrected complete build meets the target.
+
+Pressure control now also inspects this process's descendants on Linux and
+advises release of unused cache for their open, deleted regular files inside the
+explicitly tracked scratch/input roots. It opens a descriptor, then rechecks
+the pinned file's type, deletion state and root before advising it, so descriptor
+reuse cannot redirect advice outside those roots. Process/file disappearance
+during sampling is an expected race; access or cache-advice failures fail the
+measurement. Advice changes no artifact bytes. The full kernel peak remains
+unchanged and includes all file cache. Memory/disk limits, output formats,
+identity rules and the pinned native toolchain remain the same. A new image needs
+matching small/sample evidence and one complete measured retained build before
+promotion; historical reports cannot authorize that changed fingerprint.
+
 ## Completed checks
 
 - After integrating catalog PRs #169 and #170 and the staged-validation workflow,
