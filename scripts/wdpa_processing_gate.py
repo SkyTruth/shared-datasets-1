@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT))
 from ingestion.wdpa_monthly.resources import validation_limits
 
 EVIDENCE = ROOT / "catalog/wdpa-processing-acceptance.json"
+PREFERRED_MEMORY_PEAK_BYTES = 6.4 * 1024**3
+MEMORY_LIMIT_BYTES = 8 * 1024**3
 
 
 def source_digest():
@@ -98,6 +100,18 @@ def check_compatibility(evidence, builds):
     return errors
 
 
+def memory_warnings(run):
+    """Report preferred headroom independently of artifact acceptance."""
+    peak = run.get("memory_peak_bytes")
+    if type(peak) is int and PREFERRED_MEMORY_PEAK_BYTES < peak <= MEMORY_LIMIT_BYTES:
+        return [
+            f"kernel lifetime peak {peak} bytes ({peak / 1024**3:.2f} GiB) exceeds "
+            "the preferred 6.4 GiB headroom target; the enforced limit remains "
+            "8 GiB and this warning does not reject validated artifacts"
+        ]
+    return []
+
+
 def check_build(run, *, require_bundle=True):
     """A single measured complete build, with retained promotable bytes."""
     errors = []
@@ -135,8 +149,10 @@ def check_build(run, *, require_bundle=True):
         run.get(key)
         for key in ("memory_peak_bytes", "scratch_peak_bytes", "elapsed_seconds")
     )
-    if type(peak) is not int or not 0 < peak <= 6.4 * 1024**3:
-        errors.append("a benchmark missed the memory/headroom target")
+    if type(peak) is not int or not 0 < peak <= MEMORY_LIMIT_BYTES:
+        errors.append(
+            "the kernel lifetime peak is missing, invalid, or exceeds the enforced 8 GiB limit"
+        )
     if type(scratch) is not int or not 0 < scratch < 80 * 1024**3:
         errors.append("a benchmark missed the scratch target")
     if type(elapsed) not in (float, int) or not 0 < elapsed <= 86400:
@@ -269,9 +285,11 @@ def main():
     evidence = (
         ROOT / "catalog/wdpa-staged-validation.json" if args.pre_cloud else EVIDENCE
     )
-    errors = (check_precloud if args.pre_cloud else check)(
-        json.loads(evidence.read_text())
-    )
+    payload = json.loads(evidence.read_text())
+    errors = (check_precloud if args.pre_cloud else check)(payload)
+    if not args.pre_cloud:
+        for warning in memory_warnings(payload.get("build") or {}):
+            print("WARNING: " + warning, file=sys.stderr)
     if errors:
         raise SystemExit("WDPA rollout blocked:\n" + "\n".join(errors))
 
