@@ -1,3 +1,7 @@
 # Historical Python argument expression, not a credential. Ignore only this exact
 # generic-api-key finding; retain full-history scanning for every other finding.
 ed7fc2a630f20dc0ef57bf86e4bfe86fc2b90dd6:scripts/publishing_concierge.py:generic-api-key:1914
+# Official Python slim-bookworm public GPG signing-key fingerprint in the
+# unchanged image configuration blob, not an API credential. Exact finding only.
+# Source: https://github.com/docker-library/python/blob/master/3.12/slim-bookworm/Dockerfile
+4706381e66dc4ac838a662996afd0f1bd4ca639b:docs/wdpa-processing-evidence/37095105175/image-config.json:generic-api-key:1

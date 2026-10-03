@@ -18,6 +18,10 @@ The image ZIP, actual configuration blob and report ZIPs were hash-verified;
 [original reports and image metadata](wdpa-processing-evidence/37095105175/compatibility.json)
 are retained unchanged. The configuration digest is not a deployed registry
 manifest digest or evidence of a completed cloud build.
+The original configuration includes the public Python signing-key fingerprint
+from the [official base image](https://github.com/docker-library/python/blob/master/3.12/slim-bookworm/Dockerfile).
+The secret scanner excludes only its exact verified finding; no credential rule
+or file-wide exclusion is added, and the configuration bytes remain unchanged.
 
 The small fixture produced one record with valid native contracts in 1.533
 seconds (1.466 seconds in the production phase). Its production phase kernel
