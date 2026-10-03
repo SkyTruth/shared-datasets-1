@@ -878,7 +878,7 @@ class Comparison:
             "schema_changes": schema_changes(af, bf),
             "limits": asdict(self.limits),
             "method": "Complete canonical sidecars; match compatible feature_id; compare geometry_hash/properties_hash. Historical v1 geometry hashes come from the exact canonical FGB, with legacy bookkeeping excluded from source properties. No spatial matching or tile-derived counts. Provenance and localization excluded.",
-            "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. All loaded map features are colored through bounded per-release lookups, independently of table pagination.",
+            "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. Complete compressed per-release classification indexes color the map independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
                 | set(
@@ -930,6 +930,18 @@ class Comparison:
             }
             for feature_id, change, geometry in rows
         ]
+
+    def iter_map_index(self, side):
+        """Stream the complete compact index, never geometry or metadata records."""
+        if self.summary is None or side not in {"baseline", "target"}:
+            raise ComparisonError("Select one completed release side")
+        with self.checked_connection(started=time.monotonic()) as db:
+            db.execute("PRAGMA cache_size=-8192")
+            for feature_id, change, geometry in db.execute(
+                f"SELECT r.id, g.color, r.geometry FROM {side} r "
+                "JOIN geometry_display g ON r.geometry=g.geometry ORDER BY r.id COLLATE BINARY"
+            ):
+                yield [feature_id, change, "sha256:" + geometry.hex()]
 
     def page(
         self,

@@ -3,6 +3,52 @@ import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, c
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
 const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Metadata changed", unchanged: "Unchanged geometry"};
 
+async function loadMapIndex(session, onProgress) {
+  const hashes = new Map(), loaded = [0, 0];
+  const abort = new AbortController(), cancel = () => abort.abort();
+  session.abort.signal.addEventListener("abort", cancel, {once: true});
+  try { return await Promise.all(["baseline", "target"].map(async (side, index) => {
+    const response = await fetch(`/api/comparisons/${session.job}/map-index?side=${side}`, {credentials: "include", cache: "no-store", signal: abort.signal});
+    if (!response.ok || !response.headers.get("content-type")?.startsWith("application/x-ndjson")) throw new Error("Map classification stream is unavailable. The viewer may still be deploying; retry the comparison shortly.");
+    const reader = response.body.getReader(), decoder = new TextDecoder("utf-8", {fatal: true}), rows = new Map();
+    let pending = "", header = null, finished = false, previous = "";
+    const total = session.summary.feature_counts.baseline + session.summary.feature_counts.target;
+    function record(line) {
+      if (line.length > 65536) throw new Error("Map classification record exceeds its contract.");
+      const value = JSON.parse(line);
+      if (!header) {
+        if (value.schema_version !== 1 || value.side !== side || value.rows !== session.summary.feature_counts[side]) throw new Error("Map classification stream does not match the selected release.");
+        assertComparisonInputs(value.inputs, session.refs); header = value; return;
+      }
+      if (finished) throw new Error("Map classification stream has trailing records.");
+      if (Array.isArray(value)) {
+        const [id, change, hash] = value;
+        if (value.length !== 3 || typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(id) || id <= previous || !Object.hasOwn(GEOMETRY_LABELS, change) || typeof hash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(hash) || rows.size >= header.rows) throw new Error("Invalid map classification stream record.");
+        let geometry = hashes.get(hash);
+        if (geometry && geometry.change !== change) throw new Error("A geometry has conflicting map classifications.");
+        if (!geometry) { geometry = {change, geometry_hash: hash}; hashes.set(hash, geometry); }
+        rows.set(id, geometry); previous = id; loaded[index]++;
+      } else {
+        if (value.complete !== true || value.rows !== header.rows || rows.size !== header.rows) throw new Error("Map classification stream is incomplete.");
+        finished = true;
+      }
+    }
+    try {
+      while (true) {
+        const {value, done} = await reader.read();
+        pending += decoder.decode(value, {stream: !done});
+        let end;
+        while ((end = pending.indexOf("\n")) >= 0) { record(pending.slice(0, end)); pending = pending.slice(end + 1); }
+        if (pending.length > 65536) throw new Error("Map classification record exceeds its contract.");
+        if (!abort.signal.aborted) onProgress({phase: "map-index", completed: loaded[0] + loaded[1], total});
+        if (done) break;
+      }
+      if (!finished || pending) throw new Error("Map classification stream ended before completion.");
+      return rows;
+    } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  })); } finally { abort.abort(); session.abort.signal.removeEventListener("abort", cancel); }
+}
+
 // Preserve absent versus null, and ignore object key order in source values.
 export function changedPropertyFields(before, after, exclusions) {
   const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -69,12 +115,13 @@ export function createComparisonController({loadMapModule = () => import("./map-
   const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(`compare-${id}`)]));
   const versionControl = document.getElementById("version-control"), mapContainer = document.getElementById("map-preview"), mapStatus = document.getElementById("map-status");
   let asset = null, version = "latest", options = {}, active = null, opened = false, viewport = null, pageSerial = 0, inspectSerial = 0, rerunTimer = null;
+  let cancellation = Promise.resolve();
   const current = session => active === session && !session.abort.signal.aborted;
   const status = text => { ui.status.textContent = text; ui.status.hidden = !opened || !text; };
   function progress(value = null) {
     ui.progress.hidden = !opened || !value;
     if (!value) return;
-    const labels = {downloading: "Preparing releases", baseline: "Validating Before", target: "Validating After", "baseline geometry": "Checking Before geometry", "target geometry": "Checking After geometry", classifying: "Comparing geometry and metadata", publishing: "Preparing comparison"};
+    const labels = {queued: "Waiting for a comparison worker", downloading: "Preparing releases", baseline: "Validating Before", target: "Validating After", "baseline geometry": "Checking Before geometry", "target geometry": "Checking After geometry", classifying: "Comparing geometry and metadata", publishing: "Preparing comparison", "map-index": "Loading map classifications", coloring: "Coloring the map"};
     ui["progress-label"].textContent = labels[value.phase];
     // During a rolling deployment the previous API supplies phase/rows only.
     const total = value.total ?? null;
@@ -89,7 +136,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
     ui.details.textContent = expanded ? "▾ Details" : "▸ Details";
   }
   function mapNote(session) {
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.summary ? "Comparing geometry… Colors appear after all records are checked." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.mapReady ? "Preparing comparison map… Filters become available when colors are ready." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
   }
   async function cancelJob(id) {
     if (!id) return;
@@ -104,7 +151,10 @@ export function createComparisonController({loadMapModule = () => import("./map-
       viewport = active.map?.viewport() || viewport;
       window.clearInterval(active.keepalive);
       active.abort.abort(); active.mapAbort?.abort(); active.map?.dispose();
-      void cancelJob(active.job); active = null;
+      const stopped = active;
+      const started = stopped.startPromise || Promise.resolve({job_id: stopped.job});
+      cancellation = Promise.all([cancellation, started.then(result => cancelJob(result.job_id), () => {})]).then(() => {});
+      active = null;
     }
   }
   function clearResults() {
@@ -202,8 +252,11 @@ export function createComparisonController({loadMapModule = () => import("./map-
     } catch (error) { if (current(session) && token === inspectSerial) status(error.message); }
   }
   async function showMap(session) {
+    session.mapReady = false;
+    for (const button of ui.legend.querySelectorAll("button")) button.disabled = true;
     viewport = session.map?.viewport() || viewport;
     session.mapAbort?.abort(); session.map?.dispose();
+    session.map = null;
     const mapAbort = new AbortController(); session.mapAbort = mapAbort;
     const abort = () => mapAbort.abort(); session.abort.signal.addEventListener("abort", abort, {once: true});
     const isCurrent = () => current(session) && session.mapAbort === mapAbort && !mapAbort.signal.aborted;
@@ -212,26 +265,42 @@ export function createComparisonController({loadMapModule = () => import("./map-
       const map = await module.renderComparisonMap({container: mapContainer, status: mapStatus, baseline: session.refs.baseline, target: session.refs.target,
         signal: mapAbort.signal, basemap: getBasemap(), viewport, category: session.geometryFilter,
         onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features.map(feature => ({...feature, comparisonExcludedProperties: session.summary?.property_hash_exclusions}))); },
-        lookupGeometry: async (side, ids) => (await request(`/api/comparisons/${session.job}/map`, session, {method: "POST", signal: mapAbort.signal, headers: {"Content-Type": "application/json"}, body: JSON.stringify({side, feature_ids: ids})})).map_features,
+        onProgress: value => { if (isCurrent() && !session.mapReady) progress(value); },
         onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
       });
       if (!isCurrent()) { map.dispose(); return; }
       session.map = map; map.setCategory(session.geometryFilter);
       session.mapError = null; mapNote(session);
-      if (session.summary) map.refreshGeometry();
+      if (session.geometryIndex) await prepareMap(session);
     } catch (error) { if (isCurrent()) { session.mapError = error.message; mapNote(session); } }
     finally { session.abort.signal.removeEventListener("abort", abort); }
+  }
+  async function prepareMap(session) {
+    if (!session.map || !session.geometryIndex) return;
+    const map = session.map;
+    try { await map.refreshGeometry(session.geometryIndex); }
+    catch (error) { if (session.map !== map) return; throw error; }
+    if (!current(session) || session.map !== map) return;
+    session.mapReady = true;
+    for (const button of ui.legend.querySelectorAll("button")) button.disabled = false;
+    progress(); mapNote(session);
   }
   async function run() {
     stop(); clearResults();
     const session = {abort: new AbortController(), job: null, refs: null, summary: null, geometryFilter: ""}; active = session;
     try {
-      session.refs = refs(); void showMap(session);
+      progress({phase: "queued", total: null});
+      await cancellation;
+      if (!current(session)) return;
+      session.refs = refs(); session.mapPromise = showMap(session);
+      const capabilities = await request("/api/comparisons", session);
+      if (capabilities.map_index_version !== 1) throw new Error("The viewer update is still deploying. Retry this comparison shortly.");
       const expected = Object.fromEntries(["baseline", "target"].map(side => [side, comparisonFiles(session.refs[side])]));
       progress({phase: "downloading", total: null});
       // Observe superseded start responses so their server jobs can be cancelled.
-      const result = await request("/api/comparisons", session, {method: "POST", signal: undefined, headers: {"Content-Type": "application/json"}, body: JSON.stringify({slug: asset.slug, baseline: session.refs.baseline.date, target: session.refs.target.date, expected})});
-      if (!current(session)) { void cancelJob(result.job_id); return; }
+      session.startPromise = request("/api/comparisons", session, {method: "POST", signal: undefined, headers: {"Content-Type": "application/json"}, body: JSON.stringify({slug: asset.slug, baseline: session.refs.baseline.date, target: session.refs.target.date, expected})});
+      const result = await session.startPromise;
+      if (!current(session)) return;
       session.job = result.job_id;
       let response = result;
       while (response.state === "running") {
@@ -241,13 +310,17 @@ export function createComparisonController({loadMapModule = () => import("./map-
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
       session.summary = response.summary; renderSummary(response.summary);
-      for (const button of ui.legend.querySelectorAll("button")) button.disabled = false;
-      progress(); status(""); mapNote(session); session.map?.refreshGeometry();
+      status(""); mapNote(session);
+      session.geometryIndex = await loadMapIndex(session, value => { if (current(session)) progress(value); });
+      await session.mapPromise;
+      if (!current(session)) return;
+      await prepareMap(session);
+      if (!session.map) progress();
       session.keepalive = window.setInterval(() => {
         void request(`/api/comparisons/${session.job}`, session).catch(error => { if (current(session)) status(error.message); });
       }, 60000);
       if (response.summary.identity.compatible) await loadPage(session);
-    } catch (error) { if (current(session)) { progress(); status(error.message); } }
+    } catch (error) { if (current(session)) { session.mapError = error.message; mapNote(session); progress(); status(error.message); } }
   }
   ui.open.addEventListener("click", () => {
     if (opened) close();
@@ -278,7 +351,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
   });
   return {
     isOpen: () => opened,
-    refreshMap: () => { onFeatureSelect([]); if (active?.refs) void showMap(active); },
+    refreshMap: () => { onFeatureSelect([]); if (active?.refs) active.mapPromise = showMap(active); },
     setAsset(next, selectedVersion = "latest", opts = {}) {
       if (asset === next && version === selectedVersion) return;
       stop(); clearResults(); viewport = null; if (opened) setMode(false);

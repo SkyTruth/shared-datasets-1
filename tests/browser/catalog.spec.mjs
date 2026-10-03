@@ -27,7 +27,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -61,7 +61,21 @@ const test = base.extend({
           expectedErrors.add(url.href);
           return route.fulfill({status:404,contentType:'text/plain',body:'Not found'});
         }
-        const response = await route.fetch({ headers: {...request.headers(), 'X-Goog-Authenticated-User-Email': `accounts.google.com:${scenarioEmail}`} });
+        const headers = {...request.headers(), 'X-Goog-Authenticated-User-Email': `accounts.google.com:${scenarioEmail}`};
+        if (url.pathname.endsWith('/map-index')) {
+          if (state.holdMapIndex) {
+            state.holdMapIndex = false; state.mapIndexHeld = true;
+            await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
+          }
+          if (state.truncateMapIndex) {
+            const response = await route.fetch({headers});
+            const lines = (await response.text()).trimEnd().split('\n');
+            lines.pop();
+            return route.fulfill({status:200, contentType:'application/x-ndjson', body:lines.join('\n')+'\n'});
+          }
+          return route.continue({headers}); // Preserve the real streaming HTTP/gzip transport.
+        }
+        const response = await route.fetch({headers});
         if (state.holdComparison && request.method() === 'POST' && url.pathname === '/api/comparisons') {
           state.holdComparison = false; state.comparisonHeld = true;
           await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
@@ -265,7 +279,9 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas');
   await expect(page.locator('canvas')).toHaveCount(1); await expect(canvas).toBeVisible();
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map') && r.method === 'POST').length).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index')).length).toBe(2);
+  expect(transport.requests.filter(r => r.url.endsWith('/map'))).toHaveLength(0);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-01-01/') && r.url.includes('.pmtiles'))).toBe(true);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-09-22/') && r.url.includes('.pmtiles'))).toBe(true);
   // The primary map preserves the previous viewport, fitted to the after archive.
@@ -299,6 +315,31 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-open')).toHaveText('Compare releases');
   await expect(page.locator('#version-select')).toBeVisible();
   await expect(page.locator('canvas')).toHaveCount(1);
+});
+
+test('comparison filters wait for complete map indexes and truncated streams stay unavailable', async ({page, transport}) => {
+  await select(page, 'comparison');
+  transport.holdMapIndex = true;
+  await page.locator('#compare-open').click();
+  await expect.poll(() => transport.mapIndexHeld).toBe(true);
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  for (const category of ['novel','removed','metadata_changed','unchanged']) await expect(page.locator(`#compare-legend [data-change="${category}"]`)).toBeDisabled();
+  await expect(page.locator('#compare-progress')).toBeVisible();
+  await expect(page.locator('#compare-progress-label')).toHaveText('Loading map classifications');
+  await page.locator('#basemap-select').selectOption('satellite');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#compare-legend button').first()).toBeDisabled();
+  transport.release();
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  await expect(page.locator('#compare-progress')).toBeHidden();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
+  expect(transport.requests.filter(r => r.url.endsWith('/map'))).toHaveLength(0);
+  await page.locator('#compare-open').click();
+  transport.truncateMapIndex = true;
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-status')).toContainText('ended before completion');
+  await expect(page.locator('#compare-progress')).toBeHidden();
+  for (const category of ['novel','removed','metadata_changed','unchanged']) await expect(page.locator(`#compare-legend [data-change="${category}"]`)).toBeDisabled();
 });
 
 test('static catalog explains comparison availability and restores ordinary browsing', async ({page, transport}, testInfo) => {
@@ -369,13 +410,13 @@ test('automatic comparison rejects delayed starts and closing cancels pending wo
   await expect.poll(() => transport.comparisonHeld).toBe(true);
   await page.locator('#compare-before').selectOption('2026-09-22');
   await page.locator('#compare-after').selectOption('2026-01-01');
-  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const releaseRow = page.locator('#compare-summary tbody tr').first();
-  await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
+  await expect(page.locator('#compare-summary')).toBeEmpty();
   const firstReleased = page.waitForResponse(response => response.url().endsWith('/api/comparisons') && response.request().method() === 'POST');
   const firstCancelled = page.waitForResponse(response => response.url().endsWith('/cancel'));
   transport.release();
   await (await firstReleased).finished(); expect((await firstCancelled).status()).toBe(200);
+  await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
   await expect(releaseRow.locator('td').last()).toHaveText('2026-01-01');
   transport.comparisonHeld = false; transport.holdComparison = true;
   await page.locator('#compare-after').selectOption('2026-09-22');
@@ -399,7 +440,8 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-table')).toBeHidden();
   await expect(page.locator('canvas')).toHaveCount(1);
   const canvas = page.locator('#map-preview canvas');
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
   const box = await canvas.boundingBox();
   const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
   const low = mercatorY(-1.5), high = mercatorY(3), scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (low - high), 512 * 2 ** 8);
@@ -520,7 +562,8 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
   await page.locator('#basemap-select').selectOption('satellite');
   await expect(page.locator('#map-status')).toBeHidden();
   await expect(legend.locator('[data-change="unchanged"]')).toHaveAttribute('aria-pressed','true');
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(4);
+  await expect(legend.locator('[data-change="unchanged"]')).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
   {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
   // Clicking the selected category restores all geometry and table rows.
   const beforeUnfilter = await viewport();

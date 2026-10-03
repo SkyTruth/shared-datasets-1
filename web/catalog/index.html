@@ -142,7 +142,7 @@
           <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
               <details class="compare-local-guide"><summary>Local CLI and comparison limits</summary>
-                <p>The viewer compares at most 100,000 records per release, 64 MiB per input, 256 MiB expanded per sidecar, 128 MiB of workspace files, and 10 minutes. Historical v1 releases also stream up to 2 GiB of canonical FGB geometry; current releases use their stored hashes. Larger inputs require an explicit local budget. No sampling is used.</p>
+                <p>The viewer compares at most 1,000,000 records per release, 64 MiB per input, 1 GiB expanded per sidecar, 512 MiB of workspace files, and 10 minutes. Historical v1 releases also stream up to 2 GiB of canonical FGB geometry; current releases use their stored hashes. Larger inputs require an explicit local budget. No sampling is used.</p>
                 <pre>uv run python scripts/compare_releases.py --baseline baseline.json --target target.json --output report.json</pre>
                 <a href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/compare-releases.md" target="_blank" rel="noopener">Pinned bundle preparation and CLI guide</a>
               </details>

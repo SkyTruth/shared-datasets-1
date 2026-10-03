@@ -909,6 +909,28 @@ def make_handler(
             self._send(handle_request_from_self("POST", self, body))
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
+            if isinstance(response, comparisons.MapIndexResponse):
+                # An explicit terminal record distinguishes completion from a
+                # disconnected or failed stream, even behind the Cloud Run proxy.
+                self.protocol_version = "HTTP/1.1"
+                self.close_connection = True
+                try:
+                    self.send_response(response.status)
+                    for name, value in response.headers.items():
+                        self.send_header(name, value)
+                    self.end_headers()
+                    for chunk in response.chunks():
+                        self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    # Never send a success footer or storage credentials on failure.
+                    self.log_error("Comparison map index stream failed")
+                finally:
+                    response.close()
+                return
             send_handler_response(self, response, include_body=include_body)
 
     def handle_request_from_self(method: str, handler: BaseHTTPRequestHandler, body: bytes) -> Response:

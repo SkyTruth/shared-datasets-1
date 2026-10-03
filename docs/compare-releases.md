@@ -126,9 +126,15 @@ same geometry contribute a set of distinct source-property hashes. These display
 annotations are computed from complete sidecars, never tile geometry.
 
 Every loaded map feature receives a release-scoped geometry color, independently
-of the table page, search, or feature-ID compatibility. The viewer looks up at
-most 200 IDs per request in the complete comparison index and applies the results
-as map feature states. IDs remain scoped to their own release: an ID reused after
+of the table page, search, or feature-ID compatibility. After computation, the
+browser reads two gzip-compressed NDJSON streams from the complete SQLite index,
+one for each release. Each record contains only an ID, geometry category and
+geometry hash. Header inputs, sorted unique IDs, counts and a terminal record are
+validated before the map uses either index. Filters stay disabled and the progress
+bar stays visible until both indexes arrive and the initial colors are applied.
+An interrupted or malformed stream leaves filters disabled with a visible error.
+Panning, paging, filtering and changing basemaps reuse the indexes without further
+classification requests. IDs remain scoped to their own release: an ID reused after
 a reset can correctly be red in Before and green in After. Paging or inspecting
 records does not replace these colors. Geometry summary counts describe unique
 geometry hashes; they are not feature-ID classifications.
@@ -235,32 +241,54 @@ catalog access first. It does not download FGB again or recompute the comparison
 State, access leases and cancellation markers are separate objects. A worker
 alone updates its state with generation preconditions. The open comparison
 renews its access every minute; jobs expire after 15 minutes without activity.
-Cache objects are lifecycle-deleted after one day. Instance-local copies retain
-the same workspace and capacity limits. A stopped worker is reported as failed,
+Cache objects are lifecycle-deleted after one day. Each instance has one compute
+worker and at most two local jobs, including queued work and restored readers.
+An available second slot accepts a queued comparison instead of refusing while
+the worker finishes cancelling its predecessor. Queued jobs cancel immediately;
+executing jobs retain their slot until cooperative cancellation finishes. Queue
+time does not consume the computation deadline. Changing releases waits for the
+superseded start response and cancellation acknowledgement before starting again.
+Completed shared-cache copies can be evicted by least recent access and restored
+without recomputation; active reads pin their workspace against eviction. A
+stopped worker is reported as failed,
 with no partial result. Local fixture/CLI servers can use an in-process store;
 Cloud Run requires `CATALOG_VIEWER_COMPARISON_BUCKET` at startup.
 
 While comparing, a full-width progress bar sits above the Version row's bottom
 divider. Row validation reports checked rows against the exact declared totals
 from the pinned manifests, including required historical geometry checks.
-Preparation, classification and cache publication use an indeterminate bar;
-the UI does not invent a percentage for those stages. The bar disappears when
-the result completes, fails, is superseded or closes.
+Preparation, queueing, classification, cache publication and applying map colors
+use an indeterminate bar. Map-index loading reports received rows against both
+validated release counts. The bar disappears when the map is ready, the task
+fails, is superseded or closes.
 
 ```http
 POST /api/comparisons
 GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=&geometry_change=
 GET /api/comparisons/{job_id}?feature_id=1
 POST /api/comparisons/{job_id}/map
+GET /api/comparisons/{job_id}/map-index?side=baseline
+GET /api/comparisons/{job_id}/map-index?side=target
 POST /api/comparisons/{job_id}/cancel
 GET /api/comparisons/{job_id}/report
 ```
 
-`GET /api/comparisons` reports capabilities and limits. Start takes `slug`,
+`GET /api/comparisons` reports capabilities and limits, including
+`map_index_version: 1`. The browser requires this capability before starting
+computation during a frontend/backend rollout. Start takes `slug`,
 `baseline`, `target`, and `expected`, with baseline/target role dictionaries of
 `{path, generation}` for metadata/schema/manifest, available PMTiles, and canonical FGB when present. Start
 returns `202` with a job ID and pinned inputs. Polls return state/progress and,
 on completion, summary plus a bounded page when feature identity is comparable.
+`GET /api/comparisons/{job_id}/map-index?side=baseline|target` returns a
+gzip-compressed, chunked `application/x-ndjson` stream. Its header contains
+`schema_version: 1`, `side`, pinned `inputs` and `rows`; each subsequent row is
+`[feature_id, geometry_change, geometry_hash]`, ordered by binary ID; the footer
+is `{complete: true, rows: N}`. A failed stream never supplies a success footer.
+Server serialization uses approximately 64-KiB buffers and holds a read lease;
+it creates no additional cached file. The 10-MiB buffered response limit does
+not apply to this bounded stream; its row count is bounded by the release limit.
+The catalog uses this endpoint rather than the retained public lookup API below.
 `POST /api/comparisons/{job_id}/map` takes `side` (`baseline` or `target`) and
 1–200 unique `feature_ids`, with a 16-KiB request cap. It returns geometry colors
 and canonical `geometry_hash` within that release even when cross-release feature
@@ -279,20 +307,20 @@ a 15-second transport timeout with retries disabled.
 
 | Interactive limit | Budget |
 | --- | ---: |
-| Records per release | 100,000 |
+| Records per release | 1,000,000 |
 | Bytes per downloaded sidecar/schema/manifest | 64 MiB |
 | Historical canonical FGB streamed per release | 2 GiB |
 | Individual FGB feature | 64 MiB |
 | Schema/manifest contract each | 4 MiB |
-| Expanded bytes per sidecar | 256 MiB |
-| Workspace files per job | 128 MiB |
+| Expanded bytes per sidecar | 1 GiB |
+| Workspace files per job | 512 MiB |
 | Computation/download deadline | 600 seconds |
 | Individual sidecar row | 900 KiB |
 | Page size | 100 maximum; UI uses 50 |
 | Response or complete report | 10 MiB |
 | Start body | 16 KiB |
-| Concurrent jobs per instance | 2 |
-| Retained jobs per instance | 8 |
+| Compute workers per instance | 1 |
+| Local jobs per instance, including queue/readers | 2 |
 | Job retention | 15 minutes without activity |
 
 The set comparison is inexpensive. The task-scoped SQLite index stores IDs,
@@ -314,9 +342,19 @@ pass described above; temporary hashes verify the FGB's full projected propertie
 and combined feature hash without retaining expanded metadata. No row sampling or
 truncation is used.
 
+A local measurement on 2026-10-03 compared the pinned WDPA terrestrial releases
+2026-09-01 and 2026-09-30, each with 304,817 rows and a roughly 45-MB compressed
+sidecar. Complete validation and classification took 36.5 seconds, retained
+150 MiB of workspace files and reached 103 MiB peak process memory. Both map
+streams together took 2.8 seconds to serialize and compressed to 24.4 MiB.
+Neither roughly 5-GB FGB was read. These are local measurements with downloaded,
+checksum-verified inputs, not Cloud Run or end-to-end tile-render timings.
+
 Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never
-indexes sidecars or performs expensive comparison work on its UI thread.
+validates full sidecars or computes the set comparison on its UI thread. It reads
+the compact classification streams incrementally and yields while applying map
+feature states. CLI default budgets remain unchanged; explicit flags can raise them.
 
 Jobs use task-scoped SQLite files under the standard local work root, backed by
 the private temporary cache. There is no cross-job result cache; immutable job results
