@@ -137,6 +137,8 @@ class CatalogAsset:
     license_flags: list[str]
     versions: list[CatalogVersion]
     sort_key: str
+    translation_locales: list[str] = field(default_factory=list)
+    translation_fields: list[str] = field(default_factory=list)
 
 
 def load_categories(path: Path) -> dict[str, dict[str, str]]:
@@ -993,6 +995,8 @@ def asset_from_row(row: dict[str, str], docs_dir: Path, release_index_dir: Path 
         canonical_format=canonical_format,
         available_formats=formats,
         metadata_paths=metadata_paths,
+        translation_locales=split_semicolon(row.get("translation_locales", "")),
+        translation_fields=split_semicolon(row.get("translation_fields", "")),
         files=doc_latest_files(
             doc_metadata,
             canonical_path=canonical_path,

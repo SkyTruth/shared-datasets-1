@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+import yaml
+
 from scripts import catalog_docs
 
 
@@ -80,6 +83,39 @@ Feature identity follows the source field.
 ## Update notes
 Manual.
 """
+
+
+@pytest.mark.parametrize("locales,fields", [(["es", "es"], ["name"]), (["pt-BR"], ["name"]),
+                                           (["es"], []), ([], ["name"]), (["es"], ["name", "name"]),
+                                           (["es"], ["name;designation"])])
+def test_maintained_translation_contract_rejects_ambiguous_declarations(tmp_path, locales, fields):
+    path = tmp_path / "example-asset.md"
+    path.write_text(DOC.replace("metadata_paths:", yaml.safe_dump({"translation_locales": locales, "translation_fields": fields}) + "metadata_paths:"))
+    with pytest.raises(catalog_docs.CatalogDocsError, match="translation"):
+        catalog_docs.read_asset_docs(docs_dir=tmp_path, categories={"100-geographic-reference": {"110-boundaries"}})
+
+
+def test_maintained_translation_contract_survives_catalog_and_sdk(tmp_path):
+    from scripts import catalog_csv
+    from skytruth_shared_datasets import Catalog
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "example-asset.md").write_text(DOC.replace("metadata_paths:", "translation_locales: [es, pt_br]\ntranslation_fields: [name, designation]\nmetadata_paths:"))
+    doc, = catalog_docs.read_asset_docs(docs_dir=docs, categories={"100-geographic-reference": {"110-boundaries"}})
+    row = catalog_docs.catalog_row(doc.metadata, "example-bucket")
+    assert row["translation_locales"] == "es;pt_br"
+    assert row["translation_fields"] == "name;designation"
+    import csv
+    path = tmp_path / "catalog.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=catalog_docs.CATALOG_COLUMNS)
+        writer.writeheader()
+        writer.writerow(row)
+    locales, fields = catalog_csv.translation_config("example-asset", path)
+    asset = Catalog.load(source=path).get("example-asset")
+    assert asset.translation_locales == locales == ("es", "pt_br")
+    assert asset.translation_fields == fields == ("name", "designation")
 
 
 class CatalogDocsTests(unittest.TestCase):

@@ -7,6 +7,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -125,7 +126,7 @@ def parse_artifact_overrides(values: Iterable[str]) -> dict[str, Path]:
         if not separator or not raw_format or not raw_path:
             raise PublishReleaseError(f"artifact override must be format=/path/file, got: {value!r}")
         format_name = normalize_format(raw_format)
-        if format_name not in PUBLISH_ARTIFACT_FORMATS:
+        if artifact_extension(format_name) is None:
             supported = ", ".join(sorted(PUBLISH_ARTIFACT_FORMATS))
             raise PublishReleaseError(
                 f"unsupported artifact format {format_name!r}; use one of: {supported}"
@@ -184,6 +185,11 @@ def build_publish_plan(
         raise PublishReleaseError(f"unsupported catalog format(s) for publish-release v1: {', '.join(unsupported)}")
 
     local_artifacts = discover_artifacts(asset_slug, publish_dir, artifact_overrides or {})
+    locales = row.get("translation_locales", "").split(";") if row.get("translation_locales") else []
+    language_formats = ["metadata-translations", *(f"metadata-{locale}" for locale in locales)] if locales else []
+    missing_languages = set(language_formats) - set(local_artifacts)
+    if missing_languages:
+        raise PublishReleaseError("maintained translations require the whole bundle; missing: " + ", ".join(sorted(missing_languages)))
     if canonical_format not in local_artifacts:
         raise PublishReleaseError(f"canonical artifact is required: {canonical_format}")
     vector_release = canonical_format in VECTOR_CANONICAL_FORMATS
@@ -205,7 +211,7 @@ def build_publish_plan(
             "unsupported stale format id(s): " + ", ".join(unsupported_allow_stale)
         )
     expected_formats = set(available_formats) | ({"pmtiles"} if vector_release else set())
-    unexpected = sorted(set(local_artifacts) - expected_formats - SUPPORTING_RELEASE_FORMATS)
+    unexpected = sorted(set(local_artifacts) - expected_formats - SUPPORTING_RELEASE_FORMATS - set(language_formats))
     if unexpected:
         raise PublishReleaseError(f"artifact format(s) are not listed for this asset: {', '.join(unexpected)}")
     stale_formats = tuple(format_name for format_name in available_formats if format_name not in local_artifacts)
@@ -232,6 +238,7 @@ def build_publish_plan(
     publish_format_order = (
         *data_format_order,
         *(format_name for format_name in SUPPORTING_RELEASE_FORMAT_ORDER if format_name in local_artifacts),
+        *language_formats,
     )
     for format_name in publish_format_order:
         local_path = local_artifacts.get(format_name)
@@ -259,11 +266,11 @@ def build_publish_plan(
                 warnings = len(schema_compatibility.get("warning_diffs", ()))
                 checks.append(f"schema compatibility checked: blocked={blocked}, warnings={warnings}")
 
-        release_uri = f"{release_path}{asset_slug}{FORMAT_EXTENSIONS[format_name]}"
+        release_uri = f"{release_path}{asset_slug}{artifact_extension(format_name)}"
         latest_uri = (
             row["canonical_path"]
             if format_name == canonical_format
-            else f"{latest_root_uri}/{asset_slug}{FORMAT_EXTENSIONS[format_name]}"
+            else f"{latest_root_uri}/{asset_slug}{artifact_extension(format_name)}"
         )
         assert_object_missing(bucket, object_name_from_uri(release_uri), label="release object")
         latest_generations[latest_uri] = current_generation(bucket, object_name_from_uri(latest_uri))
@@ -285,6 +292,15 @@ def build_publish_plan(
             artifacts=artifacts,
             vector_bundle_validator=vector_bundle_validator,
         )
+        if locales:
+            manifest = load_json_artifact(local_artifacts["manifest"], label="release manifest")
+            release_feature_model.validate_translation_bundle_manifest(manifest, locales)
+            by_path = {entry["path"]: entry for entry in manifest["artifacts"]}
+            for artifact in artifacts:
+                if artifact.format in language_formats:
+                    entry = by_path.get(artifact.release_uri)
+                    if entry is None or str(entry.get("sha256", "")).removeprefix("sha256:") != artifact.sha256:
+                        raise PublishReleaseError("manifest language artifact hash differs from prepared bytes")
         previous_records = load_latest_metadata_records_for_publish(
             bucket=bucket,
             asset_root=asset_root,
@@ -687,11 +703,11 @@ def discover_artifacts(
 
 
 def validate_artifact_path(asset_slug: str, format_name: str, path: Path) -> None:
-    if format_name not in PUBLISH_ARTIFACT_FORMATS:
+    if artifact_extension(format_name) is None:
         raise PublishReleaseError(f"unsupported artifact format for publish-release v1: {format_name}")
     if not path.is_file():
         raise PublishReleaseError(f"artifact does not exist or is not a file: {path}")
-    expected_name = f"{asset_slug}{FORMAT_EXTENSIONS[format_name]}"
+    expected_name = f"{asset_slug}{artifact_extension(format_name)}"
     if path.name != expected_name:
         raise PublishReleaseError(f"artifact filename must be {expected_name!r} for format {format_name!r}: {path}")
     actual_format = artifact_format_for_path(asset_slug, path)
@@ -836,6 +852,21 @@ def artifact_format_for_path(asset_slug: str, path: Path) -> str | None:
     for format_name, suffix in FORMAT_EXTENSIONS.items():
         if name == f"{asset_slug}{suffix}":
             return format_name
+    if name == f"{asset_slug}.metadata-translations.csv":
+        return "metadata-translations"
+    match = re.fullmatch(re.escape(asset_slug) + r"\.metadata\.([a-z]{2,3}(?:_[a-z0-9]{2,8})*)\.ndjson\.gz", name)
+    if match:
+        return f"metadata-{match[1]}"
+    return None
+
+
+def artifact_extension(format_name: str) -> str | None:
+    if format_name in FORMAT_EXTENSIONS:
+        return FORMAT_EXTENSIONS[format_name]
+    if format_name == "metadata-translations":
+        return ".metadata-translations.csv"
+    if re.fullmatch(r"metadata-[a-z]{2,3}(?:_[a-z0-9]{2,8})*", format_name):
+        return f".metadata.{format_name.removeprefix('metadata-')}.ndjson.gz"
     return None
 
 

@@ -83,6 +83,15 @@ feature_metadata:
   schema_file: latest/marine-regions-eez.schema.json
   manifest_file: latest/marine-regions-eez.manifest.json
   provenance_default: true
+translation_locales:
+- es
+- fr
+- id
+- pt
+- pt_br
+- sw
+translation_fields:
+- GEONAME
 files:
 - path: latest/marine-regions-eez.fgb
   format: fgb

@@ -184,7 +184,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("push", trigger)
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
-            ["Feature metadata localization materialization", "Release index rebuild"],
+            ["Approved dataset mutation", "Release index rebuild"],
         )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])

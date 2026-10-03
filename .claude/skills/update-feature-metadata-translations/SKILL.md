@@ -133,16 +133,22 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    individual workbook size, not total memory use.
 4. Keep one row per `feature_id`, field, locale, and source-value hash. Duplicate
    translation keys fail validation.
-5. Generate every localized sidecar represented in the CSV:
+5. Generate every maintained locale declared by the asset's `translation_locales`
+   and restrict materialization to its `translation_fields`. Pass these explicitly;
+   a declared locale with no CSV rows must still produce its canonical fallback.
+   `--all-locales` remains available for older one-off CSV workflows, but cannot
+   discover a declared locale whose CSV rows are missing.
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
   --canonical-sidecar "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata.ndjson.gz" \
   --translation-source "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
   --schema "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.schema.json" \
-  --all-locales \
+  --locale es --locale fr \
+  --translatable-field name --translatable-field designation \
   --output-dir "$WORK_ROOT/vector-assets/example-asset/publish" \
   --report-dir "$WORK_ROOT/vector-assets/example-asset/reports" \
+  --manifest "$WORK_ROOT/vector-assets/example-asset/publish/example-asset.manifest.json" \
   --asset-slug example-asset \
   --release YYYY-MM-DD \
   --report "$WORK_ROOT/vector-assets/example-asset/reports/localization-summary.json"
@@ -168,6 +174,13 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
    `requested_rows_complete` describes only rows requested in that CSV, not
    coverage of every possible field/locale. Failed/stale rows leave canonical
    values and are counted as unresolved, never applied translations.
+   Use the report's `translations` coverage block for maintained coverage:
+   `current + stale + missing == translatable_values`, counting nonblank strings
+   only. Machine output is current when usable; review states remain a separate
+   summary. An old successful row is stale only when no current row exists; an
+   explicit failed current row is missing. `coverage` is null at a zero denominator.
+   Per-locale debt CSVs are local review artifacts and must not be included among
+   canonical dataset artifacts.
    Stale translations may be acceptable only when they are
    intentionally skipped and documented; otherwise refresh the source hash and
    translated value from the current canonical metadata.
@@ -179,10 +192,13 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
    but do not lock out arbitrary editors. These local checks do not establish
    remote generation freshness or authorize uploads.
 7. Publish translation updates through the reviewed dataset publish workflow.
-   Include the translation CSV and generated localized sidecars in staged
-   publish candidates, or rely on the
-   `Feature metadata localization materialization` workflow after a reviewed
-   publish plan promotes a new translation CSV.
+   Stage the CSV, every maintained locale sidecar, and the coverage manifest
+   together for the release and `latest/`. CSV-only promotion is rejected; there
+   is no after-publish materialization workflow. WDPA current-release edits use
+   its existing publication owner, preserving IDs and base artifact snapshots.
+   Missing/stale translations are nonblocking source-text fallbacks. The shared
+   completion hook reports debt at the inclusive 1% threshold once per release;
+   see `docs/feature-metadata-api.md` for privacy and claim/delivery semantics.
 
 ## Frontend Contract
 

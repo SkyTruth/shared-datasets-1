@@ -199,7 +199,12 @@ def fake_asset_outputs(
             "escalated_for_review": 0,
             "reviewed_decisions_applied": 0,
         },
-        localization_report={"valid": True, "requested_rows_complete": True, "applied_translation_count": 2},
+        localization_report={"valid": True, "requested_rows_complete": True, "applied_translation_count": 2,
+                             "translations": {"schema_version": 1, "locales": {
+                                 locale: {"translatable_values": 2, "current": 2, "stale": 0, "missing": 0,
+                                          "orphan": 0, "removed_fields": 0, "coverage": 1.0,
+                                          "review_states": {"human_reviewed": 2}}
+                                 for locale in localized}}},
     )
 
 

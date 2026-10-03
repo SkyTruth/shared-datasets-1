@@ -60,6 +60,15 @@ feature_metadata:
   schema_file: latest/iho-world-seas.schema.json
   manifest_file: latest/iho-world-seas.manifest.json
   provenance_default: true
+translation_locales:
+- es
+- fr
+- id
+- pt
+- pt_br
+- sw
+translation_fields:
+- NAME
 files:
 - path: latest/iho-world-seas.fgb
   format: fgb

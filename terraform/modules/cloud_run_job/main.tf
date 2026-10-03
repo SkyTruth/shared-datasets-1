@@ -35,6 +35,12 @@ variable "cpu" {
   default     = "4"
 }
 
+variable "secret_env" {
+  description = "Environment names mapped to existing Secret Manager secret IDs."
+  type        = map(string)
+  default     = {}
+}
+
 variable "memory" {
   description = "Memory limit."
   type        = string
@@ -115,6 +121,18 @@ resource "google_cloud_run_v2_job" "this" {
           content {
             name  = env.key
             value = env.value
+          }
+        }
+        dynamic "env" {
+          for_each = var.secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = env.value
+                version = "latest"
+              }
+            }
           }
         }
       }

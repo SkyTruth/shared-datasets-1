@@ -29,7 +29,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts import catalog_csv
-from ingestion.common.identity_reset import require_unmanaged_target
+from ingestion.common.identity_reset import ASSET_ROOTS, require_unmanaged_target
 from ingestion.common.publication import is_protocol_namespace, require, split_uri
 
 CATALOG_CSV_PATH = str(catalog_csv.DEFAULT_CATALOG_CSV)
@@ -62,6 +62,59 @@ def require_unmanaged_plan(plan: dict[str, Any]) -> None:
         _bucket, name = split_uri(uri)
         require_unmanaged_target(name)
         require(not is_protocol_namespace(name), "publication operational objects require their own executor")
+
+
+def validate_translation_bundles(plan: dict[str, Any], row: dict[str, str] | None) -> None:
+    """A reviewed language edit always replaces a whole prepared bundle."""
+    if not row or not row.get("translation_locales"):
+        return
+    slug = plan["asset_slug"]
+    locales = row["translation_locales"].split(";")
+    targets = {item["destination_uri"] for item in plan["promotions"]}
+    names = {f"{slug}.metadata.ndjson.gz", f"{slug}.metadata-translations.csv", f"{slug}.manifest.json",
+             *(f"{slug}.metadata.{locale}.ndjson.gz" for locale in locales)}
+    directories = {uri.rsplit("/", 1)[0] for uri in targets if uri.rsplit("/", 1)[1] in names}
+    for directory in directories:
+        required_names = {f"{slug}.metadata-translations.csv", f"{slug}.manifest.json",
+                          *(f"{slug}.metadata.{locale}.ndjson.gz" for locale in locales)}
+        missing = sorted(f"{directory}/{name}" for name in required_names if f"{directory}/{name}" not in targets)
+        require(not missing, "reviewed translation bundle is incomplete: " + ", ".join(missing))
+
+
+def validate_publish_plan(plan):
+    row = catalog_row(plan["asset_slug"])
+    validate_translation_bundles(plan, row)
+    if plan["asset_slug"] in ASSET_ROOTS:
+        from ingestion.common.identity_reset import translation_update_release
+        translation_update_release(plan, bucket=bucket_name(), locales=row["translation_locales"].split(";") if row and row.get("translation_locales") else [])
+        require(not plan.get("release_index_asset_slugs"), "owned translation edits cannot rebuild other release indexes")
+    else:
+        require_unmanaged_plan(plan)
+
+
+def promote_owned_translations(plan):
+    from types import SimpleNamespace
+    import google.auth
+    from google.cloud import storage
+    from ingestion.common.owned_publication import OwnedGeneratedPublisher
+    from ingestion.common.reset_controls import PROJECT, PUBLISHER_ACCOUNT
+    from scripts import dataset_mutation_authorization as auth
+
+    require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_REF") == "refs/heads/main"
+            and os.environ.get("GITHUB_WORKFLOW_REF") == f"{repository()}/{auth.WORKFLOW}@refs/heads/main",
+            "owned translation updates require the protected main workflow")
+    envelope = auth.verified_envelope(auth.GitHub(), pathlib.Path("authorization"), os.environ["EXPECTED_SHA256"], dict(os.environ))
+    require(envelope["outcome"] == "mutation" and envelope["document"].get("publish") == plan and "delete" not in envelope["document"],
+            "translation update must match the immutable approved publish plan")
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    require(getattr(credentials, "service_account_email", None) == PUBLISHER_ACCOUNT, "approved publisher identity is required")
+    identity = auth.identity_digests(envelope)
+    publisher = OwnedGeneratedPublisher(storage.Client(project=PROJECT, credentials=credentials), bucket_name(),
+        execution_id=identity["proposal_key"], executor_sha=envelope["trusted_executor_sha"], configuration=identity)
+    slug = plan["asset_slug"]
+    asset = SimpleNamespace(slug=slug, root=ASSET_ROOTS[slug], run_record_object=lambda date: f"{ASSET_ROOTS[slug]}/runs/{date.isoformat()}.json")
+    result = publisher.publish_translation_update(asset=asset, plan=plan)
+    print(json.dumps(result, indent=2, sort_keys=True))
 
 
 def plan_asset_slug() -> str:
@@ -191,10 +244,11 @@ def command_collect_proposed_catalog_row(args: argparse.Namespace) -> int:
 
 def command_validate_plan_paths(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
-    require_unmanaged_plan(plan)
     if args.plan_type == "publish":
+        validate_publish_plan(plan)
         uris = [promotion["destination_uri"] for promotion in plan["promotions"]]
     else:
+        require_unmanaged_plan(plan)
         uris = [deletion["uri"] for deletion in plan["deletions"]]
     for uri in uris:
         subprocess.run(gcs_asset_args("validate-path", uri), check=True)
@@ -328,7 +382,25 @@ def command_promote(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
     asset_slug = plan["asset_slug"]
     row = catalog_row(asset_slug)
-    require_unmanaged_plan(plan)
+    validate_publish_plan(plan)
+    if asset_slug in ASSET_ROOTS:
+        promote_owned_translations(plan)
+        return 0
+    if row and row.get("translation_locales"):
+        from scripts import release_feature_model as model
+        # Validate all prepared coverage manifests before the first copy. The
+        # reviewed source generations remain the authority for their bytes.
+        for promotion in plan["promotions"]:
+            if promotion["destination_uri"].endswith(f"/{asset_slug}.manifest.json"):
+                source_bucket, source_name = split_uri(promotion["source_uri"])
+                blob = gcs_asset.get_client().bucket(source_bucket).blob(source_name, generation=int(promotion["source_generation"]))
+                manifest = json.loads(blob.download_as_bytes(if_generation_match=int(promotion["source_generation"])))
+                model.validate_release_manifest(manifest, expected_asset_slug=asset_slug)
+                model.validate_translation_bundle_manifest(manifest, row["translation_locales"].split(";"))
+                artifact_prefix = next(entry["path"] for entry in manifest["artifacts"] if entry["role"] == "metadata").removesuffix(".metadata.ndjson.gz")
+                expected = artifact_prefix + ".manifest.json"
+                latest = expected.replace(f"/releases/{manifest['release']}/", "/latest/")
+                require(promotion["destination_uri"] in {expected, latest}, "prepared manifest belongs to another release")
     for index, promotion in enumerate(plan["promotions"], start=1):
         print(f"Promoting object {index} of {len(plan['promotions'])}: {promotion['destination_uri']}")
         subprocess.run(gcs_asset_args("stat", promotion["source_uri"]), check=True)
@@ -377,6 +449,10 @@ def command_promote(args: argparse.Namespace) -> int:
 
 def command_rebuild_release_index(args: argparse.Namespace) -> int:
     plan = load_plan(args.plan_json)
+    if plan["asset_slug"] in ASSET_ROOTS:
+        validate_publish_plan(plan)
+        print("The publication owner already finalized the release index.")
+        return 0
     requested_slugs = [plan["asset_slug"], *plan.get("release_index_asset_slugs", [])]
     asset_slugs = []
     seen = set()
@@ -626,6 +702,18 @@ def command_upload_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_translation_notice(args: argparse.Namespace) -> int:
+    from google.cloud import storage
+    from ingestion.common.translation_notices import notify_release
+    plan = load_plan(args.plan_json)
+    manifests = sorted({item["destination_uri"] for item in plan["promotions"]
+                        if "/releases/" in item["destination_uri"] and item["destination_uri"].endswith(".manifest.json")})
+    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT", "shared-datasets-1"))
+    for uri in manifests:
+        print(f"Translation notice for {uri}: {notify_release(client, uri)}")
+    return 0
+
+
 def delete_object_with_verification(uri: str, generation: str, *, exists_label: str, verify_label: str) -> int:
     """Delete an object by generation and verify its absence. Returns an exit code."""
     delete_args = gcs_asset_args("delete", uri, "--generation", generation, "--confirm", "DELETE")
@@ -730,6 +818,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     promote.add_argument("--plan-json", required=True)
     promote.set_defaults(func=command_promote)
+    notice = subparsers.add_parser("translation-notice", help="Attempt one combined translation-debt notice after publication.")
+    notice.add_argument("--plan-json", required=True)
+    notice.set_defaults(func=command_translation_notice)
 
     rebuild_index = subparsers.add_parser(
         "rebuild-release-index",

@@ -47,7 +47,7 @@ class PublicationBypassTests(unittest.TestCase):
                 mock.patch.object(publish_workflow, "catalog_row", return_value={}),
                 mock.patch.object(publish_workflow.subprocess, "run") as process,
                 mock.patch.object(gcs_asset, "get_client") as client,
-                self.assertRaisesRegex(PublicationError, "requires owned publication"),
+                self.assertRaisesRegex(PublicationError, "requires owned publication|does not support owned translation updates"),
             ):
                 try:
                     command(argparse.Namespace(plan_json="fixture.json"))

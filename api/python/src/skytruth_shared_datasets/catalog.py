@@ -98,6 +98,8 @@ class CatalogAsset:
     citation: str
     notes: str
     raw: Mapping[str, str | None] = field(repr=False)
+    translation_locales: tuple[str, ...] = ()
+    translation_fields: tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, row: Mapping[str, str | None]) -> "CatalogAsset":
@@ -128,6 +130,8 @@ class CatalogAsset:
             canonical_format=canonical_format,
             available_formats=available_formats,
             metadata_paths=_split_semicolon(row.get("metadata_paths", "")),
+            translation_locales=_split_semicolon(row.get("translation_locales", "")),
+            translation_fields=_split_semicolon(row.get("translation_fields", "")),
             localized_name_locales=_split_semicolon(row.get("localized_name_locales", "")),
             localized_name_review_states=MappingProxyType(
                 _split_locale_review_states(row.get("localized_name_review_states", ""))

@@ -65,6 +65,31 @@ feature_metadata:
   schema_file: latest/wdpa-terrestrial.schema.json
   manifest_file: latest/wdpa-terrestrial.manifest.json
   provenance_default: true
+translation_locales:
+- es
+- fr
+- id
+- pt
+- pt_br
+- sw
+translation_fields:
+- NAME_ENG
+- DESIG_ENG
+- DESIG_TYPE
+- GOV_TYPE
+- OWN_TYPE
+- NO_TAKE
+- STATUS
+- IUCN_CAT
+- VERIF
+- OECM_ASMT
+- DESIG
+- MANG_PLAN
+- CONS_OBJ
+- SUPP_INFO
+- INLND_WTRS
+- GOVSUBTYPE
+- OWNSUBTYPE
 files:
 - path: latest/wdpa-terrestrial.fgb
   format: fgb

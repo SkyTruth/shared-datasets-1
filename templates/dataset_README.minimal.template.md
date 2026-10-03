@@ -15,6 +15,8 @@ canonical_format: "{format}"
 canonical_file: "latest/{asset-slug}.{ext}"
 available_formats:
   - "{format}"
+translation_locales: []
+translation_fields: []
 metadata_paths:
   - "README.md"
 source: "{source-name-or-url}"

@@ -382,18 +382,18 @@ def test_cli_snapshot_precedes_schema_allowlist_read(tmp_path):
 
 def test_batch_snapshot_precedes_locale_csv_read(tmp_path):
     canonical, source, output = localization_fixture(tmp_path)
-    original = feature_metadata_localization.read_translation_source
+    original = feature_metadata_localization.iter_translation_source
     calls = 0
 
     def read_then_edit(*args, **kwargs):
         nonlocal calls
-        rows = original(*args, **kwargs)
+        rows = list(original(*args, **kwargs))
         calls += 1
         if calls == 1:
             source.write_text(source.read_text().replace("Alfa", "human correction"))
         return rows
 
-    with mock.patch.object(feature_metadata_localization, "read_translation_source", side_effect=read_then_edit):
+    with mock.patch.object(feature_metadata_localization, "iter_translation_source", side_effect=read_then_edit):
         with pytest.raises(translation_local_io.TranslationLocalIOError, match="changed"):
             feature_metadata_localization.materialize_locale_sidecars(
                 canonical_sidecar=canonical, translation_source=source, output_dir=tmp_path,

@@ -54,6 +54,10 @@ module "wdpa_monthly_job" {
   timeout               = "86400s"
   max_retries           = 0
 
+  secret_env = {
+    SHARED_DATASETS_SLACK_WEBHOOK_URL = google_secret_manager_secret.slack_webhook_url.secret_id
+  }
+
   env = {
     GOOGLE_CLOUD_PROJECT     = var.project_id
     SHARED_DATASETS_BUCKET   = var.bucket_name
@@ -66,6 +70,8 @@ module "wdpa_monthly_job" {
     google_artifact_registry_repository.jobs,
     google_project_service.required,
     google_storage_bucket_iam_member.wdpa_job_object_user,
+    google_secret_manager_secret_iam_member.translation_notice["wdpa"],
+    google_storage_bucket_iam_member.translation_debt_writer["wdpa"],
   ]
 }
 

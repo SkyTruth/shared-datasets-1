@@ -54,6 +54,8 @@ CATALOG_COLUMNS = [
     "license",
     "citation",
     "notes",
+    "translation_locales",
+    "translation_fields",
 ]
 
 FRONTMATTER_KEYS = [
@@ -88,6 +90,8 @@ FRONTMATTER_KEYS = [
     "search_fields",
     "feature_identity",
     "feature_metadata",
+    "translation_locales",
+    "translation_fields",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -106,6 +110,8 @@ OPTIONAL_DISCOVERY_FIELDS = [
     "search_fields",
     "feature_identity",
     "feature_metadata",
+    "translation_locales",
+    "translation_fields",
     "source_resolution_meters",
     "source_scale_denominator",
     "pmtiles_maxzoom",
@@ -451,6 +457,17 @@ def validate_metadata(path: Path, metadata: dict[str, Any], categories: dict[str
                 raise CatalogDocsError(f"{path}: files must contain exactly one entry for feature_metadata.{key}")
             if entries[0]["role"] != "metadata":
                 raise CatalogDocsError(f"{path}: feature metadata file entry must use role 'metadata'")
+    for key in ("translation_locales", "translation_fields"):
+        values = metadata.get(key, [])
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() or value != value.strip() or ";" in value for value in values) or len(values) != len(set(values)):
+            raise CatalogDocsError(f"{path}: {key} must be a list of unique nonblank strings")
+    if bool(metadata.get("translation_locales")) != bool(metadata.get("translation_fields")):
+        raise CatalogDocsError(f"{path}: translation_locales and translation_fields must be declared together")
+    for locale in metadata.get("translation_locales", []):
+        if not FIELD_SAFE_LOCALE_RE.fullmatch(locale):
+            raise CatalogDocsError(f"{path}: invalid translation locale {locale!r}")
+    if metadata.get("translation_locales") and not feature_metadata:
+        raise CatalogDocsError(f"{path}: maintained translations require feature_metadata")
     validate_optional_discovery_metadata(path, metadata)
 
 
@@ -799,6 +816,8 @@ def catalog_row(metadata: dict[str, Any], bucket: str) -> dict[str, str]:
         "canonical_format": metadata["canonical_format"],
         "available_formats": ";".join(formats),
         "metadata_paths": ";".join(metadata["metadata_paths"]),
+        "translation_locales": ";".join(metadata.get("translation_locales", [])),
+        "translation_fields": ";".join(metadata.get("translation_fields", [])),
         "feature_identity": feature_identity_summary(metadata),
         "has_pmtiles": str("pmtiles" in formats).lower(),
         "has_geojson": str("geojson" in formats).lower(),

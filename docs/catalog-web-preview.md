@@ -298,9 +298,8 @@ if fully offline/self-contained hosting becomes a requirement.
 ## Deploy
 
 After trusted PRs merge to `main`, the post-merge dataset mutation workflow
-runs first. When it succeeds, `.github/workflows/metadata-localization.yml`
-materializes any reviewed translation-source updates and then
-`.github/workflows/catalog-web-deploy.yml` downloads existing
+runs first, including finalization of prepared translation bundles. When it
+succeeds, `.github/workflows/catalog-web-deploy.yml` downloads existing
 `_catalog/releases/*.json` release indexes, rebuilds the catalog web bundle with
 release-index-backed latest/version fields, and publishes both `_catalog/web/`
 and the root `_catalog/shared-datasets-catalog.csv` contract with the approved

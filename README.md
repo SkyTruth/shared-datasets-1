@@ -830,25 +830,30 @@ uv run python scripts/feature_metadata_localization.py \
   --translation-source "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.metadata-translations.csv" \
   --schema "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.schema.json" \
   --translatable-field name \
-  --all-locales \
+  --locale es --locale fr \
+  --manifest "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish/example-asset.manifest.json" \
   --asset-slug example-asset \
   --release 2026-05-01 \
   --output-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/publish" \
   --report-dir "$TMPDIR/shared-datasets-1/vector-assets/example-asset/reports"
 ```
 
-Translation-only updates should leave `latest/{asset-slug}.fgb` and PMTiles
-unchanged, stage byte-identical copies for the new release directory when a new
-release is needed, stage the updated translation source under release and
-`latest/`, and stage rebuilt localized metadata sidecars under release and
-`latest/`. Stale translation rows are reported and skipped; untranslated values
-fall back to the canonical metadata sidecar values. After a reviewed publish
-plan promotes a new `{asset-slug}.metadata-translations.csv`, the
-`Feature metadata localization materialization` workflow regenerates sibling
-localized sidecars from the canonical metadata and schema using generation
-preconditions in the approved publisher environment. The catalog web deploy
-workflow runs after that localization step, so refreshed release-index metadata
-is included before the public catalog bundle is republished.
+Translation-only edits prepare one reviewed bundle containing the CSV, every
+maintained locale sidecar, and the manifest with coverage and file hashes.
+Pass explicit `--locale` and `--translatable-field` arguments from the asset's
+catalog configuration and `--manifest` to the local materializer. Stage both
+release and `latest/` copies. The approved mutation workflow rejects incomplete
+language bundles and finalizes their generations before refreshing the catalog.
+WDPA edits target its current release through the existing publication owner;
+feature IDs, geometry, source metadata, and the generated-ID counter stay fixed.
+There is no separate after-publish localization workflow.
+
+Missing or stale translations retain source text and do not block publication.
+When any maintained locale has at least 1% unresolved values, the completed
+release can produce one combined Slack notice and per-locale debt CSVs under
+`_scratch/translation-debt/{asset}/{release}/`. Private/internal notices contain
+counts and file references only. See [translation maintenance](docs/feature-metadata-api.md)
+for coverage and delivery semantics.
 
 ## Catalog web preview
 

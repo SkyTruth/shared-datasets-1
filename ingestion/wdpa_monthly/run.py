@@ -1073,6 +1073,7 @@ def publish_asset(
             previous_release=outputs.previous_release,
             decisions=outputs.identity_decisions,
         ),
+        translations=outputs.localization_report["translations"],
         extra_suffix_paths=(
             *(
                 (f".metadata.{locale}.ndjson.gz", outputs.localized_metadata[locale])

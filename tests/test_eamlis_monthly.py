@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import csv
 import hashlib
 import io
 import json
@@ -74,6 +75,11 @@ class FakeBlob:
     def download_as_bytes(self) -> bytes:
         self.reload()
         return self.data
+
+    def download_to_filename(self, filename, *, if_generation_match):
+        self.reload()
+        self._check_generation(if_generation_match)
+        Path(filename).write_bytes(self.data)
 
     def upload_from_filename(self, filename, *, content_type=None, if_generation_match=None):
         self._check_generation(if_generation_match)
@@ -213,6 +219,13 @@ def fake_asset_output(
         "release": "2026-05-02",
         "fields": [{"name": "OBJECTID", "type": "Integer", "nullable": False, "projectable": True}],
     }
+    eamlis.feature_metadata.write_sidecar([
+        {"schema_version": 2, "asset_slug": eamlis.ASSET.slug, "release": "2026-05-02",
+         "feature_id": str(index), "identity_key": [str(index)],
+         "geometry_hash": "sha256:" + "a" * 64, "properties_hash": "sha256:" + "b" * 64,
+         "properties": {"OBJECTID": index, "PA_NAME": name}, "provenance": {"source": "fixture"}}
+        for index, name in ((1, "Mine Alpha"), (2, "Mine Beta"))
+    ], metadata)
     return eamlis.AssetOutput(
         fgb=fgb,
         pmtiles=pmtiles,
@@ -232,6 +245,45 @@ def fake_asset_output(
 
 
 class EamlisMonthlyTests(unittest.TestCase):
+    def test_translation_reuse_pins_input_and_publishes_partial_coverage_in_same_release(self):
+        bucket = FakeBucket()
+        blob = bucket.blob(eamlis.ASSET.latest_object(".metadata-translations.csv"))
+        blob.exists, blob.generation = True, 9
+        stream = io.StringIO()
+        writer = csv.DictWriter(stream, fieldnames=(*eamlis.localization.REQUIRED_TRANSLATION_COLUMNS, *eamlis.localization.OPTIONAL_TRANSLATION_COLUMNS))
+        writer.writeheader()
+        writer.writerow({"feature_id": "1", "field": "PA_NAME", "locale": "es",
+                         "source_value_hash": eamlis.localization.source_value_hash("Mine Alpha"),
+                         "value": "Mina Alfa", "review_state": "machine_translated", "notes": ""})
+        blob.data = stream.getvalue().encode()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(blob, "download_to_filename", wraps=blob.download_to_filename) as download:
+            output = fake_asset_output(Path(tmpdir))
+            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+            self.assertEqual(download.call_args.kwargs["if_generation_match"], 9)
+        self.assertEqual(record["localization"]["translations"]["locales"]["es"]["coverage"], 0.5)
+        sidecar = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.es.ndjson.gz"))
+        rows = list(eamlis.feature_metadata.release_feature_model.read_metadata_sidecar_bytes(sidecar.data))
+        self.assertEqual([row["properties"]["PA_NAME"] for row in rows], ["Mina Alfa", "Mine Beta"])
+        self.assertTrue(all(row["release"] == "2026-05-02" for row in rows))
+        manifest = json.loads(bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".manifest.json")).text)
+        self.assertEqual(manifest["translations"], record["localization"]["translations"])
+        self.assertEqual(manifest["source_inputs"][1]["generation"], 9)
+        self.assertEqual(len(manifest["artifacts"]), 7)
+
+    def test_translation_input_race_or_corruption_prevents_all_canonical_writes(self):
+        for problem in (PreconditionFailed("changed"), None):
+            with self.subTest(problem=problem), tempfile.TemporaryDirectory() as tmpdir:
+                bucket = FakeBucket()
+                blob = bucket.blob(eamlis.ASSET.latest_object(".metadata-translations.csv"))
+                blob.exists, blob.data = True, b"corrupted CSV"
+                publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+                output = fake_asset_output(Path(tmpdir))
+                with mock.patch.object(blob, "download_to_filename", side_effect=problem, wraps=blob.download_to_filename):
+                    with self.assertRaises((PreconditionFailed, eamlis.localization.FeatureMetadataLocalizationError)):
+                        eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+                self.assertFalse(any(item.uploads for item in bucket.blobs.values()))
+
     def test_request_json_retries_transient_transport_failure(self):
         calls = []
 
@@ -388,7 +440,7 @@ class EamlisMonthlyTests(unittest.TestCase):
                 records = eamlis.run()
 
         self.assertEqual(records[0]["status"], "success")
-        self.assertEqual(len(records[0]["release_paths"]), 5)
+        self.assertEqual(len(records[0]["release_paths"]), 7)
         release = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".fgb"))
         release_metadata = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".metadata.ndjson.gz"))
         self.assertTrue(release.uploads)
@@ -453,8 +505,8 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(record["status"], "success")
         self.assertEqual(record["sha256"]["fgb"], VALID_FGB_SHA)
         self.assertEqual(record["sha256"]["pmtiles"], VALID_PMTILES_SHA)
-        self.assertEqual(len(record["release_paths"]), 5)
-        self.assertEqual(len(record["latest_paths"]), 5)
+        self.assertEqual(len(record["release_paths"]), 7)
+        self.assertEqual(len(record["latest_paths"]), 7)
         manifest_blob = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".manifest.json"))
         manifest = json.loads(manifest_blob.text)
         artifacts = {artifact["role"]: artifact for artifact in manifest["artifacts"]}

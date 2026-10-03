@@ -30,6 +30,14 @@ export type SharedDatasetMetadataRecord = {
   properties_hash?: string;
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
+  translation?: {
+    locale: string;
+    state: 'complete' | 'partial' | 'fallback';
+    translated_fields: string[];
+    fallback_fields: string[];
+    machine_fields: string[];
+    human_reviewed_fields: string[];
+  };
   [key: string]: unknown;
 };
 

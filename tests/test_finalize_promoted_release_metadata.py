@@ -109,7 +109,7 @@ class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
             self.assertRaises(finalizer.FinalizeReleaseMetadataError),
         ):
             finalizer.finalize_promoted_release_metadata(
-                {"promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
+                {"asset_slug": "example-asset", "promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
             )
         self.assertEqual(store.payload, {"concurrent": True})
         self.assertEqual(store.uploads, [])
@@ -129,7 +129,7 @@ class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
             mock.patch.object(finalizer.gcs_asset, "require_mutation_allowed"),
         ):
             result = finalizer.finalize_promoted_release_metadata(
-                {"promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
+                {"asset_slug": "example-asset", "promotions": [{"destination_uri": uri(".manifest.json")}]}, client=store.client,
             )
         self.assertEqual(result["finalized_manifests"][0]["generation"], 11)
         self.assertEqual(store.generation, 12)
@@ -155,7 +155,7 @@ class FinalizePromotedReleaseMetadataTests(unittest.TestCase):
             self.assertRaises(finalizer.FinalizeReleaseMetadataError),
         ):
             finalizer.finalize_promoted_release_metadata(
-                {"promotions": [
+                {"asset_slug": "example-asset", "promotions": [
                     {"destination_uri": uri(".manifest.json")},
                     {"destination_uri": f"{ROOT}/runs/{RELEASE}.json"},
                 ]}, client=client,

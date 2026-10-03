@@ -841,6 +841,8 @@ def final_manifest_payload(
     latest_blob_info_by_role: Mapping[str, Mapping[str, Any]] | None,
     manifest_release_path: str,
     manifest_latest_path: str | None = None,
+    translations: Mapping[str, Any] | None = None,
+    extra_artifacts: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     payload = manifest_payload(
         asset_slug=asset_slug,
@@ -885,6 +887,8 @@ def final_manifest_payload(
         manifest_artifact["latest_path"] = manifest_latest_path
     manifest_artifact.pop("generation", None)
     manifest_artifact.pop("latest_generation", None)
-    payload["artifacts"] = [artifacts_by_role[role] for role in ROLE_SUFFIXES]
+    payload["artifacts"] = [artifacts_by_role[role] for role in ROLE_SUFFIXES] + [dict(artifact) for artifact in extra_artifacts]
+    if translations is not None:
+        payload["translations"] = dict(translations)
     validate_final_manifest_payload(payload, expected_asset_slug=asset_slug, expected_release=release)
     return payload
