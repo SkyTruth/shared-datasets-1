@@ -329,5 +329,18 @@ delivery is logged as a warning for operators, with automatic retry suppressed.
 Runtime credentials need access to the existing Slack secret and create-only
 access to their own debt-export prefixes. The protected Scheduled ingestion
 deploy IAM sync owns those narrow grants. After its reviewed main changes apply,
-use the existing protected WDPA/e-AMLIS deploy workflows to update job images and
-secret references. No local production apply is part of this rollout.
+use the existing protected e-AMLIS deploy workflow to update its image and secret
+reference. WDPA requires a retained build produced with this translation code,
+the matching acceptance evidence, and the existing reviewed bundle promotion;
+redeploying an older retained producer image does not install this behavior.
+Follow [WDPA processing validation](wdpa-processing-validation.md) for that gate.
+No local production apply is part of this rollout.
+
+For an initial translation backfill, inspect the current committed release and
+its identity contract first. Regenerate every maintained locale and its coverage
+from that release's canonical metadata and reviewed CSV, then submit the complete
+bundle through the same immutable publish-plan PR workflow. A historical date
+from the original proposal is not authority to overwrite a newer release or
+restore pre-reset feature IDs. Verify the finalized coverage and notice marker
+after the protected publication finishes; neither code merge nor fixture tests
+establishes that the production backfill has happened.
