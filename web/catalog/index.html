@@ -134,6 +134,10 @@
             </div>
             <button id="compare-open" class="icon-button" type="button" aria-expanded="false" aria-controls="compare-release-controls">Compare releases</button>
             <button id="compare-details" class="compare-details" type="button" aria-expanded="false" aria-controls="compare-panel" hidden>▸ Details</button>
+            <div id="compare-progress" class="compare-progress" hidden>
+              <div class="compare-progress-caption"><span id="compare-progress-label"></span><span id="compare-progress-count"></span></div>
+              <progress id="compare-progress-bar" aria-labelledby="compare-progress-label compare-progress-count"></progress>
+            </div>
           </div>
           <p id="compare-status" class="compare-status" role="status" aria-live="polite" hidden></p>
             <section id="compare-panel" class="compare-panel" aria-label="Compare releases" hidden>
@@ -241,9 +245,7 @@
               <pre id="use-python" role="tabpanel" aria-labelledby="use-tab-python"></pre>
               <pre id="use-typescript" role="tabpanel" aria-labelledby="use-tab-typescript" hidden></pre>
               <p id="use-error" role="status" hidden></p>
-              <div class="use-credit">
-                <a id="use-attribution" target="_blank" rel="noopener"></a>
-                <button id="use-copy-attribution" type="button" aria-label="Copy attribution" title="Copy attribution">Copy credit</button>
+              <div class="use-footer">
                 <a class="use-help" href="https://github.com/SkyTruth/shared-datasets-1/blob/main/docs/consumer-guide.md#use-this-dataset" target="_blank" rel="noopener">SDK setup</a>
               </div>
             </section>

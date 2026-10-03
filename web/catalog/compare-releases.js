@@ -65,12 +65,24 @@ function delay(ms, signal) {
 }
 
 export function createComparisonController({loadMapModule = () => import("./map-preview.js"), onModeChange = () => {}, onFeatureSelect, getBasemap = () => "map"} = {}) {
-  const ids = ["open", "panel", "before", "after", "release-controls", "status", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "details", "map-note", "table", "legend"];
+  const ids = ["open", "panel", "before", "after", "release-controls", "status", "progress", "progress-label", "progress-count", "progress-bar", "summary", "schema", "search", "filter", "rows", "previous", "next", "page", "inspector", "details", "map-note", "table", "legend"];
   const ui = Object.fromEntries(ids.map(id => [id, document.getElementById(`compare-${id}`)]));
   const versionControl = document.getElementById("version-control"), mapContainer = document.getElementById("map-preview"), mapStatus = document.getElementById("map-status");
   let asset = null, version = "latest", options = {}, active = null, opened = false, viewport = null, pageSerial = 0, inspectSerial = 0, rerunTimer = null;
   const current = session => active === session && !session.abort.signal.aborted;
   const status = text => { ui.status.textContent = text; ui.status.hidden = !opened || !text; };
+  function progress(value = null) {
+    ui.progress.hidden = !opened || !value;
+    if (!value) return;
+    const labels = {downloading: "Preparing releases", baseline: "Validating Before", target: "Validating After", "baseline geometry": "Checking Before geometry", "target geometry": "Checking After geometry", classifying: "Comparing geometry and metadata", publishing: "Preparing comparison"};
+    ui["progress-label"].textContent = labels[value.phase];
+    // During a rolling deployment the previous API supplies phase/rows only.
+    const total = value.total ?? null;
+    ui["progress-count"].textContent = total === null ? "" : `${value.completed.toLocaleString()} / ${total.toLocaleString()} rows`;
+    ui["progress-bar"].max = total || 1;
+    if (total === null) ui["progress-bar"].removeAttribute("value");
+    else ui["progress-bar"].value = value.completed;
+  }
   function setDetails(expanded) {
     ui.panel.hidden = !opened || !expanded;
     ui.details.setAttribute("aria-expanded", String(expanded));
@@ -90,11 +102,13 @@ export function createComparisonController({loadMapModule = () => import("./map-
     onFeatureSelect([]);
     if (active) {
       viewport = active.map?.viewport() || viewport;
+      window.clearInterval(active.keepalive);
       active.abort.abort(); active.mapAbort?.abort(); active.map?.dispose();
       void cancelJob(active.job); active = null;
     }
   }
   function clearResults() {
+    progress(); status("");
     for (const key of ["summary", "schema", "rows", "inspector"]) ui[key].replaceChildren();
     ui.table.hidden = true; ui.previous.disabled = ui.next.disabled = true;
     for (const button of ui.legend.querySelectorAll("button")) {
@@ -202,7 +216,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
         onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
       });
       if (!isCurrent()) { map.dispose(); return; }
-      session.map = map; map.setCategory(session.geometryFilter, {zoom: false});
+      session.map = map; map.setCategory(session.geometryFilter);
       session.mapError = null; mapNote(session);
       if (session.summary) map.refreshGeometry();
     } catch (error) { if (isCurrent()) { session.mapError = error.message; mapNote(session); } }
@@ -214,23 +228,26 @@ export function createComparisonController({loadMapModule = () => import("./map-
     try {
       session.refs = refs(); void showMap(session);
       const expected = Object.fromEntries(["baseline", "target"].map(side => [side, comparisonFiles(session.refs[side])]));
-      status("Comparing releases…");
+      progress({phase: "downloading", total: null});
       // Observe superseded start responses so their server jobs can be cancelled.
       const result = await request("/api/comparisons", session, {method: "POST", signal: undefined, headers: {"Content-Type": "application/json"}, body: JSON.stringify({slug: asset.slug, baseline: session.refs.baseline.date, target: session.refs.target.date, expected})});
       if (!current(session)) { void cancelJob(result.job_id); return; }
       session.job = result.job_id;
       let response = result;
       while (response.state === "running") {
-        status(`${response.progress.phase}: ${response.progress.rows.toLocaleString()} validated rows…`);
+        progress(response.progress);
         await delay(600, session.abort.signal); response = await request(`/api/comparisons/${session.job}`, session);
         if (!current(session)) return;
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
       session.summary = response.summary; renderSummary(response.summary);
       for (const button of ui.legend.querySelectorAll("button")) button.disabled = false;
-      status(""); mapNote(session); session.map?.refreshGeometry();
+      progress(); status(""); mapNote(session); session.map?.refreshGeometry();
+      session.keepalive = window.setInterval(() => {
+        void request(`/api/comparisons/${session.job}`, session).catch(error => { if (current(session)) status(error.message); });
+      }, 60000);
       if (response.summary.identity.compatible) await loadPage(session);
-    } catch (error) { if (current(session)) status(error.message); }
+    } catch (error) { if (current(session)) { progress(); status(error.message); } }
   }
   ui.open.addEventListener("click", () => {
     if (opened) close();
@@ -238,7 +255,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
   });
   for (const side of ["before", "after"]) ui[side].addEventListener("change", () => {
     if (!opened || !ui.before.value || !ui.after.value) return;
-    stop(); clearResults(); status("Comparing releases…");
+    stop(); clearResults(); progress({phase: "downloading", total: null});
     rerunTimer = window.setTimeout(() => { rerunTimer = null; void run(); }, 120);
   });
   ui.legend.addEventListener("click", event => {
@@ -248,7 +265,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
     session.geometryFilter = session.geometryFilter === button.dataset.change ? "" : button.dataset.change;
     for (const item of ui.legend.querySelectorAll("button")) item.setAttribute("aria-pressed", String(item.dataset.change === session.geometryFilter));
     onFeatureSelect([]);
-    session.map?.setCategory(session.geometryFilter, {zoom: !session.geometryFilter || session.summary.geometry_counts[session.geometryFilter] > 0});
+    session.map?.setCategory(session.geometryFilter);
     if (session.summary.identity.compatible) void loadPage(session);
   });
   ui.search.addEventListener("input", () => { if (active?.summary?.identity.compatible) void loadPage(active); });

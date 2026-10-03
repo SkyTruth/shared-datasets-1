@@ -75,6 +75,12 @@ class ScenarioJobs:
     def get(self, job_id, owner):
         return self.for_owner(owner).get(job_id, owner)
 
+    def cancel(self, job):
+        return self.for_owner(job.owner).cancel(job)
+
+    def prepare(self, job):
+        return self.for_owner(job.owner).prepare(job)
+
 
 store = FixtureStore(work / "site")
 jobs = ScenarioJobs()

@@ -98,14 +98,16 @@ Changed fills, outlines, lines and points draw above all unchanged geometry from
 both releases, so later gray layers cannot obscure the red, green or yellow marks.
 
 Click **New geometry**, **Removed geometry**, **Metadata changed** or **Unchanged**
-in the legend to show only that category and zoom to its display geometry. The
+in the legend to show only that category. Filtering and unfiltering preserve the
+map's center, zoom, bearing and pitch. Use **Zoom to extents** beside the map's +/−
+controls to fit the selected category, or the full union when unfiltered. The
 selected button is pressed; click it again to restore the full union. Map clicks
 ignore hidden categories, including transparent overlapping gray points. The
 feature table also filters by geometry membership when feature IDs are comparable;
 a moved ID can belong to both the new and removed categories. Category selection
 survives a basemap change and resets when either release changes or comparison closes.
 
-Category zoom visits the union overview to include items outside the current
+The extents button visits the union overview to include items outside the current
 viewport, then fits matching loaded display geometry. It retains bounds seen at
 finer zooms. This uses PMTiles geometry without reading canonical FGB or increasing
 the comparison disk budget. Overview tiles may omit fine features; if no matching
@@ -221,6 +223,30 @@ the requesting email. Callers select catalog-owned slugs and concrete dates;
 caller-provided object URIs cannot choose server download targets. Client expected
 paths/generations are equality checks, not download authority.
 
+Cloud Run session affinity is an optimization, not job ownership. The viewer
+stores job state and completed results in the private
+`shared-datasets-1-catalog-comparisons` bucket, separate from the canonical dataset
+bucket. Any viewer instance can poll a job, load its immutable SQLite index and
+compressed source sidecars, or cancel its worker. Result files use no-clobber
+uploads and recorded generations, sizes and SHA-256 checksums; complete state
+is published only after all files upload. Hydration rechecks the user and current
+catalog access first. It does not download FGB again or recompute the comparison.
+
+State, access leases and cancellation markers are separate objects. A worker
+alone updates its state with generation preconditions. The open comparison
+renews its access every minute; jobs expire after 15 minutes without activity.
+Cache objects are lifecycle-deleted after one day. Instance-local copies retain
+the same workspace and capacity limits. A stopped worker is reported as failed,
+with no partial result. Local fixture/CLI servers can use an in-process store;
+Cloud Run requires `CATALOG_VIEWER_COMPARISON_BUCKET` at startup.
+
+While comparing, a full-width progress bar sits above the Version row's bottom
+divider. Row validation reports checked rows against the exact declared totals
+from the pinned manifests, including required historical geometry checks.
+Preparation, classification and cache publication use an indeterminate bar;
+the UI does not invent a percentage for those stages. The bar disappears when
+the result completes, fails, is superseded or closes.
+
 ```http
 POST /api/comparisons
 GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=&geometry_change=
@@ -267,7 +293,7 @@ a 15-second transport timeout with retries disabled.
 | Start body | 16 KiB |
 | Concurrent jobs per instance | 2 |
 | Retained jobs per instance | 8 |
-| Job retention | 15 minutes from start |
+| Job retention | 15 minutes without activity |
 
 The set comparison is inexpensive. The task-scoped SQLite index stores IDs,
 identity keys, binary 32-byte geometry/property hashes, and offsets into the
@@ -292,8 +318,8 @@ Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never
 indexes sidecars or performs expensive comparison work on its UI thread.
 
-Jobs use task-scoped SQLite files under the standard local work root, not a
-persistent database. There is no cross-job result cache; immutable job results
+Jobs use task-scoped SQLite files under the standard local work root, backed by
+the private temporary cache. There is no cross-job result cache; immutable job results
 are tied to their complete inputs and policy/result version. Same-date generation
 changes produce a different input key. The catalog discovers indexed snapshots,
 not a history of overwritten generations. Old generations must actually be
@@ -305,11 +331,10 @@ writable filesystem consumes instance memory. The bounded eight-job/128-MiB
 workspace policy leaves headroom for processing. These are reviewed Terraform
 source changes, routed through the existing protected catalog-viewer and preview
 workflows; implementation testing does not deploy them. Session affinity is
-[best effort](https://docs.cloud.google.com/run/docs/configuring/session-affinity):
-an instance replacement, revision transition, high utilization or broken affinity
-can expire a task. The viewer returns a visible rerun instruction, rather than
-recreating a task from unrelated inputs. Browser cookies and `credentials: include`
-preserve normal affinity. The CPU setting uses
+[best effort](https://docs.cloud.google.com/run/docs/configuring/session-affinity);
+polls, map requests and completed results remain usable on other instances.
+A worker terminated during computation still needs an explicit rerun of the
+selected pinned inputs; no unrelated inputs are substituted. The CPU setting uses
 [instance-based billing](https://docs.cloud.google.com/run/docs/configuring/billing-settings),
 which can increase runtime cost; no minimum instance count is added.
 

@@ -66,6 +66,23 @@ let activeFeatureMarker = null;
 let restrictedSessionPromises = new Map();
 let privateSignerUnavailable = false;
 
+function addExtentsControl(map, zoom) {
+  map.addControl({
+    onAdd() {
+      this.container = document.createElement("div");
+      this.container.className = "maplibregl-ctrl maplibregl-ctrl-group";
+      const button = document.createElement("button");
+      button.type = "button"; button.className = "map-zoom-extents";
+      button.title = "Zoom to extents"; button.setAttribute("aria-label", "Zoom to extents");
+      button.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M9 4H4v5m11-5h5v5M4 15v5h5m11-5v5h-5"/><path d="m4 4 5 5m11-5-5 5M4 20l5-5m11 5-5-5"/></svg>';
+      button.addEventListener("click", zoom);
+      this.container.append(button);
+      return this.container;
+    },
+    onRemove() { this.container.remove(); },
+  }, "top-right");
+}
+
 export async function renderMapPreview({
   container,
   status,
@@ -152,6 +169,7 @@ export async function renderMapPreview({
   });
   activeMap = map;
   map.addControl(new window.maplibregl.NavigationControl({ visualizePitch: false }), "top-right");
+  addExtentsControl(map, zoomToSelection);
   map.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
   await withTimeout(
@@ -1969,6 +1987,11 @@ export async function renderComparisonMap({container, status, baseline, target, 
     map = new window.maplibregl.Map({container: canvas, style, cooperativeGestures: true, attributionControl: false, center: [0, 15], zoom: 1});
     activeMap = map;
     map.addControl(new window.maplibregl.NavigationControl(), "top-right");
+    addExtentsControl(map, () => {
+      focusAbort?.abort();
+      const abort = new AbortController(); focusAbort = abort;
+      void focusCategory(abort).catch(error => { if (!abort.signal.aborted && isCurrent()) onError(error); });
+    });
     map.addControl(new window.maplibregl.AttributionControl({compact: true}), "bottom-right");
     await withTimeout(new Promise((resolve, reject) => {
       const abort = () => reject(new DOMException("Cancelled", "AbortError"));
@@ -1994,14 +2017,11 @@ export async function renderComparisonMap({container, status, baseline, target, 
     });
     return {dispose, viewport: () => isCurrent() ? captureViewport() : null,
       refreshGeometry() { ready = true; refreshInBackground(); },
-      setCategory(next, {zoom = true} = {}) {
+      setCategory(next) {
         if (!isCurrent()) return;
         focusAbort?.abort();
+        map.stop();
         category = next; updateCategory(); clearFeatureInspectionIndicator();
-        if (zoom) {
-          const abort = new AbortController(); focusAbort = abort;
-          void focusCategory(abort).catch(error => { if (!abort.signal.aborted && isCurrent()) onError(error); });
-        }
       },
       selectFeature(id) {
         if (!isCurrent()) return;

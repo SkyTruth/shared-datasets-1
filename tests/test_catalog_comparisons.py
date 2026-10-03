@@ -205,7 +205,7 @@ def test_expired_jobs_and_resource_limit_produce_no_partial_counts(context):
     result = complete(context, start["job_id"])
     assert result["state"] == "failed" and "max_input_bytes" in result["error"]
     assert "summary" not in result
-    context[1].jobs[start["job_id"]].created -= comparisons.JOB_TTL_SECONDS + 1
+    context[1].jobs[start["job_id"]].accessed -= comparisons.JOB_TTL_SECONDS + 1
     assert call(context, "GET", f"/api/comparisons/{start['job_id']}")[0] == 404
 
 

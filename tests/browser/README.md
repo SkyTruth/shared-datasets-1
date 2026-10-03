@@ -79,7 +79,8 @@ discard delayed metadata after a selection change. `comparison_server.py`
 uses synthetic IAP headers at the HTTP test boundary and never contacts GCS.
 The overlapping-point scenario checks actual red, green and yellow pixels above
 unchanged gray neighbors. It clicks all four category buttons, verifies filtered
-hits and table membership, checks zoom, toggling, basemap persistence and release
+hits and table membership, verifies toggles preserve the camera and the separate
+extents button zooms, and checks basemap persistence and release
 reset. Polygon map inspection and paired table inspection also assert yellow
 source-property cells, including absent versus explicit null.
 

@@ -8,7 +8,7 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
   iap_enabled         = true
 
   template {
-    # Comparison jobs use bounded instance-local SQLite workspaces.
+    # Affinity saves downloads; shared state keeps comparison requests portable.
     session_affinity = true
     service_account  = local.preview_service_account_email
 
@@ -27,6 +27,11 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
       env {
         name  = "SHARED_DATASETS_BUCKET"
         value = google_storage_bucket.preview_bucket.name
+      }
+
+      env {
+        name  = "CATALOG_VIEWER_COMPARISON_BUCKET"
+        value = google_storage_bucket.preview_comparisons.name
       }
 
       env {
@@ -93,7 +98,35 @@ resource "google_cloud_run_v2_service" "feature_preview_catalog_viewer" {
     ignore_changes = [launch_stage, scaling]
   }
 
-  depends_on = [google_storage_bucket.preview_bucket]
+  depends_on = [google_storage_bucket.preview_bucket, google_storage_bucket_iam_member.preview_comparisons_worker]
+}
+
+resource "google_storage_bucket" "preview_comparisons" {
+  project                     = var.project_id
+  name                        = "${var.preview_bucket_name}-comparisons"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  force_destroy               = true
+
+  soft_delete_policy {
+    retention_duration_seconds = 0
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 1
+    }
+    action {
+      type = "Delete"
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "preview_comparisons_worker" {
+  bucket = google_storage_bucket.preview_comparisons.name
+  role   = "roles/storage.objectUser"
+  member = local.preview_service_account_member
 }
 
 resource "google_cloud_run_v2_service_iam_member" "feature_preview_catalog_viewer_iap_invoker" {

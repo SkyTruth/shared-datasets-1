@@ -669,6 +669,7 @@ dt {
 
 .version-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
 }
 
@@ -687,6 +688,16 @@ dt {
 .path-row .compare-after-label { color: #168153; }
 .compare-details { margin-left: auto; align-self: end; min-height: 42px; padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .compare-status { font-size: .8rem; color: var(--muted); margin: 0 14px; }
+.compare-progress { flex-basis: 100%; min-width: 0; margin-top: 5px; }
+.compare-progress-caption { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.path-row .compare-progress-caption span { margin: 0; font-size: .75rem; font-weight: 500; }
+.compare-progress progress { display: block; width: 100%; height: 8px; border: 0; border-radius: 99px; overflow: hidden; appearance: none; background: var(--line); accent-color: var(--accent); }
+.compare-progress progress::-webkit-progress-bar { background: var(--line); border-radius: 99px; }
+.compare-progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--accent-strong), #46af82); border-radius: 99px; transition: width .3s ease; }
+.compare-progress progress::-moz-progress-bar { background: var(--accent); border-radius: 99px; }
+.compare-progress progress:indeterminate { background: linear-gradient(90deg, var(--line) 25%, #46af82 50%, var(--line) 75%); background-size: 200% 100%; animation: comparison-preparing 1.5s ease-in-out infinite; }
+@keyframes comparison-preparing { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .compare-progress progress:indeterminate { animation: none; } .compare-progress progress::-webkit-progress-value { transition: none; } }
 @media (max-width: 680px) {
   .version-row { gap: 6px; padding: 13px 0; }
   .version-control { flex: 1; }
@@ -1368,11 +1379,8 @@ h3 {
 .use-tabs button { border: 0; background: transparent; padding: 8px 12px; color: var(--muted); border-radius: 6px; cursor: pointer; }
 .use-tabs button[aria-selected="true"] { color: var(--accent); background: var(--code); font-weight: 700; }
 .use-section pre { min-width: 0; margin: 10px 0; padding: 18px; background: var(--code); border-radius: 8px; overflow-x: auto; white-space: pre; font-size: 13px; line-height: 1.65; }
-.use-credit { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px; }
-.use-credit a { color: inherit; text-decoration: none; }
-.use-credit a:hover { text-decoration: underline; }
-.use-credit button { border: 0; padding: 2px 4px; background: transparent; color: inherit; font-size: inherit; cursor: pointer; }
+.use-footer { display: flex; justify-content: end; font-size: 11px; }
+.use-help { color: var(--muted); }
 .use-help { margin-left: auto; }
-.use-credit button:hover { color: var(--accent); }
 @media (max-width: 620px) { .detail-header { grid-template-columns: minmax(0, 1fr); } }
 .detail-actions { flex-wrap: wrap; }
