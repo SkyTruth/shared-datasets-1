@@ -128,7 +128,7 @@ class TranslationInputTests(unittest.TestCase):
                 with translations.prepare_memory(publisher, [SimpleNamespace(slug=slug, root="root")], root / "work") as memory:
                     direct = memory.direct(slug, '["site-a"]')
                     self.assertEqual(len(direct), 6)
-                    self.assertEqual({value[1] for value in direct.values()}, {"translated " + locale for locale in translations.LOCALES})
+                    self.assertEqual({row[1] for values in direct.values() for row in values}, {"translated " + locale for locale in translations.LOCALES})
                     self.assertEqual(build.call_args.kwargs["sources"][0]["release"], "2026-06-09")
 
     def test_legacy_evidence_cannot_be_used_for_an_unreviewed_bucket(self):
@@ -214,7 +214,7 @@ class TranslationInputTests(unittest.TestCase):
                 with translations.prepare_memory(publisher, [SimpleNamespace(slug=slug, root="root")], root / "work") as memory:
                     self.assertEqual(memory.supplement_snapshot.sha256, supplement.sha256)
                     self.assertEqual(len(memory.supplement), 12)
-                    self.assertEqual({value[1] for value in memory.direct(slug, '["site-a"]').values()}, {"existing " + locale for locale in translations.LOCALES})
+                    self.assertEqual({row[1] for values in memory.direct(slug, '["site-a"]').values() for row in values}, {"existing " + locale for locale in translations.LOCALES})
                     self.assertEqual(downloaded.call_args.args[1], supplement)
 
     def test_pending_assets_cannot_choose_different_supplements(self):

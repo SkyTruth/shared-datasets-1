@@ -52,6 +52,29 @@ def rebuild(root, memory, records):
 
 
 class TranslationReuseTests(unittest.TestCase):
+    def test_rebuild_and_generic_materialization_agree_on_history_and_failed_current_rows(self):
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            memory, _ = build(root, [record("1", "changed", "New"), record("2", "failed", "Oops")], [
+                row("1", "Old", "Ancien"), row("2", "Old failure", "Ancien échec"),
+                row("2", "Oops", "", "translation_failed"),
+            ])
+            self.addCleanup(memory.close)
+            report, output, rows = rebuild(root, memory, [
+                record("11", "changed", "New", "2026-10-01"), record("12", "failed", "Oops", "2026-10-01"),
+            ])
+            coverage = report["translations"]["locales"]["fr"]
+            self.assertEqual((coverage["current"], coverage["stale"], coverage["missing"]), (0, 1, 1))
+            self.assertEqual(rows[0].source_value_hash, loc.source_value_hash("Old"))
+            self.assertEqual(rows[1].review_state, "translation_failed")
+            generic, = loc.materialize_locale_sidecars(
+                canonical_sidecar=root / "new.metadata.ndjson.gz",
+                translation_source=root / "output/example-asset.metadata-translations.csv",
+                output_dir=root / "generic", locales=["fr"], translatable_fields={"name"},
+            )
+            self.assertEqual(generic.coverage(), coverage)
+            self.assertEqual(list(model.read_metadata_sidecar(Path(generic.output_sidecar))), output)
+
     def test_complete_csv_join_validation_rejects_corrupted_output(self):
         for problem in ("feature_id", "source_hash", "extra_row", "translated_value", "failed_value"):
             with self.subTest(problem=problem), publication_temp_directory() as temp:
@@ -141,7 +164,7 @@ class TranslationReuseTests(unittest.TestCase):
             self.addCleanup(memory.close)
             report, output, rows = rebuild(root, memory, [record("9", "park-a", "New", "2026-10-01"), record("10", "new-site", "Unknown", "2026-10-01")])
             self.assertEqual(report["by_locale"]["fr"]["shared_text_rows"], 1)
-            self.assertEqual(rows[0].review_state, "reused_translation")
+            self.assertEqual(rows[0].review_state, "human_reviewed")
             self.assertEqual(output[0]["properties"]["name"], "Nouveau")
             self.assertEqual(output[1]["properties"]["name"], "Unknown")
             self.assertEqual(rows[1].review_state, "translation_failed")
@@ -169,10 +192,10 @@ class TranslationReuseTests(unittest.TestCase):
             memory, report = build(root, records, rows)
             self.addCleanup(memory.close)
             self.assertEqual(report["sources"][0]["stale_source_rows"], 1)
-            self.assertEqual(report["sources"][0]["unconfirmed_or_failed_rows"], 2)
+            self.assertEqual(report["sources"][0]["unconfirmed_or_failed_rows"], 1)
             report, _, rows = rebuild(root, memory, [record("1", "1", "New", "2026-10-01")])
-            self.assertEqual(report["unique_pending_tasks"], 1)
-            self.assertEqual(rows[0].review_state, "translation_failed")
+            self.assertEqual(report["unique_pending_tasks"], 0)
+            self.assertEqual(rows[0].review_state, "needs_review")
 
     def test_duplicate_source_identity_or_translation_refuses_without_replacing_database(self):
         for duplicate in ("identity", "translation"):

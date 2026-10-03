@@ -201,6 +201,34 @@ sidecars with generation preconditions from the approved publisher environment.
 Catalog web deployment is chained after this materialization step so catalog
 release metadata is rebuilt from the post-localization release indexes.
 
+Asset documents can declare maintained `translation_locales` and
+`translation_fields` together. The generated catalog exposes both lists; CSV
+columns use semicolon-separated values. Explicitly requesting those locales in
+the local materializer produces a sidecar even when the translation CSV has no
+rows for a locale. Only nonblank string values in the approved fields enter
+coverage. Existing explicit non-string translations remain supported, but do not
+enter this denominator.
+
+New localized records include an optional `translation` block with `locale`,
+`state` (`complete`, `partial`, or `fallback`), `translated_fields`,
+`fallback_fields`, `machine_fields`, and `human_reviewed_fields`. The canonical
+release, identity, hashes, and provenance remain unchanged. Consumers of older
+sidecars must tolerate the block being absent.
+
+The materialization report includes a `translations` block (`schema_version: 1`)
+keyed by locale. Each locale reports `translatable_values`, `current`, `stale`,
+`missing`, `orphan`, `removed_fields`, `coverage`, and `review_states`. Current,
+stale, and missing partition eligible current values; old CSV history never
+increases the denominator. Usable AI output is current without expert approval;
+failed current rows are missing. Coverage is `current / translatable_values`, or
+`null` when no values are eligible. The WDPA publisher writes this same block
+into its final manifest alongside the CSV and locale artifact generations.
+
+The materializer also writes a local `*.translation-debt.{locale}.csv` containing
+unresolved `feature_id`, `field`, `locale`, `source_value_hash`, and `source_value`
+columns. These files support subsequent review; this build step does not send
+notifications or publish debt files.
+
 ## Operations
 
 Both viewers construct `GcsSidecarFeatureIndex`. A lookup resolves a concrete

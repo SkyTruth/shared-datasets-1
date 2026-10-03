@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
-import tempfile
 from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +26,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts import feature_metadata_localization as localization, release_feature_model as model, translation_local_io as local_io
 
-SUCCESS_STATES = {"human_reviewed", "machine_translated", "document_translated", "source_provided", "reused_translation"}
 COLUMNS = (*localization.REQUIRED_TRANSLATION_COLUMNS, *localization.OPTIONAL_TRANSLATION_COLUMNS)
 
 
@@ -49,27 +47,9 @@ def source_key(properties: dict[str, Any], fields: Sequence[str]) -> str:
 
 
 def validate_sidecar(path: Path, slug: str, release: str) -> int:
-    from ingestion.common.identity_index import DiskIdentityRecords
-
-    with tempfile.TemporaryDirectory(
-        prefix="translation-validation-", dir=path.parent
-    ) as tmp:
-        index = DiskIdentityRecords(Path(tmp) / "identities.sqlite")
-        try:
-            result = model.validate_sidecar_records(
-                model.read_metadata_sidecar(path),
-                expected_asset_slug=slug,
-                expected_release=release,
-                identity_index=index,
-            )
-        finally:
-            index.close()
+    result = localization.validate_sidecar(path, expected_asset_slug=slug, expected_release=release)
     require(result.valid, "invalid canonical sidecar: " + "; ".join(result.errors))
     return result.feature_count
-
-
-def open_csv(path: Path):
-    return gzip.open(path, "rt", encoding="utf-8", newline="") if path.suffix == ".gz" else path.open(encoding="utf-8", newline="")
 
 
 def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: Sequence[str], locales: Sequence[str], source_key_fields: Sequence[str]) -> dict[str, Any]:
@@ -97,7 +77,8 @@ def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: S
                                       UNIQUE(source,fid), UNIQUE(source,source_key));
                 CREATE TABLE phrase (id INTEGER PRIMARY KEY, slot INTEGER NOT NULL, hash TEXT NOT NULL, value TEXT NOT NULL, review TEXT NOT NULL, notes TEXT NOT NULL,
                                      UNIQUE(slot,hash,value,review,notes));
-                CREATE TABLE translation (feature INTEGER NOT NULL, slot INTEGER NOT NULL, phrase INTEGER NOT NULL, PRIMARY KEY(feature,slot)) WITHOUT ROWID;
+                CREATE TABLE translation (feature INTEGER NOT NULL, slot INTEGER NOT NULL, hash TEXT NOT NULL, phrase INTEGER NOT NULL, PRIMARY KEY(feature,slot,hash)) WITHOUT ROWID;
+                CREATE TABLE dictionary (slot INTEGER, hash TEXT, phrase INTEGER, PRIMARY KEY(slot,hash)) WITHOUT ROWID;
             """)
             db.execute("INSERT INTO config VALUES (?)", (model.canonical_json(config),))
 
@@ -121,47 +102,54 @@ def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: S
                 @lru_cache(maxsize=2048)
                 def feature(fid):
                     found = db.execute("SELECT id,properties FROM feature WHERE source=? AND fid=?", (source_id, fid)).fetchone()
-                    require(found is not None, f"translation refers to unknown source feature {slug}/{fid}")
+                    if found is None:
+                        return None
                     props = json.loads(found[1])
                     return found[0], props, {field: localization.source_value_hash(value) for field, value in props.items()}
 
                 pending = []
-                with open_csv(translations) as handle:
-                    reader = csv.DictReader(handle)
-                    header = reader.fieldnames or []
-                    require(len(header) == len(set(header)) and set(localization.REQUIRED_TRANSLATION_COLUMNS) <= set(header) <= set(COLUMNS), "invalid translation CSV header")
-                    for row in reader:
-                        stats["input_rows"] += 1
-                        require(None not in row and all(value is not None for value in row.values()), "translation CSV row width differs from header")
-                        field = row["field"]
-                        locale = localization.normalize_locale(row["locale"])
-                        if (field, locale) not in slots:
-                            stats["out_of_scope_rows"] += 1
-                            continue
-                        fid, properties, hashes = feature(row["feature_id"])
-                        source_hash = localization.normalize_source_value_hash(row["source_value_hash"], context="reuse source")
-                        if hashes.get(field) != source_hash:
-                            stats["stale_source_rows"] += 1
-                            continue
-                        state, value, notes = row.get("review_state", ""), row["value"], row.get("notes", "")
-                        if state not in SUCCESS_STATES or localization.translation_failed(row, properties[field]) or not value.strip():
-                            stats["unconfirmed_or_failed_rows"] += 1
-                            continue
-                        slot = slots[field, locale]
-                        pending.append((fid, slot, phrase_id(slot, source_hash, value, state, notes)))
+                for row in localization.iter_translation_source(translations):
+                    stats["input_rows"] += 1
+                    field, locale = row.field, row.locale
+                    if (field, locale) not in slots:
+                        stats["out_of_scope_rows"] += 1
+                        continue
+                    found = feature(row.feature_id)
+                    if found is None:
+                        stats["orphan_source_rows"] += 1
+                        continue
+                    fid, properties, hashes = found
+                    if field not in properties:
+                        stats["removed_field_rows"] += 1
+                        continue
+                    source_hash = row.source_value_hash
+                    if hashes.get(field) != source_hash:
+                        stats["stale_source_rows"] += 1
+                    state, value, notes = row.review_state, row.value, row.notes
+                    failed = localization.translation_failed(row, properties[field])
+                    if failed:
+                        stats["unconfirmed_or_failed_rows"] += 1
+                        state, value = localization.FAILED_REVIEW_STATE, ""
+                    else:
                         stats["accepted_rows"] += 1
-                        if len(pending) == 10000:
-                            db.executemany("INSERT INTO translation VALUES (?,?,?)", pending)
-                            pending.clear()
-                        if stats["input_rows"] % 1000000 == 0:
-                            print(f"{slug}: indexed {stats['input_rows']:,} translation rows", file=sys.stderr, flush=True)
-                db.executemany("INSERT INTO translation VALUES (?,?,?)", pending)
+                    slot = slots[field, locale]
+                    phrase = phrase_id(slot, source_hash, value, state, notes)
+                    pending.append((fid, slot, source_hash, phrase))
+                    if not failed and hashes.get(field) == source_hash:
+                        db.execute("""INSERT INTO dictionary VALUES (?,?,?) ON CONFLICT(slot,hash) DO UPDATE SET phrase=
+                            CASE WHEN (SELECT value FROM phrase WHERE id=dictionary.phrase) =
+                                      (SELECT value FROM phrase WHERE id=excluded.phrase)
+                                 THEN dictionary.phrase ELSE NULL END""", (slot, source_hash, phrase))
+                    if len(pending) == 10000:
+                        db.executemany("INSERT INTO translation VALUES (?,?,?,?)", pending)
+                        pending.clear()
+                    if stats["input_rows"] % 1000000 == 0:
+                        print(f"{slug}: indexed {stats['input_rows']:,} translation rows", file=sys.stderr, flush=True)
+                db.executemany("INSERT INTO translation VALUES (?,?,?,?)", pending)
                 feature.cache_clear()
                 report["sources"].append({"asset_slug": slug, "release": release, **stats, "provenance": source.get("provenance", {})})
                 db.commit()
             db.executescript("""
-                CREATE TABLE dictionary AS SELECT slot, hash, CASE WHEN COUNT(DISTINCT value)=1 THEN MIN(id) ELSE NULL END AS phrase FROM phrase GROUP BY slot,hash;
-                CREATE UNIQUE INDEX dictionary_key ON dictionary(slot,hash);
                 CREATE TABLE report (value TEXT NOT NULL);
             """)
             report["unique_phrase_variants"] = db.execute("SELECT count(*) FROM phrase").fetchone()[0]
@@ -171,6 +159,8 @@ def build_memory(*, database: Path, sources: Sequence[dict[str, Any]], fields: S
             db.commit()
         except sqlite3.IntegrityError as exc:
             raise TranslationReuseError("duplicate source identity or current translation key") from exc
+        except localization.FeatureMetadataLocalizationError as exc:
+            raise TranslationReuseError(str(exc)) from exc
         finally:
             db.close()
     return report
@@ -187,7 +177,7 @@ def read_supplement(path: Path, slots: Sequence[tuple[str, str]]) -> dict[tuple[
             require(pair in by_slot, "supplement contains an unapproved field or locale")
             require(isinstance(row["source_value"], str) and row["source_value"].strip(), "supplement source must be nonempty text")
             require(localization.source_value_hash(row["source_value"]) == row["source_value_hash"], "supplement source hash differs")
-            require(row["review_state"] in SUCCESS_STATES and isinstance(row["value"], str) and row["value"].strip(), "supplement must contain completed translations")
+            require(isinstance(row["review_state"], str) and isinstance(row["value"], str) and row["value"].strip(), "supplement must contain completed translations")
             require(isinstance(row["notes"], str) and not localization.translation_failed(row, row["source_value"]), "supplement contains a failed translation")
             key = (by_slot[pair], row["source_value_hash"])
             require(key not in result, "duplicate supplement translation key")
@@ -220,10 +210,13 @@ class TranslationMemory:
         return self.db.execute("SELECT d.phrase,p.value,p.review,p.notes FROM dictionary d LEFT JOIN phrase p ON p.id=d.phrase WHERE d.slot=? AND d.hash=?", (slot, source_hash)).fetchone()
 
     def direct(self, asset_slug: str, key: str):
-        return {row[0]: row[1:] for row in self.db.execute("""
+        grouped = {}
+        for row in self.db.execute("""
             SELECT t.slot,p.hash,p.value,p.review,p.notes FROM source s JOIN feature f ON f.source=s.id
             JOIN translation t ON t.feature=f.id JOIN phrase p ON p.id=t.phrase WHERE s.asset=? AND f.source_key=?
-        """, (asset_slug, key))}
+        """, (asset_slug, key)):
+            grouped.setdefault(row[0], []).append(row[1:])
+        return grouped
 
     def rebuild(self, *, canonical_sidecar: Path, schema: Path, asset_slug: str, release: str, output_dir: Path) -> dict[str, Any]:
         require(not output_dir.exists(), "rebuild output directory must be new; preserve earlier reports and candidates")
@@ -239,6 +232,7 @@ class TranslationMemory:
         pending_db.executescript("PRAGMA cache_size=-65536; PRAGMA temp_store=FILE; PRAGMA mmap_size=0; CREATE TABLE target_sources (source_key TEXT PRIMARY KEY) WITHOUT ROWID;")
         pending_db.execute("CREATE TABLE pending (slot INTEGER, hash TEXT, source TEXT, reason TEXT, affected INTEGER, PRIMARY KEY(slot,hash,reason)) WITHOUT ROWID")
         counts = {locale: Counter() for locale in self.locales}
+        coverage = {locale: localization.LocalizationReport(locale, str(canonical_sidecar), "", "", sorted(self.fields)) for locale in self.locales}
         translations_path = output_dir / f"{asset_slug}.metadata-translations.csv"
         locale_paths = {locale: output_dir / f"{asset_slug}.metadata.{locale}.ndjson.gz" for locale in self.locales}
         try:
@@ -246,7 +240,13 @@ class TranslationMemory:
                 csv_handle = stack.enter_context(translations_path.open("x", encoding="utf-8", newline=""))
                 writer = csv.DictWriter(csv_handle, fieldnames=COLUMNS, lineterminator="\n")
                 writer.writeheader()
-                handles = {}
+                handles, debt_writers = {}, {}
+                for locale in self.locales:
+                    debt_path = output_dir / f"{asset_slug}.translation-debt.{locale}.csv"
+                    coverage[locale].debt_path = str(debt_path)
+                    handle = stack.enter_context(debt_path.open("x", encoding="utf-8", newline=""))
+                    debt_writers[locale] = csv.DictWriter(handle, fieldnames=localization.DEBT_COLUMNS, lineterminator="\n")
+                    debt_writers[locale].writeheader()
                 for locale, path in locale_paths.items():
                     raw = stack.enter_context(path.open("xb"))
                     zipped = stack.enter_context(gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0))
@@ -260,22 +260,23 @@ class TranslationMemory:
                         raise TranslationReuseError("target source identity is ambiguous") from exc
                     direct = self.direct(asset_slug, key)
                     hashes = {field: localization.source_value_hash(properties[field]) for field in self.fields if field in properties}
-                    localized = {locale: dict(properties) for locale in self.locales}
+                    locale_rows = {locale: [] for locale in self.locales}
                     for slot, (field, locale) in enumerate(self.slots):
                         original = properties.get(field)
-                        if original is None or original == "":
+                        if not isinstance(original, str) or not original.strip():
                             counts[locale]["empty_or_missing_fields"] += 1
                             continue
                         source_hash = hashes[field]
-                        exact = direct.get(slot)
+                        previous = direct.get(slot, ())
+                        exact = next((row for row in previous if row[0] == source_hash), None)
+                        row_hash = source_hash
                         shared = self.shared(slot, source_hash)
-                        if exact and exact[0] == source_hash:
+                        if exact and exact[2] != localization.FAILED_REVIEW_STATE:
                             _old_hash, value, state, notes = exact
                             counts[locale]["same_feature_rows"] += 1
                         elif shared is not None and shared[0] is not None:
-                            _phrase, value, _old_state, old_notes = shared
+                            _phrase, value, state, notes = shared
                             counts[locale]["shared_text_rows"] += 1
-                            state, notes = "reused_translation", old_notes
                         elif fresh := self.supplement.get((slot, source_hash)):
                             # Only fill gaps. Never replace an established
                             # site-specific or unambiguous reused translation.
@@ -287,13 +288,20 @@ class TranslationMemory:
                             pending_db.execute("INSERT INTO pending VALUES (?,?,?,?,1) ON CONFLICT(slot,hash,reason) DO UPDATE SET affected=affected+1", (slot, source_hash, model.canonical_json(original), reason))
                             # An explicit failed task is valid CSV but cannot be
                             # mistaken for a completed translation on the next run.
-                            value, state, notes = "", localization.FAILED_REVIEW_STATE, reason
-                        writer.writerow({"feature_id": record["feature_id"], "field": field, "locale": locale, "source_value_hash": source_hash,
-                                         "value": value, "review_state": state, "notes": notes})
-                        if state != localization.FAILED_REVIEW_STATE:
-                            localized[locale][field] = value
+                            stale = [row for row in previous if row[2] != localization.FAILED_REVIEW_STATE]
+                            if exact:
+                                row_hash, value, state, notes = exact
+                            elif stale:
+                                row_hash, value, state, notes = sorted(stale)[0]
+                            else:
+                                value, state, notes = "", localization.FAILED_REVIEW_STATE, reason
+                        row = {"feature_id": record["feature_id"], "field": field, "locale": locale, "source_value_hash": row_hash,
+                               "value": value, "review_state": state, "notes": notes}
+                        writer.writerow(row)
+                        locale_rows[locale].append(localization.TranslationRow(row_number=0, **row))
                     for locale, handle in handles.items():
-                        handle.write(model.canonical_json({**record, "properties": localized[locale]}) + "\n")
+                        localized = localization.localize_record(record, rows=locale_rows[locale], report=coverage[locale], debt=debt_writers[locale].writerow)
+                        handle.write(model.canonical_json(localized) + "\n")
                     if number % 50000 == 0:
                         print(f"{asset_slug}: rebuilt {number:,} features", file=sys.stderr, flush=True)
             pending_db.commit()
@@ -310,6 +318,8 @@ class TranslationMemory:
             report = {"schema_version": 1, "asset_slug": asset_slug, "release": release, "feature_count": feature_count,
                       "source_key_fields": self.config["source_key_fields"], "fields": self.fields, "locales": self.locales,
                       "input_sha256": {str(s.path): s.sha256 for s in snapshots}, "source_bundles": self.source_report["sources"],
+                      "translations": localization.translations_payload(list(coverage.values())),
+                      "debt_files": {loc: report.debt_path for loc, report in coverage.items()},
                       "by_locale": {loc: dict(counts[loc]) for loc in self.locales}, "unique_pending_tasks": pending_keys,
                       "requested_rows_complete": pending_keys == 0, "valid": True, "output_sha256": output_hashes,
                       "pending_tasks": str(pending_path), "publication_status": "local_candidate_only"}
@@ -331,23 +341,25 @@ def validate_rebuilt_sidecars(canonical: Path, localized: dict[str, Path], field
         seen = 0
         for expected in canonical_rows:
             require(expected["asset_slug"] == slug and expected["release"] == release, "unexpected canonical release")
-            properties = {locale: dict(expected["properties"]) for locale in localized}
+            rows = {locale: [] for locale in localized}
             for field in fields:
                 original = expected["properties"].get(field)
-                if original is None or original == "":
+                if not isinstance(original, str) or not original.strip():
                     continue
-                source_hash = localization.source_value_hash(original)
                 for locale in localized:
                     row = next(reader, None)
                     require(row is not None and set(row) == set(COLUMNS) and all(value is not None for value in row.values()), "rebuilt translation CSV is truncated or malformed")
-                    require((row["feature_id"], row["field"], row["locale"], row["source_value_hash"]) == (expected["feature_id"], field, locale, source_hash), "rebuilt translation CSV key/hash/order differs")
+                    require((row["feature_id"], row["field"], row["locale"]) == (expected["feature_id"], field, locale), "rebuilt translation CSV key/hash/order differs")
                     if row["review_state"] == localization.FAILED_REVIEW_STATE:
                         require(row["value"] == "", "failed translation must have an empty value")
                     else:
-                        require(row["review_state"] in SUCCESS_STATES and bool(row["value"].strip()) and not localization.translation_failed(row, original), "rebuilt CSV contains an unconfirmed translation")
-                        properties[locale][field] = row["value"]
+                        require(bool(row["value"].strip()) and not localization.translation_failed(row, original), "rebuilt CSV contains a failed translation")
+                    localization.normalize_source_value_hash(row["source_value_hash"], context="rebuilt translation")
+                    rows[locale].append(localization.TranslationRow(row_number=0, **row))
             for locale, stream in streams.items():
-                require(next(stream, None) == {**expected, "properties": properties[locale]}, f"{locale}: localized row differs from canonical/translation CSV join")
+                report = localization.LocalizationReport(locale, str(canonical), str(translation_source), str(localized[locale]), sorted(fields))
+                result = localization.localize_record(expected, rows=rows[locale], report=report)
+                require(next(stream, None) == result, f"{locale}: localized row differs from canonical/translation CSV join")
             seen += 1
         require(seen == count, "incomplete canonical file")
         require(next(reader, None) is None, "extra translation CSV rows")

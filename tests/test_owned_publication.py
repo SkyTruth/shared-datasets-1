@@ -73,19 +73,24 @@ class OwnedPublicationTests(unittest.TestCase):
         self.native = native.start()
         self.addCleanup(native.stop)
 
-    def test_first_release_requires_complete_translations_before_reserving_ids(self):
+    def test_first_release_commits_partial_translations_without_weakening_identity_ownership(self):
         asset = wdpa.ASSETS[0]
         with publication_temp_directory() as temporary:
             publisher, store = publisher_fixture(asset)
             approved = publisher.reset_translation_supplement(asset)
             self.assertIn("/_scratch/pending-publishes/", approved.path)
             outputs = outputs_fixture(Path(temporary), asset)
-            incomplete = replace(outputs, localization_report={**outputs.localization_report, "requested_rows_complete": False})
-            before = list(store.events)
-            with self.assertRaisesRegex(p.PublicationError, "complete approved translations"):
-                publish(publisher, asset, incomplete)
-            self.assertEqual(before, store.events)
-            publish(publisher, asset, outputs)
+            incomplete = replace(outputs, localization_report={**outputs.localization_report, "requested_rows_complete": False,
+                "translations": {"schema_version": 1, "locales": {
+                    locale: {**counts, "current": 1, "missing": 1, "coverage": 0.5, "review_states": {"human_reviewed": 1}}
+                    for locale, counts in outputs.localization_report["translations"]["locales"].items()}}})
+            record = publish(publisher, asset, incomplete)
+            self.assertEqual(record["status"], "success")
+            state = store.read_json(publisher.context(asset).state_uri).value
+            self.assertEqual(state["reserved_next_feature_id"], 3)
+            self.assertIsNone(state["active"])
+            manifest = store.read_json(f"gs://bucket/{asset.release_object(DATE, '.manifest.json')}").value
+            self.assertTrue(all(counts["missing"] == 1 for counts in manifest["translations"]["locales"].values()))
             with self.assertRaisesRegex(p.PublicationError, "only available before"):
                 publisher.reset_translation_supplement(asset)
 
@@ -123,6 +128,27 @@ class OwnedPublicationTests(unittest.TestCase):
                 if asset.slug.startswith("wdpa-"):
                     self.assertEqual(len(record["release_paths"]), 12)
                     self.assertEqual(record["localization"]["translation_locales"], list(wdpa.translations.LOCALES))
+                    self.assertEqual(manifest["translations"], outputs.localization_report["translations"])
+                    self.assertEqual({entry["path"] for entry in manifest["artifacts"]}, {entry["path"] for entry in record["release_paths"]})
+
+    def test_old_captured_manifest_derivation_remains_byte_stable(self):
+        from ingestion.common.owned_publication import derive
+
+        asset = wdpa.ASSETS[0]
+        with publication_temp_directory() as temporary:
+            publisher, store = publisher_fixture(asset)
+            publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+            receipt = store.read_json(publisher.context(asset).receipt_uri).value
+            operation = next(op for op in receipt["intent"]["operations"] if op["id"] == "release-manifest")
+            parameters = operation["source"]["parameters"]
+            results = {key: p.ObjectVersion.parse(value) for key, value in receipt["results"].items()}
+            new_manifest = p.strict_json(derive(parameters, results))
+            parameters = {"kind": "manifest", "payload": {key: value for key, value in parameters["payload"].items() if key != "translations"}}
+            # Old receipts already contain extra locale results, but their v1
+            # manifest omitted them. Resuming must keep that exact old shape.
+            expected = {key: value for key, value in new_manifest.items() if key != "translations"}
+            expected["artifacts"] = [entry for entry in expected["artifacts"] if not entry["role"].startswith("extra-")]
+            self.assertEqual(derive(parameters, results), p.canonical(expected))
 
     def test_actual_publishers_resume_after_every_durable_write_without_rebuilding(self):
         for asset in (wdpa.ASSETS[0], sea_ice.ASSET):

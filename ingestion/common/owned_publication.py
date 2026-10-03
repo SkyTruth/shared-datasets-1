@@ -29,9 +29,16 @@ def blob_info(version: p.ObjectVersion) -> dict[str, Any]:
 
 def derive(parameters: dict[str, Any], results: Mapping[str, p.ObjectVersion]) -> bytes:
     kind = parameters["kind"]
-    if kind == "manifest":
+    if kind in {"manifest", "manifest-v2"}:
+        extra_artifacts = [
+            {"role": key.removeprefix("release-"), "format": "metadata", **blob_info(version), "sha256": version.sha256,
+             "latest_path": results[key.replace("release-", "latest-", 1)].path,
+             "latest_generation": results[key.replace("release-", "latest-", 1)].generation}
+            for key, version in results.items() if key.startswith("release-extra-") and kind == "manifest-v2"
+        ]
         payload = feature_metadata.final_manifest_payload(
             **parameters["payload"],
+            extra_artifacts=extra_artifacts,
             release_blob_info_by_role={role: blob_info(results[f"release-{role}"]) for role in ("fgb", "pmtiles", "metadata", "schema")},
             latest_blob_info_by_role={role: blob_info(results[f"latest-{role}"]) for role in ("fgb", "pmtiles", "metadata", "schema")},
         )
@@ -209,7 +216,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
             p.require(f"release-{role}" in operations and f"latest-{role}" in operations, "incomplete vector bundle")
         p.require("run-record" in operations and "release-index" in operations, "publication must include run and release-index effects")
 
-    def publish_generated(self, *, asset, run_date, outputs, identity, object_metadata, source_inputs, record, extra_suffix_paths=(), asset_readme: Path | None = None):
+    def publish_generated(self, *, asset, run_date, outputs, identity, object_metadata, source_inputs, record, extra_suffix_paths=(), asset_readme: Path | None = None, translations=None):
         context = self.context(asset)
         existing = self.resume(asset)
         if existing is not None:
@@ -223,9 +230,6 @@ class OwnedGeneratedPublisher(GcsPublisher):
             reset = load_reset_candidate(self.store, context, adoption)
             p.require(run_date.isoformat() == reset.value["first_release"] and outputs.previous_release is None and outputs.identity_baseline_snapshot is None,
                       "reset build must use the approved empty baseline and release")
-            if asset.slug.startswith("wdpa-"):
-                p.require(outputs.localization_report["requested_rows_complete"] is True,
-                          "first WDPA release requires complete approved translations")
         else:
             p.require(outputs.identity_baseline_snapshot is not None and asdict(outputs.identity_baseline_snapshot) == current["latest_manifest"], "builder used a stale identity baseline")
         p.require(outputs.identity_contract == CONTRACT_ID, "builder belongs to another identity contract")
@@ -275,8 +279,13 @@ class OwnedGeneratedPublisher(GcsPublisher):
                    "sha256_by_role": outputs.sha256, "schema": outputs.schema_payload, "source_inputs": source_inputs, "identity": identity,
                    "feature_count": outputs.row_count, "manifest_release_path": f"gs://{context.bucket}/{asset.release_object(run_date, '.manifest.json')}",
                    "manifest_latest_path": f"gs://{context.bucket}/{asset.latest_object('.manifest.json')}"}
+        if translations is not None:
+            model.validate_translation_coverage(translations)
+            payload["translations"] = translations
         dependencies = [op["id"] for op in operations if op["phase"] == "data"]
-        source = {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": {"kind": "manifest", "payload": payload}, "dependencies": dependencies}
+        # Persist the new derivation explicitly. Existing captured "manifest"
+        # intents must reproduce their original bytes when resumed.
+        source = {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": {"kind": "manifest-v2", "payload": payload}, "dependencies": dependencies}
         operations.append(self.operation("release-manifest", "commit", payload["manifest_release_path"], source, 0, asset.slug, object_metadata))
         operations.append(self.operation("latest-manifest", "commit", payload["manifest_latest_path"], {"kind": "result", "operation": "release-manifest"}, current["latest_manifest"]["generation"], asset.slug, object_metadata))
         ordered_roles = ["fgb", "pmtiles", "metadata", "schema", "manifest", *[role for role in roles if role.startswith("extra-")]]

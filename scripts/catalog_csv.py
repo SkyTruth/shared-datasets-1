@@ -52,3 +52,11 @@ def catalog_row_from_text(text: str, asset_slug: str, *, label: str = "catalog")
         if row.get("asset_slug") == asset_slug:
             return row
     return None
+
+
+def translation_config(asset_slug: str, path: Path = DEFAULT_CATALOG_CSV) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Read the maintained translation contract from the generated catalog."""
+    row = catalog_row(asset_slug, path)
+    if row is None:
+        raise CatalogCsvError(f"asset is absent from the catalog: {asset_slug}")
+    return tuple(filter(None, row.get("translation_locales", "").split(";"))), tuple(filter(None, row.get("translation_fields", "").split(";")))

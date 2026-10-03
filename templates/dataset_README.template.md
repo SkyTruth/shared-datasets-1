@@ -15,6 +15,8 @@ canonical_format: "fgb" # fgb | cog | zarr | pmtiles | geojson | ndgeojson | csv
 canonical_file: "latest/{asset-slug}.{ext}"
 available_formats:
   - "fgb"
+translation_locales: []
+translation_fields: []
 metadata_paths:
   - "README.md"
 source: "{source-name-or-url}"

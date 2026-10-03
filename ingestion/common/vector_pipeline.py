@@ -93,11 +93,11 @@ class PublishedVectorBundle:
 
     @property
     def release_paths(self) -> list[dict[str, Any]]:
-        return [self.release_by_role[role] for role in BUNDLE_ROLES]
+        return [self.release_by_role[role] for role in BUNDLE_ROLES] + list(self.extra_release_paths)
 
     @property
     def latest_paths(self) -> list[dict[str, Any]]:
-        return [self.latest_by_role[role] for role in BUNDLE_ROLES]
+        return [self.latest_by_role[role] for role in BUNDLE_ROLES] + list(self.extra_latest_paths)
 
 
 def publish_vector_bundle(
@@ -110,6 +110,7 @@ def publish_vector_bundle(
     source_inputs: Sequence[Mapping[str, Any]],
     identity: Mapping[str, Any],
     extra_suffix_paths: Sequence[tuple[str, Path]] = (),
+    translations: Mapping[str, Any] | None = None,
 ) -> PublishedVectorBundle:
     """Upload the standard FGB/PMTiles/metadata/schema/manifest release bundle.
 
@@ -189,6 +190,13 @@ def publish_vector_bundle(
             latest_blob_info_by_role={role: latest_by_role[role] for role in CORE_BUNDLE_ROLES},
             manifest_release_path=f"gs://{publisher.bucket.name}/{manifest_release_object}",
             manifest_latest_path=f"gs://{publisher.bucket.name}/{manifest_latest_object}",
+            translations=translations,
+            extra_artifacts=[
+                {"role": f"extra-{index}", "format": "metadata", **release_info,
+                 "latest_path": latest_info["path"], "latest_generation": latest_info["generation"],
+                 "sha256": sha256_file(path)}
+                for index, ((suffix, path), release_info, latest_info) in enumerate(zip(extra_suffix_paths, extra_release, extra_latest, strict=True))
+            ],
         ),
         outputs.manifest,
     )

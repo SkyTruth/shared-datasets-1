@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import contextmanager
+import gzip
 import json
 import re
+import sqlite3
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from itertools import zip_longest
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -25,6 +29,8 @@ REQUIRED_TRANSLATION_COLUMNS = ("feature_id", "field", "locale", "source_value_h
 OPTIONAL_TRANSLATION_COLUMNS = ("review_state", "notes")
 FIELD_SAFE_LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:_[a-z0-9]{2,8})*$")
 FAILED_REVIEW_STATE = "translation_failed"
+MACHINE_REVIEW_STATES = frozenset({"machine_placeholder", "machine_translated", "document_translated"})
+DEBT_COLUMNS = ("feature_id", "field", "locale", "source_value_hash", "source_value")
 LEGACY_FAILURE_NOTES_RE = re.compile(r"machine translation failed; source value retained; provider=google; target=[A-Za-z][A-Za-z0-9_-]*")
 SOURCE_VALUE_HASH_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
@@ -67,6 +73,23 @@ class LocalizationReport:
     missing_field_translations: list[dict[str, Any]] = field(default_factory=list)
     failed_translation_count: int = 0
     failed_translations: list[dict[str, Any]] = field(default_factory=list)
+    translatable_values: int = 0
+    current: int = 0
+    stale: int = 0
+    missing: int = 0
+    review_states: dict[str, int] = field(default_factory=dict)
+    debt_path: str = ""
+
+    def coverage(self) -> dict[str, Any]:
+        assert self.current + self.stale + self.missing == self.translatable_values
+        return {
+            "translatable_values": self.translatable_values,
+            "current": self.current, "stale": self.stale, "missing": self.missing,
+            "orphan": self.orphan_translation_count,
+            "removed_fields": self.missing_field_translation_count,
+            "coverage": self.current / self.translatable_values if self.translatable_values else None,
+            "review_states": dict(sorted(self.review_states.items())),
+        }
 
     @property
     def valid(self) -> bool:
@@ -79,6 +102,7 @@ class LocalizationReport:
         unresolved = self.failed_translation_count + self.stale_translation_count + self.orphan_translation_count + self.missing_field_translation_count
         payload["unresolved_translation_count"] = unresolved
         payload["requested_rows_complete"] = unresolved == 0
+        payload["coverage"] = self.coverage()
         return payload
 
 
@@ -118,14 +142,15 @@ def normalize_source_value_hash(value: Any, *, context: str) -> str:
     return digest if digest.startswith("sha256:") else f"sha256:{digest}"
 
 
-def read_translation_source(
+def iter_translation_source(
     path: Path,
     *,
     translatable_fields: set[str] | None = None,
-) -> list[TranslationRow]:
+) -> Iterable[TranslationRow]:
     if not path.exists():
         raise FeatureMetadataLocalizationError(f"translation source does not exist: {path}")
-    with path.open(newline="", encoding="utf-8") as handle:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
         if not fieldnames:
@@ -140,10 +165,8 @@ def read_translation_source(
         if unsupported:
             raise FeatureMetadataLocalizationError("translation source has unsupported column(s): " + ", ".join(unsupported))
 
-        rows: list[TranslationRow] = []
-        errors: list[str] = []
-        seen_keys: dict[tuple[str, str, str, str], int] = {}
         for row_number, row in enumerate(reader, start=2):
+            errors: list[str] = []
             if None in row or any(value is None for value in row.values()):
                 errors.append(f"row {row_number}: CSV row width does not match header")
             feature_id = str(row.get("feature_id") or "").strip()
@@ -186,16 +209,45 @@ def read_translation_source(
                 review_state=review_state,
                 notes=str(row.get("notes") or "").strip(),
             )
-            key = translation.key
-            if all(key):
-                previous = seen_keys.get(key)
-                if previous is not None:
-                    errors.append(f"row {row_number}: duplicate translation key first seen on row {previous}")
-                seen_keys[key] = row_number
-            rows.append(translation)
-    if errors:
-        raise FeatureMetadataLocalizationError("; ".join(errors))
-    return rows
+            if errors:
+                raise FeatureMetadataLocalizationError("; ".join(errors))
+            yield translation
+
+
+@contextmanager
+def translation_index(path: Path, *, translatable_fields: set[str] | None = None):
+    """One bounded-memory CSV boundary; the unique key also validates history."""
+    with tempfile.TemporaryDirectory(prefix="translation-index-", dir=path.parent) as directory:
+        db = sqlite3.connect(Path(directory) / "rows.sqlite")
+        try:
+            db.executescript("""
+                PRAGMA journal_mode=OFF;
+                PRAGMA cache_size=-32768;
+                PRAGMA temp_store=FILE;
+                CREATE TABLE rows (
+                    row_number INTEGER, feature_id TEXT, field TEXT, locale TEXT,
+                    source_value_hash TEXT, value TEXT, review_state TEXT, notes TEXT,
+                    PRIMARY KEY(locale, feature_id, field, source_value_hash)
+                ) WITHOUT ROWID;
+                CREATE TABLE seen (feature_id TEXT PRIMARY KEY) WITHOUT ROWID;
+            """)
+            try:
+                db.executemany("INSERT INTO rows VALUES (?,?,?,?,?,?,?,?)", (
+                    tuple(asdict(row).values()) for row in iter_translation_source(path, translatable_fields=translatable_fields)
+                ))
+            except sqlite3.IntegrityError as exc:
+                raise FeatureMetadataLocalizationError("duplicate translation key") from exc
+            db.commit()
+            yield db
+        finally:
+            db.close()
+
+
+def read_translation_source(path: Path, *, translatable_fields: set[str] | None = None) -> list[TranslationRow]:
+    # Compatibility for interactive machine/document translation tools. Release
+    # materialization reads the same validated index without collecting all rows.
+    with translation_index(path, translatable_fields=translatable_fields) as db:
+        return [TranslationRow(*row) for row in db.execute("SELECT * FROM rows ORDER BY row_number")]
 
 
 def translation_failed(row: TranslationRow | Mapping[str, Any], current_value: Any) -> bool:
@@ -237,19 +289,6 @@ def resolved_translatable_fields(*, schema: Path | None, fields: Sequence[str]) 
     raise FeatureMetadataLocalizationError("--schema or at least one --translatable-field is required")
 
 
-def translations_by_feature(rows: Iterable[TranslationRow], *, locale: str) -> dict[str, list[TranslationRow]]:
-    grouped: dict[str, list[TranslationRow]] = {}
-    for row in rows:
-        if row.locale != locale:
-            continue
-        grouped.setdefault(row.feature_id, []).append(row)
-    return grouped
-
-
-def locales_from_translation_rows(rows: Iterable[TranslationRow]) -> list[str]:
-    return sorted({row.locale for row in rows})
-
-
 def localized_sidecar_path(*, canonical_sidecar: Path, output_dir: Path, locale: str) -> Path:
     canonical_name = canonical_sidecar.name
     if not canonical_name.endswith(".metadata.ndjson.gz"):
@@ -275,52 +314,120 @@ def _translation_summary(row: TranslationRow, *, expected_hash: str | None = Non
     return payload
 
 
-def iter_localized_records(
-    canonical_records: Iterable[Mapping[str, Any]],
-    *,
-    grouped_translations: Mapping[str, Sequence[TranslationRow]],
-    report: LocalizationReport,
-) -> Iterable[dict[str, Any]]:
-    seen_feature_ids: set[str] = set()
-    for record in canonical_records:
-        payload = dict(record)
-        feature_id = str(payload.get("feature_id") or "").strip()
-        properties = payload.get("properties")
-        if not isinstance(properties, Mapping):
-            raise FeatureMetadataLocalizationError(f"record {report.feature_count + 1}: properties must be an object")
-        localized_properties = dict(properties)
-        applied_fields: set[str] = set()
-        report.feature_count += 1
-        seen_feature_ids.add(feature_id)
-        for translation in grouped_translations.get(feature_id, ()):
-            if translation.field not in properties:
-                report.missing_field_translation_count += 1
-                report.missing_field_translations.append(_translation_summary(translation))
-                continue
-            current_hash = source_value_hash(properties.get(translation.field))
-            if translation.source_value_hash != current_hash:
-                report.stale_translation_count += 1
-                report.stale_translations.append(_translation_summary(translation, expected_hash=current_hash))
-                continue
-            if translation_failed(translation, properties[translation.field]):
-                report.failed_translation_count += 1
-                report.failed_translations.append(_translation_summary(translation))
-                continue
-            localized_properties[translation.field] = translation.value
-            applied_fields.add(translation.field)
-            report.applied_translation_count += 1
-        if not applied_fields:
-            report.untranslated_feature_count += 1
-        payload["feature_id"] = feature_id
-        payload["properties"] = localized_properties
-        yield payload
-
-    for feature_id, rows in grouped_translations.items():
-        if feature_id in seen_feature_ids:
+def localize_record(
+    record: Mapping[str, Any], *, rows: Sequence[TranslationRow],
+    report: LocalizationReport, debt: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Classify each eligible value once, independently of translation history."""
+    properties = record["properties"]
+    localized = dict(properties)
+    feature_id = record["feature_id"]
+    by_field: dict[str, list[TranslationRow]] = {}
+    report.feature_count += 1
+    for row in rows:
+        if row.field not in properties or row.field not in report.translatable_fields:
+            report.missing_field_translation_count += 1
+            if len(report.missing_field_translations) < 25:
+                report.missing_field_translations.append(_translation_summary(row))
             continue
-        for row in rows:
-            report.orphan_translation_count += 1
-            report.orphan_translations.append(_translation_summary(row))
+        by_field.setdefault(row.field, []).append(row)
+        digest = source_value_hash(properties[row.field])
+        if translation_failed(row, properties[row.field]):
+            report.failed_translation_count += 1
+            if len(report.failed_translations) < 25:
+                report.failed_translations.append(_translation_summary(row))
+        elif row.source_value_hash != digest:
+            report.stale_translation_count += 1
+            if len(report.stale_translations) < 25:
+                report.stale_translations.append(_translation_summary(row, expected_hash=digest))
+
+    translated, fallback, machine, reviewed = [], [], [], []
+    for name in report.translatable_fields:
+        original = properties.get(name)
+        eligible = isinstance(original, str) and bool(original.strip())
+        if original is None or isinstance(original, str) and not eligible:
+            continue
+        digest = source_value_hash(original)
+        candidates = by_field.get(name, ())
+        current = next((row for row in candidates if row.source_value_hash == digest), None)
+        usable = current is not None and not translation_failed(current, original)
+        # Preserve explicit non-string translations created by the public
+        # --stringify-non-string tool. Only nonblank strings enter coverage/debt.
+        if not eligible and not usable:
+            continue
+        report.translatable_values += int(eligible)
+        if usable:
+            localized[name] = current.value
+            translated.append(name)
+            report.applied_translation_count += 1
+            state = current.review_state or "unknown"
+            if eligible:
+                report.current += 1
+                report.review_states[state] = report.review_states.get(state, 0) + 1
+            if state in MACHINE_REVIEW_STATES:
+                machine.append(name)
+            elif state == "human_reviewed":
+                reviewed.append(name)
+            continue
+        fallback.append(name)
+        # A current failed task is missing, even if older successful rows remain.
+        stale = current is None and any(not translation_failed(row, original) for row in candidates)
+        if stale:
+            report.stale += 1
+        else:
+            report.missing += 1
+        if debt is not None:
+            debt(dict(zip(DEBT_COLUMNS, (feature_id, name, report.locale, digest, original))))
+    if not translated:
+        report.untranslated_feature_count += 1
+    return {
+        **record, "properties": localized,
+        "translation": {
+            "locale": report.locale,
+            "state": "complete" if not fallback else "partial" if translated else "fallback",
+            "translated_fields": translated, "fallback_fields": fallback,
+            "machine_fields": machine, "human_reviewed_fields": reviewed,
+        },
+    }
+
+
+def indexed_localized_records(canonical_sidecar, db, report, debt=None):
+    for record in release_feature_model.read_metadata_sidecar(canonical_sidecar):
+        rows = [TranslationRow(*row) for row in db.execute(
+            "SELECT * FROM rows WHERE locale=? AND feature_id=? ORDER BY field,source_value_hash",
+            (report.locale, record["feature_id"]),
+        )]
+        db.execute("INSERT OR IGNORE INTO seen VALUES (?)", (record["feature_id"],))
+        yield localize_record(record, rows=rows, report=report, debt=debt)
+    for row in db.execute("SELECT * FROM rows WHERE locale=? AND feature_id NOT IN (SELECT feature_id FROM seen)", (report.locale,)):
+        report.orphan_translation_count += 1
+        if len(report.orphan_translations) < 25:
+            report.orphan_translations.append(_translation_summary(TranslationRow(*row)))
+
+
+def translations_payload(reports: Sequence[LocalizationReport]) -> dict[str, Any]:
+    return {"schema_version": 1, "locales": {report.locale: report.coverage() for report in reports}}
+
+
+def validate_sidecar(path: Path, *, expected_asset_slug=None, expected_release=None):
+    """Validate large sidecars without retaining every feature ID in memory."""
+    from ingestion.common.identity_index import DiskIdentityRecords
+
+    with tempfile.TemporaryDirectory(prefix="translation-validation-", dir=path.parent) as directory:
+        index = DiskIdentityRecords(Path(directory) / "identities.sqlite")
+        try:
+            return release_feature_model.validate_sidecar_records(
+                release_feature_model.read_metadata_sidecar(path),
+                expected_asset_slug=expected_asset_slug, expected_release=expected_release,
+                identity_index=index,
+            )
+        finally:
+            index.close()
+
+
+def debt_file_path(output_sidecar: Path, locale: str) -> Path:
+    stem = output_sidecar.name.removesuffix(f".metadata.{normalize_locale(locale)}.ndjson.gz")
+    return output_sidecar.with_name(f"{stem}.translation-debt.{normalize_locale(locale)}.csv")
 
 
 def materialize_locale_sidecar(
@@ -337,54 +444,63 @@ def materialize_locale_sidecar(
     expected_output: translation_local_io.FileSnapshot | None = None,
     input_snapshots: Sequence[translation_local_io.FileSnapshot] = (),
 ) -> LocalizationReport:
+    expected = translation_local_io.snapshots([canonical_sidecar, translation_source, *protected_inputs], observed=input_snapshots)
+    expected_output = expected_output or translation_local_io.FileSnapshot.capture(output_sidecar)
+    expected_debt = translation_local_io.FileSnapshot.capture(debt_file_path(output_sidecar, locale))
+    with translation_index(translation_source) as db:
+        return _materialize_locale_sidecar(
+            db=db, canonical_sidecar=canonical_sidecar, translation_source=translation_source,
+            output_sidecar=output_sidecar, locale=locale, translatable_fields=translatable_fields,
+            expected_asset_slug=expected_asset_slug, expected_release=expected_release,
+            fail_on_stale=fail_on_stale, protected_inputs=protected_inputs,
+            expected_output=expected_output, expected_debt=expected_debt, input_snapshots=expected,
+        )
+
+
+def _materialize_locale_sidecar(
+    *, db: sqlite3.Connection, canonical_sidecar: Path, translation_source: Path,
+    output_sidecar: Path, locale: str, translatable_fields: set[str],
+    expected_asset_slug: str | None, expected_release: str | None,
+    fail_on_stale: bool, protected_inputs: Sequence[Path],
+    expected_output: translation_local_io.FileSnapshot | None,
+    expected_debt: translation_local_io.FileSnapshot,
+    input_snapshots: Sequence[translation_local_io.FileSnapshot],
+) -> LocalizationReport:
     inputs = [canonical_sidecar, translation_source, *protected_inputs]
     translation_local_io.validate_paths(inputs=inputs, outputs=[output_sidecar])
     expected = (*translation_local_io.snapshots(inputs, observed=input_snapshots), expected_output or translation_local_io.FileSnapshot.capture(output_sidecar))
     normalized_locale = normalize_locale(locale)
-    source_validation = release_feature_model.validate_sidecar_records(
-        release_feature_model.read_metadata_sidecar(canonical_sidecar),
+    source_validation = validate_sidecar(
+        canonical_sidecar,
         expected_asset_slug=expected_asset_slug, expected_release=expected_release,
     )
     if not source_validation.valid:
         raise FeatureMetadataLocalizationError("canonical sidecar validation failed: " + "; ".join(source_validation.errors))
-    rows = read_translation_source(translation_source, translatable_fields=translatable_fields)
-    grouped = translations_by_feature(rows, locale=normalized_locale)
-    report = LocalizationReport(
-        locale=normalized_locale,
-        canonical_sidecar=str(canonical_sidecar),
-        translation_source=str(translation_source),
-        output_sidecar=str(output_sidecar),
-        translatable_fields=sorted(translatable_fields),
-    )
-    records = iter_localized_records(
-        release_feature_model.read_metadata_sidecar(canonical_sidecar),
-        grouped_translations=grouped,
-        report=report,
-    )
-    with translation_local_io.candidate_output(output_sidecar, expected=expected, protected=inputs) as candidate:
-        release_feature_model.write_metadata_sidecar(records, candidate)
-        validation = release_feature_model.validate_sidecar_records(
-            release_feature_model.read_metadata_sidecar(candidate),
+    debt_path = debt_file_path(output_sidecar, normalized_locale)
+    translation_local_io.validate_paths(inputs=inputs, outputs=[output_sidecar, debt_path])
+    report = LocalizationReport(normalized_locale, str(canonical_sidecar), str(translation_source), str(output_sidecar), sorted(translatable_fields), debt_path=str(debt_path))
+    with translation_local_io.candidate_output(output_sidecar, expected=expected, protected=inputs) as candidate, \
+         translation_local_io.candidate_output(debt_path, expected=[*expected, expected_debt], protected=inputs) as debt_candidate:
+        with debt_candidate.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=DEBT_COLUMNS, lineterminator="\n")
+            writer.writeheader()
+            records = indexed_localized_records(canonical_sidecar, db, report, writer.writerow)
+            release_feature_model.write_metadata_sidecar(records, candidate)
+        validation = validate_sidecar(
+            candidate,
             expected_asset_slug=expected_asset_slug, expected_release=expected_release,
         )
         if not validation.valid:
             raise FeatureMetadataLocalizationError("localized sidecar validation failed: " + "; ".join(validation.errors))
         if validation.feature_count != source_validation.feature_count:
             raise FeatureMetadataLocalizationError("localized sidecar row count does not match canonical sidecar")
-        # Compare the entire intended result one record at a time. This checks
-        # identity and unchanged properties without another full metadata copy.
         comparison_report = LocalizationReport(normalized_locale, str(canonical_sidecar), str(translation_source), str(output_sidecar), sorted(translatable_fields))
-        expected_records = iter_localized_records(
-            release_feature_model.read_metadata_sidecar(canonical_sidecar),
-            grouped_translations=grouped, report=comparison_report,
-        )
+        expected_records = indexed_localized_records(canonical_sidecar, db, comparison_report)
         for expected_record, actual in zip_longest(expected_records, release_feature_model.read_metadata_sidecar(candidate)):
             if expected_record != actual:
                 raise FeatureMetadataLocalizationError("localized sidecar identity or properties differ from canonical derivation")
         if fail_on_stale and report.stale_translation_count:
-            raise FeatureMetadataLocalizationError(
-                f"{report.stale_translation_count} stale translation(s) found for locale {normalized_locale}"
-            )
+            raise FeatureMetadataLocalizationError(f"{report.stale_translation_count} stale translation(s) found for locale {normalized_locale}")
     return report
 
 
@@ -405,39 +521,40 @@ def materialize_locale_sidecars(
 ) -> list[LocalizationReport]:
     inputs = [canonical_sidecar, translation_source, *protected_inputs]
     expected = translation_local_io.snapshots(inputs, observed=input_snapshots)
-    rows = read_translation_source(translation_source, translatable_fields=translatable_fields)
-    selected_locales = parse_locale_arguments(locales or [])
-    if not selected_locales:
-        selected_locales = locales_from_translation_rows(rows)
-    if not selected_locales:
-        raise FeatureMetadataLocalizationError("translation source does not contain any locales")
+    with translation_index(translation_source) as db:
+        selected_locales = parse_locale_arguments(locales or [])
+        if not selected_locales:
+            selected_locales = [row[0] for row in db.execute("SELECT DISTINCT locale FROM rows ORDER BY locale")]
+        if not selected_locales:
+            raise FeatureMetadataLocalizationError("translation source does not contain any locales")
 
-    outputs = [localized_sidecar_path(canonical_sidecar=canonical_sidecar, output_dir=output_dir, locale=locale) for locale in selected_locales]
-    report_paths = [report_dir / f"{path.name}.report.json" for path in outputs] if report_dir else []
-    translation_local_io.validate_paths(inputs=inputs, outputs=[*outputs, *report_paths, *reserved_outputs])
-    destinations = {path: translation_local_io.FileSnapshot.capture(path) for path in [*outputs, *report_paths]}
-    reports: list[LocalizationReport] = []
-    for locale in selected_locales:
-        for snapshot in expected:
-            snapshot.verify()
-        output_sidecar = localized_sidecar_path(canonical_sidecar=canonical_sidecar, output_dir=output_dir, locale=locale)
-        report = materialize_locale_sidecar(
-            canonical_sidecar=canonical_sidecar,
-            translation_source=translation_source,
-            output_sidecar=output_sidecar,
-            locale=locale,
-            translatable_fields=translatable_fields,
-            expected_asset_slug=expected_asset_slug,
-            expected_release=expected_release,
-            fail_on_stale=fail_on_stale,
-            protected_inputs=protected_inputs,
-            expected_output=destinations[output_sidecar],
-            input_snapshots=expected,
-        )
-        reports.append(report)
-        if report_dir:
-            report_path = report_dir / f"{output_sidecar.name}.report.json"
-            translation_local_io.write_json(report_path, report.to_dict(), protected=[*inputs, *outputs, *reserved_outputs], expected=[destinations[report_path]])
+        outputs = [localized_sidecar_path(canonical_sidecar=canonical_sidecar, output_dir=output_dir, locale=locale) for locale in selected_locales]
+        debt_paths = [debt_file_path(path, locale) for path, locale in zip(outputs, selected_locales)]
+        report_paths = [report_dir / f"{path.name}.report.json" for path in outputs] if report_dir else []
+        translation_local_io.validate_paths(inputs=inputs, outputs=[*outputs, *debt_paths, *report_paths, *reserved_outputs])
+        destinations = {path: translation_local_io.FileSnapshot.capture(path) for path in [*outputs, *debt_paths, *report_paths]}
+        reports: list[LocalizationReport] = []
+        for locale, output_sidecar, debt_path in zip(selected_locales, outputs, debt_paths):
+            for snapshot in expected:
+                snapshot.verify()
+            report = _materialize_locale_sidecar(
+                db=db, canonical_sidecar=canonical_sidecar,
+                translation_source=translation_source,
+                output_sidecar=output_sidecar,
+                locale=locale,
+                translatable_fields=translatable_fields,
+                expected_asset_slug=expected_asset_slug,
+                expected_release=expected_release,
+                fail_on_stale=fail_on_stale,
+                protected_inputs=protected_inputs,
+                expected_output=destinations[output_sidecar],
+                expected_debt=destinations[debt_path],
+                input_snapshots=expected,
+            )
+            reports.append(report)
+            if report_dir:
+                report_path = report_dir / f"{output_sidecar.name}.report.json"
+                translation_local_io.write_json(report_path, report.to_dict(), protected=[*inputs, *outputs, *debt_paths, *reserved_outputs], expected=[destinations[report_path]])
     return reports
 
 
@@ -457,6 +574,7 @@ def batch_report_payload(
         "locales": [report.locale for report in reports],
         "report_count": len(reports),
         "reports": [report.to_dict() for report in reports],
+        "translations": translations_payload(reports),
     }
 
 
@@ -523,7 +641,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise FeatureMetadataLocalizationError("exactly one --locale is required for single-locale generation")
             translation_local_io.validate_paths(
                 inputs=[args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else [])],
-                outputs=[args.output_sidecar, *([args.report] if args.report else [])],
+                outputs=[args.output_sidecar, debt_file_path(args.output_sidecar, locales[0]), *([args.report] if args.report else [])],
             )
             report = materialize_locale_sidecar(
                 canonical_sidecar=args.canonical_sidecar,
@@ -543,8 +661,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             protected = [args.canonical_sidecar, args.translation_source, *([args.schema] if args.schema else [])]
             if batch_mode:
                 protected.extend(Path(report.output_sidecar) for report in reports)
+                protected.extend(Path(report.debt_path) for report in reports)
             else:
                 protected.append(args.output_sidecar)
+                protected.append(Path(report.debt_path))
             translation_local_io.write_json(args.report, payload_obj, protected=protected, expected=report_expected)
         else:
             print(json.dumps(payload_obj, indent=2, sort_keys=True))

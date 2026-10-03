@@ -1167,6 +1167,43 @@ def sidecar_record_bytes(record: SidecarRecord | Mapping[str, Any]) -> bytes:
     return (canonical_json(payload) + "\n").encode("utf-8")
 
 
+def validate_translation_record(value: Any, properties: Mapping[str, Any]) -> None:
+    """Optional localization provenance; legacy/canonical records omit it."""
+    if not isinstance(value, Mapping) or not re.fullmatch(r"[a-z]{2,3}(?:_[a-z0-9]{2,8})*", str(value.get("locale", ""))):
+        raise ReleaseFeatureModelError("translation must contain a field-safe locale")
+    groups = {}
+    for key in ("translated_fields", "fallback_fields", "machine_fields", "human_reviewed_fields"):
+        fields = value.get(key)
+        if not isinstance(fields, list) or any(not isinstance(name, str) or name not in properties for name in fields) or len(set(fields)) != len(fields):
+            raise ReleaseFeatureModelError(f"translation.{key} must contain unique existing fields")
+        groups[key] = set(fields)
+    translated, fallback = groups["translated_fields"], groups["fallback_fields"]
+    if translated & fallback or not groups["machine_fields"] <= translated or not groups["human_reviewed_fields"] <= translated or groups["machine_fields"] & groups["human_reviewed_fields"]:
+        raise ReleaseFeatureModelError("translation field partitions/provenance disagree")
+    state = "complete" if not fallback else "partial" if translated else "fallback"
+    if value.get("state") != state:
+        raise ReleaseFeatureModelError("translation state disagrees with field coverage")
+
+
+def validate_translation_coverage(value: Any) -> None:
+    if not isinstance(value, Mapping) or type(value.get("schema_version")) is not int or value["schema_version"] != 1 or not isinstance(value.get("locales"), Mapping):
+        raise ReleaseFeatureModelError("invalid translations coverage block")
+    for locale, counts in value["locales"].items():
+        if not isinstance(locale, str) or not re.fullmatch(r"[a-z]{2,3}(?:_[a-z0-9]{2,8})*", locale) or not isinstance(counts, Mapping):
+            raise ReleaseFeatureModelError("invalid translations locale")
+        for key in ("translatable_values", "current", "stale", "missing", "orphan", "removed_fields"):
+            if type(counts.get(key)) is not int or counts[key] < 0:
+                raise ReleaseFeatureModelError(f"translations.{locale}.{key} must be a nonnegative integer")
+        total = counts["translatable_values"]
+        expected = counts["current"] / total if total else None
+        reviews = counts.get("review_states")
+        if ("coverage" not in counts or counts["current"] + counts["stale"] + counts["missing"] != total
+                or counts["coverage"] != expected or total and type(counts["coverage"]) not in (int, float)):
+            raise ReleaseFeatureModelError("translation coverage counts disagree")
+        if not isinstance(reviews, Mapping) or any(not isinstance(key, str) or not key or type(count) is not int or count < 0 for key, count in reviews.items()) or sum(reviews.values()) != counts["current"]:
+            raise ReleaseFeatureModelError("translation review counts disagree with current values")
+
+
 def validate_sidecar_records(
     records: Iterable[SidecarRecord | Mapping[str, Any]],
     *,
@@ -1235,6 +1272,11 @@ def validate_sidecar_records(
             errors.append(f"record {count} properties must be an object")
         if not isinstance(payload.get("provenance"), Mapping):
             errors.append(f"record {count} provenance must be an object")
+        if "translation" in payload and isinstance(payload.get("properties"), Mapping):
+            try:
+                validate_translation_record(payload["translation"], payload["properties"])
+            except ReleaseFeatureModelError as exc:
+                errors.append(f"record {count}: {exc}")
     if duplicates:
         errors.append("duplicate feature_id values: " + ", ".join(sorted(duplicates)))
     if duplicate_identity_keys:
@@ -1554,6 +1596,11 @@ def validate_release_manifest(
     validate_identity: bool = True,
 ) -> dict[str, Mapping[str, Any]]:
     errors: list[str] = []
+    if "translations" in manifest:
+        try:
+            validate_translation_coverage(manifest["translations"])
+        except ReleaseFeatureModelError as exc:
+            errors.append(str(exc))
     if manifest.get("schema_version") != RELEASE_MANIFEST_SCHEMA_VERSION:
         errors.append("manifest has unsupported schema_version")
     if expected_asset_slug is not None and manifest.get("asset_slug") != expected_asset_slug:
@@ -1631,8 +1678,12 @@ def build_release_manifest(
     schema: Mapping[str, Any],
     identity: Mapping[str, Any],
     validation: Mapping[str, Any],
+    translations: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if translations is not None:
+        validate_translation_coverage(translations)
     return {
+        **({"translations": dict(translations)} if translations is not None else {}),
         "schema_version": RELEASE_MANIFEST_SCHEMA_VERSION,
         "asset_slug": asset_slug,
         "release": release,

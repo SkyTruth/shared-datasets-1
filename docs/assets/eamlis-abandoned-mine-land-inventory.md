@@ -61,6 +61,10 @@ feature_metadata:
   schema_file: latest/eamlis-abandoned-mine-land-inventory.schema.json
   manifest_file: latest/eamlis-abandoned-mine-land-inventory.manifest.json
   provenance_default: true
+translation_locales:
+- es
+translation_fields:
+- PA_NAME
 files:
 - path: latest/eamlis-abandoned-mine-land-inventory.fgb
   format: fgb

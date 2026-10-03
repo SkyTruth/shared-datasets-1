@@ -11,10 +11,13 @@ import hashlib
 from pathlib import Path
 
 from ingestion.common import publication as p
+from scripts import catalog_csv
 from scripts.feature_metadata_translation_reuse import TranslationMemory, build_memory
 
-LOCALES = ("es", "fr", "id", "pt", "pt_br", "sw")
-FIELDS = ("NAME_ENG", "DESIG_ENG", "DESIG_TYPE", "GOV_TYPE", "OWN_TYPE", "NO_TAKE", "STATUS", "IUCN_CAT", "VERIF", "OECM_ASMT", "DESIG", "MANG_PLAN", "CONS_OBJ", "SUPP_INFO", "INLND_WTRS", "GOVSUBTYPE", "OWNSUBTYPE")
+CATALOG_PATH = Path(__file__).resolve().parents[2] / "catalog/shared-datasets-catalog.csv"
+LOCALES, FIELDS = catalog_csv.translation_config("wdpa-marine", CATALOG_PATH)
+if catalog_csv.translation_config("wdpa-terrestrial", CATALOG_PATH) != (LOCALES, FIELDS):
+    raise ValueError("WDPA realms must share the maintained translation contract")
 SUFFIXES = (".metadata.ndjson.gz", ".metadata-translations.csv")
 LEGACY = {
     "wdpa-marine": (

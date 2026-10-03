@@ -34,16 +34,19 @@ an English-only value.
 ## Translation reuse
 
 The job rebuilds `es`, `fr`, `id`, `pt`, `pt_br`, and `sw` metadata sidecars
-together with each release. `ingestion/wdpa_monthly/translations.py` lists the
-17 supported text fields. The translation-source CSV and all six sidecars are
-part of the same owned publication as the geometry and canonical metadata.
+together with each release. The two asset documents declare the same
+`translation_locales` and 17 `translation_fields`; the job reads these through
+the generated catalog. The translation-source CSV and all six sidecars are
+part of the same owned publication as the geometry and canonical metadata,
+and the final manifest records their exact generations and translation coverage.
 
 Translations are matched first by the exact `SITE_PID` and original source-value
 hash. Numeric `feature_id` values never join translations across releases or
 identity contracts. An unambiguous existing translation of the same source text,
 field, and locale can fill another record. Conflicting text translations remain
-site-specific. Existing review states and notes are retained for direct matches;
-phrase reuse is marked `reused_translation`.
+site-specific. Both direct matches and phrase reuse retain the original review
+states and notes. Usable machine translations and `needs_review` rows are current;
+editorial review is reported separately from availability.
 
 The job downloads the exact canonical metadata and translation CSV generations
 recorded in its last committed publication receipt. While either asset is in the
@@ -52,17 +55,24 @@ bundles pinned in `translations.py`. Keeping that pair fixed across retries
 preserves translations for protected areas that move between marine and terrestrial.
 That state also binds a reviewed gap supplement by staged object path, generation,
 and SHA-256. Both assets must approve the same supplement; the first build verifies
-and consumes it without replacing established translations. The first new release
-must have complete requested translations before the publisher reserves IDs.
+and consumes it without replacing established translations. Translation gaps are
+nonblocking for the first release and later releases; identity reservation,
+generation checks, and bundle validation still apply.
 Once both first publications finish, later builds use their committed CSV and
 do not reload the reset supplement.
 Missing state or an incomplete committed bundle fails; it does not select arbitrary
 `latest/` files. One disposable SQLite index serves both WDPA assets. Large CSVs
 are streamed and the downloaded copies are locally compressed.
 
-In subsequent releases, new or changed text without a verified translation retains the canonical value.
-Its CSV row is empty with `review_state=translation_failed`; the run record reports
-the unresolved counts. The job does not contact a translation provider or claim
+New or changed text without a usable current translation retains the canonical
+value. A successful older row keeps its old source hash, so the next build still
+recognizes stale text. With no successful history, its CSV row is empty with
+`review_state=translation_failed`. A failed current row counts as missing even
+when older successful rows exist. The report and final manifest partition each
+locale's nonblank approved string values into `current`, `stale`, and `missing`.
+Local `*.translation-debt.{locale}.csv` files contain only unresolved current
+feature/field keys and source text. They are build outputs, not canonical artifacts.
+The job does not contact a translation provider or claim
 that fallback text is translated. Follow the [translation evidence and tooling](../../docs/wdpa-translation-reset-evidence.md)
 to fill these tasks without retranslating the full dataset. New machine results
 remain labeled as machine output rather than human review.

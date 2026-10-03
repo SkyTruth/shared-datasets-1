@@ -77,6 +77,10 @@ feature_metadata:
   schema_file: latest/petrodata.schema.json
   manifest_file: latest/petrodata.manifest.json
   provenance_default: true
+translation_locales:
+- es
+translation_fields:
+- NAME
 files:
 - path: latest/petrodata.fgb
   format: fgb

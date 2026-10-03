@@ -57,6 +57,8 @@ export type SharedDatasetCatalogRef = SharedDatasetPmtilesRef &
   SharedDatasetCatalogMetadata;
 
 export type SharedDatasetsCatalogAsset = {
+  translation_locales?: string[];
+  translation_fields?: string[];
   access_tier?: string | null;
   available_formats: string[];
   citation?: string | null;

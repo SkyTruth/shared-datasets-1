@@ -58,9 +58,11 @@ gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-feature-id-reset
 | `review-report.json` | `1790741773367347` | 2,752,288 | `17f2afeb840aa6f17cd068590777fe2fe2321ada28660ea51c5969d4dd7f779d` |
 
 The reset installer verifies this reference but does not promote the supplement
-to a canonical dataset path. The first WDPA build verifies and consumes it,
-then requires complete translations before reserving IDs. Later builds reuse the
-full CSV in their committed receipt and do not reload this reset input.
+to a canonical dataset path. The first WDPA build verifies and consumes it.
+Translation gaps are reported and retain canonical text without blocking identity
+reservation or publication; all identity and input-integrity checks still apply.
+Later builds reuse the full CSV in their committed receipt and do not reload
+this reset input.
 
 ## Source and validation evidence
 

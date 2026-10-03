@@ -151,8 +151,11 @@ Sidecar/API records include `geometry_hash`; use it as the stable
 geometry-equivalence key for grouping or de-duplicating footprints after
 metadata is loaded, not as a URL lookup handle.
 
-Use `review_state` values from metadata records to show or filter confidence
-for source-provided, machine-translated, human-reviewed, and mixed labels.
+New localized records may include `translation.state` (`complete`, `partial`, or
+`fallback`) and field lists for translated, fallback, machine, and human-reviewed
+values. Treat that block as optional for older releases. Catalog JSON can also
+include `translation_locales` and `translation_fields`, the maintained locale
+and field lists; coverage and editorial review are separate concepts.
 
 Each resolved ref includes:
 
