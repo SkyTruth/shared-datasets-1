@@ -7,7 +7,7 @@ its immediate predecessor as defaults. Comparison starts automatically and
 reruns when either selection changes. The same button becomes **Close comparison**;
 closing restores ordinary browsing. There is no second run button or map-mode
 selector. The union occupies the primary map at the top of the detail view,
-retaining its viewport. Before is red and After green. The selections, Close comparison, and right-aligned
+retaining its viewport. Removals and old positions are red; additions and new positions are green. The selections, Close comparison, and right-aligned
 **Details** affordance share one row. Details start collapsed and contain compact
 release, change, and schema tables; progress and failures remain visible. Selecting
 a map feature shows its property details below the map, independently of the
@@ -63,7 +63,7 @@ they legitimately have no generated contract field. Legacy/missing identity
 evidence, contract resets and incompatible semantics withhold feature counts,
 matching and paired table inspection. Individual map hits remain inspectable
 from their own pinned release sidecars. They still allow geometry colors and
-schema/publication comparison; geometry lookups never join feature IDs across releases.
+schema/publication comparison; geometry-only lookups never join feature IDs across releases.
 There is no inferred identity continuity from similar geometry or numeric IDs.
 Generated IDs must be below the declared next allocation. Each record must match
 its declared assignment-key strategy. The publisher owns reviewed identity
@@ -91,45 +91,61 @@ source-property changes. No feature counts come from PMTiles.
 
 ## Union map
 
-The primary map displays the union of Before and After geometry. New geometry
-is green, removed geometry red, and identical geometry with altered source
-metadata yellow. Unchanged geometry is gray with faint fill and outline opacity.
+The primary map displays the union of Before and After geometry. When identity
+contracts are compatible, each object uses its own feature-ID classification:
+additions and new positions are green, removals and old positions red, and
+stationary objects with altered source metadata yellow. Unchanged objects are
+gray with faint fill and outline opacity. Distinct objects sharing exact geometry
+keep independent statuses; an addition, removal or edit does not change its
+neighbors' statuses.
 Changed fills, outlines, lines and points draw above all unchanged geometry from
 both releases, so later gray layers cannot obscure the red, green or yellow marks.
 
-Click **New geometry**, **Removed geometry**, **Metadata changed** or **Unchanged**
-in the legend to show only that category and zoom to its display geometry. The
+Click **Added / moved here**, **Removed / moved away**, **Metadata changed** or **Unchanged**
+in the legend to show only that category. Filtering and unfiltering preserve the
+map's center, zoom, bearing and pitch. Use **Zoom to extents** beside the map's +/−
+controls to fit the selected category, or the full union when unfiltered. The
 selected button is pressed; click it again to restore the full union. Map clicks
 ignore hidden categories, including transparent overlapping gray points. The
-feature table also filters by geometry membership when feature IDs are comparable;
+feature table uses the same per-object map status when feature IDs are comparable;
 a moved ID can belong to both the new and removed categories. Category selection
 survives a basemap change and resets when either release changes or comparison closes.
 
-Category zoom visits the union overview to include items outside the current
+The extents button visits the union overview to include items outside the current
 viewport, then fits matching loaded display geometry. It retains bounds seen at
 finer zooms. This uses PMTiles geometry without reading canonical FGB or increasing
 the comparison disk budget. Overview tiles may omit fine features; if no matching
 display geometry is available, the viewer explains that finer tiles need inspection.
 An empty category hides all features without moving the map.
 
-A moved feature has a red old footprint and green new footprint. Exact shared
-geometry renders once from the After source to avoid doubling its opacity.
+A moved feature has a red old footprint and green new footprint, including when
+its metadata also changed. A matched stationary object renders once from the
+After source to avoid doubling its opacity. Its Before record remains inspectable.
 
-Geometry membership uses exact canonical `geometry_hash` sets, independently of
-feature identity. For a shared geometry, differing sets of canonical
-`properties_hash` values produce yellow. An exact shared geometry can be yellow
-even if an identity edit is correctly an addition/removal in the table. This
-geometric membership is not an invented feature match. Duplicate records on the
-same geometry contribute a set of distinct source-property hashes. These display
-annotations are computed from complete sidecars, never tile geometry.
+When identity contracts are incompatible, the map explicitly describes a
+**geometry-only comparison**. Its legend is **New geometry**, **Removed geometry**,
+**Contents differ here** and **Unchanged geometry**. Exact canonical
+`geometry_hash` sets determine membership. For a shared geometry, differing sets
+of canonical `properties_hash` values produce yellow; that describes the
+collection at that geometry, not a matched object's metadata edit. Duplicate
+records contribute a set of distinct property hashes, without multiplicity.
+Shared geometry renders once from After, but both releases remain inspectable.
+These annotations use complete sidecars, never tile geometry.
 
-Every loaded map feature receives a release-scoped geometry color, independently
-of the table page, search, or feature-ID compatibility. The viewer looks up at
-most 200 IDs per request in the complete comparison index and applies the results
-as map feature states. IDs remain scoped to their own release: an ID reused after
+Every loaded map feature receives a release-scoped color, independently
+of the table page, search, or feature-ID compatibility. After computation, the
+browser reads two gzip-compressed NDJSON streams from the complete SQLite index,
+one for each release. Each record contains only an ID, map category and
+geometry hash. Header inputs, sorted unique IDs, counts and a terminal record are
+validated before the map uses either index. Filters stay disabled and the progress
+bar stays visible until both indexes arrive and the initial colors are applied.
+An interrupted or malformed stream leaves filters disabled with a visible error.
+Panning, paging, filtering and changing basemaps reuse the indexes without further
+classification requests. IDs remain scoped to their own release: an ID reused after
 a reset can correctly be red in Before and green in After. Paging or inspecting
-records does not replace these colors. Geometry summary counts describe unique
-geometry hashes; they are not feature-ID classifications.
+records does not replace these colors. The report's separate `geometry_counts`
+still describe unique geometry hashes; they do not determine per-object colors
+or filters when IDs are compatible.
 
 Map inspection retains every overlapping release layer, including transparent
 Before geometry when an exact shared polygon is drawn from After. Identical
@@ -138,18 +154,22 @@ metadata using its captured path and generation, without joining a reused ID to
 another release. Map clicks remain available while the comparison runs and on
 static viewers without comparison jobs. Clicking empty space, changing either
 release, closing comparison or rebuilding the map clears the selection; delayed
-metadata cannot restore a superseded inspector. Once both clicked hits load source
-metadata, changed fields and their values are highlighted yellow. Pairing uses
-identical canonical geometry hashes across the two releases, including historical
-v1 geometry recovered by the engine; it never assumes reset IDs identify the same
-feature. Missing fields differ from explicit nulls; object key order does not
-create a change. Hash-excluded operational fields stay unhighlighted. Paired table
-inspection also highlights its source-property changes.
+metadata cannot restore a superseded inspector. When identity contracts are
+compatible, changed fields and their values are highlighted only between
+already-loaded opposite-release hits with the same asset and feature ID.
+Geometry never establishes object identity. Incompatible contracts show each
+release's properties without changed-field highlights, even if numeric IDs match.
+The map inspector makes no additional counterpart requests: if a moved object's
+counterpart is outside the selection, use paired table inspection for its complete
+property comparison. Missing fields differ from explicit nulls; object key order
+does not create a change. Hash-excluded operational fields stay unhighlighted.
 
 Tiles simplify geometry and visibility varies with zoom. Missing or unauthorized
 historical tile generations produce visible errors. Map signer and comparison
 responses must match the selected paths/generations before use. Comparison report
-schema version 3 also pins optional canonical FGB input for historical v1 readers.
+schema version 4 defines identity-aware map statuses and retains optional pinned
+canonical FGB input for historical v1 readers. Older retained results require a
+new comparison; the viewer rejects older result semantics.
 
 ## Published historical v1 releases
 
@@ -221,20 +241,66 @@ the requesting email. Callers select catalog-owned slugs and concrete dates;
 caller-provided object URIs cannot choose server download targets. Client expected
 paths/generations are equality checks, not download authority.
 
+Cloud Run session affinity is an optimization, not job ownership. The viewer
+stores job state and completed results in the private
+`shared-datasets-1-catalog-comparisons` bucket, separate from the canonical dataset
+bucket. Any viewer instance can poll a job, load its immutable SQLite index and
+compressed source sidecars, or cancel its worker. Result files use no-clobber
+uploads and recorded generations, sizes and SHA-256 checksums; complete state
+is published only after all files upload. Hydration rechecks the user and current
+catalog access first. It does not download FGB again or recompute the comparison.
+
+State, access leases and cancellation markers are separate objects. A worker
+alone updates its state with generation preconditions. The open comparison
+renews its access every minute; jobs expire after 15 minutes without activity.
+Cache objects are lifecycle-deleted after one day. Each instance has one compute
+worker and at most two local jobs, including queued work and restored readers.
+An available second slot accepts a queued comparison instead of refusing while
+the worker finishes cancelling its predecessor. Queued jobs cancel immediately;
+executing jobs retain their slot until cooperative cancellation finishes. Queue
+time does not consume the computation deadline. Changing releases waits for the
+superseded start response and cancellation acknowledgement before starting again.
+Completed shared-cache copies can be evicted by least recent access and restored
+without recomputation; active reads pin their workspace against eviction. A
+stopped worker is reported as failed,
+with no partial result. Local fixture/CLI servers can use an in-process store;
+Cloud Run requires `CATALOG_VIEWER_COMPARISON_BUCKET` at startup.
+
+While comparing, a full-width progress bar sits above the Version row's bottom
+divider. Row validation reports checked rows against the exact declared totals
+from the pinned manifests, including required historical geometry checks.
+Preparation, queueing, classification, cache publication and applying map colors
+use an indeterminate bar. Map-index loading reports received rows against both
+validated release counts. The bar disappears when the map is ready, the task
+fails, is superseded or closes.
+
 ```http
 POST /api/comparisons
 GET /api/comparisons/{job_id}?offset=0&limit=50&query=&classification=&geometry_change=
 GET /api/comparisons/{job_id}?feature_id=1
 POST /api/comparisons/{job_id}/map
+GET /api/comparisons/{job_id}/map-index?side=baseline
+GET /api/comparisons/{job_id}/map-index?side=target
 POST /api/comparisons/{job_id}/cancel
 GET /api/comparisons/{job_id}/report
 ```
 
-`GET /api/comparisons` reports capabilities and limits. Start takes `slug`,
+`GET /api/comparisons` reports capabilities and limits, including
+`map_index_version: 1`. The browser requires this capability before starting
+computation during a frontend/backend rollout. Start takes `slug`,
 `baseline`, `target`, and `expected`, with baseline/target role dictionaries of
 `{path, generation}` for metadata/schema/manifest, available PMTiles, and canonical FGB when present. Start
 returns `202` with a job ID and pinned inputs. Polls return state/progress and,
 on completion, summary plus a bounded page when feature identity is comparable.
+`GET /api/comparisons/{job_id}/map-index?side=baseline|target` returns a
+gzip-compressed, chunked `application/x-ndjson` stream. Its header contains
+`schema_version: 1`, `side`, pinned `inputs` and `rows`; each subsequent row is
+`[feature_id, geometry_change, geometry_hash]`, ordered by binary ID; the footer
+is `{complete: true, rows: N}`. A failed stream never supplies a success footer.
+Server serialization uses approximately 64-KiB buffers and holds a read lease;
+it creates no additional cached file. The 10-MiB buffered response limit does
+not apply to this bounded stream; its row count is bounded by the release limit.
+The catalog uses this endpoint rather than the retained public lookup API below.
 `POST /api/comparisons/{job_id}/map` takes `side` (`baseline` or `target`) and
 1–200 unique `feature_ids`, with a 16-KiB request cap. It returns geometry colors
 and canonical `geometry_hash` within that release even when cross-release feature
@@ -253,21 +319,21 @@ a 15-second transport timeout with retries disabled.
 
 | Interactive limit | Budget |
 | --- | ---: |
-| Records per release | 100,000 |
+| Records per release | 1,000,000 |
 | Bytes per downloaded sidecar/schema/manifest | 64 MiB |
 | Historical canonical FGB streamed per release | 2 GiB |
 | Individual FGB feature | 64 MiB |
 | Schema/manifest contract each | 4 MiB |
-| Expanded bytes per sidecar | 256 MiB |
-| Workspace files per job | 128 MiB |
+| Expanded bytes per sidecar | 1 GiB |
+| Workspace files per job | 512 MiB |
 | Computation/download deadline | 600 seconds |
 | Individual sidecar row | 900 KiB |
 | Page size | 100 maximum; UI uses 50 |
 | Response or complete report | 10 MiB |
 | Start body | 16 KiB |
-| Concurrent jobs per instance | 2 |
-| Retained jobs per instance | 8 |
-| Job retention | 15 minutes from start |
+| Compute workers per instance | 1 |
+| Local jobs per instance, including queue/readers | 2 |
+| Job retention | 15 minutes without activity |
 
 The set comparison is inexpensive. The task-scoped SQLite index stores IDs,
 identity keys, binary 32-byte geometry/property hashes, and offsets into the
@@ -288,12 +354,22 @@ pass described above; temporary hashes verify the FGB's full projected propertie
 and combined feature hash without retaining expanded metadata. No row sampling or
 truncation is used.
 
+A local measurement on 2026-10-03 compared the pinned WDPA terrestrial releases
+2026-09-01 and 2026-09-30, each with 304,817 rows and a roughly 45-MB compressed
+sidecar. Complete validation and classification took 36.5 seconds, retained
+150 MiB of workspace files and reached 103 MiB peak process memory. Both map
+streams together took 2.8 seconds to serialize and compressed to 24.4 MiB.
+Neither roughly 5-GB FGB was read. These are local measurements with downloaded,
+checksum-verified inputs, not Cloud Run or end-to-end tile-render timings.
+
 Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never
-indexes sidecars or performs expensive comparison work on its UI thread.
+validates full sidecars or computes the set comparison on its UI thread. It reads
+the compact classification streams incrementally and yields while applying map
+feature states. CLI default budgets remain unchanged; explicit flags can raise them.
 
-Jobs use task-scoped SQLite files under the standard local work root, not a
-persistent database. There is no cross-job result cache; immutable job results
+Jobs use task-scoped SQLite files under the standard local work root, backed by
+the private temporary cache. There is no cross-job result cache; immutable job results
 are tied to their complete inputs and policy/result version. Same-date generation
 changes produce a different input key. The catalog discovers indexed snapshots,
 not a history of overwritten generations. Old generations must actually be
@@ -305,11 +381,10 @@ writable filesystem consumes instance memory. The bounded eight-job/128-MiB
 workspace policy leaves headroom for processing. These are reviewed Terraform
 source changes, routed through the existing protected catalog-viewer and preview
 workflows; implementation testing does not deploy them. Session affinity is
-[best effort](https://docs.cloud.google.com/run/docs/configuring/session-affinity):
-an instance replacement, revision transition, high utilization or broken affinity
-can expire a task. The viewer returns a visible rerun instruction, rather than
-recreating a task from unrelated inputs. Browser cookies and `credentials: include`
-preserve normal affinity. The CPU setting uses
+[best effort](https://docs.cloud.google.com/run/docs/configuring/session-affinity);
+polls, map requests and completed results remain usable on other instances.
+A worker terminated during computation still needs an explicit rerun of the
+selected pinned inputs; no unrelated inputs are substituted. The CPU setting uses
 [instance-based billing](https://docs.cloud.google.com/run/docs/configuring/billing-settings),
 which can increase runtime cost; no minimum instance count is added.
 

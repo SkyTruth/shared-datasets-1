@@ -350,6 +350,8 @@ jobs:
           plan = json.load(open(sys.argv[1]))
           allowed_exact = {
               "google_storage_bucket.preview_bucket",
+              "google_storage_bucket.preview_comparisons",
+              "google_storage_bucket_iam_member.preview_comparisons_worker",
               "google_storage_bucket_iam_member.feature_preview_service_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_object_viewer",
               "google_storage_bucket_iam_member.feature_preview_loader_index_load_creator",
@@ -413,6 +415,14 @@ jobs:
                   values = planned_values(resource)
                   if address == "google_storage_bucket.preview_bucket":
                       require_value(value_violations, address, values, "name", expected["bucket"])
+                  elif address == "google_storage_bucket.preview_comparisons":
+                      require_value(value_violations, address, values, "name", expected["bucket"] + "-comparisons")
+                      require_value(value_violations, address, values, "public_access_prevention", "enforced")
+                      require_value(value_violations, address, values, "uniform_bucket_level_access", True)
+                  elif address == "google_storage_bucket_iam_member.preview_comparisons_worker":
+                      require_value(value_violations, address, values, "bucket", expected["bucket"] + "-comparisons")
+                      require_value(value_violations, address, values, "role", "roles/storage.objectUser")
+                      require_value(value_violations, address, values, "member", "serviceAccount:feature-preview-service@shared-datasets-1.iam.gserviceaccount.com")
                   elif address == "google_cloud_run_v2_service.feature_preview_service":
                       require_value(value_violations, address, values, "name", expected["service"])
                       env = cloud_run_env(values)
@@ -424,6 +434,7 @@ jobs:
                       if env:
                           require_env_value(value_violations, address, env, "SHARED_DATASETS_BUCKET", expected["bucket"])
                           require_env_value(value_violations, address, env, "SHARED_DATASETS_SITE_PREFIX", "_catalog/web")
+                          require_env_value(value_violations, address, env, "CATALOG_VIEWER_COMPARISON_BUCKET", expected["bucket"] + "-comparisons")
                           require_env_value(
                               value_violations,
                               address,

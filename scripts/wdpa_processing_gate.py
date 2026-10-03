@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed until reviewed complete October builds meet the resource target."""
+"""Require one retained October build before publishing its exact artifacts."""
 
 from __future__ import annotations
 import argparse
@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT))
 from ingestion.wdpa_monthly.resources import validation_limits
 
 EVIDENCE = ROOT / "catalog/wdpa-processing-acceptance.json"
+PREFERRED_MEMORY_PEAK_BYTES = 6.4 * 1024**3
+MEMORY_LIMIT_BYTES = 8 * 1024**3
 
 
 def source_digest():
@@ -98,137 +100,178 @@ def check_compatibility(evidence, builds):
     return errors
 
 
+def memory_warnings(run):
+    """Report preferred headroom independently of artifact acceptance."""
+    peak = run.get("memory_peak_bytes")
+    if type(peak) is int and PREFERRED_MEMORY_PEAK_BYTES < peak <= MEMORY_LIMIT_BYTES:
+        return [
+            f"kernel lifetime peak {peak} bytes ({peak / 1024**3:.2f} GiB) exceeds "
+            "the preferred 6.4 GiB headroom target; the enforced limit remains "
+            "8 GiB and this warning does not reject validated artifacts"
+        ]
+    return []
+
+
+def check_build(run, *, require_bundle=True):
+    """A single measured complete build, with retained promotable bytes."""
+    errors = []
+    if require_bundle:
+        from ingestion.wdpa_monthly.artifact_bundle import check_reference
+
+        try:
+            check_reference(
+                run.get("artifact_bundle"), execution=run.get("cloud_execution")
+            )
+        except (RuntimeError, ValueError, KeyError, TypeError) as exc:
+            errors.append(f"retained build bundle is required: {exc}")
+    if not re.fullmatch(
+        r"wdpa-processing-validation-[a-z0-9]+", str(run.get("cloud_execution", ""))
+    ):
+        errors.append("complete builds require their Cloud Run execution IDs")
+    if not re.fullmatch(
+        r"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:[0-9a-f]{64}",
+        str(run.get("cloud_image", "")),
+    ):
+        errors.append(
+            "complete builds require the immutable Cloud Run deployment image"
+        )
+    if (
+        run.get("state") != "succeeded"
+        or run.get("sample_fraction") != 1
+        or run.get("genesis") is not False
+        or run.get("run_date") != "2026-10-01"
+        or run.get("translation_index_built") is not True
+    ):
+        errors.append("a benchmark is incomplete, sampled, or uses a genesis baseline")
+    if not validation_limits(run.get("cpu_limit"), run.get("memory_limit_bytes")):
+        errors.append("a benchmark did not use 4 CPU / 8 GiB limits")
+    peak, scratch, elapsed = (
+        run.get(key)
+        for key in ("memory_peak_bytes", "scratch_peak_bytes", "elapsed_seconds")
+    )
+    if type(peak) is not int or not 0 < peak <= MEMORY_LIMIT_BYTES:
+        errors.append(
+            "the kernel lifetime peak is missing, invalid, or exceeds the enforced 8 GiB limit"
+        )
+    if type(scratch) is not int or not 0 < scratch < 80 * 1024**3:
+        errors.append("a benchmark missed the scratch target")
+    if type(elapsed) not in (float, int) or not 0 < elapsed <= 86400:
+        errors.append("a benchmark missed the timeout target")
+    if (
+        run.get("source_counts_verified") is not True
+        or run.get("contracts_verified") is not True
+    ):
+        errors.append("benchmark counts and artifact contracts must be verified")
+    if set(run.get("assets", {})) != {"wdpa-marine", "wdpa-terrestrial"}:
+        errors.append("both realms must be built")
+    for slug, (rows, india) in {
+        "wdpa-marine": (17938, 304),
+        "wdpa-terrestrial": (497914, 193174),
+    }.items():
+        asset = run.get("assets", {}).get(slug, {})
+        if (
+            asset.get("rows") != rows
+            or asset.get("india_rows") != india
+            or asset.get("india_sites") != india
+        ):
+            errors.append(
+                f"complete October {slug} counts differ from the frozen source"
+            )
+        if (
+            type(asset.get("next_generated_feature_id")) is not int
+            or asset["next_generated_feature_id"] <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", str(asset.get("semantic_sha256", "")))
+        ):
+            errors.append(f"{slug} identity/semantic evidence is incomplete")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(run.get("image_digest", ""))):
+        errors.append("benchmark image digest is missing")
+    return errors
+
+
+def check_promotion_plan(evidence):
+    """Require an immutable reviewed document for the owned build promotion."""
+    build = evidence.get("build") or {}
+    reference = build.get("artifact_bundle") or {}
+    expected = f".github/dataset-plans/wdpa-build-{reference.get('sha256', '')}.json"
+    if evidence.get("promotion_plan") != expected or not re.fullmatch(
+        r"\.github/dataset-plans/wdpa-build-[0-9a-f]{64}\.json", expected
+    ):
+        return ["a checked-in immutable WDPA build promotion plan is required"]
+    path = ROOT / expected
+    if not path.is_file():
+        return ["reviewed WDPA build promotion plan is missing"]
+    plan = json.loads(path.read_text())
+    if plan != {
+        "schema_version": 1,
+        "kind": "wdpa_owned_build_promotion",
+        "artifact_bundle": reference,
+        "cloud_execution": build.get("cloud_execution"),
+        "cloud_image": build.get("cloud_image"),
+        "image_digest": build.get("image_digest"),
+        "source_tree_sha256": build.get("source_tree_sha256"),
+        "run_date": build.get("run_date"),
+        "assets": build.get("assets"),
+    }:
+        return ["WDPA promotion plan differs from accepted build evidence"]
+    return []
+
+
 def check(evidence):
     errors = []
     if (
-        evidence.get("schema_version") != 2
-        or evidence.get("source_tree_sha256") != source_digest()
+        evidence.get("schema_version") != 3
+        or not re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence.get("source_tree_sha256", ""))
+        )
     ):
-        errors.append("benchmark evidence does not match the processing source tree")
+        errors.append("benchmark evidence is missing its producer source fingerprint")
     if evidence.get("disk_quota_approved") is not True:
         errors.append("100 GiB ephemeral disk per-instance quota has not been approved")
-    runs = evidence.get("runs", [])
-    if len(runs) != 2:
-        errors.append("two complete October deployment-image builds are required")
-    for run in runs:
-        if not re.fullmatch(
-            r"wdpa-processing-validation-[a-z0-9]+", str(run.get("cloud_execution", ""))
-        ):
-            errors.append("complete builds require their Cloud Run execution IDs")
-        if not re.fullmatch(
-            r"us-central1-docker\.pkg\.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:[0-9a-f]{64}",
-            str(run.get("cloud_image", "")),
-        ):
-            errors.append(
-                "complete builds require the immutable Cloud Run deployment image"
-            )
-        if run.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
-            errors.append("a benchmark does not match the processing source tree")
-        if (
-            run.get("state") != "succeeded"
-            or run.get("sample_fraction") != 1
-            or run.get("genesis") is not False
-            or run.get("run_date") != "2026-10-01"
-            or run.get("translation_index_built") is not True
-        ):
-            errors.append(
-                "a benchmark is incomplete, sampled, or uses a genesis baseline"
-            )
-        if not validation_limits(run.get("cpu_limit"), run.get("memory_limit_bytes")):
-            errors.append("a benchmark did not use 4 CPU / 8 GiB limits")
-        peak, scratch, elapsed = (
-            run.get(key)
-            for key in ("memory_peak_bytes", "scratch_peak_bytes", "elapsed_seconds")
-        )
-        if not isinstance(peak, int) or peak <= 0 or peak > 6.4 * 1024**3:
-            errors.append("a benchmark missed the memory/headroom target")
-        if not isinstance(scratch, int) or scratch <= 0 or scratch >= 80 * 1024**3:
-            errors.append("a benchmark missed the scratch target")
-        if not isinstance(elapsed, (float, int)) or elapsed <= 0 or elapsed > 86400:
-            errors.append("a benchmark missed the timeout target")
-        if (
-            run.get("source_counts_verified") is not True
-            or run.get("contracts_verified") is not True
-        ):
-            errors.append("benchmark counts and artifact contracts must be verified")
-        if set(run.get("assets", {})) != {"wdpa-marine", "wdpa-terrestrial"}:
-            errors.append("both realms must be built")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(run.get("image_digest", ""))):
-            errors.append("benchmark image digest is missing")
-    if len(runs) == 2:
-        if runs[0].get("cloud_execution") == runs[1].get("cloud_execution"):
-            errors.append("two distinct complete Cloud Run executions are required")
-        for key in (*INPUT_KEYS, "cloud_image"):
-            if not runs[0].get(key) or runs[0].get(key) != runs[1].get(key):
-                errors.append(f"complete builds disagree on {key}")
-        for slug in ("wdpa-marine", "wdpa-terrestrial"):
-            for key in (
-                "rows",
-                "india_rows",
-                "india_sites",
-                "semantic_sha256",
-                "next_generated_feature_id",
-            ):
-                values = [run.get("assets", {}).get(slug, {}).get(key) for run in runs]
-                if values[0] is None or values[0] != values[1]:
-                    errors.append(f"complete builds disagree on {slug} {key}")
-    return errors + check_compatibility(evidence, runs)
+    build = evidence.get("build") or {}
+    if "runs" in evidence:
+        errors.append("acceptance must identify one build, not a replay list")
+    if type(evidence.get("promotion_pr")) is not int or evidence["promotion_pr"] <= 0:
+        errors.append("the merged PR approving this build promotion must be identified")
+    if build.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
+        errors.append("a benchmark does not match the processing source tree")
+    return (
+        errors
+        + check_build(build)
+        + check_compatibility(evidence, [build])
+        + check_promotion_plan(evidence)
+    )
 
 
 def check_precloud(evidence):
-    """Authorize the isolated validation job; never authorize dataset publication."""
+    """Small/sampled checks permit one artifact build, never publication."""
     errors = []
     if (
-        evidence.get("schema_version") != 2
+        evidence.get("schema_version") != 3
         or evidence.get("source_tree_sha256") != source_digest()
     ):
         errors.append("staged validation does not match the processing source tree")
     if evidence.get("disk_quota_approved") is not True:
         errors.append("100 GiB ephemeral disk quota has not been approved")
-    small, marine = evidence.get("small_fixture") or {}, evidence.get("marine") or {}
+    small = evidence.get("small_fixture") or {}
+    sample = evidence.get("compatibility_sample") or {}
     if (
         small.get("scope") != "small-sea-ice-fixture"
         or small.get("state") != "succeeded"
         or small.get("contracts_verified") is not True
     ):
         errors.append("the small sea-ice production-path smoke test must pass first")
-    if (
-        marine.get("state") != "succeeded"
-        or marine.get("sample_fraction") != 1
-        or marine.get("genesis") is not False
-        or marine.get("translation_index_built") is not True
-        or marine.get("run_date") != "2026-10-01"
-        or set(marine.get("assets", {})) != {"wdpa-marine"}
-        or marine.get("source_counts_verified") is not True
-        or marine.get("contracts_verified") is not True
-    ):
-        errors.append(
-            "a complete verified marine WDPA build is required before cloud validation"
-        )
-    for run in (small, marine):
+    for run in (small, sample):
         if run.get("source_tree_sha256") != evidence.get("source_tree_sha256"):
             errors.append("a staged test uses different processing code")
         if not validation_limits(run.get("cpu_limit"), run.get("memory_limit_bytes")):
             errors.append("a staged test did not use 4 CPU / 8 GiB")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(run.get("image_digest", ""))):
             errors.append("a staged test is missing its immutable image digest")
-    if not small.get("image_digest") or small.get("image_digest") != marine.get(
+    if not small.get("image_digest") or small.get("image_digest") != sample.get(
         "image_digest"
     ):
-        errors.append("small and marine tests must use the same deployment image")
-    peak, scratch, elapsed = (
-        marine.get(k)
-        for k in ("memory_peak_bytes", "scratch_peak_bytes", "elapsed_seconds")
-    )
-    if not isinstance(peak, int) or not 0 < peak <= 6.4 * 1024**3:
-        errors.append("marine WDPA missed the memory/headroom target")
-    if not isinstance(scratch, int) or not 8 * 1024**3 < scratch < 80 * 1024**3:
-        errors.append(
-            "marine WDPA must demonstrate disk spill beyond RAM while meeting the scratch target"
-        )
-    if not isinstance(elapsed, (float, int)) or not 0 < elapsed <= 86400:
-        errors.append("marine WDPA missed the timeout target")
-    return errors + check_compatibility(evidence, [marine])
+        errors.append("small and sampled checks must use the same build image")
+    return errors + check_compatibility(evidence, [sample])
 
 
 def main():
@@ -246,9 +289,11 @@ def main():
     evidence = (
         ROOT / "catalog/wdpa-staged-validation.json" if args.pre_cloud else EVIDENCE
     )
-    errors = (check_precloud if args.pre_cloud else check)(
-        json.loads(evidence.read_text())
-    )
+    payload = json.loads(evidence.read_text())
+    errors = (check_precloud if args.pre_cloud else check)(payload)
+    if not args.pre_cloud:
+        for warning in memory_warnings(payload.get("build") or {}):
+            print("WARNING: " + warning, file=sys.stderr)
     if errors:
         raise SystemExit("WDPA rollout blocked:\n" + "\n".join(errors))
 

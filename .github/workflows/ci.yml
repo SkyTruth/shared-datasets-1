@@ -7,6 +7,10 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      wdpa_build_smoke:
+        description: Test the build image with small fixtures and the deterministic sample only
+        type: boolean
+        default: false
       wdpa_full_benchmark:
         description: Run small sea-ice smoke first, then marine WDPA without publication
         type: boolean
@@ -33,7 +37,7 @@ env:
 
 jobs:
   wdpa-benchmark-capacity:
-    if: github.event_name == 'workflow_dispatch' && !inputs.wdpa_full_benchmark
+    if: github.event_name == 'workflow_dispatch' && !inputs.wdpa_full_benchmark && !inputs.wdpa_build_smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -56,7 +60,7 @@ jobs:
             'import json; from pathlib import Path; root=Path("/sys/fs/cgroup"); print(json.dumps({name:(root/name).read_text().strip() if (root/name).exists() else None for name in ("cpu.max","memory.max","memory.peak")},sort_keys=True))'
 
   wdpa-benchmark-image:
-    if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
+    if: github.event_name == 'workflow_dispatch' && (inputs.wdpa_full_benchmark || inputs.wdpa_build_smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,7 +86,7 @@ jobs:
 
   wdpa-small-smoke:
     needs: wdpa-benchmark-image
-    if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
+    if: github.event_name == 'workflow_dispatch' && (inputs.wdpa_full_benchmark || inputs.wdpa_build_smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -117,7 +121,7 @@ jobs:
 
   wdpa-full-benchmark:
     needs: [wdpa-benchmark-image, wdpa-small-smoke]
-    if: github.event_name == 'workflow_dispatch' && inputs.wdpa_full_benchmark
+    if: github.event_name == 'workflow_dispatch' && (inputs.wdpa_full_benchmark || inputs.wdpa_build_smoke)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
@@ -189,11 +193,11 @@ jobs:
               --fraction 0.001 --seed 7919 --compare-legacy
           cp /work/shared-datasets-1/compatibility/benchmark.json "$RUNNER_TEMP/wdpa-reports/compatibility.json"
           # This job owns the disposable sample directory; retain its raw report
-          # before freeing scratch for the complete marine resource measurement.
+          # before freeing this disposable scratch directory.
           sudo rm -rf /work/shared-datasets-1/compatibility
           docker rm wdpa-compatibility
       - name: Run marine WDPA with 4 CPU and 8 GiB
-        if: ${{ !inputs.wdpa_inputs_probe }}
+        if: ${{ !inputs.wdpa_inputs_probe && !inputs.wdpa_build_smoke }}
         env:
           WDPA_BENCHMARK_FRACTION: ${{ inputs.wdpa_benchmark_fraction || '1' }}
         run: |
@@ -269,7 +273,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ (inputs.wdpa_inputs_probe || inputs.wdpa_benchmark_fraction == '0.001') && 'wdpa-debug-benchmark-reports' || 'wdpa-marine-benchmark-reports' }}
+          name: ${{ inputs.wdpa_build_smoke && 'wdpa-build-smoke-reports' || (inputs.wdpa_inputs_probe || inputs.wdpa_benchmark_fraction == '0.001') && 'wdpa-debug-benchmark-reports' || 'wdpa-marine-benchmark-reports' }}
           path: ${{ runner.temp }}/wdpa-reports/
           if-no-files-found: ignore
           retention-days: 30

@@ -453,13 +453,17 @@ The authenticated catalog viewer compares generation-pinned canonical release
 sidecars, schemas and manifests through `scripts/compare_releases.py` and the
 same-origin `/api/comparisons` job routes. The catalog offers release selection,
 complete change counts, a searchable table, source property inspection, a union
-map (green novel geometry, red removed geometry, yellow identical geometry with
-altered metadata, faint unchanged geometry) in the primary map. Complete reports
+map (green additions/new positions, red removals/old positions, yellow stationary
+metadata edits, faint unchanged objects) in the primary map. Comparable IDs keep
+independent statuses even when their geometry is identical. Complete reports
 are available through the CLI/API. Before/After selections rerun automatically; Close comparison
 restores ordinary browsing. Summaries use compact tables. Geometry colors remain
-available when feature-ID contracts differ. Map clicks show every overlapping
+available when feature-ID contracts differ, explicitly labeled geometry-only;
+yellow then means contents differ at that geometry. Map clicks show every overlapping
 Before/After polygon with release-bound source metadata, even when IDs cannot be
-matched; these details sit below the map without expanding the summary. Localization
+matched; these details sit below the map without expanding the summary.
+Field highlights require compatible identity contracts and matching feature IDs
+among already-loaded Before/After hits. Localization
 is excluded from source changes. Identity incompatibility withholds authoritative
 feature classification; static catalogs retain visual inspection and a local CLI
 route. See [comparison semantics, authorization, budgets and CLI](compare-releases.md).
@@ -468,7 +472,8 @@ route. See [comparison semantics, authorization, budgets and CLI](compare-releas
 
 **Use this dataset** is an inline section immediately above the canonical paths. Its
 Python/TypeScript tabs show 3–5 line examples and a single Copy code action.
-A small source link and Copy credit action provide corner-sized attribution.
+Citation, source and licensing remain in Source and terms; this section only
+provides integration code and an SDK setup link.
 Setup lives in the consumer guide; the UI has no integration dialog, Save
 workspace action, lockfile download, artifact identity dump, or provenance output.
 Dataset descriptions span the detail header independently of its action buttons.

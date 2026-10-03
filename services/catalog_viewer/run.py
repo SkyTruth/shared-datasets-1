@@ -909,6 +909,28 @@ def make_handler(
             self._send(handle_request_from_self("POST", self, body))
 
         def _send(self, response: Response, *, include_body: bool = True) -> None:
+            if isinstance(response, comparisons.MapIndexResponse):
+                # An explicit terminal record distinguishes completion from a
+                # disconnected or failed stream, even behind the Cloud Run proxy.
+                self.protocol_version = "HTTP/1.1"
+                self.close_connection = True
+                try:
+                    self.send_response(response.status)
+                    for name, value in response.headers.items():
+                        self.send_header(name, value)
+                    self.end_headers()
+                    for chunk in response.chunks():
+                        self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except Exception:
+                    # Never send a success footer or storage credentials on failure.
+                    self.log_error("Comparison map index stream failed")
+                finally:
+                    response.close()
+                return
             send_handler_response(self, response, include_body=include_body)
 
     def handle_request_from_self(method: str, handler: BaseHTTPRequestHandler, body: bytes) -> Response:
@@ -943,8 +965,17 @@ _comparison_jobs = None
 def default_comparison_jobs():
     global _comparison_jobs
     if _comparison_jobs is None:
-        _comparison_jobs = comparisons.ComparisonJobs()
+        _comparison_jobs = comparison_jobs_from_env()
     return _comparison_jobs
+
+
+def comparison_jobs_from_env():
+    from services.catalog_viewer.comparison_store import GcsComparisonStore
+
+    bucket = os.environ.get("CATALOG_VIEWER_COMPARISON_BUCKET")
+    if os.environ.get("K_SERVICE") and not bucket:
+        raise ValueError("Cloud Run comparisons require CATALOG_VIEWER_COMPARISON_BUCKET")
+    return comparisons.ComparisonJobs(store=GcsComparisonStore(bucket) if bucket else None)
 
 
 def main() -> None:
@@ -980,6 +1011,7 @@ def main() -> None:
             feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
         ),
         feature_require_iap=bool_env("CATALOG_VIEWER_FEATURE_LOOKUP_REQUIRE_IAP", True),
+        comparison_jobs=comparison_jobs_from_env(),
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()

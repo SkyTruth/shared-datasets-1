@@ -95,6 +95,7 @@ class TargetApplyCallerTests(unittest.TestCase):
                 REUSABLE_PATH_ENTRY,
                 "terraform/envs/prod/main.tf",
                 "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
+                "terraform/envs/prod/wdpa_observer_bootstrap_iam.tf",
                 "terraform/envs/prod/wdpa_reset_iam.tf",
                 "terraform/envs/prod/translation_notices.tf",
                 "terraform/envs/prod/variables.tf",
@@ -105,6 +106,8 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_targets={
                 "google_project_iam_custom_role.scheduled_ingestion_deployer",
                 "google_project_iam_member.github_actions_scheduled_ingestion_deployer",
+                "google_project_iam_custom_role.wdpa_observer_bootstrap",
+                "google_project_iam_member.github_actions_wdpa_observer_bootstrap",
                 "google_storage_bucket_iam_member.wdpa_reset_translation_reader",
                 'google_secret_manager_secret_iam_member.translation_notice["wdpa"]',
                 'google_secret_manager_secret_iam_member.translation_notice["eamlis"]',

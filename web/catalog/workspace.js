@@ -26,9 +26,6 @@ export function captureWorkspace(references, {bucket = 'skytruth-shared-datasets
   });
   return validateSnapshot({kind: 'skytruth-workspace', schema_version: 1, bucket, datasets, presentation}, {bucket});
 }
-export function attribution(snapshot) {
-  return snapshot.datasets.map(d => `Data: ${d.provenance.source || d.provenance.title || d.asset_slug} · SkyTruth`).join('; ');
-}
 function pinnedUri(artifact) { return `${artifact.gs_uri}#${artifact.generation}`; }
 export function pythonSnippet(snapshot) {
   const dataset = snapshot.datasets[0], artifact = dataset.artifacts.find(a => a.role === 'canonical');

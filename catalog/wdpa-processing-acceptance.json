@@ -1,8 +1,10 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "source_tree_sha256": null,
   "disk_quota_approved": true,
   "compatibility_sample": null,
-  "runs": [],
-  "blocked_reason": "100 GiB disk quota is approved. Fresh sea-ice, deterministic old/new compatibility and marine spill evidence must match the corrected runtime reader, followed by two complete cloud builds. No complete October acceptance or terrestrial publication is claimed."
+  "build": null,
+  "promotion_plan": null,
+  "promotion_pr": null,
+  "blocked_reason": "One complete passing build must retain generation/hash-pinned FGB, PMTiles, metadata, schema and all translations in immutable noncanonical staging. Review its exact artifact bundle and promotion plan, then publish those bytes without a second build. Reports without retained artifacts cannot authorize publication."
 }

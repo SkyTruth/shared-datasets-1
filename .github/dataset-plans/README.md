@@ -96,3 +96,36 @@ reruns of old workflows are rollout prerequisites. Current acceptance is checked
 just before mutation, but GitHub review changes and GCS writes are not one atomic
 transaction. Publication receipts/finalizer recovery and distributed localization
 output races remain separate work; this document does not claim to fix them.
+
+## Owned WDPA build promotion
+
+The single-build WDPA rollout uses an immutable document at
+`wdpa-build-{build-bundle-sha256}.json` in this directory. It contains
+`schema_version: 1`, `kind: wdpa_owned_build_promotion`, the exact bundle reference
+(URI, generation, size, SHA-256), cloud execution/image, image configuration
+digest, original producer source fingerprint, run date and measured
+realm summaries. The bundle hash transitively binds every staged file reference,
+validated output fact and captured identity baseline. Include its full JSON in a
+`shared-datasets-publish-plan` fence and record the evidence PR number in version
+3 `catalog/wdpa-processing-acceptance.json`. Add one document per PR; never edit a
+merged document or change authority through body edits.
+
+This subtype routes through `wdpa-monthly-deploy.yml` and
+`scripts/wdpa_build_authorization.py`, not the generic unmanaged object writer.
+The gate verifies same-repo merged-to-main status, exact-head effective approval
+(or the existing self-authored merged exception), the added regular-file plan,
+identical reviewed-head/merge/current bytes, the matching readable fence and the
+merge's ancestry. The worker checks exact staged generations and hashes, both
+live predecessor manifests/counters and existing ownership before new writes.
+Canonical destinations remain the fixed WDPA dated/latest artifacts, run records
+and release indexes. Their generation expectations are captured by the owned
+publisher after those predecessor checks, preserving the original receipt and
+reservation recovery contract. The immutable dataset files are never rebuilt.
+A dispatch cannot select an unreviewed bundle or a different run date.
+
+The producer fingerprint identifies the code that built the retained files,
+independently of subsequent reviewed publication fixes. The protected deployment
+verifies the producer image's configuration and fingerprint before adding its
+small publication-only software layer. An already-committed realm is checked
+against the frozen predecessor and owned source/identity contract and left
+unchanged; its regenerated candidate hashes do not authorize replacing it.

@@ -1,0 +1,15 @@
+# Keep the verified producer's native tools/dependencies and all artifact bytes.
+# Only reviewed publication checks change; no source processing runs at build time.
+ARG ACCEPTED_IMAGE
+FROM ${ACCEPTED_IMAGE}
+
+ARG ACCEPTED_BUILD_SOURCE_SHA256
+ARG SHARED_DATASETS_EXECUTOR_SHA
+ENV WDPA_ACCEPTED_BUILD_SOURCE_SHA256=${ACCEPTED_BUILD_SOURCE_SHA256} \
+    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
+
+COPY ingestion/wdpa_monthly/artifact_bundle.py /app/ingestion/wdpa_monthly/artifact_bundle.py
+COPY scripts/wdpa_processing_gate.py /app/scripts/wdpa_processing_gate.py
+COPY ingestion/wdpa_monthly/publication_only.py /app/ingestion/wdpa_monthly/publication_only.py
+
+CMD ["python", "-m", "ingestion.wdpa_monthly.publication_only"]

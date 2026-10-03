@@ -12,6 +12,12 @@ The preview bucket is disposable and uses `force_destroy = true` so the preview
 stack can be destroyed after testing. Do not put canonical dataset releases,
 production-only credentials, or irreplaceable data in the preview bucket.
 
+The catalog viewer uses a separate private temporary comparison cache at
+`gs://skytruth-shared-datasets-1-preview-comparisons/`. It keeps job state and
+completed indexes available across viewer instances. Objects expire after one
+day, and preview destruction removes this disposable bucket too. Cache writes
+are scoped to this bucket; it contains no canonical dataset releases.
+
 ## Deploy Or Replace The Preview
 
 Use the GitHub Actions workflow named `Deploy Feature Branch to Preview`.

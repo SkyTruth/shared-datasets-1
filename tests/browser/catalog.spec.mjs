@@ -27,7 +27,7 @@ const test = base.extend({
       schema_version: 1, job_name: 'projects/test/locations/test/jobs/wdpa-monthly', observed_at: new Date().toISOString(),
       latest_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString(), reason_code: 'NON_ZERO_EXIT_CODE'},
       latest_completed_execution: {id: 'wdpa-monthly-new', state: 'failed', completed_at: new Date().toISOString()},
-    }, deny: 0, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
+    }, deny: 0, progress: null, comparisonUnavailable: false, holdMetadata: false, held: false, holdComparison: false, comparisonHeld: false, holdMapIndex: false, mapIndexHeld: false, truncateMapIndex: false, release: () => releaseHeld?.(), requests, indexes, unavailable: new Set() };
     page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`));
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) errors.push({ type: message.type(), text: message.text(), url: message.location().url });
@@ -61,11 +61,26 @@ const test = base.extend({
           expectedErrors.add(url.href);
           return route.fulfill({status:404,contentType:'text/plain',body:'Not found'});
         }
-        const response = await route.fetch({ headers: {...request.headers(), 'X-Goog-Authenticated-User-Email': `accounts.google.com:${scenarioEmail}`} });
+        const headers = {...request.headers(), 'X-Goog-Authenticated-User-Email': `accounts.google.com:${scenarioEmail}`};
+        if (url.pathname.endsWith('/map-index')) {
+          if (state.holdMapIndex) {
+            state.holdMapIndex = false; state.mapIndexHeld = true;
+            await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
+          }
+          if (state.truncateMapIndex) {
+            const response = await route.fetch({headers});
+            const lines = (await response.text()).trimEnd().split('\n');
+            lines.pop();
+            return route.fulfill({status:200, contentType:'application/x-ndjson', body:lines.join('\n')+'\n'});
+          }
+          return route.continue({headers}); // Preserve the real streaming HTTP/gzip transport.
+        }
+        const response = await route.fetch({headers});
         if (state.holdComparison && request.method() === 'POST' && url.pathname === '/api/comparisons') {
           state.holdComparison = false; state.comparisonHeld = true;
           await new Promise(resolveHeld => { releaseHeld = resolveHeld; });
         }
+        if (state.progress && (url.pathname === '/api/comparisons' || /^\/api\/comparisons\/[a-f0-9]{32}$/.test(url.pathname))) return json({...await response.json(), state:'running', progress:state.progress});
         return route.fulfill({response});
       }
       if (url.origin === baseURL && url.pathname.endsWith('.js') && !url.pathname.startsWith('/sdk/')) {
@@ -264,7 +279,9 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas');
   await expect(page.locator('canvas')).toHaveCount(1); await expect(canvas).toBeVisible();
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map') && r.method === 'POST').length).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index')).length).toBe(2);
+  expect(transport.requests.filter(r => r.url.endsWith('/map'))).toHaveLength(0);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-01-01/') && r.url.includes('.pmtiles'))).toBe(true);
   expect(transport.requests.some(r => r.range && r.url.includes('/2026-09-22/') && r.url.includes('.pmtiles'))).toBe(true);
   // The primary map preserves the previous viewport, fitted to the after archive.
@@ -298,6 +315,31 @@ test('comparison automatically takes over the primary map with compact tables an
   await expect(page.locator('#compare-open')).toHaveText('Compare releases');
   await expect(page.locator('#version-select')).toBeVisible();
   await expect(page.locator('canvas')).toHaveCount(1);
+});
+
+test('comparison filters wait for complete map indexes and truncated streams stay unavailable', async ({page, transport}) => {
+  await select(page, 'comparison');
+  transport.holdMapIndex = true;
+  await page.locator('#compare-open').click();
+  await expect.poll(() => transport.mapIndexHeld).toBe(true);
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  for (const category of ['novel','removed','metadata_changed','unchanged']) await expect(page.locator(`#compare-legend [data-change="${category}"]`)).toBeDisabled();
+  await expect(page.locator('#compare-progress')).toBeVisible();
+  await expect(page.locator('#compare-progress-label')).toHaveText('Loading map classifications');
+  await page.locator('#basemap-select').selectOption('satellite');
+  await expect(page.locator('#map-status')).toBeHidden();
+  await expect(page.locator('#compare-legend button').first()).toBeDisabled();
+  transport.release();
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  await expect(page.locator('#compare-progress')).toBeHidden();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
+  expect(transport.requests.filter(r => r.url.endsWith('/map'))).toHaveLength(0);
+  await page.locator('#compare-open').click();
+  transport.truncateMapIndex = true;
+  await page.locator('#compare-open').click();
+  await expect(page.locator('#compare-status')).toContainText('ended before completion');
+  await expect(page.locator('#compare-progress')).toBeHidden();
+  for (const category of ['novel','removed','metadata_changed','unchanged']) await expect(page.locator(`#compare-legend [data-change="${category}"]`)).toBeDisabled();
 });
 
 test('static catalog explains comparison availability and restores ordinary browsing', async ({page, transport}, testInfo) => {
@@ -344,18 +386,37 @@ test('comparison table updates preserve a denied historical map error and select
 });
 
 test('automatic comparison rejects delayed starts and closing cancels pending work', async ({page, transport}) => {
-  await select(page, 'public'); transport.holdComparison = true;
+  await select(page, 'public');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await page.locator('#compare-open').click();
+  const progress = page.locator('#compare-progress'), bar = page.locator('#compare-progress-bar');
+  await expect(progress).toBeVisible();
+  transport.progress = {phase:'baseline', rows:38500};
+  await expect(bar).not.toHaveAttribute('value');
+  transport.progress = {phase:'baseline', rows:38500, completed:38500, total:128786};
+  await expect(page.locator('#compare-progress-label')).toHaveText('Validating Before');
+  await expect(bar).toHaveAttribute('value','38500');
+  await expect(bar).toHaveAttribute('max','128786');
+  const rowBox = await page.locator('#version-path-row').boundingBox(), barBox = await bar.boundingBox();
+  expect(barBox.width).toBeGreaterThan(rowBox.width - 35);
+  expect(barBox.y + barBox.height).toBeLessThan(rowBox.y + rowBox.height);
+  await test.info().attach('comparison-progress.png', {body:await progress.screenshot(),contentType:'image/png'});
+  transport.progress = null;
+  await expect(page.locator('#compare-summary table')).toHaveCount(3);
+  await expect(progress).toBeHidden();
+  await page.locator('#compare-open').click();
+  transport.holdComparison = true;
   await page.locator('#compare-open').click();
   await expect.poll(() => transport.comparisonHeld).toBe(true);
   await page.locator('#compare-before').selectOption('2026-09-22');
   await page.locator('#compare-after').selectOption('2026-01-01');
-  await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const releaseRow = page.locator('#compare-summary tbody tr').first();
-  await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
+  await expect(page.locator('#compare-summary')).toBeEmpty();
   const firstReleased = page.waitForResponse(response => response.url().endsWith('/api/comparisons') && response.request().method() === 'POST');
   const firstCancelled = page.waitForResponse(response => response.url().endsWith('/cancel'));
   transport.release();
   await (await firstReleased).finished(); expect((await firstCancelled).status()).toBe(200);
+  await expect(releaseRow.locator('td').first()).toHaveText('2026-09-22');
   await expect(releaseRow.locator('td').last()).toHaveText('2026-01-01');
   transport.comparisonHeld = false; transport.holdComparison = true;
   await page.locator('#compare-after').selectOption('2026-09-22');
@@ -379,7 +440,8 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-table')).toBeHidden();
   await expect(page.locator('canvas')).toHaveCount(1);
   const canvas = page.locator('#map-preview canvas');
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('#compare-legend button').first()).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
   const box = await canvas.boundingBox();
   const mercatorY = lat => (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360)) / Math.PI) / 2;
   const low = mercatorY(-1.5), high = mercatorY(3), scale = Math.min((box.width - 68) / (6 / 360), (box.height - 68) / (low - high), 512 * 2 ** 8);
@@ -415,9 +477,9 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(before).toContainText('2026-01-01');
   await expect(after).toContainText('Shared after');
   await expect(after).toContainText('2026-09-22');
-  await expect(before.locator('th.metadata-changed')).toHaveText(['name']);
-  await expect(after.locator('th.metadata-changed')).toHaveText(['name', 'optional']);
-  expect(await after.locator('th.metadata-changed').first().evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgb(255, 243, 176)');
+  await expect(page.locator('#compare-map-note')).toContainText('Geometry-only comparison');
+  await expect(page.locator('#compare-legend [data-change="metadata_changed"]')).toHaveText('Contents differ here');
+  await expect(hits.locator('.metadata-changed')).toHaveCount(0);
   await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('.map-click-target')).toHaveCount(1);
   await testInfo.attach('comparison-polygon-details.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
@@ -444,11 +506,13 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(page.locator('#compare-summary')).toContainText('New geometry');
 });
 
-test('category focus filters clicks, zooms and keeps overlapping changes above gray', async ({page, transport}, testInfo) => {
+test('category filters preserve the camera, extents zoom explicitly and changes draw above gray', async ({page, transport}, testInfo) => {
   await select(page, 'overlap'); await expect(page.locator('#map-status')).toBeHidden();
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  await expect(legend.locator('[data-change="metadata_changed"]')).toHaveText('Metadata changed');
+  await expect(legend.locator('[data-change="novel"]')).toHaveText('Added / moved here');
   const colors = [[195,59,59], [22,129,83], [227,189,32]];
   const nearColor = (image, color) => {
     for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
@@ -465,9 +529,12 @@ test('category focus filters clicks, zooms and keeps overlapping changes above g
   });
   const union = await viewport(), hits = page.locator('#feature-inspector .feature-hit');
   for (const [category, count, side, longitude] of [['novel',1,'After',1], ['removed',1,'Before',-1], ['metadata_changed',2,'',.1]]) {
+    const beforeFilter = await viewport();
     await legend.locator(`[data-change="${category}"]`).click();
     await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(1);
     await expect(page.locator('#compare-page')).toHaveText('1–1 of 1');
+    expect(await viewport()).toEqual(beforeFilter);
+    await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
     await expect.poll(async () => {
       const view = await viewport();
       return view.zoom > union.zoom + 1 && Math.abs(view.center[0] - longitude) < .02;
@@ -485,21 +552,41 @@ test('category focus filters clicks, zooms and keeps overlapping changes above g
     const image = await sample(), selected = category === 'novel' ? 1 : category === 'removed' ? 0 : 2;
     expect(nearColor(image, colors[selected])).toBe(true);
     expect(colors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
+    if (category === 'metadata_changed') {
+      // Reveal the distinct unchanged object at precisely the same coordinates.
+      // Each release keeps both hits; only the matched edited object highlights.
+      await legend.locator('[data-change="metadata_changed"]').click();
+      await canvas.click({position:{x:box.width/2,y:box.height/2}});
+      await expect(hits).toHaveCount(4);
+      const unchanged = hits.filter({hasText:'grayCommon'});
+      await expect(unchanged).toHaveCount(2);
+      await expect(unchanged.locator('th.metadata-changed')).toHaveCount(0);
+      await expect(hits.locator('th.metadata-changed')).toHaveCount(3);
+      expect(await unchanged.first().evaluate(node => node.style.getPropertyValue('--feature-color'))).toBe('#949d97');
+      await testInfo.attach('comparison-colocated-identities.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
+    }
   }
+  const beforeUnchanged = await viewport();
   await legend.locator('[data-change="unchanged"]').click();
   await expect(page.locator('#compare-page')).toHaveText('1–3 of 3');
+  expect(await viewport()).toEqual(beforeUnchanged);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => (await viewport()).zoom).toBeLessThan(union.zoom + 1);
   await canvas.screenshot();
   {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
   await page.locator('#basemap-select').selectOption('satellite');
   await expect(page.locator('#map-status')).toBeHidden();
   await expect(legend.locator('[data-change="unchanged"]')).toHaveAttribute('aria-pressed','true');
-  await expect.poll(() => transport.requests.filter(r => r.url.endsWith('/map')).length).toBeGreaterThanOrEqual(4);
+  await expect(legend.locator('[data-change="unchanged"]')).toBeEnabled();
+  expect(transport.requests.filter(r => new URL(r.url).pathname.endsWith('/map-index'))).toHaveLength(2);
   {const image=await sample();expect(colors.some(color=>nearColor(image,color))).toBe(false);}
   // Clicking the selected category restores all geometry and table rows.
+  const beforeUnfilter = await viewport();
   await legend.locator('[data-change="unchanged"]').click();
   await expect(legend.locator('[aria-pressed="true"]')).toHaveCount(0);
   await expect(page.locator('#compare-page')).toHaveText('1–6 of 6');
+  expect(await viewport()).toEqual(beforeUnfilter);
+  await page.getByRole('button',{name:'Zoom to extents',exact:true}).click();
   await expect.poll(async () => {const image=await sample();return colors.every(color=>nearColor(image,color));}).toBe(true);
   await legend.locator('[data-change="novel"]').click();
   await legend.locator('[data-change="removed"]').click();
@@ -564,10 +651,8 @@ test('inline dataset examples are short, copyable and execute a real map integra
   expect(code.split('\n').length).toBe(5);
   expect(code).toContain('showDataset');
   expect(code).toContain('#201'); expect(code).toContain('#202');
-  await page.locator('#use-copy-attribution').click();
-  const credit = await page.evaluate(() => navigator.clipboard.readText());
-  expect(credit).toBe(await page.locator('#use-attribution').textContent());
-  expect(credit.split('\n')).toHaveLength(1);
+  await expect(page.locator('#use-attribution, #use-copy-attribution')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Zoom to extents',exact:true})).toBeVisible();
   await testInfo.attach('inline-use-desktop.png', {body: await section.screenshot(), contentType: 'image/png'});
   await testInfo.attach('generated-python.py', {body: python, contentType: 'text/x-python'});
   await testInfo.attach('generated-typescript.ts', {body: code, contentType: 'text/plain'});

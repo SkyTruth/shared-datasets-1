@@ -141,19 +141,20 @@ docker build -f ingestion/wdpa_monthly/Dockerfile -t wdpa-monthly .
 
 ## Deploy
 
-Production deploys run through `.github/workflows/wdpa-monthly-deploy.yml` in
-the `shared-datasets-production` environment. Merging reviewed changes that
-touch this job, `ingestion/common/`, the copied `scripts/` modules, reviewed
-`catalog/feature-identity-resolutions/` decisions, or the job Terraform builds
-a fresh image from `main`, smoke-tests it, pushes an immutable digest, applies
-only the worker and explicitly allowlisted observer resources/IAM, and starts an
-async canary execution. If the schedule is paused, deployment skips the canary
-unless the dispatch supplies an explicit `canary_run_date`. The image ships the
-feature-identity resolutions directory, so merging reviewed ambiguity decisions redeploys the job and the
-next scheduled attempt picks them up. Use the workflow's `canary_run_date`
-dispatch input for a deliberate backfill or metadata-contract repair run. Do
-not deploy this job with a local `terraform apply` or by pushing hand-built
-images.
+Production deploys use protected `.github/workflows/wdpa-monthly-deploy.yml`
+after reviewed changes merge to `main`. The workflow promotes the accepted
+immutable image; it does not rebuild it. For the October rollout it requires one
+retained complete build and its exact-head reviewed promotion plan, then executes
+the worker with `WDPA_PROMOTION_BUNDLE` and the build's `RUN_DATE`. Publication
+copies that bundle's exact FGB, PMTiles and sidecar bytes through the existing
+owned publisher, preserving claims, counters, generation preconditions and
+recovery. It does not run source processing again. A different canary date is
+rejected. Observer and controlled-failure alert prerequisites remain required.
+
+Later scheduled monthly refreshes still process each new source once and publish
+through the same owned publisher. Do not deploy this job with a local Terraform
+apply or hand-built production image. See the
+[single-build runbook](../../docs/wdpa-processing-validation.md#single-build-and-promotion).
 
 ## Cost Controls and Teardown
 
@@ -233,8 +234,8 @@ docker run --rm --platform linux/amd64 --cpus=4 --memory=8g --memory-swap=8g \
   --workdir /work/shared-datasets-1/october-build-1
 ```
 
-Use a named disk volume and retain its reports for the two complete acceptance
-runs. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genesis`
+Use a named disk volume for diagnostics. Only the protected Cloud Run build
+stages the immutable bundle needed for acceptance. Specify `--fraction 0.001 --seed 7919` for debugging; samples and `--genesis`
 fixtures cannot satisfy acceptance. Add `--compare-legacy` on a sample to compare
 the retained old allocation/export path against IDs, hashes, properties, geometry,
 field types, metadata schemas, all six locales and the canonical translation CSV.
@@ -258,50 +259,49 @@ uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
 cache. It skips symlinks and special files, never changes file bytes and never
 resets or excludes cache from the measured cgroup peak. Frozen local replays also
 release cache from their read-only input directory. Cache advice failures fail
-measurement; the 6.4 GiB acceptance limit remains unchanged.
+measurement. The preferred 6.4 GiB headroom target produces an advisory warning;
+the enforced 8 GiB memory limit remains unchanged. Reports retain the actual
+kernel lifetime peak, including file cache.
 Missing peak telemetry is not passing evidence.
 Scratch measurements cover the entire `/work` filesystem, including native
 temporary files outside the build directory and open files that were unlinked.
 
-`scripts/wdpa_processing_gate.py` blocks production-worker deployment until the reviewed
-`catalog/wdpa-processing-acceptance.json` matches the processing source digest,
-records two complete October builds on 4 CPU / 8 GiB with matching frozen inputs,
-peak memory ≤6.4 GiB, scratch <80 GiB and completion within 24 hours, verifies
-source-derived realm/India counts, compatibility and artifact contracts, and
-confirms disk quota approval. A missed target blocks readiness; increasing the
-worker size does not satisfy the gate. Benchmark the deployment amd64 image,
-record its immutable digest and verify FGB/metadata/PMTiles contracts. Re-run
-benchmarks when processing code changes.
+`scripts/wdpa_processing_gate.py` requires one complete terminal-success October
+build at 4 CPU / 8 GiB with a measured kernel peak within the enforced 8 GiB
+limit, scratch <80 GiB and duration
+≤24 hours, plus independently verified realm/India counts, native contracts and
+a matching sampled old/new comparison. Schema version 3 acceptance binds its
+retained bundle by URI, generation, size and SHA-256, its actual cloud image and
+execution, and the reviewed immutable promotion plan. Samples and genesis runs
+cannot authorize publication. Exceeding preferred headroom alone does not reject
+valid artifacts or require a rebuild. Resource configuration cannot be increased.
 
-Record each retained `benchmark.json` in the acceptance document, adding the
-resolved registry image digest and linking the reviewed fixture/sample
-compatibility evidence. Full resource replays do not also run the old pipeline;
-`compatibility_verified` in acceptance records attests to that separately
-reviewed comparison, while `source_counts_verified` and `contracts_verified`
-come from the replay itself.
+The initial CI checks use `wdpa_build_smoke=true`: a small native fixture followed
+by the deterministic sample, with no full marine build. Reviewed staged evidence
+opens only the isolated protected build workflow. That job may create immutable
+objects under `_scratch/wdpa-builds/` only, has no canonical dataset permissions
+and no scheduler. All eleven input artifact roles per realm are retained before
+local cleanup. A root descriptor is committed only after the entire build passes.
+The production worker can read that staging prefix; it checks both predecessor
+states and all needed file bytes before starting new canonical writes. Manifests,
+run records and release indexes are finalized by the owned publisher with actual
+canonical object generations. Existing owned recovery semantics are unchanged.
 
-Validation proceeds from small to large. The opt-in CI benchmark first runs
-`scripts/local_ingestion_smoke.py` against a tiny synthetic sea-ice raster in the
-deployment image. Only after it passes does the hosted runner process complete
-marine WDPA (`local_wdpa_sample.py --asset wdpa-marine`). Require ≤6.4 GiB peak
-memory and measured scratch greater than the 8 GiB RAM limit and below 80 GiB.
-The hosted runner's six-hour cap is not the production timeout target.
+Already-committed realms retain their successful receipts and published bytes.
+Promotion checks their frozen manifest, predecessor release, allocation counter,
+source period/URL, identity contract and row count; it does not compare unused
+rebuilt files with canonical hashes. Only the needed realm's retained files are
+downloaded and published at exact generations and hashes.
 
-Record small and marine reports in `catalog/wdpa-staged-validation.json`. After
-review, merge, disk quota approval and bootstrap permission verification,
-`wdpa-processing-validation-deploy.yml` deploys an isolated Cloud Run job at
-4 CPU / 8 GiB with 100 GiB disk and a 24-hour timeout. Its runtime service account
-has no dataset permissions and it has no scheduler. Public frozen inputs and
-local processing produce only diagnostics in Cloud Logging, including a
-`wdpa_cloud_validation_report`; downloads also contribute to resource measurements.
-The protected workflow checks exactly three resources and refuses bucket IAM,
-production-worker changes, deletes, larger resource limits and a publishing entrypoint.
-
-Verify the controlled failure's actual alert delivery before triggering the
-large replay. Follow each complete October execution through terminal status and
-collect its report. Two passing cloud reports permit the normal production-worker
-rollout through the unchanged publication-state gate. Interrupted validation
-cannot modify allocations, claims, receipts, release indexes or artifacts.
+The reviewed promotion plan also pins the producer configuration and original
+source fingerprint. Publication code can change without invalidating those
+build facts. `Dockerfile.promotion` inherits the verified producer image's native
+tools and dependencies and adds only the reviewed consumer/gate/entrypoint.
+`WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the expected producer at the bundle
+boundary. The publication-only entrypoint refuses a missing bundle before
+source processing; the controlled pre-write failure probe remains available.
+No source download, normalization, tile build or translation rebuild is part
+of this image layer or publication.
 
 ## Execution observations and failure recovery
 

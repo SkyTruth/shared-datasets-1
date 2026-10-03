@@ -1128,6 +1128,12 @@ def run() -> list[dict[str, Any]]:
         storage.Client(project=project_id), bucket_name, logger=LOGGER
     )
 
+    if "WDPA_PROMOTION_BUNDLE" in os.environ:
+        from ingestion.wdpa_monthly.artifact_bundle import promote
+        reference = json.loads(os.environ["WDPA_PROMOTION_BUNDLE"])
+        with tempfile.TemporaryDirectory(prefix="wdpa-promotion-", dir=work_root()) as directory:
+            return promote(storage.Client(project=project_id), publisher, reference, Path(directory))
+
     resumed = {asset.slug: publisher.resume(asset) for asset in ASSETS}
     if all(value is not None for value in resumed.values()):
         return [resumed[asset.slug] for asset in ASSETS]

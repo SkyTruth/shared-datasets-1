@@ -1,7 +1,7 @@
 import {createComparisonController, changedPropertyFields} from "./compare-releases.js";
 import {executionStatusText, selectReleaseReference, releaseFile, metadataFile, artifactGeneration, artifactKey, artifactUrl, snapshotKey, assertArtifactResponse, lookupMatchesReference} from "./release-reference.js";
 
-import {captureWorkspace, attribution, pythonSnippet, typescriptSnippet} from "./workspace.js";
+import {captureWorkspace, pythonSnippet, typescriptSnippet} from "./workspace.js";
 
 const state = {
   catalog: null,
@@ -2420,9 +2420,9 @@ function renderFeatureInspector(features) {
 
   for (const feature of selectedFeatures) {
     const changedFields = new Set();
-    if (feature.metadataLoaded && feature.comparisonChange === "metadata_changed") {
+    if (feature.metadataLoaded && feature.comparisonIdentityCompatible) {
       for (const other of selectedFeatures) {
-        if (other.metadataLoaded && other.assetSlug === feature.assetSlug && other.comparisonSide !== feature.comparisonSide && other.geometryHash === feature.geometryHash) {
+        if (other.metadataLoaded && other.assetSlug === feature.assetSlug && other.comparisonSide !== feature.comparisonSide && featureIdFor(other) === featureIdFor(feature)) {
           for (const field of changedPropertyFields(feature.properties, other.properties, feature.comparisonExcludedProperties)) changedFields.add(field);
         }
       }
@@ -2942,13 +2942,9 @@ function renderUseSection(reference) {
     document.querySelector('#use-tab-typescript').hidden = !typescript;
     const active = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' && typescript ? 'typescript' : 'python';
     useLanguage(active);
-    const credit = document.querySelector('#use-attribution');
-    credit.textContent = attribution(snapshot);
-    credit.href = reference.source_url || reference.docs_url || 'https://skytruth.org';
   } catch (failure) {
     document.querySelector('#use-python').textContent = '';
     document.querySelector('#use-typescript').textContent = '';
-    document.querySelector('#use-attribution').textContent = '';
     error.textContent = 'Code is unavailable for this version. Please choose another version.';
     error.hidden = false; document.querySelector('#use-copy-code').disabled = true;
   }
@@ -2968,5 +2964,4 @@ function wireUseEvents() {
     const language = document.querySelector('#use-tab-typescript').getAttribute('aria-selected') === 'true' ? 'typescript' : 'python';
     copyValue(document.querySelector(`#use-${language}`).textContent, event.currentTarget);
   });
-  document.querySelector('#use-copy-attribution').addEventListener('click', event => copyValue(document.querySelector('#use-attribution').textContent, event.currentTarget));
 }

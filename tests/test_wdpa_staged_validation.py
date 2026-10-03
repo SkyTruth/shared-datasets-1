@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import json
+from types import SimpleNamespace
 import subprocess
 import sys
 from pathlib import Path
@@ -28,10 +30,9 @@ DEPLOYER = "shared-datasets-terraform@shared-datasets-1.iam.gserviceaccount.com"
 
 def staged_evidence():
     complete = accepted_evidence()
-    marine = complete["runs"][0]
-    marine["assets"].pop("wdpa-terrestrial")
+    build = complete["build"]
     small = {
-        key: marine[key]
+        key: build[key]
         for key in (
             "source_tree_sha256",
             "image_digest",
@@ -43,11 +44,10 @@ def staged_evidence():
         scope="small-sea-ice-fixture", state="succeeded", contracts_verified=True
     )
     return dict(
-        schema_version=2,
+        schema_version=3,
         source_tree_sha256=gate.source_digest(),
         disk_quota_approved=True,
         small_fixture=small,
-        marine=marine,
         compatibility_sample=complete["compatibility_sample"],
     )
 
@@ -56,7 +56,7 @@ def test_staged_evidence_cannot_authorize_publication():
     evidence = staged_evidence()
     assert gate.check_precloud(evidence) == []
     assert gate.check(evidence), (
-        "small/marine evidence cannot open the production publication gate"
+        "small/sampled evidence cannot open the production publication gate"
     )
 
 
@@ -69,26 +69,26 @@ def test_staged_evidence_cannot_authorize_publication():
         "terrestrial",
         "cache",
         "memory",
-        "no_spill",
+        "native",
         "digest",
     ],
 )
-def test_cloud_validation_requires_all_prior_stages_and_measured_disk_spill(defect):
+def test_cloud_build_requires_matching_small_and_sampled_checks(defect):
     evidence = staged_evidence()
     if defect == "quota":
         evidence["disk_quota_approved"] = False
     if defect == "small":
         evidence["small_fixture"]["state"] = "failed"
     if defect == "sample":
-        evidence["marine"]["sample_fraction"] = 0.001
+        evidence["compatibility_sample"]["sample_fraction"] = 1
     if defect == "terrestrial":
-        evidence["marine"]["assets"]["wdpa-terrestrial"] = {}
+        evidence["compatibility_sample"]["assets"].pop("wdpa-terrestrial")
     if defect == "cache":
-        evidence["marine"]["translation_index_built"] = False
+        evidence["compatibility_sample"]["translation_index_built"] = False
     if defect == "memory":
-        evidence["marine"]["memory_peak_bytes"] = 7 * 1024**3
-    if defect == "no_spill":
-        evidence["marine"]["scratch_peak_bytes"] = 7 * 1024**3
+        evidence["compatibility_sample"]["memory_limit_bytes"] = 16 * 1024**3
+    if defect == "native":
+        evidence["compatibility_sample"]["native_versions"] = {}
     if defect == "digest":
         evidence["small_fixture"]["image_digest"] = "sha256:" + "f" * 64
     assert gate.check_precloud(evidence)
@@ -107,7 +107,22 @@ def test_hosted_stages_run_small_before_marine_and_never_terrestrial():
     assert job["timeout-minutes"] == 360
 
 
-def test_isolated_cloud_workflow_is_protected_and_cannot_target_worker_or_bucket_iam():
+def test_single_build_smoke_never_runs_the_complete_marine_benchmark():
+    workflow = load_workflow(ROOT / ".github/workflows/ci.yml")
+    steps = workflow_steps_by_name(workflow, "wdpa-full-benchmark")
+    assert (
+        "!inputs.wdpa_build_smoke"
+        in steps["Run marine WDPA with 4 CPU and 8 GiB"]["if"]
+    )
+    assert (
+        "wdpa_build_smoke"
+        not in steps[
+            "Compare deterministic October sample with the old processing path"
+        ]["if"]
+    )
+
+
+def test_cloud_build_workflow_is_protected_and_limits_staging_permissions():
     workflow = load_workflow(
         ROOT / ".github/workflows/wdpa-processing-validation-deploy.yml"
     )
@@ -123,21 +138,25 @@ def test_isolated_cloud_workflow_is_protected_and_cannot_target_worker_or_bucket
     )
     names = list(steps)
     assert names.index(
-        "Require small and marine validation plus disk quota"
+        "Require small and sampled checks plus disk quota"
     ) < names.index("Publish the tested immutable validation image")
     assert (
         "--pre-cloud"
-        in steps["Require small and marine validation plus disk quota"]["run"]
+        in steps["Require small and sampled checks plus disk quota"]["run"]
     )
     assert names.index(
         "Enforce isolated resource and permission allowlist"
     ) < names.index("Apply the saved protected plan")
     tf = (ROOT / "terraform/envs/prod/wdpa_processing_validation.tf").read_text()
-    assert "google_storage_bucket_iam" not in tf and "scheduler" not in tf
+    assert "_scratch/wdpa-builds/" in tf and "scheduler" not in tf
+    assert 'permissions = ["storage.objects.create"]' in tf
+    assert 'permissions = ["storage.objects.get"]' in tf
 
 
 def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
-    workflow = load_workflow(ROOT / ".github/workflows/wdpa-processing-validation-deploy.yml")
+    workflow = load_workflow(
+        ROOT / ".github/workflows/wdpa-processing-validation-deploy.yml"
+    )
     steps = workflow_steps_by_name(workflow, "deploy")
     download = steps["Download the tested deployment image"]
     assert download["with"]["name"] == "wdpa-benchmark-image"
@@ -147,8 +166,13 @@ def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
     assert "config_digest" in publish and "--print-source-digest" in publish
     assert "docker build" not in publish.replace("docker buildx imagetools", "inspect")
     names = list(steps)
-    assert names.index("Refuse to replace an active validation execution") < names.index("Publish the tested immutable validation image")
-    assert "completionTime" in steps["Refuse to replace an active validation execution"]["run"]
+    assert names.index(
+        "Refuse to replace an active validation execution"
+    ) < names.index("Publish the tested immutable validation image")
+    assert (
+        "completionTime"
+        in steps["Refuse to replace an active validation execution"]["run"]
+    )
 
 
 def test_sample_comparison_precedes_full_marine_and_is_not_resource_evidence():
@@ -163,20 +187,80 @@ def test_sample_comparison_precedes_full_marine_and_is_not_resource_evidence():
     assert "compatibility/benchmark.json" in command and "compatibility.json" in command
 
 
-@pytest.mark.parametrize("cpu,memory,peak,reason", [
-    (None, 8 * 1024**3, 1, "kernel CPU"),
-    (8, 8 * 1024**3, 1, "kernel CPU"),
-    (3.72, 16 * 1024**3, 1, "8 GiB"),
-    (3.72, 8 * 1024**3, None, "peak-memory"),
-])
-def test_cloud_preflight_stops_before_download_for_invalid_or_unmeasured_limits(monkeypatch, cpu, memory, peak, reason):
+@pytest.mark.parametrize(
+    "cpu,memory,peak,reason",
+    [
+        (None, 8 * 1024**3, 1, "kernel CPU"),
+        (8, 8 * 1024**3, 1, "kernel CPU"),
+        (3.72, 16 * 1024**3, 1, "8 GiB"),
+        (3.72, 8 * 1024**3, None, "peak-memory"),
+    ],
+)
+def test_cloud_preflight_stops_before_download_for_invalid_or_unmeasured_limits(
+    monkeypatch, cpu, memory, peak, reason
+):
     monkeypatch.delenv("WDPA_FAIL_BEFORE_DATASET_WRITES", raising=False)
     monkeypatch.setattr(cloud, "prepare_scratch", lambda: None)
     monkeypatch.setattr(cloud, "cgroup_limits", lambda: (cpu, memory))
     monkeypatch.setattr(cloud, "cgroup_memory", lambda: (1, peak))
-    monkeypatch.setattr(cloud.subprocess, "run", lambda *_a, **_k: pytest.fail("preflight downloaded inputs"))
+    monkeypatch.setattr(
+        cloud.subprocess,
+        "run",
+        lambda *_a, **_k: pytest.fail("preflight downloaded inputs"),
+    )
     with pytest.raises(RuntimeError, match=reason):
         cloud.main()
+
+
+def test_successful_cloud_build_retains_actual_peak_and_advisory_in_final_report(
+    monkeypatch, tmp_path, capsys
+):
+    from ingestion.wdpa_monthly.artifact_bundle import BuildStager
+
+    build = accepted_evidence()["build"]
+    reference = build.pop("artifact_bundle")
+    peak = 7732400128
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", build["cloud_execution"])
+    monkeypatch.setenv("WDPA_BUILD_IMAGE", build["cloud_image"])
+    monkeypatch.setenv("WDPA_BUILD_IMAGE_CONFIG_DIGEST", build["image_digest"])
+    monkeypatch.delenv("WDPA_FAIL_BEFORE_DATASET_WRITES", raising=False)
+    monkeypatch.setattr(cloud, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(cloud, "cgroup_limits", lambda: (3.72, 8 * 1024**3))
+    monkeypatch.setattr(cloud, "cgroup_memory", lambda: (1, peak))
+    monkeypatch.setattr(cloud.wdpa, "native_versions", lambda: {})
+
+    class Profiler:
+        def __init__(self, *_args, **_kwargs):
+            self.records = []
+
+        @contextmanager
+        def phase(self, _name):
+            yield
+            self.records.append({"scratch_peak_bytes": 1, "elapsed_seconds": 1})
+
+    def run(command, **_kwargs):
+        if "--stage-build" in command:
+            directory = Path(command[command.index("--workdir") + 1])
+            directory.mkdir()
+            (directory / "benchmark.json").write_text(json.dumps(build))
+
+    def commit(report, _root):
+        assert gate.check_build(report, require_bundle=False) == []
+        assert report["memory_peak_bytes"] == peak
+        assert report["resource_warnings"] == gate.memory_warnings(report)
+        return reference
+
+    monkeypatch.setattr(cloud, "PhaseProfiler", Profiler)
+    monkeypatch.setattr(cloud.subprocess, "run", run)
+    monkeypatch.setattr(BuildStager, "from_runtime", lambda: SimpleNamespace(commit=commit))
+    cloud.main()
+    report = json.loads((tmp_path / "cloud-validation/benchmark.json").read_text())
+    assert report["state"] == "succeeded"
+    assert report["memory_peak_bytes"] == peak
+    assert report["artifact_bundle"] == reference
+    logged = json.loads(capsys.readouterr().out)["report"]
+    assert logged == report and logged["resource_warnings"]
 
 
 def plan():
@@ -216,6 +300,11 @@ def plan():
                                     {"name": "work", "mount_path": "/work"}
                                 ],
                                 "env": [
+                                    {"name": "WDPA_BUILD_IMAGE", "value": IMAGE},
+                                    {
+                                        "name": "WDPA_BUILD_IMAGE_CONFIG_DIGEST",
+                                        "value": "sha256:" + "a" * 64,
+                                    },
                                     {"name": "TMPDIR", "value": "/work/tmp"},
                                     {
                                         "name": "SHARED_DATASETS_WORKDIR",
@@ -234,6 +323,40 @@ def plan():
             {"address": policy.JOB, "change": {"actions": ["create"], "after": after}}
         ]
     }
+
+
+@pytest.mark.parametrize("defect", ["delete", "wide_prefix"])
+def test_build_staging_cannot_grant_replacement_or_bucket_wide_access(defect):
+    resource = {
+        "address": "google_project_iam_custom_role.wdpa_build_stager",
+        "change": {
+            "actions": ["create"],
+            "after": {
+                "project": "shared-datasets-1",
+                "role_id": "wdpaBuildStager",
+                "permissions": ["storage.objects.create", "storage.objects.delete"],
+            },
+        },
+    }
+    if defect == "wide_prefix":
+        resource = {
+            "address": "google_storage_bucket_iam_member.wdpa_build_stager",
+            "change": {
+                "actions": ["create"],
+                "after": {
+                    "bucket": "skytruth-shared-datasets-1",
+                    "role": "projects/shared-datasets-1/roles/wdpaBuildStager",
+                    "member": "serviceAccount:wdpa-processing-validation@shared-datasets-1.iam.gserviceaccount.com",
+                    "condition": [
+                        {
+                            "expression": "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1/objects/')"
+                        }
+                    ],
+                },
+            },
+        }
+    with pytest.raises(ValueError, match="staging"):
+        policy.check({"resource_changes": [resource]}, image=IMAGE, deployer=DEPLOYER)
 
 
 @pytest.mark.parametrize(
@@ -310,6 +433,9 @@ def test_runtime_inspection_is_distinct_from_source_processing():
         "template"
     ][0]["containers"][0]
     container["command"] = inspection_recipe()["command"]
+    container["env"] = [
+        e for e in container["env"] if not e["name"].startswith("WDPA_BUILD_")
+    ]
     policy.check(document, image=IMAGE, deployer=DEPLOYER, runtime_inspection=True)
     with pytest.raises(ValueError, match="configuration"):
         policy.check(document, image=IMAGE, deployer=DEPLOYER)

@@ -181,6 +181,8 @@ jobs:
             -out="${RUNNER_TEMP}/catalog-viewer.tfplan" \
             -target=module.catalog_viewer_service_account.google_service_account.this \
             -target=google_storage_bucket_iam_member.catalog_viewer_object_viewer \
+            -target=google_storage_bucket.catalog_comparisons \
+            -target=google_storage_bucket_iam_member.catalog_comparisons_worker \
             -target=google_project_iam_custom_role.catalog_viewer_sign_blob \
             -target=google_service_account_iam_member.catalog_viewer_self_sign_blob \
             -target=google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer \
@@ -210,6 +212,8 @@ jobs:
               "google_secret_manager_secret_iam_member.pmtiles_cdn_catalog_viewer_signer",
               "google_service_account_iam_member.catalog_viewer_self_sign_blob",
               "google_storage_bucket_iam_member.catalog_viewer_object_viewer",
+              "google_storage_bucket.catalog_comparisons",
+              "google_storage_bucket_iam_member.catalog_comparisons_worker",
           }
           allowed_patterns = [
               re.compile(r"^module\.catalog_viewer_service_account\."),

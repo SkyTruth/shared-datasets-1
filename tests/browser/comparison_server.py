@@ -53,7 +53,7 @@ def geometry_opener(ref, *, bucket_name):
 class ScenarioJobs:
     """Give each browser scenario a fresh real job store with production limits."""
 
-    limits = comparisons.engine.Limits()
+    limits = comparisons.VIEWER_LIMITS
 
     def __init__(self):
         self.scenarios = {}
@@ -74,6 +74,12 @@ class ScenarioJobs:
 
     def get(self, job_id, owner):
         return self.for_owner(owner).get(job_id, owner)
+
+    def cancel(self, job):
+        return self.for_owner(job.owner).cancel(job)
+
+    def prepare(self, job):
+        return self.for_owner(job.owner).prepare(job)
 
 
 store = FixtureStore(work / "site")
