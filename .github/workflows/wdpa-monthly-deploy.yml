@@ -64,8 +64,12 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
+  iam:
+    uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
+
   deploy:
     name: Prepare publication image and apply wdpa-monthly Terraform
+    needs: iam
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production

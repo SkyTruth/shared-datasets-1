@@ -93,8 +93,11 @@ Reviewed translation edits stage the CSV, rebuilt Spanish sidecar, and coverage
 manifest together. The normal reviewed mutation workflow publishes this bundle;
 there is no separate after-publish localization workflow. Completion may send
 one translation-debt notice per release using the shared helper. Runtime secret
-and export permissions are managed by the protected ingestion IAM sync before
-the ordinary job deployment.
+and export permissions are managed by the protected ingestion IAM sync, which
+the deployment workflow waits for. The sync first bootstraps the deployer's
+metadata-read and IAM-policy permissions on the one Slack secret, then installs
+the runtime grants. The deployer does not gain access to secret values through
+this bootstrap.
 
 Release uploads use no-clobber GCS generation preconditions. `latest/` uploads
 replace only the observed generation. If release objects exist without a run
