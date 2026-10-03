@@ -6,6 +6,31 @@ bucket. It does not require a second complete build or regenerate artifacts in
 the production canary. `catalog/wdpa-processing-acceptance.json` remains blocked
 until a retained build and its reviewed promotion plan exist.
 
+The artifact-retaining image passed its small native fixture and deterministic
+both-realm old/new sample in [run 37095105175](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37095105175)
+on `1d67e856dda11e936abad95d6a92c5e421660857`. The complete hosted marine step
+was skipped as requested. Version 3 `catalog/wdpa-staged-validation.json` records
+processing fingerprint
+`1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23`
+and image configuration digest
+`sha256:ca0d2b90531f6273f088def35de858b40b9ae9772f37ccc9dc95d4e0d5f6c760`.
+The image ZIP, actual configuration blob and report ZIPs were hash-verified;
+[original reports and image metadata](wdpa-processing-evidence/37095105175/compatibility.json)
+are retained unchanged. The configuration digest is not a deployed registry
+manifest digest or evidence of a completed cloud build.
+
+The small fixture produced one record with valid native contracts in 1.533
+seconds (1.466 seconds in the production phase). Its production phase kernel
+peak was 104,157,184 bytes and scratch was
+876,544 bytes; these remain per-phase measurements. The fresh October comparison
+passed in 678.281 seconds for 20 marine and 499 terrestrial records, including
+193 terrestrial India records/sites, under 4 CPU / 8 GiB. Its kernel lifetime
+peak was 6,467,153,920 bytes and scratch was 9,561,575,424 bytes. All sampled
+artifact hashes, semantic results, baseline identities and allocation counters
+match the preceding sample. These are sampled counts and compatibility evidence,
+not full terrestrial acceptance or publication. After reviewed merge and no
+active execution, this permits one isolated complete retaining build.
+
 ## Single build and promotion
 
 1. Build the Linux deployment image once. Dispatch CI with `wdpa_build_smoke=true`

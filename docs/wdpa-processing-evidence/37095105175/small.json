@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "scope": "small-sea-ice-fixture",
+  "source_tree_sha256": "1e7d60b2e1cbcf171894e072e0b72b92ee03933d34b5a715e6951485565b5c23",
+  "state": "succeeded",
+  "source": "synthetic IMS classes, 4 by 4 cells",
+  "cpu_limit": 4.0,
+  "memory_limit_bytes": 8589934592,
+  "native_versions": {
+    "gdal_python": "3.6.2",
+    "pmtiles_build_version": "v1.30.1",
+    "ogr2ogr_path": "/usr/bin/ogr2ogr",
+    "tippecanoe_path": "/usr/bin/tippecanoe",
+    "pmtiles_path": "/usr/local/bin/pmtiles",
+    "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+    "tippecanoe": "tippecanoe v2.52.0",
+    "pmtiles": "pmtiles dev, commit none, built at unknown"
+  },
+  "rows": 1,
+  "artifact_sha256": {
+    "fgb": "e6adc05c8a6c584b2b79873994bf708cd2a704fa500374ff00d419880638285b",
+    "pmtiles": "5031faf765df1f5715d85eea0420c71cdcf92bc88a9073daad523e9f1a20e6f0",
+    "metadata": "30edb50616289fa6ecf60d105f2bf3cb047009016443336cf644854394c58bef",
+    "schema": "996d00f80b6a6b5e7510e0000d6a9c126522593b9e5832daab04501460570d8a"
+  },
+  "contracts_verified": true,
+  "elapsed_seconds": 1.5332970670000066,
+  "phases": [
+    {
+      "event": "wdpa_phase_resources",
+      "phase": "sea-ice:synthetic-source",
+      "state": "succeeded",
+      "elapsed_seconds": 0.055,
+      "phase_memory_peak_bytes": 54046720,
+      "memory_breakdown_at_sampled_peak": {
+        "anon": 42364928,
+        "file": 6832128,
+        "kernel": 4034560,
+        "shmem": 0,
+        "file_mapped": 0,
+        "file_dirty": 6721536
+      },
+      "scratch_cache_releases": 0,
+      "cgroup_memory_peak_bytes": 64876544,
+      "process_rss_peak_bytes": 94801920,
+      "scratch_peak_bytes": 8192,
+      "native_versions": {
+        "gdal_python": "3.6.2",
+        "pmtiles_build_version": "v1.30.1",
+        "ogr2ogr_path": "/usr/bin/ogr2ogr",
+        "tippecanoe_path": "/usr/bin/tippecanoe",
+        "pmtiles_path": "/usr/local/bin/pmtiles",
+        "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+        "tippecanoe": "tippecanoe v2.52.0",
+        "pmtiles": "pmtiles dev, commit none, built at unknown"
+      },
+      "artifact_sizes": {
+        "source.tif": 379
+      }
+    },
+    {
+      "event": "wdpa_phase_resources",
+      "phase": "sea-ice:production-build",
+      "state": "succeeded",
+      "elapsed_seconds": 1.466,
+      "phase_memory_peak_bytes": 59637760,
+      "memory_breakdown_at_sampled_peak": {
+        "anon": 46718976,
+        "file": 7626752,
+        "kernel": 4882432,
+        "shmem": 0,
+        "file_mapped": 0,
+        "file_dirty": 7516160
+      },
+      "scratch_cache_releases": 0,
+      "cgroup_memory_peak_bytes": 104157184,
+      "process_rss_peak_bytes": 94932992,
+      "scratch_peak_bytes": 876544,
+      "native_versions": {
+        "gdal_python": "3.6.2",
+        "pmtiles_build_version": "v1.30.1",
+        "ogr2ogr_path": "/usr/bin/ogr2ogr",
+        "tippecanoe_path": "/usr/bin/tippecanoe",
+        "pmtiles_path": "/usr/local/bin/pmtiles",
+        "ogr2ogr": "GDAL 3.6.2, released 2023/01/02",
+        "tippecanoe": "tippecanoe v2.52.0",
+        "pmtiles": "pmtiles dev, commit none, built at unknown"
+      },
+      "artifact_sizes": {
+        "ims-sea-ice-extent.schema.json": 332,
+        "ims-sea-ice-extent.pmtiles": 2952,
+        "source.tif": 379,
+        "ims-sea-ice-extent.metadata.ndjson.gz": 333,
+        "ims-sea-ice-extent.fgb": 2480
+      }
+    }
+  ]
+}
