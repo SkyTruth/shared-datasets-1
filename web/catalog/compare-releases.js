@@ -294,6 +294,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       if (!current(session)) return;
       session.refs = refs(); session.mapPromise = showMap(session);
       const capabilities = await request("/api/comparisons", session);
+      if (!current(session)) return;
       if (capabilities.map_index_version !== 1) throw new Error("The viewer update is still deploying. Retry this comparison shortly.");
       const expected = Object.fromEntries(["baseline", "target"].map(side => [side, comparisonFiles(session.refs[side])]));
       progress({phase: "downloading", total: null});
