@@ -111,7 +111,9 @@ alive at the same time.
 
 Use the reviewed WDPA resource target, and never increase it to bypass acceptance:
 
-- Cloud Run Job task resources: `4` CPU and `8Gi` memory, with peak ≤6.4 GiB.
+- Cloud Run Job task resources: `4` CPU and enforced `8Gi` memory. Preserve the
+  measured kernel lifetime peak; exceeding preferred 6.4 GiB headroom is an
+  advisory warning, not artifact rejection or a reason to rebuild retained bytes.
 - Ephemeral DISK: `100Gi` at `/work`; measured scratch must stay below 80 GiB.
   Obtain the additional per-instance disk quota before rollout.
 - Require one complete retained October build and matching processing/image

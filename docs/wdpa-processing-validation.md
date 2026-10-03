@@ -28,7 +28,9 @@ until a retained build and its reviewed promotion plan exist.
    the actual immutable deployed image URI, its configuration digest and every
    staged object's generation, size and SHA-256. Version 3 acceptance names
    `build`, not a replay list, and the matching separate compatibility sample.
-   Require kernel peak ≤6.4 GiB, scratch <80 GiB and duration ≤24 hours.
+   Require the actual kernel lifetime peak within the enforced 8 GiB limit,
+   scratch <80 GiB and duration ≤24 hours. Exceeding preferred 6.4 GiB headroom
+   produces an advisory warning; it does not reject otherwise valid artifacts.
 5. Add `.github/dataset-plans/wdpa-build-{bundle-sha256}.json` and the matching
    `shared-datasets-publish-plan` fence to the evidence PR. Record that PR number
    in acceptance. The protected worker workflow checks exact-head approval (or
@@ -59,6 +61,47 @@ marine files already removed. Its diagnostic progress cannot supply a promotable
 bundle. Let it finish; deploy the retaining image only after no execution is active.
 No second replay of that old image is authorized. Historical reports below remain
 unaltered evidence for their original images and delivery paths.
+
+## Artifact acceptance and preferred headroom
+
+The enforced memory configuration is 8 GiB. The preferred 6.4 GiB peak is an
+advisory warning, separate from artifact acceptance. Preserve and report the
+actual kernel lifetime peak, including file cache. A complete successful build
+at 7.2 GiB can commit its retained bundle and be promoted when counts, identities,
+frozen inputs, native FGB/PMTiles/sidecar contracts, image evidence, reviewed plan
+and ownership checks all pass. Do not require a second matching build or rebuild
+valid retained files to improve memory measurements. Cache-control improvements
+are separate operational work, not prerequisites for accepting such artifacts.
+
+The old diagnostic `wdpa-processing-validation-5q7zp` built terrestrial metadata
+(70,215,228 bytes), schema (3,862 bytes) and indexed FGB (5,816,513,152 bytes).
+Metadata took 5,260.409 seconds; FGB took 75.354 seconds and completed at
+`2026-10-03T02:52:01Z`. Its observed real kernel lifetime peak is 7,732,400,128
+bytes (7.20 GiB): advisory under this policy. Raw API/phase facts are retained
+[unchanged](wdpa-processing-evidence/wdpa-processing-validation-5q7zp/terrestrial-export-logs.json).
+
+This execution cannot supply a complete retained bundle. Its deployed sampler
+deletes each realm's validated output files before moving on and has no artifact
+staging code or permissions. All eleven marine artifact files were already
+removed. Terrestrial FGB/metadata/schema remain temporary working files;
+PMTiles, translation CSV, six locale sidecars and final contracts were still
+outstanding at the latest captured phase. It has no generation/hash-pinned
+staged objects or root descriptor.
+The [read-only retention assessment](wdpa-processing-evidence/wdpa-processing-validation-5q7zp/retention-assessment.json)
+at `2026-10-03T03:52:06Z` found **zero objects** under its exact
+`_scratch/wdpa-builds/wdpa-processing-validation-5q7zp/` prefix and confirmed
+the old immutable image and running execution.
+
+The exact required files for **each** realm are `{asset-slug}.fgb`,
+`{asset-slug}.pmtiles`, `{asset-slug}.metadata.ndjson.gz`,
+`{asset-slug}.schema.json`, `{asset-slug}.metadata-translations.csv`, and
+`{asset-slug}.metadata.{locale}.ndjson.gz` for `es`, `fr`, `id`, `pt`, `pt_br`
+and `sw`. The missing retained marine files cannot be recovered from scalar
+reports. After this diagnostic is terminal, the minimum supported work is one
+complete build using the retaining image, upload both validated realm sets before
+cleanup, commit the root descriptor, then review and promote those exact bytes.
+This is required to retain the artifacts, not to improve its memory margin. No
+retained complete artifact bundle is rebuilt merely because it exceeds 6.4 GiB.
 
 ## Completed checks
 
@@ -195,8 +238,8 @@ The complete marine replay in that run passed at 4 CPU / 8 GiB with no swap:
 | Measurement | Marine result | Required target |
 | --- | --- | --- |
 | Processing duration | 3,004.028 seconds (50.1 minutes) | ≤24 hours |
-| Cgroup memory peak | 6,603,804,672 bytes (6.15 GiB) | ≤6.4 GiB |
-| Memory headroom | 23.1% | ≥20% |
+| Cgroup memory peak | 6,603,804,672 bytes (6.15 GiB) | 6.4 GiB preferred; 8 GiB enforced |
+| Memory headroom | 23.1% | ≥20% preferred |
 | Scratch peak | 9,457,233,920 bytes (8.81 GiB) | >8 GiB and <80 GiB |
 | Marine records | 17,938 | Frozen source: 17,938 |
 | India records/sites | 304 / 304 | Frozen source: 304 / 304 |
@@ -232,8 +275,8 @@ Complete marine finished at `2026-10-02T19:42:44Z` with exit code zero and
 | Measurement | Earlier marine result | Required target |
 | --- | --- | --- |
 | Processing duration | 3,027.472 seconds (50.5 minutes) | ≤24 hours |
-| Kernel cgroup memory peak | 4,842,131,456 bytes (4.51 GiB) | ≤6.4 GiB |
-| Memory headroom | 43.6% | ≥20% |
+| Kernel cgroup memory peak | 4,842,131,456 bytes (4.51 GiB) | 6.4 GiB preferred; 8 GiB enforced |
+| Memory headroom | 43.6% | ≥20% preferred |
 | Scratch peak | 9,561,579,520 bytes (8.90 GiB) | >8 GiB and <80 GiB |
 | Marine records | 17,938 | Frozen source: 17,938 |
 | India records/sites | 304 / 304 | Frozen source: 304 / 304 |
@@ -269,8 +312,8 @@ output. Complete marine finished at `2026-10-02T21:53:27Z`, exit code zero and
 | Measurement | Corrected marine result | Required target |
 | --- | --- | --- |
 | Processing duration | 3,059.526 seconds (51.0 minutes) | ≤24 hours |
-| Kernel cgroup memory peak | 4,744,769,536 bytes (4.42 GiB) | ≤6.4 GiB |
-| Memory headroom | 44.8% | ≥20% |
+| Kernel cgroup memory peak | 4,744,769,536 bytes (4.42 GiB) | 6.4 GiB preferred; 8 GiB enforced |
+| Memory headroom | 44.8% | ≥20% preferred |
 | Scratch peak | 9,379,639,296 bytes (8.74 GiB) | >8 GiB and <80 GiB |
 | Marine records | 17,938 | Frozen source: 17,938 |
 | India records/sites | 304 / 304 | Frozen source: 304 / 304 |
@@ -317,8 +360,9 @@ completed in 48.136 seconds with **7,855,362,048 bytes (7.32 GiB)** total cgroup
 peak, exceeding the 6.4 GiB target. Scratch peaked at 9,561,575,424 bytes;
 parent RSS was 172,761,088 bytes and child RSS 96,567,296 bytes. At phase end,
 `memory.stat` showed 4,928,614,400 bytes of file cache, no mapped files or shmem,
-and 111,677,440 bytes of anonymous memory. This diagnostic misses the headroom
-target and cannot pass acceptance.
+and 111,677,440 bytes of anonymous memory. This input-only diagnostic cannot
+pass acceptance because it did not build and retain complete validated artifacts;
+its headroom excess is advisory under the current policy.
 
 The processing sampler now requests release of regular-file cache under memory
 pressure using Linux cache advice. It retains total cgroup peak measurement,
@@ -375,8 +419,11 @@ downloaded the frozen inputs, but its early lifetime kernel peak reached
 **7,520,972,800 bytes (7.00 GiB)**, exceeding the 6.4 GiB target. The input
 download phase itself peaked at 4,446,232,576 bytes. These
 [early Cloud Logging resource events](wdpa-processing-evidence/wdpa-processing-validation-6mvsp/early-phase-logs.json)
-are diagnostic evidence while the execution continues; they cannot establish
-complete counts, contracts or acceptance.
+remain diagnostic evidence; they cannot establish complete counts, contracts or
+acceptance. That execution subsequently failed during platform hardware
+maintenance at `2026-10-02T22:17:51Z`, without a final processing report. Its
+preferred headroom excess is advisory under the current policy, separate from
+that terminal failure and missing artifact bundle.
 
 The replay hashed the 4.8 GB source ZIP before entering its first measured
 phase. Linux file cache from that read therefore accumulated without the

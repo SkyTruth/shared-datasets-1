@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import json
+from types import SimpleNamespace
 import subprocess
 import sys
 from pathlib import Path
@@ -208,6 +210,57 @@ def test_cloud_preflight_stops_before_download_for_invalid_or_unmeasured_limits(
     )
     with pytest.raises(RuntimeError, match=reason):
         cloud.main()
+
+
+def test_successful_cloud_build_retains_actual_peak_and_advisory_in_final_report(
+    monkeypatch, tmp_path, capsys
+):
+    from ingestion.wdpa_monthly.artifact_bundle import BuildStager
+
+    build = accepted_evidence()["build"]
+    reference = build.pop("artifact_bundle")
+    peak = 7732400128
+    monkeypatch.setenv("SHARED_DATASETS_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", build["cloud_execution"])
+    monkeypatch.setenv("WDPA_BUILD_IMAGE", build["cloud_image"])
+    monkeypatch.setenv("WDPA_BUILD_IMAGE_CONFIG_DIGEST", build["image_digest"])
+    monkeypatch.delenv("WDPA_FAIL_BEFORE_DATASET_WRITES", raising=False)
+    monkeypatch.setattr(cloud, "prepare_scratch", lambda: None)
+    monkeypatch.setattr(cloud, "cgroup_limits", lambda: (3.72, 8 * 1024**3))
+    monkeypatch.setattr(cloud, "cgroup_memory", lambda: (1, peak))
+    monkeypatch.setattr(cloud.wdpa, "native_versions", lambda: {})
+
+    class Profiler:
+        def __init__(self, *_args, **_kwargs):
+            self.records = []
+
+        @contextmanager
+        def phase(self, _name):
+            yield
+            self.records.append({"scratch_peak_bytes": 1, "elapsed_seconds": 1})
+
+    def run(command, **_kwargs):
+        if "--stage-build" in command:
+            directory = Path(command[command.index("--workdir") + 1])
+            directory.mkdir()
+            (directory / "benchmark.json").write_text(json.dumps(build))
+
+    def commit(report, _root):
+        assert gate.check_build(report, require_bundle=False) == []
+        assert report["memory_peak_bytes"] == peak
+        assert report["resource_warnings"] == gate.memory_warnings(report)
+        return reference
+
+    monkeypatch.setattr(cloud, "PhaseProfiler", Profiler)
+    monkeypatch.setattr(cloud.subprocess, "run", run)
+    monkeypatch.setattr(BuildStager, "from_runtime", lambda: SimpleNamespace(commit=commit))
+    cloud.main()
+    report = json.loads((tmp_path / "cloud-validation/benchmark.json").read_text())
+    assert report["state"] == "succeeded"
+    assert report["memory_peak_bytes"] == peak
+    assert report["artifact_bundle"] == reference
+    logged = json.loads(capsys.readouterr().out)["report"]
+    assert logged == report and logged["resource_warnings"]
 
 
 def plan():

@@ -18,7 +18,7 @@ from ingestion.wdpa_monthly.resources import (
     prepare_scratch,
     validation_limits,
 )
-from scripts.wdpa_processing_gate import source_digest
+from scripts.wdpa_processing_gate import memory_warnings, source_digest
 
 
 def main():
@@ -95,6 +95,7 @@ def main():
         report["image_digest"] = config_digest
         report["phases"] = profiler.records + report.get("phases", [])
         report["memory_peak_bytes"] = cgroup_memory()[1]
+        report["resource_warnings"] = memory_warnings(report)
         report["scratch_peak_bytes"] = max(
             (p["scratch_peak_bytes"] for p in report["phases"]),
             default=None,

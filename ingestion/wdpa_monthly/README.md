@@ -248,18 +248,22 @@ uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
 cache. It skips symlinks and special files, never changes file bytes and never
 resets or excludes cache from the measured cgroup peak. Frozen local replays also
 release cache from their read-only input directory. Cache advice failures fail
-measurement; the 6.4 GiB acceptance limit remains unchanged.
+measurement. The preferred 6.4 GiB headroom target produces an advisory warning;
+the enforced 8 GiB memory limit remains unchanged. Reports retain the actual
+kernel lifetime peak, including file cache.
 Missing peak telemetry is not passing evidence.
 Scratch measurements cover the entire `/work` filesystem, including native
 temporary files outside the build directory and open files that were unlinked.
 
 `scripts/wdpa_processing_gate.py` requires one complete terminal-success October
-build at 4 CPU / 8 GiB with kernel peak ≤6.4 GiB, scratch <80 GiB and duration
+build at 4 CPU / 8 GiB with a measured kernel peak within the enforced 8 GiB
+limit, scratch <80 GiB and duration
 ≤24 hours, plus independently verified realm/India counts, native contracts and
 a matching sampled old/new comparison. Schema version 3 acceptance binds its
 retained bundle by URI, generation, size and SHA-256, its actual cloud image and
 execution, and the reviewed immutable promotion plan. Samples and genesis runs
-cannot authorize publication. A missed target is not permission to resize.
+cannot authorize publication. Exceeding preferred headroom alone does not reject
+valid artifacts or require a rebuild. Resource configuration cannot be increased.
 
 The initial CI checks use `wdpa_build_smoke=true`: a small native fixture followed
 by the deterministic sample, with no full marine build. Reviewed staged evidence

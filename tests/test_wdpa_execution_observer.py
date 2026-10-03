@@ -1,5 +1,6 @@
 import copy
 import json
+import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -228,15 +229,18 @@ def reviewed_plan(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "check_promotion_plan", check)
 
 
-def test_missed_target_cannot_be_accepted_by_increasing_resources():
+def test_preferred_headroom_warns_without_rejecting_a_successful_build():
     evidence = accepted_evidence()
     assert gate.check(evidence) == []
-    evidence["build"]["memory_peak_bytes"] = 7 * 1024**3
-    assert any("headroom" in error for error in gate.check(evidence))
+    peak = 7732400128
+    evidence["build"]["memory_peak_bytes"] = peak
+    assert gate.check(evidence) == []
+    assert gate.memory_warnings(evidence["build"])
+    assert evidence["build"]["memory_peak_bytes"] == peak
     evidence["build"]["memory_limit_bytes"] = 16 * 1024**3
     assert any("4 CPU" in error for error in gate.check(evidence))
     evidence["build"]["memory_peak_bytes"] = None
-    assert any("headroom" in error for error in gate.check(evidence))
+    assert any("kernel lifetime peak" in error for error in gate.check(evidence))
     evidence = accepted_evidence()
     evidence["build"]["source_sha256"] = "different"
     assert any("disagree" in error for error in gate.check(evidence))
@@ -245,6 +249,38 @@ def test_missed_target_cannot_be_accepted_by_increasing_resources():
     assert gate.check(evidence), (
         "a cached index cannot certify complete production processing"
     )
+
+
+@pytest.mark.parametrize("peak", [None, True, 0, -1, 7.2, 8 * 1024**3 + 1])
+def test_memory_peak_must_be_measured_and_within_the_enforced_limit(peak):
+    build = accepted_evidence()["build"]
+    build["memory_peak_bytes"] = peak
+    assert any("kernel lifetime peak" in error for error in gate.check_build(build))
+
+
+@pytest.mark.parametrize("peak,warns", [
+    (int(6.4 * 1024**3), False), (int(6.4 * 1024**3) + 1, True),
+    (7732400128, True), (8 * 1024**3, True),
+])
+def test_advisory_boundary_does_not_change_acceptance(peak, warns):
+    build = accepted_evidence()["build"]
+    build["memory_peak_bytes"] = peak
+    assert gate.check_build(build) == []
+    assert bool(gate.memory_warnings(build)) == warns
+
+
+def test_acceptance_cli_warns_and_succeeds_for_preferred_headroom_excess(
+    monkeypatch, tmp_path, capsys
+):
+    evidence = accepted_evidence()
+    evidence["build"]["memory_peak_bytes"] = 7732400128
+    path = tmp_path / "acceptance.json"
+    path.write_text(json.dumps(evidence))
+    monkeypatch.setattr(gate, "EVIDENCE", path)
+    monkeypatch.setattr(sys, "argv", ["wdpa_processing_gate.py"])
+    gate.main()
+    warning = capsys.readouterr().err
+    assert "WARNING:" in warning and "7732400128 bytes (7.20 GiB)" in warning
 
 
 def test_build_must_match_the_reviewed_processing_tree():

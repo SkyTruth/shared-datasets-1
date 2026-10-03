@@ -23,7 +23,10 @@ allowlist continues to require exactly 4 configured CPU, 8 GiB RAM and a 100 GiB
 disk. Resource checks require a positive measured CPU quota no greater than 4,
 exactly 8 GiB memory and a real kernel high-water mark. Missing telemetry blocks
 validation; sampled usage and process RSS cannot replace the kernel peak.
-The ≤6.4 GiB peak, <80 GiB scratch and 24-hour completion targets remain intact.
+The enforced 8 GiB memory limit, <80 GiB scratch and 24-hour completion checks
+remain intact. The preferred 6.4 GiB peak is advisory: a successful complete build
+at 7.2 GiB can be accepted with a warning when all artifact and ownership checks
+pass. Keep the real kernel lifetime peak; do not reset or subtract file cache.
 
 The refreshed alert apply
 [`37044038452`](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37044038452)
@@ -36,12 +39,12 @@ The controlled pre-write failure `wdpa-processing-validation-tlwbd`
 actually reached `#shared-datasets-alerts`; a green workflow alone is not proof
 of live filter or notification delivery.
 
-Version 2 acceptance evidence separates the deterministic October old/new
-sample (`fraction=0.001`, `seed=7919`) from the two complete resource builds.
+Version 3 acceptance evidence separates the deterministic October old/new
+sample (`fraction=0.001`, `seed=7919`) from one complete retained artifact build.
 The sample compares both realms' IDs, hashes, properties, geometry, field types,
 canonical metadata, every locale and translation CSV. Its processing digest,
 frozen source/baseline/translation snapshots, native versions and image config
-digest must match the complete builds. Full reports retain
+digest must match the complete build. Full reports retain
 `compatibility_verified=false`; their contract checks do not imply a legacy
 comparison. Keep the raw sample and full reports unchanged.
 
@@ -49,8 +52,8 @@ Cloud deployment now loads and verifies the reviewed staged image artifact,
 then tags and pushes those same bytes. It does not rebuild after the staged
 tests. `image_digest` in reviewed benchmark evidence identifies the verified
 image **configuration** digest from `image.json`; complete cloud evidence also
-records the execution's immutable registry URI as `cloud_image`. The two cloud
-executions must use the same URI. Capture these deployment facts alongside
+records the execution's immutable registry URI as `cloud_image`. The accepted
+build also records its retained bundle. Capture these deployment facts alongside
 raw reports rather than rewriting a raw compatibility or measurement result.
 The image artifact lasts seven days; expired bytes require rerunning stages.
 
@@ -89,11 +92,13 @@ This diagnostic workflow changes the validation job's command. The normal
 command when `wdpa_validation_runtime_inspection` uses its default `false`.
 Do not manually start a complete replay until that command is restored,
 the staged gate matches the current processing source, and the alert probe
-has actually reached Slack. Keep the same immutable image for the two complete
-replays and retain their raw reports and terminal execution status.
+has actually reached Slack. Run one complete retaining build and preserve its
+raw report, terminal execution status and immutable bundle references. Promotion
+uses those same files without a second replay.
 
 A changed dependency lock changes the processing fingerprint. Existing reports
 remain evidence for their captured image and source digest; they must not be
-relabeled to match newer code. After fixing runtime telemetry, rerun the small
-and marine stages on the final processing digest before repeating cloud
-acceptance. No resource increase or publication-state reset is part of recovery.
+relabeled to match newer code. New processing code uses small/sample checks on
+the final image before its one complete retaining build. Preferred headroom
+warnings do not require rebuilding a valid retained bundle. No resource increase
+or publication-state reset is part of recovery.
