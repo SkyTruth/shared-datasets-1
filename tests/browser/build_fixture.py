@@ -23,8 +23,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 def build(work: Path) -> None:
     for name, digest in {
-        "union-overlap-before": "c1c15f45c64f4b275ed971bf08fd3df59c298066da1ea696e32a9106c6eeef20",
-        "union-overlap-after": "d76eb6fdc9a61545746d13bb54131eeb05848e736df9c55d52204ee1a17fa19f",
+        "union-overlap-before": "662dbb1a70308e463730e337d1d83c394ef11150a2d3b91a6c21629ba72846aa",
+        "union-overlap-after": "b491a942b586d52a645039ad12f161c90e429476eada99bfcc21fdcaf8608eb9",
         "union-polygons-before": "0c372994eb305e3e52e88f1ba138cc5c38d463c9d70ef125bd687c5990ea24b2",
         "union-polygons-after": "8c4603fb7bb5db14ee051d00ab48c4d04f9ff2ecc30545aea343fa6d91dd1d40",
         "old": "dd0fcd07c883059a6d8ec76cc9cb9088bca7904887a253aa509e11f2af673927",

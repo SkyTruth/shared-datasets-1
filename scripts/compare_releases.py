@@ -25,7 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts import release_feature_model as model
 
 POLICY = "feature-id-hashes-v1"
-RESULT_VERSION = 3
+RESULT_VERSION = 4
 LEGACY_FEATURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 LEGACY_BOOKKEEPING = {"ext_id", "feature_hash", "feature_id"}
 
@@ -878,7 +878,7 @@ class Comparison:
             "schema_changes": schema_changes(af, bf),
             "limits": asdict(self.limits),
             "method": "Complete canonical sidecars; match compatible feature_id; compare geometry_hash/properties_hash. Historical v1 geometry hashes come from the exact canonical FGB, with legacy bookkeeping excluded from source properties. No spatial matching or tile-derived counts. Provenance and localization excluded.",
-            "map_method": "Exact geometry_hash set union; shared geometry with differing sets of source properties_hash is yellow. Geometry membership is independent of feature identity. All loaded map features are colored through bounded per-release lookups, independently of table pagination.",
+            "map_method": "Comparable feature IDs use their own classification: additions and new positions green, removals and old positions red, stationary metadata edits yellow, unchanged gray. Incompatible identities use exact geometry_hash sets; yellow means contents differ here, without pairing objects. All loaded features use bounded per-release lookups independently of table pagination.",
             "property_hash_exclusions": sorted(
                 model.HASH_EXCLUDED_PROPERTIES
                 | set(
@@ -895,8 +895,20 @@ class Comparison:
         }
         return self.summary
 
+    def map_rows_sql(self, side: str) -> str:
+        """One map projection shared by batch lookups, inspection and filters."""
+        if self.summary["identity"]["compatible"]:
+            movement = "removed" if side == "baseline" else "novel"
+            return f"""SELECT r.id, r.geometry, CASE c.classification
+                WHEN 'unchanged' THEN 'unchanged'
+                WHEN 'properties_only' THEN 'metadata_changed'
+                ELSE '{movement}' END AS color
+                FROM {side} r JOIN changes c ON r.id=c.id"""
+        return f"""SELECT r.id, r.geometry, g.color
+            FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry"""
+
     def map_features(self, side: str, feature_ids: list[str]) -> list[dict]:
-        """Resolve geometry colors within one release; never join IDs across releases."""
+        """Resolve each release-scoped feature using the declared identity contract."""
         if self.summary is None:
             raise ComparisonError("Comparison is incomplete")
         if (
@@ -915,7 +927,7 @@ class Comparison:
             raise ComparisonError("Map feature IDs must be unique")
         with sqlite3.connect(self.db_path) as db:
             rows = db.execute(
-                f"SELECT r.id, g.color, r.geometry FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry WHERE r.id IN ({','.join('?' for _ in feature_ids)}) ORDER BY r.id COLLATE BINARY",
+                f"SELECT id, color, geometry FROM ({self.map_rows_sql(side)}) WHERE id IN ({','.join('?' for _ in feature_ids)}) ORDER BY id COLLATE BINARY",
                 feature_ids,
             ).fetchall()
         if len(rows) != len(feature_ids):
@@ -959,10 +971,10 @@ class Comparison:
             where += " AND c.classification=?"
             args.append(classification)
         if geometry_change:
-            where += """ AND (EXISTS (SELECT 1 FROM baseline r JOIN geometry_display g
-                ON r.geometry=g.geometry WHERE r.id=c.id AND g.color=?)
-                OR EXISTS (SELECT 1 FROM target r JOIN geometry_display g
-                ON r.geometry=g.geometry WHERE r.id=c.id AND g.color=?))"""
+            where += f""" AND (EXISTS (SELECT 1 FROM ({self.map_rows_sql("baseline")}) m
+                WHERE m.id=c.id AND m.color=?)
+                OR EXISTS (SELECT 1 FROM ({self.map_rows_sql("target")}) m
+                WHERE m.id=c.id AND m.color=?))"""
             args.extend([geometry_change, geometry_change])
         with self.checked_connection(started=started) as db:
             if query:
@@ -1003,7 +1015,7 @@ class Comparison:
         result = {}
         for side in ("baseline", "target"):
             row = db.execute(
-                f"SELECT r.geometry, g.color FROM {side} r JOIN geometry_display g ON r.geometry=g.geometry WHERE r.id=?",
+                f"SELECT geometry, color FROM ({self.map_rows_sql(side)}) WHERE id=?",
                 (feature_id,),
             ).fetchone()
             result["map_before" if side == "baseline" else "map_after"] = (

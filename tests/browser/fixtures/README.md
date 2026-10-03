@@ -109,18 +109,19 @@ with only `feature_id`. Metadata contains no machine-local workspace paths.
 
 
 The `union-overlap-before`/`union-overlap-after` CC0 fixtures have five points
-per release. Gray unchanged neighbors are just 0.0005 degrees from the red,
-green and yellow points, so their dots overlap at overview zoom. Tests verify
+per release. Gray unchanged objects share exact coordinates with the red, green and yellow
+objects. The inspector must preserve distinct IDs and only highlight the edited
+object, even though all its neighbors have the same geometry hash. Tests verify
 changed colors remain on top across both sources and that category focus filters
 clicks as well as paint. All five IDs survive zoom 0; tiles have only `feature_id`.
 
-Built on 2026-10-02 with resolved `/usr/local/bin/tippecanoe` v2.79.0,
+Rebuilt on 2026-10-03 with resolved `/usr/local/bin/tippecanoe` v2.79.0,
 `/usr/local/bin/pmtiles` reporting `dev, commit none, built at unknown`, and
 `/usr/local/bin/tippecanoe-decode` from the same Tippecanoe installation.
 Commands ran in a named task directory with relative filenames:
 
 ```sh
-tippecanoe -f -Z0 -z4 --drop-rate=1 --no-feature-limit --no-tile-size-limit \
+tippecanoe -Z0 -z4 --drop-rate=1 --no-feature-limit --no-tile-size-limit \
   -l changes --name 'Synthetic overlapping comparison before' \
   --description 'Repository-authored overlapping points; CC0' \
   -o union-overlap-before.mbtiles union-overlap-before.geojson
@@ -136,5 +137,5 @@ in archive metadata. The tests enforce these exact verified bytes.
 
 | File | Bytes | SHA256 |
 | --- | ---: | --- |
-| union-overlap-before.pmtiles | 2585 | c1c15f45c64f4b275ed971bf08fd3df59c298066da1ea696e32a9106c6eeef20 |
-| union-overlap-after.pmtiles | 2602 | d76eb6fdc9a61545746d13bb54131eeb05848e736df9c55d52204ee1a17fa19f |
+| union-overlap-before.pmtiles | 2580 | 662dbb1a70308e463730e337d1d83c394ef11150a2d3b91a6c21629ba72846aa |
+| union-overlap-after.pmtiles | 2592 | b491a942b586d52a645039ad12f161c90e429476eada99bfcc21fdcaf8608eb9 |

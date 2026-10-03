@@ -273,6 +273,14 @@ class ComparisonJobs:
                     raise engine.ComparisonError(
                         "Unsupported comparison cache state version"
                     )
+                if (
+                    state["state"] == "complete"
+                    and state["summary"]["result_schema_version"]
+                    != engine.RESULT_VERSION
+                ):
+                    raise engine.ComparisonError(
+                        "Comparison result version changed; run the selected releases again"
+                    )
                 lease, generation = self.store.read_json(job_id, "access.json")
                 accessed = max(
                     state["updated"], lease["at"] if lease else state["created"]

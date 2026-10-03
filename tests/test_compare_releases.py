@@ -360,7 +360,7 @@ def test_cancel_and_checksum_rejection(tmp_path):
         run(tmp_path, a, b)
 
 
-def test_union_colors_geometry_membership_separately_from_feature_identity(tmp_path):
+def test_replacement_at_same_geometry_is_removed_and_added(tmp_path):
     a = bundle(tmp_path / "a", A, [record(1, A, name="before")])
     changed = record(
         2, B, name="after", geometry={"type": "Point", "coordinates": [1, 0]}
@@ -369,8 +369,77 @@ def test_union_colors_geometry_membership_separately_from_feature_identity(tmp_p
     engine = run(tmp_path, a, b)
     assert engine.summary["counts"]["added"] == 1
     assert engine.summary["counts"]["removed"] == 1
-    assert engine.inspect("1")["map_before"]["change"] == "metadata_changed"
-    assert engine.inspect("2")["map_after"]["change"] == "metadata_changed"
+    assert engine.inspect("1")["map_before"]["change"] == "removed"
+    assert engine.inspect("2")["map_after"]["change"] == "novel"
+
+
+@pytest.mark.parametrize(
+    "action,before_colors,after_colors",
+    [
+        ("unchanged", ["unchanged", "unchanged"], ["unchanged", "unchanged"]),
+        ("edit", ["unchanged", "metadata_changed"], ["unchanged", "metadata_changed"]),
+        ("add", ["unchanged", "unchanged"], ["unchanged", "unchanged", "novel"]),
+        ("remove", ["unchanged", "removed"], ["unchanged"]),
+        ("replace", ["unchanged", "removed"], ["unchanged", "novel"]),
+        ("move", ["unchanged", "removed"], ["unchanged", "novel"]),
+        ("move_and_edit", ["unchanged", "removed"], ["unchanged", "novel"]),
+    ],
+)
+def test_colocated_objects_keep_independent_map_status(
+    tmp_path, action, before_colors, after_colors
+):
+    geometry = {"type": "Point", "coordinates": [1, 0]}
+    old = [record(i, A, geometry=geometry) for i in (1, 2)]
+    new = [record(i, B, geometry=geometry) for i in (1, 2)]
+    if action in {"edit", "move_and_edit"}:
+        new[1]["properties"]["name"] = "changed"
+        new[1]["properties_hash"] = model.properties_hash(new[1]["properties"])
+    if action in {"move", "move_and_edit"}:
+        new[1]["geometry_hash"] = model.geometry_hash(
+            {"type": "Point", "coordinates": [2, 0]}
+        )
+    if action in {"remove", "replace"}:
+        new.pop()
+    if action in {"add", "replace"}:
+        # Even identical properties and geometry must not merge distinct IDs.
+        new.append(record(3, B, geometry=geometry))
+    for item in old + new:
+        item["identity_key"] = [item["feature_id"]]
+    engine = run(
+        tmp_path,
+        bundle(tmp_path / "a", A, old),
+        bundle(tmp_path / "b", B, list(reversed(new))),
+    )
+    expected = {}
+    for side, records, colors in (
+        ("baseline", old, before_colors),
+        ("target", new, after_colors),
+    ):
+        expected[side] = dict(zip((r["feature_id"] for r in records), colors))
+        assert {
+            row["feature_id"]: row["change"]
+            for row in engine.map_features(side, list(expected[side]))
+        } == expected[side]
+    assert engine.inspect("1")["classification"] == "unchanged"
+    assert engine.inspect("1")["property_changes"] == []
+    for color in ("novel", "removed", "metadata_changed", "unchanged"):
+        ids = sorted(
+            {
+                id
+                for colors in expected.values()
+                for id, value in colors.items()
+                if value == color
+            }
+        )
+        page = engine.page(geometry_change=color)
+        assert [row["feature_id"] for row in page["rows"]] == ids
+        assert page["total"] == len(ids)
+        for row in page["rows"]:
+            for side, key in (("baseline", "map_before"), ("target", "map_after")):
+                membership = row[key]
+                assert (membership["change"] if membership else None) == expected[
+                    side
+                ].get(row["feature_id"])
 
 
 def test_generated_source_assignment_key_and_namespace_are_validated(tmp_path):
@@ -403,7 +472,7 @@ def test_generated_content_edit_is_add_remove_not_an_invented_match(tmp_path):
     )
     engine = run(tmp_path, a, b)
     assert engine.summary["counts"]["added"] == engine.summary["counts"]["removed"] == 1
-    assert engine.inspect("2")["map_after"]["change"] == "metadata_changed"
+    assert engine.inspect("2")["map_after"]["change"] == "novel"
 
 
 @pytest.mark.parametrize("action", ["reuse", "force_new"])

@@ -1,7 +1,8 @@
 import {selectReleaseReference, metadataFile, releaseFile, artifactGeneration, captureArtifact} from "./release-reference.js";
 
 export const CHANGE_LABELS = {added: "Added", removed: "Removed", geometry_only: "Geometry only", properties_only: "Properties only", both: "Geometry and properties", unchanged: "Unchanged"};
-const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Metadata changed", unchanged: "Unchanged geometry"};
+const GEOMETRY_LABELS = {novel: "New geometry", removed: "Removed geometry", metadata_changed: "Contents differ here", unchanged: "Unchanged geometry"};
+const FEATURE_MAP_LABELS = {novel: "Added / moved here", removed: "Removed / moved away", metadata_changed: "Metadata changed", unchanged: "Unchanged"};
 
 // Preserve absent versus null, and ignore object key order in source values.
 export function changedPropertyFields(before, after, exclusions) {
@@ -89,7 +90,9 @@ export function createComparisonController({loadMapModule = () => import("./map-
     ui.details.textContent = expanded ? "▾ Details" : "▸ Details";
   }
   function mapNote(session) {
-    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.summary ? "Comparing geometry… Colors appear after all records are checked." : "Colors cover all loaded geometry, independently of table pages. Unchanged geometry is faint. Display detail varies with zoom.";
+    ui["map-note"].textContent = session.mapError ? `Map inspection unavailable: ${session.mapError}` : !session.summary ? "Comparing releases… Colors appear after all records are checked."
+      : session.summary.identity.compatible ? "Colors describe each object's changes, independently of table pages. Unchanged objects are faint. Display detail varies with zoom."
+      : "Geometry-only comparison: object identities cannot be matched. Yellow means contents differ at this geometry; individual metadata changes are unknown.";
   }
   async function cancelJob(id) {
     if (!id) return;
@@ -142,6 +145,8 @@ export function createComparisonController({loadMapModule = () => import("./map-
     return payload;
   }
   function renderSummary(summary) {
+    const labels = summary.identity.compatible ? FEATURE_MAP_LABELS : GEOMETRY_LABELS;
+    for (const button of ui.legend.querySelectorAll("button")) button.textContent = labels[button.dataset.change];
     const rows = [["Release", summary.inputs.baseline.release, summary.inputs.target.release], ["Features", summary.feature_counts.baseline.toLocaleString(), summary.feature_counts.target.toLocaleString()]];
     ui.summary.replaceChildren(table(["Selection", "Before", "After"], rows, "Releases"));
     const matching = element("details", undefined, "compare-method");
@@ -211,7 +216,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
       const module = await loadMapModule(); if (!isCurrent()) return;
       const map = await module.renderComparisonMap({container: mapContainer, status: mapStatus, baseline: session.refs.baseline, target: session.refs.target,
         signal: mapAbort.signal, basemap: getBasemap(), viewport, category: session.geometryFilter,
-        onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features.map(feature => ({...feature, comparisonExcludedProperties: session.summary?.property_hash_exclusions}))); },
+        onFeatureSelect: features => { if (isCurrent()) onFeatureSelect(features.map(feature => ({...feature, comparisonExcludedProperties: session.summary?.property_hash_exclusions, comparisonIdentityCompatible: session.summary?.identity.compatible === true}))); },
         lookupGeometry: async (side, ids) => (await request(`/api/comparisons/${session.job}/map`, session, {method: "POST", signal: mapAbort.signal, headers: {"Content-Type": "application/json"}, body: JSON.stringify({side, feature_ids: ids})})).map_features,
         onError: error => { if (isCurrent()) { session.mapError = error.message; mapNote(session); } },
       });
@@ -240,6 +245,7 @@ export function createComparisonController({loadMapModule = () => import("./map-
         if (!current(session)) return;
       }
       if (response.state !== "complete") throw new Error(response.error || "Comparison cancelled");
+      if (response.summary.result_schema_version !== 4) throw new Error("Comparison result version changed; reload the catalog and compare again.");
       session.summary = response.summary; renderSummary(response.summary);
       for (const button of ui.legend.querySelectorAll("button")) button.disabled = false;
       progress(); status(""); mapNote(session); session.map?.refreshGeometry();

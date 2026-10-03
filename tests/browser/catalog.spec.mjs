@@ -435,9 +435,9 @@ test('polygons render red green yellow and faint gray across a generated ID rese
   await expect(before).toContainText('2026-01-01');
   await expect(after).toContainText('Shared after');
   await expect(after).toContainText('2026-09-22');
-  await expect(before.locator('th.metadata-changed')).toHaveText(['name']);
-  await expect(after.locator('th.metadata-changed')).toHaveText(['name', 'optional']);
-  expect(await after.locator('th.metadata-changed').first().evaluate(node => getComputedStyle(node).backgroundColor)).toBe('rgb(255, 243, 176)');
+  await expect(page.locator('#compare-map-note')).toContainText('Geometry-only comparison');
+  await expect(page.locator('#compare-legend [data-change="metadata_changed"]')).toHaveText('Contents differ here');
+  await expect(hits.locator('.metadata-changed')).toHaveCount(0);
   await expect(page.locator('#compare-panel')).toBeHidden();
   await expect(page.locator('.map-click-target')).toHaveCount(1);
   await testInfo.attach('comparison-polygon-details.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
@@ -469,6 +469,8 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
   await page.locator('#compare-open').click();
   await expect(page.locator('#compare-summary table')).toHaveCount(3);
   const canvas = page.locator('#map-preview canvas'), legend = page.locator('#compare-legend');
+  await expect(legend.locator('[data-change="metadata_changed"]')).toHaveText('Metadata changed');
+  await expect(legend.locator('[data-change="novel"]')).toHaveText('Added / moved here');
   const colors = [[195,59,59], [22,129,83], [227,189,32]];
   const nearColor = (image, color) => {
     for (let i=0; i<image.data.length; i+=4) if (Math.hypot(...color.map((v,j) => v-image.data[i+j])) < 20) return true;
@@ -508,6 +510,19 @@ test('category filters preserve the camera, extents zoom explicitly and changes 
     const image = await sample(), selected = category === 'novel' ? 1 : category === 'removed' ? 0 : 2;
     expect(nearColor(image, colors[selected])).toBe(true);
     expect(colors.filter((_,i) => i!==selected).some(color => nearColor(image,color))).toBe(false);
+    if (category === 'metadata_changed') {
+      // Reveal the distinct unchanged object at precisely the same coordinates.
+      // Each release keeps both hits; only the matched edited object highlights.
+      await legend.locator('[data-change="metadata_changed"]').click();
+      await canvas.click({position:{x:box.width/2,y:box.height/2}});
+      await expect(hits).toHaveCount(4);
+      const unchanged = hits.filter({hasText:'grayCommon'});
+      await expect(unchanged).toHaveCount(2);
+      await expect(unchanged.locator('th.metadata-changed')).toHaveCount(0);
+      await expect(hits.locator('th.metadata-changed')).toHaveCount(3);
+      expect(await unchanged.first().evaluate(node => node.style.getPropertyValue('--feature-color'))).toBe('#949d97');
+      await testInfo.attach('comparison-colocated-identities.png', {body:await page.locator('#feature-inspector').screenshot(), contentType:'image/png'});
+    }
   }
   const beforeUnchanged = await viewport();
   await legend.locator('[data-change="unchanged"]').click();
