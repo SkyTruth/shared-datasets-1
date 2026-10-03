@@ -1,0 +1,124 @@
+{
+  "execution": "wdpa-processing-validation-cg4bc",
+  "realm": "wdpa-terrestrial",
+  "verified_at": "2026-10-03T13:28:54.140943+00:00",
+  "object_metadata_snapshot": "cloud-retaining-cg4bc-status-20261003T131745Z.json",
+  "bundle_sha256": "a0378f473863a95f233f0f8aa6413e57789d16500a6ba13c6bf404fad0d52170",
+  "files": [
+    {
+      "generation": 1791032900457468,
+      "sha256": "f8e4f37133cbb1876117a3489708ee89d9e592474635219adc03eb6d00032ab8",
+      "size": 5816513152,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.fgb",
+      "role": "fgb",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 231.85960179099493
+    },
+    {
+      "generation": 1791032921458134,
+      "sha256": "8bb8d0efd6d29b570c6bcf481843b94fd353d48a3b2722bd887817de4acecba6",
+      "size": 70215228,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.ndjson.gz",
+      "role": "metadata",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 7.086603792005917
+    },
+    {
+      "generation": 1791033107297054,
+      "sha256": "d0b5d71ff2da7c9b49bfbe7fee6fb927bfeb96416328ffbeff99ed5554fb492f",
+      "size": 71525468,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.es.ndjson.gz",
+      "role": "metadata_es",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 6.523449916996469
+    },
+    {
+      "generation": 1791033108567707,
+      "sha256": "a7262938b1abf4a82e8d48773fd6190d7ed3f02c35df1bd2b037f320eb9e7872",
+      "size": 71238392,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.fr.ndjson.gz",
+      "role": "metadata_fr",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 5.67024016600044
+    },
+    {
+      "generation": 1791033109801552,
+      "sha256": "9dc6dcba1fd8631b757638d0cc1d4ae4075730ff671dbfd2563193017878334c",
+      "size": 71513142,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.id.ndjson.gz",
+      "role": "metadata_id",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 21.62269233299594
+    },
+    {
+      "generation": 1791033111134053,
+      "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+      "size": 71517792,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt.ndjson.gz",
+      "role": "metadata_pt",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 8.687039958000241
+    },
+    {
+      "generation": 1791033112492248,
+      "sha256": "e91c4b9e9f0f1b13d6b33b51b320d7df6a78db7f4f9fdb36e20706e61ca1b23f",
+      "size": 71517792,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
+      "role": "metadata_pt_br",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 7.183610874999431
+    },
+    {
+      "generation": 1791033113809809,
+      "sha256": "95744507e4aaacae1135d33b3dd3750f15913f2604fd654ef339f55954dfa680",
+      "size": 71475188,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata.sw.ndjson.gz",
+      "role": "metadata_sw",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 11.334125458000926
+    },
+    {
+      "generation": 1791033105897614,
+      "sha256": "2e0708a64d1a8e9399792478bd802b01be61af3fe565eeb7bf76f3348cadbe4b",
+      "size": 8503902895,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.metadata-translations.csv",
+      "role": "metadata_translations",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 396.3625436669972
+    },
+    {
+      "generation": 1791032919961731,
+      "sha256": "873963b21692781bc3576ba427e93e3e359c0fd07f67e6a895dc855fa39287ad",
+      "size": 893775735,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.pmtiles",
+      "role": "pmtiles",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 114.04576979099511
+    },
+    {
+      "generation": 1791032921693754,
+      "sha256": "0fa1ac2540abeb90b2bf9b0ce918a9b850ad633593884d9e0245b2055ba4d4da",
+      "size": 3862,
+      "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-cg4bc/wdpa-terrestrial/wdpa-terrestrial.schema.json",
+      "role": "schema",
+      "read_at_exact_generation": true,
+      "matches_stager_metadata": true,
+      "elapsed_seconds": 0.5072869159994298
+    }
+  ],
+  "complete_realm_byte_verification": true,
+  "marine_references_match_previous_byte_verification": true,
+  "total_bytes": 15713198646,
+  "elapsed_seconds": 426.4649845840031,
+  "canonical_publication": false
+}
