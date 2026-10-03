@@ -209,6 +209,11 @@ def discover_document(
     path = candidates[0]["filename"]
     raw, blob_sha = git_file(api, repository, pr["head"]["sha"], path)
     require(candidates[0].get("sha") == blob_sha, "PR file blob does not match head")
+    # Owned WDPA build bundles route through the WDPA protected workflow and
+    # its exact-head review gate, never the generic unmanaged object writer.
+    if re.fullmatch(r"\.github/dataset-plans/wdpa-build-[0-9a-f]{64}\.json", path):
+        require(plans.strict_json_loads(raw).get("kind") == "wdpa_owned_build_promotion", "unexpected WDPA build plan")
+        return None
     document = plans.read_document(raw, path=path)
     if merged:
         merge_raw, merge_blob = git_file(api, repository, pr["merge_commit_sha"], path)

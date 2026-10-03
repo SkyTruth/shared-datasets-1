@@ -47,6 +47,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
   id-token: write
 
 env:
@@ -127,18 +128,39 @@ jobs:
       - name: Require WDPA processing acceptance and disk quota
         run: uv run --no-sync python scripts/wdpa_processing_gate.py
 
+      - name: Verify reviewed build promotion authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/wdpa_build_authorization.py
+
       - name: Verify feature-ID publication state
         run: uv run --no-sync python scripts/publication_rollout_gate.py --job wdpa-monthly
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
+      - name: Verify accepted build terminal success
+        run: |
+          set -euo pipefail
+          execution="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["cloud_execution"])')"
+          gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format=json > "$RUNNER_TEMP/accepted-wdpa-execution.json"
+          python - "$RUNNER_TEMP/accepted-wdpa-execution.json" <<'PY'
+          import json, sys
+          accepted = json.load(open('catalog/wdpa-processing-acceptance.json'))['build']
+          execution = json.load(open(sys.argv[1]))
+          status = execution['status']
+          image = execution['spec']['template']['spec']['containers'][0]['image']
+          if (not status.get('completionTime') or int(status.get('succeededCount', 0)) != 1
+              or int(status.get('failedCount', 0)) != 0 or image != accepted['cloud_image']):
+              raise SystemExit('Only a terminal successful execution of the accepted image may be promoted')
+          PY
+
       - name: Promote accepted wdpa-monthly image
         run: |
           set -euo pipefail
 
-          accepted_image="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["runs"][0]["cloud_image"])')"
-          expected_config="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["runs"][0]["image_digest"])')"
+          accepted_image="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["cloud_image"])')"
+          expected_config="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["image_digest"])')"
           docker pull --platform linux/amd64 "${accepted_image}"
           actual_config="$(docker image inspect "${accepted_image}" --format '{{.Id}}')"
           if [[ "${actual_config}" != "${expected_config}" ]]; then
@@ -321,11 +343,8 @@ jobs:
             exit 0
           fi
 
-          # A merge that only touches workflow files still rebuilds the image and
-          # would start a second canary alongside one already publishing. That
-          # duplicate rebuilds the whole release before discovering it is
-          # redundant. Skip by default; cancel only when deliberately deploying
-          # a fix over a run executing known-bad code.
+          # Never start another publication alongside an existing execution.
+          # Cancelling a known-bad execution does not release its durable claim.
           running="$(gcloud run jobs executions list \
             --job="${JOB_NAME}" --region="${REGION}" --project="${GOOGLE_CLOUD_PROJECT}" \
             --format='value(metadata.name,status.runningCount)' 2>/dev/null \
@@ -401,9 +420,14 @@ jobs:
               echo "canary_run_date must be YYYY-MM-DD, got: ${CANARY_RUN_DATE}" >&2
               exit 1
             fi
-            echo "Canary uses execution-level override RUN_DATE=${CANARY_RUN_DATE}"
-            execute_args+=(--update-env-vars="RUN_DATE=${CANARY_RUN_DATE}")
           fi
+          bundle="$(python -c 'import json; print(json.dumps(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["artifact_bundle"], separators=(",", ":")))')"
+          build_date="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["run_date"])')"
+          if [[ -n "${CANARY_RUN_DATE}" && "${CANARY_RUN_DATE}" != "$build_date" ]]; then
+            echo "Promotion must use the captured build date; changing RUN_DATE cannot bypass ownership." >&2
+            exit 1
+          fi
+          execute_args+=(--update-env-vars="^|^WDPA_PROMOTION_BUNDLE=${bundle}|RUN_DATE=${build_date}")
           execution_name="$(gcloud run jobs execute "${execute_args[@]}")"
           echo "Canary execution: ${execution_name}"
           echo "WDPA_CANARY_EXECUTION=${execution_name}" >> "${GITHUB_ENV}"
