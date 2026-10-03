@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Allow only the isolated validation job, empty runtime identity and deployer binding."""
+"""Allow only the isolated build job and narrowly scoped staging/read grants."""
 
 from __future__ import annotations
 
@@ -12,6 +12,27 @@ SA = "module.wdpa_validation_service_account.google_service_account.this"
 JOB = "module.wdpa_processing_validation_job.google_cloud_run_v2_job.this"
 IAM = "google_service_account_iam_member.wdpa_validation_deployer"
 ALLOWED = {SA, JOB, IAM}
+STAGING = {
+    "google_project_iam_custom_role.wdpa_build_stager": (
+        "wdpaBuildStager",
+        "storage.objects.create",
+    ),
+    "google_project_iam_custom_role.wdpa_build_reader": (
+        "wdpaBuildReader",
+        "storage.objects.get",
+    ),
+}
+BINDINGS = {
+    "google_storage_bucket_iam_member.wdpa_build_stager": (
+        "wdpaBuildStager",
+        "wdpa-processing-validation",
+    ),
+    "google_storage_bucket_iam_member.wdpa_build_reader": (
+        "wdpaBuildReader",
+        "wdpa-monthly-job",
+    ),
+}
+ALLOWED |= set(STAGING) | set(BINDINGS)
 
 
 def check(plan, *, image, deployer, runtime_inspection=False):
@@ -44,7 +65,27 @@ def check(plan, *, image, deployer, runtime_inspection=False):
                 f"Isolated validation refuses {resource['address']} {actions}"
             )
         after = resource["change"]["after"]
-        if resource["address"] == SA:
+        if resource["address"] in STAGING:
+            role, permission = STAGING[resource["address"]]
+            if (
+                after["project"] != "shared-datasets-1"
+                or after["role_id"] != role
+                or after["permissions"] != [permission]
+            ):
+                raise ValueError("Unexpected staging role permissions")
+        elif resource["address"] in BINDINGS:
+            role, account = BINDINGS[resource["address"]]
+            if (
+                after["bucket"] != "skytruth-shared-datasets-1"
+                or after["role"] != "projects/shared-datasets-1/roles/" + role
+                or after["member"]
+                != f"serviceAccount:{account}@shared-datasets-1.iam.gserviceaccount.com"
+                or len(after["condition"]) != 1
+                or after["condition"][0]["expression"]
+                != "resource.name.startsWith('projects/_/buckets/skytruth-shared-datasets-1/objects/_scratch/wdpa-builds/')"
+            ):
+                raise ValueError("Unexpected staging scope or identity")
+        elif resource["address"] == SA:
             if (
                 after["project"] != "shared-datasets-1"
                 or after["account_id"] != "wdpa-processing-validation"
@@ -84,13 +125,22 @@ def check(plan, *, image, deployer, runtime_inspection=False):
                     for m in container["volume_mounts"]
                 ]
                 != [("work", "/work", True)]
-                or {e["name"]: e.get("value") for e in container["env"]}
-                != {
-                    "TMPDIR": "/work/tmp",
-                    "SHARED_DATASETS_WORKDIR": "/work/shared-datasets-1",
-                }
             ):
                 raise ValueError("Unexpected validation job configuration")
+            env = {e["name"]: e.get("value") for e in container["env"]}
+            expected = {
+                "TMPDIR": "/work/tmp",
+                "SHARED_DATASETS_WORKDIR": "/work/shared-datasets-1",
+            }
+            if not runtime_inspection:
+                digest = env.get("WDPA_BUILD_IMAGE_CONFIG_DIGEST", "")
+                if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                    raise ValueError("Verified build configuration digest is required")
+                expected.update(
+                    WDPA_BUILD_IMAGE=image, WDPA_BUILD_IMAGE_CONFIG_DIGEST=digest
+                )
+            if env != expected:
+                raise ValueError("Unexpected validation job environment")
 
 
 def main():

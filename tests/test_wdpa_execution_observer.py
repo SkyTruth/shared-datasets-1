@@ -150,7 +150,8 @@ def accepted_evidence():
         "native_versions": {"gdal_python": "3.6.2"},
         "source_tree_sha256": gate.source_digest(),
         "image_digest": "sha256:" + "a" * 64,
-        "cloud_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:" + "1" * 64,
+        "cloud_image": "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:"
+        + "1" * 64,
         "cloud_execution": "wdpa-processing-validation-aaaaa",
         "source_sha256": "b" * 64,
         "baseline_snapshot_sha256": "c" * 64,
@@ -159,16 +160,16 @@ def accepted_evidence():
         "translation_index_built": True,
         "assets": {
             "wdpa-marine": {
-                "rows": 100,
-                "india_rows": 3,
-                "india_sites": 3,
+                "rows": 17938,
+                "india_rows": 304,
+                "india_sites": 304,
                 "semantic_sha256": "e" * 64,
                 "next_generated_feature_id": 101,
             },
             "wdpa-terrestrial": {
-                "rows": 1000,
-                "india_rows": 30,
-                "india_sites": 30,
+                "rows": 497914,
+                "india_rows": 193174,
+                "india_sites": 193174,
                 "semantic_sha256": "f" * 64,
                 "next_generated_feature_id": 1001,
             },
@@ -178,49 +179,103 @@ def accepted_evidence():
     sample.update(sample_fraction=0.001, sample_seed=7919, compatibility_verified=True)
     for asset in sample["assets"].values():
         asset["compatibility_verified"] = True
-    second = copy.deepcopy(run)
-    second["cloud_execution"] = "wdpa-processing-validation-bbbbb"
+    run["artifact_bundle"] = {
+        "uri": "gs://skytruth-shared-datasets-1/_scratch/wdpa-builds/wdpa-processing-validation-aaaaa/build-bundle.json",
+        "generation": 12,
+        "size": 100,
+        "sha256": "a" * 64,
+    }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "source_tree_sha256": gate.source_digest(),
         "disk_quota_approved": True,
-        "runs": [run, second],
+        "build": run,
+        "promotion_pr": 7,
+        "promotion_plan": ".github/dataset-plans/wdpa-build-" + "a" * 64 + ".json",
         "compatibility_sample": sample,
     }
+
+
+@pytest.fixture(autouse=True)
+def reviewed_plan(tmp_path, monkeypatch):
+    evidence = accepted_evidence()
+    build = evidence["build"]
+    plan = {
+        "schema_version": 1,
+        "kind": "wdpa_owned_build_promotion",
+        **{
+            key: build[key]
+            for key in (
+                "artifact_bundle",
+                "cloud_execution",
+                "cloud_image",
+                "run_date",
+                "assets",
+            )
+        },
+    }
+    path = tmp_path / evidence["promotion_plan"]
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(plan))
+    # Keep source_digest bound to the real repo while isolating immutable plans.
+    original = gate.check_promotion_plan
+
+    def check(evidence):
+        with monkeypatch.context() as patch:
+            patch.setattr(gate, "ROOT", tmp_path)
+            return original(evidence)
+
+    monkeypatch.setattr(gate, "check_promotion_plan", check)
 
 
 def test_missed_target_cannot_be_accepted_by_increasing_resources():
     evidence = accepted_evidence()
     assert gate.check(evidence) == []
-    evidence["runs"][0]["memory_peak_bytes"] = 7 * 1024**3
+    evidence["build"]["memory_peak_bytes"] = 7 * 1024**3
     assert any("headroom" in error for error in gate.check(evidence))
-    evidence["runs"][0]["memory_limit_bytes"] = 16 * 1024**3
+    evidence["build"]["memory_limit_bytes"] = 16 * 1024**3
     assert any("4 CPU" in error for error in gate.check(evidence))
-    evidence["runs"][0]["memory_peak_bytes"] = None
+    evidence["build"]["memory_peak_bytes"] = None
     assert any("headroom" in error for error in gate.check(evidence))
     evidence = accepted_evidence()
-    evidence["runs"][1]["source_sha256"] = "different"
+    evidence["build"]["source_sha256"] = "different"
     assert any("disagree" in error for error in gate.check(evidence))
     evidence = accepted_evidence()
-    evidence["runs"][0]["translation_index_built"] = False
-    assert gate.check(evidence), "a cached index cannot certify complete production processing"
+    evidence["build"]["translation_index_built"] = False
+    assert gate.check(evidence), (
+        "a cached index cannot certify complete production processing"
+    )
 
 
-def test_both_replays_must_match_the_reviewed_processing_tree():
+def test_build_must_match_the_reviewed_processing_tree():
     evidence = accepted_evidence()
-    evidence["runs"][1]["source_tree_sha256"] = "0" * 64
+    evidence["build"]["source_tree_sha256"] = "0" * 64
     assert any("processing source tree" in error for error in gate.check(evidence))
 
 
 def test_complete_resource_reports_do_not_claim_a_legacy_comparison():
     evidence = accepted_evidence()
-    assert all(run["compatibility_verified"] is False for run in evidence["runs"])
+    assert evidence["build"]["compatibility_verified"] is False
     assert gate.check(evidence) == []
     evidence.pop("compatibility_sample")
     assert any("compatibility" in error for error in gate.check(evidence))
 
 
-@pytest.mark.parametrize("defect", ["full", "genesis", "unverified", "one_realm", "source", "baseline", "translations", "image", "native", "seed"])
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "full",
+        "genesis",
+        "unverified",
+        "one_realm",
+        "source",
+        "baseline",
+        "translations",
+        "image",
+        "native",
+        "seed",
+    ],
+)
 def test_compatibility_evidence_cannot_be_substituted_with_artifact_checks(defect):
     evidence = accepted_evidence()
     sample = evidence["compatibility_sample"]
@@ -235,7 +290,13 @@ def test_compatibility_evidence_cannot_be_substituted_with_artifact_checks(defec
     elif defect == "seed":
         sample["sample_seed"] = 1
     else:
-        key = {"source": "source_sha256", "baseline": "baseline_snapshot_sha256", "translations": "translation_inputs_snapshot_sha256", "image": "image_digest", "native": "native_versions"}[defect]
+        key = {
+            "source": "source_sha256",
+            "baseline": "baseline_snapshot_sha256",
+            "translations": "translation_inputs_snapshot_sha256",
+            "image": "image_digest",
+            "native": "native_versions",
+        }[defect]
         sample[key] = "mismatched"
     assert gate.check(evidence)
 
@@ -243,22 +304,21 @@ def test_compatibility_evidence_cannot_be_substituted_with_artifact_checks(defec
 @pytest.mark.parametrize("cpu", [None, 0, -1, 4.01, 8, True])
 def test_cpu_budget_cannot_be_missing_or_increased(cpu):
     evidence = accepted_evidence()
-    evidence["runs"][0]["cpu_limit"] = cpu
+    evidence["build"]["cpu_limit"] = cpu
     assert any("4 CPU" in error for error in gate.check(evidence))
 
 
 def test_cloud_kernel_quota_is_retained_without_increasing_the_budget():
     evidence = accepted_evidence()
-    for run in evidence["runs"]:
-        run["cpu_limit"] = 3.72
+    evidence["build"]["cpu_limit"] = 3.72
     assert gate.check(evidence) == []
-    assert evidence["runs"][0]["cpu_limit"] == 3.72
+    assert evidence["build"]["cpu_limit"] == 3.72
 
 
-def test_duplicate_execution_or_different_cloud_image_cannot_certify_two_builds():
+def test_acceptance_requires_retained_bytes_instead_of_a_replay_list():
     evidence = accepted_evidence()
-    evidence["runs"][1]["cloud_execution"] = evidence["runs"][0]["cloud_execution"]
-    assert any("distinct" in error for error in gate.check(evidence))
+    evidence["runs"] = [evidence["build"], evidence["build"]]
+    assert any("replay list" in error for error in gate.check(evidence))
     evidence = accepted_evidence()
-    evidence["runs"][1]["cloud_image"] = evidence["runs"][0]["cloud_image"].replace("1" * 64, "2" * 64)
-    assert any("cloud_image" in error for error in gate.check(evidence))
+    evidence["build"].pop("artifact_bundle")
+    assert any("retained" in error for error in gate.check(evidence))

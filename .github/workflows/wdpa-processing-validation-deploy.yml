@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       run_validation:
-        description: Start a frozen complete October replay after deployment and alert verification
+        description: Build and retain the frozen October artifact bundle after alert verification
         type: boolean
         default: false
       failure_alert_verified_execution:
@@ -53,7 +53,7 @@ jobs:
         with:
           version: "0.11.8"
       - run: uv sync --locked --all-groups
-      - name: Require small and marine validation plus disk quota
+      - name: Require small and sampled checks plus disk quota
         run: uv run --no-sync python scripts/wdpa_processing_gate.py --pre-cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -82,14 +82,14 @@ jobs:
           import json, re
           from pathlib import Path
           evidence = json.loads(Path('catalog/wdpa-staged-validation.json').read_text())
-          small, marine = evidence['small_fixture'], evidence['marine']
-          if small['workflow_run_url'] != marine['workflow_run_url'] or small['head_sha'] != marine['head_sha']:
+          small, sample = evidence['small_fixture'], evidence['compatibility_sample']
+          if small['workflow_run_url'] != sample['workflow_run_url'] or small['head_sha'] != sample['head_sha']:
               raise SystemExit('Staged checks must use one reviewed image build')
-          match = re.fullmatch(r'https://github.com/SkyTruth/shared-datasets-1/actions/runs/([0-9]+)', marine['workflow_run_url'])
+          match = re.fullmatch(r'https://github.com/SkyTruth/shared-datasets-1/actions/runs/([0-9]+)', sample['workflow_run_url'])
           if not match:
               raise SystemExit('Unexpected staged image artifact origin')
           print('run_id=' + match[1])
-          print('config_digest=' + marine['image_digest'])
+          print('config_digest=' + sample['image_digest'])
           PY
       - name: Download the tested deployment image
         uses: actions/download-artifact@v4
@@ -128,7 +128,12 @@ jobs:
             -target=module.wdpa_validation_service_account.google_service_account.this \
             -target=google_service_account_iam_member.wdpa_validation_deployer \
             -target=module.wdpa_processing_validation_job.google_cloud_run_v2_job.this \
+            -target=google_project_iam_custom_role.wdpa_build_stager \
+            -target=google_project_iam_custom_role.wdpa_build_reader \
+            -target=google_storage_bucket_iam_member.wdpa_build_stager \
+            -target=google_storage_bucket_iam_member.wdpa_build_reader \
             -var="wdpa_validation_image=${VALIDATION_IMAGE}" \
+            -var="wdpa_validation_image_config_digest=${{ steps.staged-image.outputs.config_digest }}" \
             -var="wdpa_monthly_image=unused-by-isolated-validation" \
             -var="sea_ice_daily_image=unused-by-isolated-validation" \
             -var="eamlis_monthly_image=unused-by-isolated-validation"
@@ -139,6 +144,10 @@ jobs:
             module.wdpa_validation_service_account.google_service_account.this
             google_service_account_iam_member.wdpa_validation_deployer
             module.wdpa_processing_validation_job.google_cloud_run_v2_job.this
+            google_project_iam_custom_role.wdpa_build_stager
+            google_project_iam_custom_role.wdpa_build_reader
+            google_storage_bucket_iam_member.wdpa_build_stager
+            google_storage_bucket_iam_member.wdpa_build_reader
         run: |
           uv run --no-sync python scripts/terraform_plan_allowlist.py "$RUNNER_TEMP/wdpa-validation-plan.json" \
             --allowed-exact="$allowed_exact" --block-deletes --refusal-prefix="Refusing isolated WDPA validation deploy"
