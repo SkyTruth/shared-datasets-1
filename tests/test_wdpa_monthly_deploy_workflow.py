@@ -55,13 +55,15 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         run = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Enforce wdpa-monthly resource-change allowlist"]["run"]
         code = run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         image = "registry/wdpa@sha256:" + "a" * 64
+        bundle = json.loads((REPO_ROOT / "catalog/wdpa-processing-acceptance.json").read_text())["build"]["artifact_bundle"]
         after = {"template": [{"template": [{
             "timeout": "86400s", "volumes": [{"name": "work", "empty_dir": [{"medium": "DISK", "size_limit": "100Gi"}]}],
             "containers": [{"image": image, "resources": [{"limits": {"cpu": "4", "memory": "8Gi"}}],
                 "volume_mounts": [{"name": "work", "mount_path": "/work"}],
-                "env": [{"name": "TMPDIR", "value": "/work/tmp"}, {"name": "SHARED_DATASETS_WORKDIR", "value": "/work/shared-datasets-1"}]}],
+                "env": [{"name": "TMPDIR", "value": "/work/tmp"}, {"name": "SHARED_DATASETS_WORKDIR", "value": "/work/shared-datasets-1"},
+                        {"name": "WDPA_PROMOTION_BUNDLE", "value": json.dumps(bundle)}]}],
         }]}]}
-        for mismatch in (None, "memory", "disk", "scratch"):
+        for mismatch in (None, "memory", "disk", "scratch", "missing_bundle", "wrong_bundle", "persistent_date"):
             with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as root:
                 proposed = copy.deepcopy(after)
                 task = proposed["template"][0]["template"][0]
@@ -71,12 +73,23 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                     task["volumes"][0]["empty_dir"][0]["medium"] = "MEMORY"
                 elif mismatch == "scratch":
                     task["containers"][0]["env"][0]["value"] = "/tmp"
+                elif mismatch == "missing_bundle":
+                    task["containers"][0]["env"].pop()
+                elif mismatch == "wrong_bundle":
+                    task["containers"][0]["env"][-1]["value"] = json.dumps({**bundle, "generation": bundle["generation"] + 1})
+                elif mismatch == "persistent_date":
+                    task["containers"][0]["env"].append({"name": "RUN_DATE", "value": "2026-10-01"})
                 plan = Path(root) / "plan.json"
                 plan.write_text(json.dumps({"resource_changes": [{
                     "address": "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
                     "change": {"actions": ["update"], "after": proposed}}]}))
                 result = subprocess.run([sys.executable, "-c", code, str(plan), image], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stdout + result.stderr)
+
+    def test_scheduled_job_uses_reviewed_bundle_without_pinning_the_calendar_date(self):
+        terraform = (REPO_ROOT / "terraform/envs/prod/wdpa_monthly.tf").read_text()
+        self.assertRegex(terraform, r'WDPA_PROMOTION_BUNDLE\s*=\s*jsonencode\(jsondecode\(file\("\$\{path.module\}/../../../catalog/wdpa-processing-acceptance.json"\)\).build.artifact_bundle\)')
+        self.assertNotRegex(terraform, r"(?m)^\s*RUN_DATE\s*=")
 
     def test_wdpa_monthly_deploy_workflow_is_protected_and_digest_pinned(self):
         workflow = load_workflow(DEPLOY_WORKFLOW)

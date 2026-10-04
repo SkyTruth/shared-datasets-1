@@ -119,13 +119,20 @@ records terminal success and actual canonical generations.
    or regenerates translations. Publication manifests and receipts are finalized
    with the actual canonical GCS generations; artifact bytes remain unchanged.
 
-Before promotion, both identity baselines, predecessor releases and reserved
-counters must still match those used by the build. An already-successful realm
-is preserved when its owned current receipt matches the source period, URL,
-identity contract, record count and unchanged allocation sequence. Its rebuilt
-artifact hashes need not equal previously published bytes: those candidate files
-are not downloaded or published. This permits the existing October marine
-release to remain committed while terrestrial's retained bytes are promoted.
+Before a new publication, its identity baseline, predecessor release and
+reserved counter must still match those used by the build. A realm published
+before the build is preserved when its frozen current manifest and owned receipt
+match the source period, URL, identity contract, record count and unchanged
+allocation sequence. Its unused candidate hashes need not equal previously
+published bytes. This permits the existing October marine release to remain
+committed while terrestrial's retained bytes are promoted.
+
+After a retained realm is published, its current receipt instead proves the
+original build predecessor and allocation. Its run record must contain the
+retained artifact hashes plus the finalized manifest hash. This recognizes a
+completed terrestrial promotion even though it advanced the live baseline.
+A retry of the fully published October bundle verifies both receipts and skips
+both realms without downloading or republishing dataset artifacts.
 An interrupted publication resumes its original receipt;
 another owner, stale baseline or changed staged bytes stops publication. Never
 reset claims/counters or change the date to bypass recovery. Validation's staging
@@ -579,6 +586,15 @@ and deploys its immutable digest. This small software image layer does not
 rebuild dataset artifacts. The publication-only entrypoint requires a reviewed
 bundle, except for the explicit pre-write failure probe; it cannot fall back to
 source processing when a scheduler or manual execution omits the bundle.
+
+The production job template pins the approved bundle reference from the
+acceptance document, so ordinary Scheduler calls receive the same reviewed
+input as deployment canaries. It never pins `RUN_DATE`: scheduled invocations
+use the current UTC month, and the bundle consumer rejects another month's
+build before any publication or recovery. Explicit canaries keep the captured
+build date. Deploying a new month's approved retained build is required before
+that month's schedule can succeed; a missing or out-of-period build cannot
+trigger automatic source rebuilding.
 
 ## Infrastructure and failure visibility
 

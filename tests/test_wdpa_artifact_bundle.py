@@ -1,3 +1,5 @@
+import copy
+from dataclasses import asdict
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,11 +8,13 @@ from unittest.mock import Mock
 import pytest
 
 from ingestion.common.publication import PublicationError
+from ingestion.common import publication as p
 from ingestion.common.identity_reset import CONTRACT_ID
 from ingestion.wdpa_monthly import artifact_bundle as bundle, run as wdpa
 from ingestion.wdpa_monthly import publication_only
 from scripts import release_feature_model as model, wdpa_processing_gate as gate
 from tests.test_wdpa_execution_observer import accepted_evidence
+from test_publication import operation
 
 
 class Objects:
@@ -55,6 +59,7 @@ class Objects:
 @pytest.fixture
 def built(tmp_path, request, monkeypatch):
     report = accepted_evidence()["build"]
+    monkeypatch.setenv("RUN_DATE", report["run_date"])
     settings = getattr(request, "param", 5 * 1024**3)
     report["memory_peak_bytes"] = (
         settings.get("memory", 5 * 1024**3) if isinstance(settings, dict) else settings
@@ -125,6 +130,8 @@ def publisher_for(report):
     publisher = Mock(spec=wdpa.GcsPublisher)
     publisher.resume.return_value = None
     publisher.load_successful_run_record.return_value = None
+    publisher.store = Mock()
+    publisher.store.read_json.return_value = None
 
     def state(asset):
         facts = report["staged_assets"][asset.slug]["outputs"]
@@ -134,6 +141,8 @@ def publisher_for(report):
                 "current": {
                     "latest_manifest": facts["identity_baseline_snapshot"],
                     "release": facts["previous_release"],
+                    "receipt_uri": f"gs://{bundle.BUCKET}/{asset.root}/publications/receipts/{'a' * 64}.json",
+                    "transaction_id": "b" * 64,
                 },
                 "reserved_next_feature_id": facts["previous_generated_feature_id"],
             }
@@ -141,6 +150,105 @@ def publisher_for(report):
 
     publisher.state.side_effect = state
     return publisher
+
+
+def completed_publisher_for(report):
+    """Model a real complete-release receipt that advanced each live baseline."""
+    publisher = publisher_for(report)
+    states, records, receipts = {}, {}, {}
+    for asset in wdpa.ASSETS:
+        facts = report["staged_assets"][asset.slug]["outputs"]
+        context = p.Context("a" * 64, "b" * 64, "c" * 40, p.FINALIZATION_VERSION,
+                            bundle.BUCKET, asset.root, asset.slug, CONTRACT_ID)
+        intent = p.Intent.build({
+            "schema_version": 1, "context": asdict(context), "mode": "complete_release",
+            "release": report["run_date"], "predecessor": facts["identity_baseline_snapshot"],
+            "reservation": {"start": facts["previous_generated_feature_id"], "next": facts["next_generated_feature_id"]},
+            "prepared_at": "2026-10-03T00:00:00Z", "notification": None,
+            "operations": [
+                operation(f"{part}-manifest", "commit",
+                          f"gs://{bundle.BUCKET}/{asset.root}/{directory}/{asset.slug}.manifest.json",
+                          {"kind": "derived", "version": p.FINALIZATION_VERSION,
+                           "parameters": {}, "dependencies": []})
+                for part, directory in (("release", f"releases/{report['run_date']}"), ("latest", "latest"))
+            ],
+        })
+        states[asset.slug] = SimpleNamespace(value={
+            "active": None, "reserved_next_feature_id": facts["next_generated_feature_id"],
+            "current": {"release": report["run_date"], "receipt_uri": context.receipt_uri,
+                        "transaction_id": intent.transaction_id,
+                        "release_manifest": {"sha256": "f" * 64},
+                        "latest_manifest": {**facts["identity_baseline_snapshot"], "generation": 202}},
+        })
+        receipts[context.receipt_uri] = SimpleNamespace(value={"intent": intent.value})
+        records[asset.slug] = {
+            "release_date": report["run_date"], "source_version": "Oct2026",
+            "source": wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, wdpa.parse_run_date(report["run_date"])),
+            "identity_contract": CONTRACT_ID, "row_count": facts["row_count"],
+            "sha256": {**copy.deepcopy(facts["sha256"]), "manifest": "f" * 64},
+        }
+    publisher.state.side_effect = lambda asset: states[asset.slug]
+    publisher.load_successful_run_record.side_effect = lambda asset, _date: (records[asset.slug], {})
+    publisher.store.read_json.side_effect = receipts.get
+    return publisher, states, records, receipts
+
+
+@pytest.mark.parametrize("defect", [None, "baseline", "allocation", "bytes", "manifest", "receipt", "missing_receipt", "owner", "rows"])
+def test_completed_build_retry_skips_without_artifact_downloads_or_publication(
+    built, tmp_path, monkeypatch, defect
+):
+    store, ref, report = built
+    publisher, states, records, receipts = completed_publisher_for(report)
+    state = states["wdpa-terrestrial"].value
+    receipt = receipts[state["current"]["receipt_uri"]].value
+    if defect == "baseline":
+        receipt["intent"]["predecessor"]["generation"] += 1
+    elif defect == "allocation":
+        receipt["intent"]["reservation"]["start"] += 1
+    elif defect == "bytes":
+        records["wdpa-terrestrial"]["sha256"]["fgb"] = "e" * 64
+    elif defect == "manifest":
+        records["wdpa-terrestrial"]["sha256"]["manifest"] = "e" * 64
+    elif defect == "receipt":
+        state["current"]["transaction_id"] = "d" * 64
+    elif defect == "missing_receipt":
+        del receipts[state["current"]["receipt_uri"]]
+    elif defect == "owner":
+        state["active"] = {"owner": "other"}
+    elif defect == "rows":
+        records["wdpa-terrestrial"]["row_count"] -= 1
+    # Preserve the state/receipt relationship when testing a genuinely different
+    # but internally valid committed predecessor/allocation.
+    if defect in {"baseline", "allocation"}:
+        state["current"]["transaction_id"] = p.Intent.build(receipt["intent"]).transaction_id
+    published = Mock()
+    monkeypatch.setattr(wdpa, "publish_asset", published)
+    for name in ("build_asset_outputs", "download_file", "prepare_source_datasets"):
+        monkeypatch.setattr(wdpa, name, lambda *_a, **_k: pytest.fail("retry rebuilt data"))
+    if defect:
+        with pytest.raises(PublicationError):
+            bundle.promote(store, publisher, ref, tmp_path / "retry")
+        publisher.record_existing_successful_release.assert_not_called()
+    else:
+        result = bundle.promote(store, publisher, ref, tmp_path / "retry")
+        assert [record["status"] for record in result] == ["skipped", "skipped"]
+        assert publisher.record_existing_successful_release.call_count == 2
+    published.assert_not_called()
+    assert len(store.calls) == 1  # Only the small retained bundle descriptor.
+
+
+@pytest.mark.parametrize("requested_date,allowed", [("2026-10-04", True), ("2026-11-01", False), ("2026-09-30", False)])
+def test_retained_build_must_match_requested_month(built, tmp_path, monkeypatch, requested_date, allowed):
+    store, ref, report = built
+    monkeypatch.setenv("RUN_DATE", requested_date)
+    publisher, *_ = completed_publisher_for(report)
+    if allowed:
+        assert len(bundle.promote(store, publisher, ref, tmp_path / "retry")) == 2
+    else:
+        with pytest.raises(PublicationError, match="approve and deploy"):
+            bundle.promote(store, publisher, ref, tmp_path / "retry")
+        publisher.resume.assert_not_called()
+    assert len(store.calls) == 1
 
 
 @pytest.mark.parametrize("built", [5 * 1024**3, 7732400128], indirect=True)
