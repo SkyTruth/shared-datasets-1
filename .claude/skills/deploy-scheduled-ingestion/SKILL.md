@@ -134,7 +134,8 @@ Use the reviewed WDPA resource target, and never increase it to bypass acceptanc
   unused candidate hashes to equal its published artifacts. The plan pins the
   original producer fingerprint and configuration independently of reviewed
   publication fixes. A publication-only software layer can inherit that verified
-  producer image and copy only the approved consumer/gate/entrypoint; it must
+  producer image and copy the approved consumer/gate/entrypoint and its shared
+  publication/translation dependencies and maintained locale catalog; it must
   never regenerate dataset files or fall back to source processing.
   Follow `docs/wdpa-processing-validation.md` for the single-build sequence.
 - Observe terminal status through the independent execution observer. After an
