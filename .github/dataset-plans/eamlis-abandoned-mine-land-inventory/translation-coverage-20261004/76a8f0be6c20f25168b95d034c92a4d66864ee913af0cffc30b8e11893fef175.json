@@ -1,0 +1,75 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "eamlis-abandoned-mine-land-inventory",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-02/eamlis-abandoned-mine-land-inventory.metadata-translations.csv",
+        "source_generation": "1791152254084548",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1780643783939547",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.metadata-translations.csv",
+        "source_generation": "1791152254084548",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-02/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz",
+        "source_generation": "1791152256624848",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1780643778001682",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz",
+        "source_generation": "1791152256624848",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1790913840153258",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/releases/2026-10-02/eamlis-abandoned-mine-land-inventory.manifest.json",
+        "source_generation": "1791152258319043",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1790913840403156",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/latest/eamlis-abandoned-mine-land-inventory.manifest.json",
+        "source_generation": "1791152258319043",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/eamlis-abandoned-mine-land-inventory.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1790913840672222",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/320-mining/eamlis-abandoned-mine-land-inventory/runs/2026-10-02.json",
+        "source_generation": "1791152878085730",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/eamlis-abandoned-mine-land-inventory/translation-coverage-20261004/2026-10-02.json"
+      }
+    ],
+    "proposal_id": "translation-coverage-20261004",
+    "release_index_asset_slugs": []
+  }
+}
