@@ -30,6 +30,7 @@ MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_JOBS = 2
 MAX_RUNNING = 1
 VIEWER_LIMITS = engine.Limits(
+    max_input_bytes=80 * 1024 * 1024,
     max_rows=1_000_000,
     max_expanded_bytes=1024 * 1024 * 1024,
     max_disk_bytes=512 * 1024 * 1024,
