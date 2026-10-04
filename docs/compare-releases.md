@@ -320,7 +320,7 @@ a 15-second transport timeout with retries disabled.
 | Interactive limit | Budget |
 | --- | ---: |
 | Records per release | 1,000,000 |
-| Bytes per downloaded sidecar/schema/manifest | 64 MiB |
+| Bytes per downloaded sidecar/schema/manifest | 80 MiB |
 | Historical canonical FGB streamed per release | 2 GiB |
 | Individual FGB feature | 64 MiB |
 | Schema/manifest contract each | 4 MiB |
@@ -361,6 +361,16 @@ sidecar. Complete validation and classification took 36.5 seconds, retained
 streams together took 2.8 seconds to serialize and compressed to 24.4 MiB.
 Neither roughly 5-GB FGB was read. These are local measurements with downloaded,
 checksum-verified inputs, not Cloud Run or end-to-end tile-render timings.
+
+A second local measurement compared the pinned terrestrial releases 2026-09-30
+and 2026-10-01, with 304,817 and 497,914 rows. October's canonical compressed
+metadata is 70,215,228 bytes (66.96 MiB), above the former 64-MiB input cap.
+Raising only the viewer input cap to 80 MiB allowed complete validation and
+classification in 104.9 seconds, with 332.7 MiB of workspace files and 86.4 MiB
+peak process memory. The larger sidecar expanded to 710.4 MiB, within the existing
+1-GiB per-sidecar budget. All six downloaded metadata/schema/manifest inputs were
+generation-pinned and size/SHA-256 verified; neither canonical FGB was read.
+This is a local sizing measurement, not a Cloud Run timing guarantee.
 
 Budgets are independent: a dataset below the row limit can exceed workspace or
 byte limits. Such jobs fail explicitly and point to the CLI. The browser never

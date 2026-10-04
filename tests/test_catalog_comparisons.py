@@ -165,10 +165,12 @@ def test_real_viewer_start_page_inspect_report_and_current_authorization(context
 def test_viewer_capability_exposes_larger_budget_without_changing_cli_defaults(context):
     status, capability = call(context, "GET")
     assert status == 200 and capability["map_index_version"] == 1
+    assert capability["limits"]["max_input_bytes"] == 80 * 1024 * 1024
     assert capability["limits"]["max_rows"] == 1_000_000
     assert capability["limits"]["max_disk_bytes"] == 512 * 1024 * 1024
     assert capability["limits"]["max_expanded_bytes"] == 1024 * 1024 * 1024
     assert engine.Limits().max_rows == 100_000
+    assert engine.Limits().max_input_bytes == 64 * 1024 * 1024
 
 
 def test_denied_restricted_access_and_job_ownership(context):
