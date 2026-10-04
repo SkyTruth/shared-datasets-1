@@ -256,6 +256,7 @@ jobs:
 
           plan = json.load(open(sys.argv[1]))
           expected_image = sys.argv[2]
+          expected_bundle = json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["artifact_bundle"]
           allowed_exact = {
               "module.wdpa_monthly_job.google_cloud_run_v2_job.this",
               "module.wdpa_observer_service_account.google_service_account.this",
@@ -308,6 +309,10 @@ jobs:
                   disk = volume.get("empty_dir", [{}])[0] if volume.get("empty_dir") else {}
                   mounts = containers[0].get("volume_mounts", [])
                   env = {e.get("name"): e.get("value") for e in containers[0].get("env", [])}
+                  if json.loads(env.get("WDPA_PROMOTION_BUNDLE", "null")) != expected_bundle:
+                      blocked.append("WDPA scheduled executions require the reviewed retained bundle")
+                  if "RUN_DATE" in env:
+                      blocked.append("WDPA RUN_DATE must remain execution-only")
                   if disk.get("medium") != "DISK" or disk.get("size_limit") != "100Gi" or not any(m.get("name") == "work" and m.get("mount_path") == "/work" for m in mounts):
                       blocked.append("WDPA requires the 100 GiB disk at /work")
                   if env.get("TMPDIR") != "/work/tmp" or env.get("SHARED_DATASETS_WORKDIR") != "/work/shared-datasets-1":

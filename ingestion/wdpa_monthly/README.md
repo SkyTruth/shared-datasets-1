@@ -125,11 +125,11 @@ that asset is skipped. If release objects exist without a successful run record,
 the job fails before touching `latest/`.
 
 The upstream Protected Planet ZIP for a new month is not guaranteed to exist on
-the first day of the month. HTTP 403/404 source responses are treated as "not
-available yet"; the job exits successfully with skipped records and writes no
-GCS objects. The production scheduler runs daily on days 1-10 of each month, so
-the first run after the source appears publishes the stable month-start release,
-and later attempts skip because the success run record exists.
+the first day of the month. Source availability and processing belong to the
+retained-build stage. The production scheduler runs the publication-only worker
+daily on days 1-10; it consumes an approved build for the current month and
+skips a verified completed publication. It does not discover or process a new
+upstream ZIP. An unavailable approved build remains an actionable failure.
 
 ## Container
 
@@ -156,9 +156,18 @@ management on the one Slack secret and install runtime translation-notice
 permissions. This prerequisite does not replace the retained-build acceptance
 and promotion gates.
 
-Later scheduled monthly refreshes still process each new source once and publish
-through the same owned publisher. Do not deploy this job with a local Terraform
-apply or hand-built production image. See the
+The job template pins `WDPA_PROMOTION_BUNDLE` to the accepted build reference
+from `catalog/wdpa-processing-acceptance.json`; `RUN_DATE` remains an
+execution-only override. Scheduled invocations therefore use the current UTC
+month and can consume only a reviewed build for that month. A missing bundle or
+a bundle for another month fails before publication with an actionable error;
+the worker never falls back to processing source data. Each new month's retained
+build and promotion authority must be reviewed and deployed before that month's
+scheduled publication can succeed. Repeat invocations of a completed month
+verify the owned receipts and return `skipped` without downloading or
+republishing artifacts.
+
+Do not deploy this job with a local Terraform apply or hand-built production image. See the
 [single-build runbook](../../docs/wdpa-processing-validation.md#single-build-and-promotion).
 
 ## Cost Controls and Teardown
@@ -293,10 +302,16 @@ run records and release indexes are finalized by the owned publisher with actual
 canonical object generations. Existing owned recovery semantics are unchanged.
 
 Already-committed realms retain their successful receipts and published bytes.
-Promotion checks their frozen manifest, predecessor release, allocation counter,
-source period/URL, identity contract and row count; it does not compare unused
-rebuilt files with canonical hashes. Only the needed realm's retained files are
-downloaded and published at exact generations and hashes.
+For a realm published before the build, promotion checks its frozen current
+manifest, release, allocation counter, source period/URL, identity contract and
+row count. Unused candidate hashes need not match that pre-existing release.
+For a realm published from the retained build, the current owned receipt must
+prove the build's predecessor and allocation, and the run record must match all
+retained artifact hashes plus the finalized manifest hash. A successful
+publication advances the live baseline; a verified retry does not require that
+baseline to remain at its pre-publication generation. Another owner or an
+unrelated state change still stops publication. Only an unpublished realm's
+retained files are downloaded and published at exact generations and hashes.
 
 The reviewed promotion plan also pins the producer configuration and original
 source fingerprint. Publication code can change without invalidating those

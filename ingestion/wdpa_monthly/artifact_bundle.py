@@ -236,6 +236,52 @@ def check_bundle(bundle, *, producer_source):
             )
 
 
+def verify_committed_build(publisher, state, record, facts, *, run_date, source):
+    """Prove either a pre-existing release or this build's completed promotion."""
+    from ingestion.wdpa_monthly import run as wdpa
+
+    p.require(
+        record["release_date"] == state["current"]["release"] == run_date.isoformat()
+        and record["source_version"] == wdpa.source_version_for(run_date)
+        and record["source"] == source
+        and record["identity_contract"] == facts["identity_contract"] == wdpa.CONTRACT_ID
+        and record["row_count"] == facts["row_count"]
+        and facts["next_generated_feature_id"] == state["reserved_next_feature_id"],
+        "committed release differs from the frozen identity/source contract",
+    )
+    if facts["identity_baseline_snapshot"] == state["current"]["latest_manifest"]:
+        # This realm was already published when the build captured its inputs.
+        # The unused candidate bytes can differ from the committed release.
+        p.require(
+            facts["previous_release"] == state["current"]["release"]
+            and facts["previous_generated_feature_id"] == state["reserved_next_feature_id"],
+            "pre-existing release differs from the frozen predecessor",
+        )
+        return
+
+    # A completed promotion advances the live baseline. Its owned receipt must
+    # prove that it consumed this build's predecessor, allocation and bytes.
+    receipt = publisher.store.read_json(state["current"]["receipt_uri"])
+    p.require(receipt is not None, "committed publication receipt is missing")
+    intent = p.Intent.build(receipt.value["intent"])
+    p.require(
+        intent.transaction_id == state["current"]["transaction_id"]
+        and intent.value["mode"] == "complete_release"
+        and intent.value["predecessor"] == facts["identity_baseline_snapshot"]
+        and intent.value["reservation"] == {
+            "start": facts["previous_generated_feature_id"],
+            "next": facts["next_generated_feature_id"],
+        }
+        # The manifest is finalized during publication with canonical object
+        # generations; it is the one hash added to the retained artifact set.
+        and record["sha256"] == {
+            **facts["sha256"],
+            "manifest": state["current"]["release_manifest"]["sha256"],
+        },
+        "committed publication does not match the retained build",
+    )
+
+
 def promote(client, publisher, ref, workdir):
     """Consume the approved build; owned publication retains recovery semantics."""
     from ingestion.wdpa_monthly import run as wdpa
@@ -248,6 +294,12 @@ def promote(client, publisher, ref, workdir):
     )
     report = bundle["report"]
     run_date = wdpa.parse_run_date(report["run_date"])
+    requested_date = wdpa.parse_run_date(os.environ.get("RUN_DATE"))
+    p.require(
+        run_date.replace(day=1) == requested_date.replace(day=1),
+        f"reviewed WDPA build is for {run_date:%Y-%m}, but this execution requests "
+        f"{requested_date:%Y-%m}; approve and deploy that month's retained build",
+    )
     # Check every predecessor before the first new canonical write. Existing
     # successful realms remain committed; an interrupted owner resumes its receipt.
     resumed, committed = {}, {}
@@ -258,36 +310,25 @@ def promote(client, publisher, ref, workdir):
             state = publisher.state(asset).value
             p.require(state["active"] is None, "another publication owns the asset")
             facts = bundle["assets"][asset.slug]["outputs"]
-            p.require(
-                facts["identity_baseline_snapshot"]
-                == state["current"]["latest_manifest"],
-                "staged build has a stale identity baseline",
-            )
-            p.require(
-                facts["previous_generated_feature_id"]
-                == state["reserved_next_feature_id"],
-                "staged build has a stale allocation counter",
-            )
-            p.require(
-                facts["previous_release"] == state["current"]["release"],
-                "staged build has a stale predecessor release",
-            )
             if committed[asset.slug]:
                 record, _info = committed[asset.slug]
-                p.require(
-                    record["release_date"] == run_date.isoformat()
-                    and record["source_version"] == wdpa.source_version_for(run_date)
-                    and record["source"]
-                    == wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, run_date)
-                    and record["identity_contract"]
-                    == facts["identity_contract"]
-                    == wdpa.CONTRACT_ID
-                    and record["row_count"] == facts["row_count"]
-                    and facts["next_generated_feature_id"]
-                    == state["reserved_next_feature_id"],
-                    "committed release differs from the frozen identity/source contract",
+                verify_committed_build(
+                    publisher, state, record, facts, run_date=run_date,
+                    source=wdpa.build_source_url(wdpa.DEFAULT_SOURCE_URL_TEMPLATE, run_date),
                 )
             else:
+                p.require(
+                    facts["identity_baseline_snapshot"] == state["current"]["latest_manifest"],
+                    "staged build has a stale identity baseline",
+                )
+                p.require(
+                    facts["previous_generated_feature_id"] == state["reserved_next_feature_id"],
+                    "staged build has a stale allocation counter",
+                )
+                p.require(
+                    facts["previous_release"] == state["current"]["release"],
+                    "staged build has a stale predecessor release",
+                )
                 publisher.assert_no_partial_release(asset, run_date)
     # Verify every needed file before the first new publication. Hashing large
     # files is measured and uses the same scratch cache-pressure control.

@@ -62,8 +62,11 @@ module "wdpa_monthly_job" {
     GOOGLE_CLOUD_PROJECT     = var.project_id
     SHARED_DATASETS_BUCKET   = var.bucket_name
     WDPA_SOURCE_URL_TEMPLATE = var.wdpa_source_url_template
-    TMPDIR                   = "/work/tmp"
-    SHARED_DATASETS_WORKDIR  = "/work/shared-datasets-1"
+    # Deployment verifies this exact retained build's reviewed promotion authority.
+    # RUN_DATE stays execution-only: scheduled runs must use the current UTC month.
+    WDPA_PROMOTION_BUNDLE   = jsonencode(jsondecode(file("${path.module}/../../../catalog/wdpa-processing-acceptance.json")).build.artifact_bundle)
+    TMPDIR                  = "/work/tmp"
+    SHARED_DATASETS_WORKDIR = "/work/shared-datasets-1"
   }
 
   depends_on = [
