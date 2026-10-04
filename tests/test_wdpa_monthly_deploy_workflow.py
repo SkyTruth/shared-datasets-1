@@ -103,6 +103,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
         self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
         self.assertEqual(env["IMAGE_NAME"], "wdpa-monthly")
         self.assertEqual(env["JOB_NAME"], "wdpa-monthly")
 

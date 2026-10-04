@@ -87,6 +87,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          # Authorization verifies that the reviewed promotion merge is an
+          # ancestor of this deployment, including after subsequent merges.
+          fetch-depth: 0
 
       - name: Validate Terraform auth configuration
         run: |
