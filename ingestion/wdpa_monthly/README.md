@@ -125,11 +125,11 @@ that asset is skipped. If release objects exist without a successful run record,
 the job fails before touching `latest/`.
 
 The upstream Protected Planet ZIP for a new month is not guaranteed to exist on
-the first day of the month. HTTP 403/404 source responses are treated as "not
-available yet"; the job exits successfully with skipped records and writes no
-GCS objects. The production scheduler runs daily on days 1-10 of each month, so
-the first run after the source appears publishes the stable month-start release,
-and later attempts skip because the success run record exists.
+the first day of the month. Source availability and processing belong to the
+retained-build stage. The production scheduler runs the publication-only worker
+daily on days 1-10; it consumes an approved build for the current month and
+skips a verified completed publication. It does not discover or process a new
+upstream ZIP. An unavailable approved build remains an actionable failure.
 
 ## Container
 
