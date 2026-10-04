@@ -368,7 +368,9 @@ class OwnedPublicationTests(unittest.TestCase):
             with self.subTest(already_published=already_published), publication_temp_directory() as temporary:
                 asset = wdpa.ASSETS[0]
                 publisher, store = publisher_fixture(asset)
-                original = publish(publisher, asset, outputs_fixture(Path(temporary), asset))
+                outputs = outputs_fixture(Path(temporary), asset)
+                outputs.sha256["csv"] = outputs.sha256["metadata_translations"]
+                original = publish(publisher, asset, outputs)
                 state = publisher.state(asset).value
                 intent = store.read_json(state["current"]["receipt_uri"]).value["intent"]
                 facts = {"identity_contract": CONTRACT_ID, "row_count": original["row_count"],
@@ -385,6 +387,12 @@ class OwnedPublicationTests(unittest.TestCase):
                     plan = translation_plan(store, asset)
                     editor, _ = publisher_fixture(asset, execution=f"translation-{edit}", store=store)
                     record = editor.publish_translation_update(asset=asset, plan=plan)
+                    csv_uri = f"gs://bucket/{asset.release_object(DATE, '.metadata-translations.csv')}"
+                    csv_hash = store.inspect(csv_uri).sha256
+                    self.assertEqual(record["sha256"]["csv"], csv_hash)
+                    index = store.read_json(f"gs://bucket/_catalog/releases/{asset.slug}.json").value
+                    indexed_csv = next(entry for entry in index["latest_release"]["files"] if entry["path"] == csv_uri)
+                    self.assertEqual(indexed_csv["sha256"], csv_hash)
                     current = editor.state(asset).value
                     before = list(store.events)
                     verify_committed_build(editor, current, record, facts, run_date=DATE, source=original["source"])

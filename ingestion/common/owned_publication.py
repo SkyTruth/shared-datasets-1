@@ -309,7 +309,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
         artifacts = {entry["path"]: entry for entry in template["artifacts"]}
         suffixes = [("translation-source", ".metadata-translations.csv"), *((f"metadata-{locale.replace('_', '-')}", f".metadata.{locale}.ndjson.gz") for locale in locales)]
         operations = []
-        hash_roles = {}
+        hash_roles = {"csv": "release-translation-source"}
         for role, suffix in suffixes:
             uri = f"gs://{context.bucket}/{asset.root}/releases/{release}/{asset.slug}{suffix}"
             source = sources[uri]
