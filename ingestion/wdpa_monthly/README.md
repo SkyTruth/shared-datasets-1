@@ -316,12 +316,19 @@ retained files are downloaded and published at exact generations and hashes.
 The reviewed promotion plan also pins the producer configuration and original
 source fingerprint. Publication code can change without invalidating those
 build facts. `Dockerfile.promotion` inherits the verified producer image's native
-tools and dependencies and adds only the reviewed consumer/gate/entrypoint.
+tools and dependencies and adds the reviewed consumer/gate/entrypoint and the
+current shared translation publisher, helpers and locale catalog.
 `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` pins the expected producer at the bundle
 boundary. The publication-only entrypoint refuses a missing bundle before
 source processing; the controlled pre-write failure probe remains available.
 No source download, normalization, tile build or translation rebuild is part
 of this image layer or publication.
+
+Translation-only updates retain the prior committed receipt and manifest
+snapshots. Subsequent retained-build retries verify that history back to the
+original accepted publication and require unchanged base artifact hashes and
+feature-ID allocation. Language updates therefore remain valid inputs for
+future builds without causing the current month's scheduled retry to fail.
 
 ## Execution observations and failure recovery
 

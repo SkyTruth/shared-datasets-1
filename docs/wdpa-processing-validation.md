@@ -576,8 +576,9 @@ evidence before deployment.
 Publication fixes can therefore consume a valid retained bundle without
 repeating source processing or rewriting its evidence.
 
-`Dockerfile.promotion` starts from that verified producer image and copies only
-the reviewed bundle consumer, acceptance gate and publication-only entrypoint.
+`Dockerfile.promotion` starts from that verified producer image and installs the
+reviewed bundle consumer, acceptance gate, publication-only entrypoint and shared
+translation publisher dependencies, including the maintained locale catalog.
 It inherits the producer's native tools and dependencies without installation
 or conversion commands, pins `WDPA_ACCEPTED_BUILD_SOURCE_SHA256` to the accepted
 producer and records the reviewed publication executor SHA separately from the
@@ -586,6 +587,13 @@ and deploys its immutable digest. This small software image layer does not
 rebuild dataset artifacts. The publication-only entrypoint requires a reviewed
 bundle, except for the explicit pre-write failure probe; it cannot fall back to
 source processing when a scheduler or manual execution omits the bundle.
+
+A reviewed translation update captures its previous committed receipt and
+manifest snapshots. A retained-build retry follows this verified history to the
+original release, checking unchanged base artifact hashes and allocation at each
+step. This permits repeated language-only updates without invalidating the
+accepted build or rebuilding its geometry. Missing, altered or foreign receipt
+history remains an error.
 
 The production job template pins the approved bundle reference from the
 acceptance document, so ordinary Scheduler calls receive the same reviewed
