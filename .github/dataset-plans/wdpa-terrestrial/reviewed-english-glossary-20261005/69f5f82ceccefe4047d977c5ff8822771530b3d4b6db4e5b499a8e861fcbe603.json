@@ -11,8 +11,8 @@
         "content_type": "text/csv",
         "destination_generation": "1791037328887445",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata-translations.csv",
-        "source_generation": "1791154092369441",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata-translations.csv"
+        "source_generation": "1791239356697493",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata-translations.csv"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -20,8 +20,8 @@
         "content_type": "text/csv",
         "destination_generation": "1791037622559938",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata-translations.csv",
-        "source_generation": "1791154092369441",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata-translations.csv"
+        "source_generation": "1791239356697493",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata-translations.csv"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -29,8 +29,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037163117609",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.es.ndjson.gz",
-        "source_generation": "1791154097306414",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.es.ndjson.gz"
+        "source_generation": "1791239393773023",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.es.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -38,8 +38,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037456340584",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.es.ndjson.gz",
-        "source_generation": "1791154097306414",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.es.ndjson.gz"
+        "source_generation": "1791239393773023",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.es.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -47,8 +47,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037165030275",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.fr.ndjson.gz",
-        "source_generation": "1791154102698935",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.fr.ndjson.gz"
+        "source_generation": "1791239397825236",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.fr.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -56,8 +56,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037458193305",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.fr.ndjson.gz",
-        "source_generation": "1791154102698935",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.fr.ndjson.gz"
+        "source_generation": "1791239397825236",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.fr.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -65,8 +65,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037166893041",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.id.ndjson.gz",
-        "source_generation": "1791154107962458",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.id.ndjson.gz"
+        "source_generation": "1791239406229034",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.id.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -74,8 +74,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037460002012",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.id.ndjson.gz",
-        "source_generation": "1791154107962458",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.id.ndjson.gz"
+        "source_generation": "1791239406229034",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.id.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -83,8 +83,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037168690766",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.pt.ndjson.gz",
-        "source_generation": "1791154113278233",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.pt.ndjson.gz"
+        "source_generation": "1791239410133022",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.pt.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -92,8 +92,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037461842077",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt.ndjson.gz",
-        "source_generation": "1791154113278233",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.pt.ndjson.gz"
+        "source_generation": "1791239410133022",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.pt.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -101,8 +101,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037170698285",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
-        "source_generation": "1791154118905776",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.pt_br.ndjson.gz"
+        "source_generation": "1791239415038883",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.pt_br.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -110,8 +110,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037463808352",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.pt_br.ndjson.gz",
-        "source_generation": "1791154118905776",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.pt_br.ndjson.gz"
+        "source_generation": "1791239415038883",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.pt_br.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -119,8 +119,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037172635830",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.metadata.sw.ndjson.gz",
-        "source_generation": "1791154124683739",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.sw.ndjson.gz"
+        "source_generation": "1791239419868486",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.sw.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -128,8 +128,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1791037465648765",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.metadata.sw.ndjson.gz",
-        "source_generation": "1791154124683739",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.metadata.sw.ndjson.gz"
+        "source_generation": "1791239419868486",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.metadata.sw.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -137,8 +137,8 @@
         "content_type": "application/json",
         "destination_generation": "1791037623675818",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/releases/2026-10-01/wdpa-terrestrial.manifest.json",
-        "source_generation": "1791154126032558",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.manifest.json"
+        "source_generation": "1791239421509385",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.manifest.json"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -146,11 +146,11 @@
         "content_type": "application/json",
         "destination_generation": "1791037624842824",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-terrestrial/latest/wdpa-terrestrial.manifest.json",
-        "source_generation": "1791154126032558",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/translation-coverage-20261004/wdpa-terrestrial.manifest.json"
+        "source_generation": "1791239421509385",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-terrestrial/reviewed-english-glossary-20261005/wdpa-terrestrial.manifest.json"
       }
     ],
-    "proposal_id": "translation-coverage-20261004",
+    "proposal_id": "reviewed-english-glossary-20261005",
     "release_index_asset_slugs": []
   }
 }
