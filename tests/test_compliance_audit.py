@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from google.auth.exceptions import RefreshError
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = REPO_ROOT / ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py"
@@ -19,6 +21,51 @@ SPEC.loader.exec_module(audit)
 
 
 class LocalComplianceAuditTests(unittest.TestCase):
+    def setUp(self):
+        audit.get_storage_client.cache_clear()
+        self.addCleanup(audit.get_storage_client.cache_clear)
+
+    def test_remote_reads_reuse_authenticated_client_and_pin_object_generations(self):
+        catalog_path = REPO_ROOT / "catalog/shared-datasets-catalog.csv"
+        with mock.patch.object(audit.storage, "Client") as client_factory:
+            client = client_factory.return_value
+            client.list_blobs.return_value = []
+            bucket = client.bucket.return_value
+            bucket.blob.return_value.download_as_text.return_value = catalog_path.read_text()
+
+            self.assertEqual(audit.list_blobs("example-bucket", "assets/"), [])
+            audit.download_object_text("example-bucket", "assets/README.md", "123")
+            audit.download_object_text("example-bucket", "assets/runs/2026-10-05.json", "456")
+            self.assertEqual(audit.validate_remote_catalog("example-bucket", catalog_path), [])
+
+            client_factory.assert_called_once()
+            client.list_blobs.assert_called_once_with("example-bucket", prefix="assets/")
+            self.assertEqual(
+                bucket.blob.call_args_list,
+                [
+                    mock.call("assets/README.md", generation=123),
+                    mock.call("assets/runs/2026-10-05.json", generation=456),
+                    mock.call("_catalog/shared-datasets-catalog.csv"),
+                ],
+            )
+
+    def test_authentication_failure_is_not_hidden_as_a_clean_audit(self):
+        with mock.patch.object(audit.storage, "Client") as client_factory:
+            client_factory.return_value.list_blobs.side_effect = RefreshError("authentication failed")
+
+            with self.assertRaises(RefreshError):
+                audit.list_blobs("example-bucket", "")
+
+    def test_local_only_audit_does_not_initialize_cloud_credentials(self):
+        with (
+            mock.patch.object(sys, "argv", [str(AUDIT_PATH), "--local-only", "--health-profile", "production"]),
+            mock.patch.object(audit.storage, "Client") as client_factory,
+        ):
+            result = audit.run_audit(audit.parse_args())
+
+        self.assertEqual(result.exit_code, 0)
+        client_factory.assert_not_called()
+
     def test_root_readme_is_ignored_as_intentional_bucket_landing_doc(self):
         blob = audit.BlobInfo(
             name="README.md",
