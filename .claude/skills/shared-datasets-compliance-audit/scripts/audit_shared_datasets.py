@@ -16,6 +16,7 @@ import os
 import re
 import sys
 from dataclasses import asdict, dataclass
+from functools import cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -207,8 +208,15 @@ def load_catalog(path: Path) -> Tuple[List[Dict[str, str]], Dict[str, Dict[str, 
     return rows, {row.get("asset_slug", ""): row for row in rows if row.get("asset_slug")}
 
 
+@cache
+def get_storage_client() -> storage.Client:
+    # Reuse credentials and connections for the audit process. Constructing a
+    # client per object repeats the GitHub OIDC exchange for every metadata read.
+    return storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+
+
 def list_blobs(bucket_name: str, prefix: str) -> List[BlobInfo]:
-    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+    client = get_storage_client()
     blobs = []
     for blob in client.list_blobs(bucket_name, prefix=prefix):
         blobs.append(
@@ -224,14 +232,8 @@ def list_blobs(bucket_name: str, prefix: str) -> List[BlobInfo]:
     return blobs
 
 
-def download_readme_text(bucket_name: str, blob_name: str, generation: str) -> str:
-    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
-    blob = client.bucket(bucket_name).blob(blob_name, generation=int(generation) if generation else None)
-    return blob.download_as_text()
-
-
 def download_object_text(bucket_name: str, blob_name: str, generation: str) -> str:
-    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+    client = get_storage_client()
     blob = client.bucket(bucket_name).blob(blob_name, generation=int(generation) if generation else None)
     return blob.download_as_text()
 
@@ -366,7 +368,7 @@ def feature_metadata_prompt(*, asset_slug: str) -> str:
 
 
 def validate_remote_catalog(bucket_name: str, local_catalog_path: Path) -> List[Finding]:
-    client = storage.Client(project=os.environ.get("GOOGLE_CLOUD_PROJECT") or None)
+    client = get_storage_client()
     blob = client.bucket(bucket_name).blob("_catalog/shared-datasets-catalog.csv")
     if not blob.exists():
         return [
@@ -1255,7 +1257,7 @@ def validate_asset_roots(
 
         readme_text = None
         if readme_blob and not skip_readme_content:
-            readme_text = download_readme_text(bucket, readme_blob.name, readme_blob.generation)
+            readme_text = download_object_text(bucket, readme_blob.name, readme_blob.generation)
         requires_raster_metadata = object_is_raster_like(
             row.get("canonical_path", "") if row else "",
             row,
