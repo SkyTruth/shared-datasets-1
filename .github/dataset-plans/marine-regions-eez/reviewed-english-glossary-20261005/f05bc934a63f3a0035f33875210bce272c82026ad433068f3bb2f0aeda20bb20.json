@@ -11,8 +11,8 @@
         "content_type": "text/csv",
         "destination_generation": "1781015177382952",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata-translations.csv",
-        "source_generation": "1791152236222890",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata-translations.csv"
+        "source_generation": "1791234225049014",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata-translations.csv"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -20,8 +20,8 @@
         "content_type": "text/csv",
         "destination_generation": "1781015179935287",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata-translations.csv",
-        "source_generation": "1791152236222890",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata-translations.csv"
+        "source_generation": "1791234225049014",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata-translations.csv"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -29,8 +29,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015145663446",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.es.ndjson.gz",
-        "source_generation": "1791152238014102",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.es.ndjson.gz"
+        "source_generation": "1791234226974658",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.es.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -38,8 +38,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015148387307",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.es.ndjson.gz",
-        "source_generation": "1791152238014102",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.es.ndjson.gz"
+        "source_generation": "1791234226974658",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.es.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -47,8 +47,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015151230141",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.fr.ndjson.gz",
-        "source_generation": "1791152239969068",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.fr.ndjson.gz"
+        "source_generation": "1791234228610483",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.fr.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -56,8 +56,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015153861755",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.fr.ndjson.gz",
-        "source_generation": "1791152239969068",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.fr.ndjson.gz"
+        "source_generation": "1791234228610483",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.fr.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -65,8 +65,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015156567697",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.id.ndjson.gz",
-        "source_generation": "1791152242098187",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.id.ndjson.gz"
+        "source_generation": "1791234230269855",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.id.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -74,8 +74,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015159110956",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.id.ndjson.gz",
-        "source_generation": "1791152242098187",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.id.ndjson.gz"
+        "source_generation": "1791234230269855",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.id.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -83,8 +83,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015161700630",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.pt.ndjson.gz",
-        "source_generation": "1791152243953477",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.pt.ndjson.gz"
+        "source_generation": "1791234232021035",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.pt.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -92,8 +92,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015164221742",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.pt.ndjson.gz",
-        "source_generation": "1791152243953477",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.pt.ndjson.gz"
+        "source_generation": "1791234232021035",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.pt.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -101,8 +101,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015166837656",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.pt_br.ndjson.gz",
-        "source_generation": "1791152245909554",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.pt_br.ndjson.gz"
+        "source_generation": "1791234233809573",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.pt_br.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -110,8 +110,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015169447269",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.pt_br.ndjson.gz",
-        "source_generation": "1791152245909554",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.pt_br.ndjson.gz"
+        "source_generation": "1791234233809573",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.pt_br.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -119,8 +119,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015172056803",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.metadata.sw.ndjson.gz",
-        "source_generation": "1791152247794018",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.sw.ndjson.gz"
+        "source_generation": "1791234235423387",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.sw.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -128,8 +128,8 @@
         "content_type": "application/x-ndjson",
         "destination_generation": "1781015174726495",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.metadata.sw.ndjson.gz",
-        "source_generation": "1791152247794018",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.metadata.sw.ndjson.gz"
+        "source_generation": "1791234235423387",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.metadata.sw.ndjson.gz"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -137,8 +137,8 @@
         "content_type": "application/json",
         "destination_generation": "1781015194016357",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/releases/2026-06-09/marine-regions-eez.manifest.json",
-        "source_generation": "1791152250572105",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.manifest.json"
+        "source_generation": "1791234237103499",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.manifest.json"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -146,8 +146,8 @@
         "content_type": "application/json",
         "destination_generation": "1781015195256171",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/latest/marine-regions-eez.manifest.json",
-        "source_generation": "1791152250572105",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/marine-regions-eez.manifest.json"
+        "source_generation": "1791234237103499",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/marine-regions-eez.manifest.json"
       },
       {
         "cache_control": "no-cache, max-age=0, must-revalidate",
@@ -155,11 +155,11 @@
         "content_type": "application/json",
         "destination_generation": "1781015196497419",
         "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/runs/2026-06-09.json",
-        "source_generation": "1791152874759027",
-        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/translation-coverage-20261004/2026-06-09.json"
+        "source_generation": "1791234511307710",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/reviewed-english-glossary-20261005/2026-06-09.json"
       }
     ],
-    "proposal_id": "translation-coverage-20261004",
+    "proposal_id": "reviewed-english-glossary-20261005",
     "release_index_asset_slugs": []
   }
 }
