@@ -249,6 +249,43 @@ def verify_committed_build(publisher, state, record, facts, *, run_date, source)
         and facts["next_generated_feature_id"] == state["reserved_next_feature_id"],
         "committed release differs from the frozen identity/source contract",
     )
+    # A reviewed translation edit advances the manifest, but preserves the
+    # original release. Follow its captured committed predecessor so the same
+    # build proof still applies after one or more language-only updates.
+    seen = set()
+    while facts["identity_baseline_snapshot"] != state["current"]["latest_manifest"]:
+        current = state["current"]
+        p.require(current["receipt_uri"] not in seen, "cyclic publication history")
+        seen.add(current["receipt_uri"])
+        receipt = publisher.store.read_json(current["receipt_uri"])
+        p.require(receipt is not None, "committed publication receipt is missing")
+        intent = p.Intent.build(receipt.value["intent"])
+        p.require(intent.transaction_id == current["transaction_id"], "committed receipt identity changed")
+        if intent.value["mode"] != "metadata_update":
+            break
+        publisher.validate_semantics(intent)
+        parameters = next(op["source"]["parameters"] for op in intent.value["operations"]
+                          if op["id"] == "release-manifest")
+        previous = parameters["previous_current"]
+        p.require(record["sha256"]["manifest"] == current["release_manifest"]["sha256"],
+                  "translation run differs from the committed manifest")
+        previous_state = {**state, "current": previous}
+        context = p.Context(**intent.value["context"])
+        p.validate_state(previous_state, context)
+        p.validate_state_references(publisher.store, previous_state, context)
+        parent = publisher.store.read_json(previous["receipt_uri"])
+        p.require(
+            previous["release"] == current["release"]
+            and intent.value["reservation"] == {"start": state["reserved_next_feature_id"],
+                                                "next": state["reserved_next_feature_id"]},
+            "translation predecessor differs from its committed receipt",
+        )
+        parent_record = publisher.result(parent.value)
+        p.require(all(record["sha256"][role] == parent_record["sha256"][role]
+                      for role in ("fgb", "pmtiles", "metadata", "schema")),
+                  "translation update changed base artifact hashes")
+        state = previous_state
+        record = parent_record
     if facts["identity_baseline_snapshot"] == state["current"]["latest_manifest"]:
         # This realm was already published when the build captured its inputs.
         # The unused candidate bytes can differ from the committed release.
@@ -261,9 +298,6 @@ def verify_committed_build(publisher, state, record, facts, *, run_date, source)
 
     # A completed promotion advances the live baseline. Its owned receipt must
     # prove that it consumed this build's predecessor, allocation and bytes.
-    receipt = publisher.store.read_json(state["current"]["receipt_uri"])
-    p.require(receipt is not None, "committed publication receipt is missing")
-    intent = p.Intent.build(receipt.value["intent"])
     p.require(
         intent.transaction_id == state["current"]["transaction_id"]
         and intent.value["mode"] == "complete_release"

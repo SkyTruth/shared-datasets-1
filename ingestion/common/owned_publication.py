@@ -253,6 +253,8 @@ class OwnedGeneratedPublisher(GcsPublisher):
         if value["mode"] == "metadata_update":
             parameters = operations["release-manifest"]["source"]["parameters"]
             p.require(parameters["kind"] == "translation-manifest-v1", "unsupported metadata derivation")
+            p.require(parameters["previous_current"]["latest_manifest"] == value["predecessor"],
+                      "translation update must retain its committed predecessor")
             validate_translation_template(parameters["payload"], parameters["baseline"], parameters["locales"])
             translation_update_release({"asset_slug": context.asset_slug, "promotions": [
                 {"destination_uri": op["destination"]} for op in value["operations"] if op["phase"] in {"data", "commit"}
@@ -307,7 +309,7 @@ class OwnedGeneratedPublisher(GcsPublisher):
         artifacts = {entry["path"]: entry for entry in template["artifacts"]}
         suffixes = [("translation-source", ".metadata-translations.csv"), *((f"metadata-{locale.replace('_', '-')}", f".metadata.{locale}.ndjson.gz") for locale in locales)]
         operations = []
-        hash_roles = {}
+        hash_roles = {"csv": "release-translation-source"}
         for role, suffix in suffixes:
             uri = f"gs://{context.bucket}/{asset.root}/releases/{release}/{asset.slug}{suffix}"
             source = sources[uri]
@@ -321,7 +323,8 @@ class OwnedGeneratedPublisher(GcsPublisher):
                 operations.append(self.operation(f"{prefix}-{role}", "data", target, captured, int(promotion["destination_generation"] or 0), asset.slug))
             hash_roles["metadata_translations" if role == "translation-source" else role.replace("-", "_")] = f"release-{role}"
         data_ids = [op["id"] for op in operations]
-        parameters = {"kind": "translation-manifest-v1", "payload": template, "baseline": baseline.value, "locales": locales}
+        parameters = {"kind": "translation-manifest-v1", "payload": template, "baseline": baseline.value,
+                      "locales": locales, "previous_current": current}
         operations.append(self.operation("release-manifest", "commit", current["release_manifest"]["path"],
             {"kind": "derived", "version": p.FINALIZATION_VERSION, "parameters": parameters, "dependencies": data_ids}, current["release_manifest"]["generation"], asset.slug))
         operations.append(self.operation("latest-manifest", "commit", current["latest_manifest"]["path"],
