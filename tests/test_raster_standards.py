@@ -108,12 +108,16 @@ def validate_with_text(
     readme_text: str = RASTER_README,
     manifest_text: str | None = None,
 ) -> list[audit.Finding]:
-    old_readme = audit.download_readme_text
     old_object = audit.download_object_text
+
+    def download_text(bucket: str, name: str, generation: str) -> str:
+        if name.endswith("/README.md"):
+            return readme_text
+        assert manifest_text is not None, f"Unexpected object read: {name}"
+        return manifest_text
+
     try:
-        audit.download_readme_text = lambda *_args: readme_text
-        if manifest_text is not None:
-            audit.download_object_text = lambda *_args: manifest_text
+        audit.download_object_text = download_text
         return audit.validate_asset_roots(
             BUCKET,
             blobs,
@@ -124,7 +128,6 @@ def validate_with_text(
             prefix="",
         )
     finally:
-        audit.download_readme_text = old_readme
         audit.download_object_text = old_object
 
 
