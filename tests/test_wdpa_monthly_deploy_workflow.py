@@ -36,7 +36,7 @@ REQUIRED_SCRIPT_COPIES = (
 
 
 class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
-    def test_publication_layer_keeps_native_producer_and_copies_only_reviewed_consumer(self):
+    def test_publication_layer_keeps_native_producer_and_updates_translation_publisher(self):
         recipe = (REPO_ROOT / "ingestion/wdpa_monthly/Dockerfile.promotion").read_text()
         self.assertEqual(re.findall(r"^FROM (.+)$", recipe, re.MULTILINE), ["${ACCEPTED_IMAGE}"])
         self.assertNotRegex(recipe, r"(?m)^RUN ")
@@ -46,6 +46,15 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                 ("ingestion/wdpa_monthly/artifact_bundle.py", "/app/ingestion/wdpa_monthly/artifact_bundle.py"),
                 ("scripts/wdpa_processing_gate.py", "/app/scripts/wdpa_processing_gate.py"),
                 ("ingestion/wdpa_monthly/publication_only.py", "/app/ingestion/wdpa_monthly/publication_only.py"),
+                ("ingestion/common", "/app/ingestion/common"),
+                ("ingestion/wdpa_monthly/run.py", "/app/ingestion/wdpa_monthly/run.py"),
+                ("ingestion/wdpa_monthly/translations.py", "/app/ingestion/wdpa_monthly/translations.py"),
+                ("scripts/catalog_csv.py", "/app/scripts/catalog_csv.py"),
+                ("scripts/release_feature_model.py", "/app/scripts/release_feature_model.py"),
+                ("scripts/feature_metadata_localization.py", "/app/scripts/feature_metadata_localization.py"),
+                ("scripts/feature_metadata_translation_reuse.py", "/app/scripts/feature_metadata_translation_reuse.py"),
+                ("scripts/slack_notify.py", "/app/scripts/slack_notify.py"),
+                ("catalog/shared-datasets-catalog.csv", "/app/catalog/shared-datasets-catalog.csv"),
             ],
         )
         self.assertIn('CMD ["python", "-m", "ingestion.wdpa_monthly.publication_only"]', recipe)

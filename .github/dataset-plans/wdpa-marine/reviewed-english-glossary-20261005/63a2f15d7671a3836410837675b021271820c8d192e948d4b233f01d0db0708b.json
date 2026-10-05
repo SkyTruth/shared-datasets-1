@@ -1,0 +1,156 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "wdpa-marine",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1790866713092413",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata-translations.csv",
+        "source_generation": "1791234492512752",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1790866750636069",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata-translations.csv",
+        "source_generation": "1791234492512752",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866701749816",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.es.ndjson.gz",
+        "source_generation": "1791234494416965",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866739500834",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.es.ndjson.gz",
+        "source_generation": "1791234494416965",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866703042008",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.fr.ndjson.gz",
+        "source_generation": "1791234496280273",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.fr.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866740738797",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.fr.ndjson.gz",
+        "source_generation": "1791234496280273",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.fr.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866704330268",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.id.ndjson.gz",
+        "source_generation": "1791234498092069",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.id.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866742084021",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.id.ndjson.gz",
+        "source_generation": "1791234498092069",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.id.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866705560905",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.pt.ndjson.gz",
+        "source_generation": "1791234499892004",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.pt.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866743361895",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt.ndjson.gz",
+        "source_generation": "1791234499892004",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.pt.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866707061368",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.pt_br.ndjson.gz",
+        "source_generation": "1791234501688977",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.pt_br.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866744610544",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.pt_br.ndjson.gz",
+        "source_generation": "1791234501688977",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.pt_br.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866708296071",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.metadata.sw.ndjson.gz",
+        "source_generation": "1791234503378490",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.sw.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1790866745955228",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.metadata.sw.ndjson.gz",
+        "source_generation": "1791234503378490",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.metadata.sw.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1790866751841894",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.manifest.json",
+        "source_generation": "1791234504842340",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1790866753009809",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/latest/wdpa-marine.manifest.json",
+        "source_generation": "1791234504842340",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/wdpa-marine/reviewed-english-glossary-20261005/wdpa-marine.manifest.json"
+      }
+    ],
+    "proposal_id": "reviewed-english-glossary-20261005",
+    "release_index_asset_slugs": []
+  }
+}

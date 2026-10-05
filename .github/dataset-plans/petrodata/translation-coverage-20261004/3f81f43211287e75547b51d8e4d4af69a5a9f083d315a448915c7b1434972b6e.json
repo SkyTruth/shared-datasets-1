@@ -1,0 +1,75 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "petrodata",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1781103921391011",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/releases/2026-06-10/petrodata.metadata-translations.csv",
+        "source_generation": "1791152251308443",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1781103942734291",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/latest/petrodata.metadata-translations.csv",
+        "source_generation": "1791152251308443",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781103918520098",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/releases/2026-06-10/petrodata.metadata.es.ndjson.gz",
+        "source_generation": "1791152253154287",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781103939735451",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/latest/petrodata.metadata.es.ndjson.gz",
+        "source_generation": "1791152253154287",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781103960709862",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/releases/2026-06-10/petrodata.manifest.json",
+        "source_generation": "1791152254908222",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781103961777526",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/latest/petrodata.manifest.json",
+        "source_generation": "1791152254908222",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/petrodata.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781103962261722",
+        "destination_uri": "gs://skytruth-shared-datasets-1/300-infrastructure-industrial/310-energy/petrodata/runs/2026-06-10.json",
+        "source_generation": "1791152876487284",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/petrodata/translation-coverage-20261004/2026-06-10.json"
+      }
+    ],
+    "proposal_id": "translation-coverage-20261004",
+    "release_index_asset_slugs": []
+  }
+}

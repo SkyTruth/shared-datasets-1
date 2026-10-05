@@ -1,0 +1,165 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "iho-world-seas",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1781038156388378",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata-translations.csv",
+        "source_generation": "1791152236155378",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "text/csv",
+        "destination_generation": "1781038190915210",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata-translations.csv",
+        "source_generation": "1791152236155378",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata-translations.csv"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038140429235",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.es.ndjson.gz",
+        "source_generation": "1791152237913808",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038175135547",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.es.ndjson.gz",
+        "source_generation": "1791152237913808",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.es.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038143102768",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.fr.ndjson.gz",
+        "source_generation": "1791152239815749",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.fr.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038177799442",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.fr.ndjson.gz",
+        "source_generation": "1791152239815749",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.fr.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038145958465",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.id.ndjson.gz",
+        "source_generation": "1791152241964582",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.id.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038180434040",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.id.ndjson.gz",
+        "source_generation": "1791152241964582",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.id.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038148650644",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.pt.ndjson.gz",
+        "source_generation": "1791152243752364",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.pt.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038183083649",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.pt.ndjson.gz",
+        "source_generation": "1791152243752364",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.pt.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038151206725",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.pt_br.ndjson.gz",
+        "source_generation": "1791152245491576",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.pt_br.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038185727078",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.pt_br.ndjson.gz",
+        "source_generation": "1791152245491576",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.pt_br.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038153769252",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.metadata.sw.ndjson.gz",
+        "source_generation": "1791152247247984",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.sw.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/x-ndjson",
+        "destination_generation": "1781038188361498",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.metadata.sw.ndjson.gz",
+        "source_generation": "1791152247247984",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.metadata.sw.ndjson.gz"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781038207296665",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/releases/2026-06-09/iho-world-seas.manifest.json",
+        "source_generation": "1791152248996976",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781038207964350",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/latest/iho-world-seas.manifest.json",
+        "source_generation": "1791152248996976",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/iho-world-seas.manifest.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1781038209071508",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/iho-world-seas/runs/2026-06-09.json",
+        "source_generation": "1791152873032468",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/iho-world-seas/translation-coverage-20261004/2026-06-09.json"
+      }
+    ],
+    "proposal_id": "translation-coverage-20261004",
+    "release_index_asset_slugs": []
+  }
+}
