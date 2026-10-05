@@ -71,6 +71,7 @@ def translation_plan(store, asset):
     prefix = f"gs://bucket/{asset.root}/releases/{DATE.isoformat()}/{asset.slug}"
     manifest = store.read_json(prefix + ".manifest.json").value
     plan = {"asset_slug": asset.slug, "promotions": []}
+    proposal = str(len(store.events))
     for suffix in (".metadata-translations.csv", *(f".metadata.{locale}.ndjson.gz" for locale in wdpa.translations.LOCALES), ".manifest.json"):
         uri = prefix + suffix
         if suffix == ".manifest.json":
@@ -81,7 +82,7 @@ def translation_plan(store, asset):
             artifact.update(sha256=p.digest(data), size=len(data))
             artifact.pop("generation")
             artifact.pop("latest_generation")
-        source = store.write_bytes(f"gs://bucket/_scratch/pending-publishes/edit/{asset.slug}{suffix}", data, 0, {}, "application/octet-stream", "")
+        source = store.write_bytes(f"gs://bucket/_scratch/pending-publishes/edit/{proposal}/{asset.slug}{suffix}", data, 0, {}, "application/octet-stream", "")
         for target in (uri, uri.replace(f"/releases/{DATE.isoformat()}/", "/latest/")):
             plan["promotions"].append({"source_uri": source.path, "source_generation": str(source.generation),
                 "destination_uri": target, "destination_generation": str(store.head(target).generation)})
@@ -359,6 +360,46 @@ class OwnedPublicationTests(unittest.TestCase):
                     state = store.read_json(editor.context(asset).state_uri).value
                     self.assertIsNone(state["active"])
                     self.assertEqual(state["reserved_next_feature_id"], 3)
+
+    def test_retained_build_proof_survives_repeated_translation_edits(self):
+        from ingestion.wdpa_monthly.artifact_bundle import verify_committed_build
+
+        for already_published in (False, True):
+            with self.subTest(already_published=already_published), publication_temp_directory() as temporary:
+                asset = wdpa.ASSETS[0]
+                publisher, store = publisher_fixture(asset)
+                outputs = outputs_fixture(Path(temporary), asset)
+                outputs.sha256["csv"] = outputs.sha256["metadata_translations"]
+                original = publish(publisher, asset, outputs)
+                state = publisher.state(asset).value
+                intent = store.read_json(state["current"]["receipt_uri"]).value["intent"]
+                facts = {"identity_contract": CONTRACT_ID, "row_count": original["row_count"],
+                         "previous_generated_feature_id": intent["reservation"]["start"],
+                         "next_generated_feature_id": state["reserved_next_feature_id"],
+                         "identity_baseline_snapshot": intent["predecessor"],
+                         "previous_release": "2026-09-30",
+                         "sha256": {k: v for k, v in original["sha256"].items() if k != "manifest"}}
+                if already_published:
+                    facts.update(identity_baseline_snapshot=state["current"]["latest_manifest"],
+                                 previous_release=DATE.isoformat(),
+                                 previous_generated_feature_id=state["reserved_next_feature_id"])
+                for edit in range(2):
+                    plan = translation_plan(store, asset)
+                    editor, _ = publisher_fixture(asset, execution=f"translation-{edit}", store=store)
+                    record = editor.publish_translation_update(asset=asset, plan=plan)
+                    csv_uri = f"gs://bucket/{asset.release_object(DATE, '.metadata-translations.csv')}"
+                    csv_hash = store.inspect(csv_uri).sha256
+                    self.assertEqual(record["sha256"]["csv"], csv_hash)
+                    index = store.read_json(f"gs://bucket/_catalog/releases/{asset.slug}.json").value
+                    indexed_csv = next(entry for entry in index["latest_release"]["files"] if entry["path"] == csv_uri)
+                    self.assertEqual(indexed_csv["sha256"], csv_hash)
+                    current = editor.state(asset).value
+                    before = list(store.events)
+                    verify_committed_build(editor, current, record, facts, run_date=DATE, source=original["source"])
+                    self.assertEqual(store.events, before)
+                    changed = {**record, "sha256": {**record["sha256"], "fgb": "e" * 64}}
+                    with self.assertRaisesRegex(p.PublicationError, "base artifact hashes"):
+                        verify_committed_build(editor, current, changed, facts, run_date=DATE, source=original["source"])
 
     def test_translation_edit_rejects_incomplete_or_changed_bundle_before_claim(self):
         asset = wdpa.ASSETS[0]

@@ -1,5 +1,6 @@
 # Keep the verified producer's native tools/dependencies and all artifact bytes.
-# Only reviewed publication checks change; no source processing runs at build time.
+# Use the reviewed publisher and its translation contract. No source processing
+# runs at build time; the accepted producer still owns the retained artifact bytes.
 ARG ACCEPTED_IMAGE
 FROM ${ACCEPTED_IMAGE}
 
@@ -11,5 +12,14 @@ ENV WDPA_ACCEPTED_BUILD_SOURCE_SHA256=${ACCEPTED_BUILD_SOURCE_SHA256} \
 COPY ingestion/wdpa_monthly/artifact_bundle.py /app/ingestion/wdpa_monthly/artifact_bundle.py
 COPY scripts/wdpa_processing_gate.py /app/scripts/wdpa_processing_gate.py
 COPY ingestion/wdpa_monthly/publication_only.py /app/ingestion/wdpa_monthly/publication_only.py
+COPY ingestion/common /app/ingestion/common
+COPY ingestion/wdpa_monthly/run.py /app/ingestion/wdpa_monthly/run.py
+COPY ingestion/wdpa_monthly/translations.py /app/ingestion/wdpa_monthly/translations.py
+COPY scripts/catalog_csv.py /app/scripts/catalog_csv.py
+COPY scripts/release_feature_model.py /app/scripts/release_feature_model.py
+COPY scripts/feature_metadata_localization.py /app/scripts/feature_metadata_localization.py
+COPY scripts/feature_metadata_translation_reuse.py /app/scripts/feature_metadata_translation_reuse.py
+COPY scripts/slack_notify.py /app/scripts/slack_notify.py
+COPY catalog/shared-datasets-catalog.csv /app/catalog/shared-datasets-catalog.csv
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.publication_only"]
