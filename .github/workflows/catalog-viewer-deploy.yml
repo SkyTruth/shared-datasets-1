@@ -22,10 +22,10 @@ on:
         type: string
       source_run_id:
         required: true
-        type: number
+        type: string
       source_run_attempt:
         required: true
-        type: number
+        type: string
 
 permissions:
   contents: read
