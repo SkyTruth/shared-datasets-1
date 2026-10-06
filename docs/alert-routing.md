@@ -1,7 +1,13 @@
-# Failure alert routing
+# Operational alert routing
 
 Slack reports unattended failures. A supervised execution can be quiet only
 when its GitHub workflow waits for its result and reports failure itself.
+
+GitHub alerts can use a persistent incident lifecycle: one parent message per
+open target, retries in its thread, and one visible recovery reply after verified
+success. Configuration, delivery reconciliation and compatibility are described
+in [Slack incident lifecycle](slack-incidents.md). Until explicitly enabled,
+the existing failure-only webhook remains active.
 
 | Execution | Failure reporting |
 | --- | --- |
@@ -82,8 +88,10 @@ Before declaring live routing verified:
    through `unattended-workflow-alert.yml`. That privileged workflow checks out
    only `main`, reads event JSON as data, and never downloads source-run artifacts.
 
-Successful/skipped upstream outcomes are filtered before allocating alert
-workers. CI now includes reusable dataset publication, catalog refresh and
+Successful/skipped upstream outcomes are filtered before allocating the legacy
+failure worker. When incident tracking is enabled, its separate reconciliation
+worker also inspects successful completions for matching recovery evidence;
+routine healthy completions produce no Slack messages. CI now includes reusable dataset publication, catalog refresh and
 deployment jobs. For a failed main-push CI run, the alert worker verifies the
 workflow identity and exact current run attempt, then checks its actual jobs.
 Publication failures and failed deployment jobs after passing `ci-ready` are

@@ -168,7 +168,7 @@ jobs:
         run: uv run python scripts/install_feature_id_reset.py --directory authorization --expected-sha256 "$EXPECTED_SHA256"
 
   apply-approved-pr-plans:
-    name: Apply approved PR mutation plans (PR #${{ inputs.pr_number }})
+    name: "Apply approved PR mutation plans (PR #${{ inputs.pr_number }})"
     outputs:
       mutation_completed: ${{ steps.publication_receipt.outputs.mutation_completed || steps.deletion_receipt.outputs.mutation_completed }}
     needs: reviewed_pr_plans

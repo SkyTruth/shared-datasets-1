@@ -122,3 +122,93 @@ class ReceiptContractTests(unittest.TestCase):
             changed["steps"].pop(index)
             with self.subTest(index=index):
                 self.assertFalse(contracts.sdk_boundary("publish-typescript-sdk.yml", "publish", changed))
+
+    def notification(self):
+        source = Path(__file__).resolve().parents[1] / ".github/workflows" / contracts.NOTIFICATION_WORKFLOW
+        return yaml.safe_load(source.read_text())
+
+    def test_exact_main_notification_writer_preserves_production_boundaries(self):
+        value = self.notification()
+        self.assertTrue(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "incidents", value, value["jobs"]["incidents"]))
+        self.write(contracts.NOTIFICATION_WORKFLOW, value)
+        self.assertEqual(contracts.permissions(self.root), [])
+        self.assertEqual(contracts.boundaries(self.root), [])
+        self.assertFalse(contracts.notification_boundary("other.yml", "incidents", value, value["jobs"]["incidents"]))
+        self.assertFalse(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "other", value, value["jobs"]["incidents"]))
+
+    def test_notification_cannot_broaden_triggers_tokens_ref_or_authorization(self):
+        mutations = {
+            "PR": lambda value, job: value[True].update(pull_request={}),
+            "PR target": lambda value, job: value[True].update(pull_request_target={}),
+            "reusable": lambda value, job: value[True].update(workflow_call={}),
+            "nonmain upstream": lambda value, job: value[True]["workflow_run"].update(branches=["feature"]),
+            "unfinished upstream": lambda value, job: value[True]["workflow_run"].update(types=["requested"]),
+            "global writer": lambda value, job: value.update(permissions={"deployments": "write"}),
+            "extra writer": lambda value, job: job["permissions"].update(contents="write"),
+            "all writer": lambda value, job: job.update(permissions="write-all"),
+            "missing main": lambda value, job: job.update({"if": job["if"].replace("github.ref == 'refs/heads/main'", "true")}),
+            "OR bypass": lambda value, job: job.update({"if": job["if"] + " || true"}),
+            "removed guard": lambda value, job: job["steps"].pop(0),
+            "disabled guard": lambda value, job: job["steps"][0].update({"if": False}),
+            "weak guard": lambda value, job: job["steps"][0].update(run=job["steps"][0]["run"].replace("exit 1", "exit 0")),
+            "production env": lambda value, job: job.update(environment=contracts.PROTECTED),
+            "cloud env": lambda value, job: value.update(env={"GOOGLE_APPLICATION_CREDENTIALS": "credential.json"}),
+            "workflow shell override": lambda value, job: value.update(defaults={"run": {"shell": "python"}}),
+            "job shell override": lambda value, job: job.update(defaults={"run": {"shell": "python"}}),
+            "other runner": lambda value, job: job.update({"runs-on": "self-hosted"}),
+            "cancellation": lambda value, job: job["concurrency"].update({"cancel-in-progress": True}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = self.notification()
+                job = value["jobs"]["incidents"]
+                mutate(value, job)
+                self.assertFalse(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "incidents", value, job))
+                # A protected environment must not disguise a PR-capable writer.
+                if label != "production env":
+                    self.write(contracts.NOTIFICATION_WORKFLOW, value)
+                    self.assertTrue(contracts.permissions(self.root))
+
+    def test_notification_requires_trusted_checkout_commands_and_signed_delivery(self):
+        mutations = {
+            "upstream checkout": lambda steps: steps[1]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"),
+            "shallow checkout": lambda steps: steps[1]["with"].update({"fetch-depth": 1}),
+            "persisted token": lambda steps: steps[1]["with"].update({"persist-credentials": True}),
+            "second checkout": lambda steps: steps.append(copy.deepcopy(steps[1])),
+            "shadowed checkout ID": lambda steps: steps[1].update(id="prepare"),
+            "shadowed setup ID": lambda steps: steps[2].update(id="deliver"),
+            "untrusted artifact": lambda steps: steps.append({"uses": "actions/download-artifact@v4"}),
+            "GCP auth": lambda steps: steps.append({"uses": "google-github-actions/auth@v3"}),
+            "production command": lambda steps: steps.append({"run": "terraform apply saved.tfplan"}),
+            "changed command": lambda steps: steps[6].update(run=steps[6]["run"] + "\npython arbitrary.py"),
+            "disabled prepare": lambda steps: steps[6].update({"if": "false && true"}),
+            "GCP credential": lambda steps: steps[6]["env"].update(GOOGLE_APPLICATION_CREDENTIALS="credential.json"),
+            "wrong signer": lambda steps: steps[7].update(uses="actions/attest@unreviewed"),
+            "broad subjects": lambda steps: steps[7]["with"].update({"subject-path": "${{ runner.temp }}/*.json"}),
+            "storage write": lambda steps: steps[7]["with"].update({"create-storage-record": True}),
+            "unsigned send": lambda steps: steps[8].update({"if": "always()"}),
+            "late claim signature": lambda steps: steps.insert(9, steps.pop(7)),
+            "lost failed outcome": lambda steps: steps[9].update({"if": "success()"}),
+            "missing verification": lambda steps: steps.pop(),
+            "unpinned Python": lambda steps: steps[2]["with"].update({"python-version": "3.12"}),
+            "unpinned uv": lambda steps: steps[3]["with"].update(version="latest"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                value = self.notification()
+                job = value["jobs"]["incidents"]
+                mutate(job["steps"])
+                self.assertFalse(contracts.notification_boundary(contracts.NOTIFICATION_WORKFLOW, "incidents", value, job))
+                self.write(contracts.NOTIFICATION_WORKFLOW, value)
+                self.assertTrue(contracts.permissions(self.root))
+
+    def test_notification_exception_cannot_authorize_another_writer_job(self):
+        value = self.notification()
+        value["jobs"]["other"] = copy.deepcopy(value["jobs"]["incidents"])
+        self.write(contracts.NOTIFICATION_WORKFLOW, value)
+        self.assertTrue(contracts.permissions(self.root))
+        value = self.notification()
+        value[True]["pull_request"] = {}
+        value["jobs"]["incidents"]["environment"] = contracts.PROTECTED
+        self.write(contracts.NOTIFICATION_WORKFLOW, value)
+        self.assertTrue(contracts.permissions(self.root))

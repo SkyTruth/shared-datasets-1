@@ -630,7 +630,7 @@ jobs:
     secrets: inherit
 
   publish-reviewed-dataset:
-    name: Publish PR #${{ matrix.pr_number }}
+    name: "Publish PR #${{ matrix.pr_number }}"
     needs: [ci-ready, dataset-mutation-selection, geospatial-changes, pmtiles-cdn]
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_mutations == 'true' && (needs.geospatial-changes.outputs.pmtiles_cdn != 'true' || needs.pmtiles-cdn.result == 'success') }}
     strategy:

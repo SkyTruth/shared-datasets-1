@@ -108,25 +108,33 @@ def policy(repository, repo_id, value, run, signer):
     }
 
 
-def verify_result(results, value, expected):
+def verify_result(results, value, expected, *, batch=False):
     require(isinstance(results, list) and results, "no cryptographically verified receipt")
     digest = hashlib.sha256(canonical(value)).hexdigest()
     for result in results:
         verified = result.get("verificationResult", {})
         cert = verified.get("signature", {}).get("certificate", {})
         statement = verified.get("statement", {})
+        subject = {"name": name(value), "digest": {"sha256": digest}}
+        subjects = statement.get("subject")
+        subjects_match = subjects == [subject]
+        if batch:
+            # Notification checkpoints may be attested together. Require this
+            # exact subject once; production receipts retain single-subject
+            # verification unless the caller explicitly selects batch mode.
+            subjects_match = isinstance(subjects, list) and 0 < len(subjects) <= 1024 and subjects.count(subject) == 1
         if (
             all(cert.get(key) == item for key, item in expected.items())
             and verified.get("verifiedTimestamps")
             and statement.get("_type") == "https://in-toto.io/Statement/v1"
             and statement.get("predicateType") == PREDICATE
-            and statement.get("subject") == [{"name": name(value), "digest": {"sha256": digest}}]
+            and subjects_match
         ):
             return
     raise EmissionError("DEPLOYMENT_EMISSION: signed receipt does not bind the exact record, phase and protected emitter")
 
 
-def verify(api, repository, record, status, *, original_signer):
+def verify(api, repository, record, status, *, original_signer, batch=False):
     value = receipt(repository, record, status)
     match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)/attempts/([1-9][0-9]*)", status.get("log_url", ""))
     require(match is not None, "receipt lacks exact run/attempt identity")
@@ -158,7 +166,7 @@ def verify(api, repository, record, status, *, original_signer):
         # A nonzero exit (including unavailable attestations or trusted roots)
         # is fatal. Never parse a raw bundle as verified evidence.
         results = json.loads(subprocess.check_output(command, text=True))
-    verify_result(results, value, expected)
+    verify_result(results, value, expected, batch=batch)
 
 
 def rehearsal(api, repository):

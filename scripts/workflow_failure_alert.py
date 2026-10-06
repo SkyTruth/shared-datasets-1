@@ -31,7 +31,26 @@ WORKFLOW_PATHS = {
     "Publish TypeScript SDK": "publish-typescript-sdk.yml",
     "Deployment terminal verification": "deployment-verification.yml",
     "Deployment read-only reconciliation": "deployment-recovery.yml",
+    "EAMLIS monthly deploy": "eamlis-monthly-deploy.yml",
+    "WDPA monthly deploy": "wdpa-monthly-deploy.yml",
+    "Sea ice daily deploy": "sea-ice-daily-deploy.yml",
+    "WDPA isolated processing validation deploy": "wdpa-processing-validation-deploy.yml",
+    "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
+    "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
+    "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
+    "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
+    "Cron alert policy sync": "cron-alert-policy-sync.yml",
+    "Approved dataset mutation": "publish-dataset.yml",
 }
+
+
+def failed_ci_delivery_jobs(jobs: list[dict]) -> list[dict]:
+    ready = any(job.get("name") == "ci-ready" and job.get("status") == "completed"
+                and job.get("conclusion") == "success" for job in jobs)
+    return [job for job in jobs
+            if job["conclusion"] in FAILED_CONCLUSIONS and job["status"] == "completed"
+            and (job["name"].rsplit(" / ", 1)[-1].startswith(PUBLICATION_JOBS)
+                 or (ready and job["name"] not in VALIDATION_JOBS))]
 
 
 def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None:
@@ -55,14 +74,7 @@ def alert_for_run(event: dict, *, jobs: list[dict] | None = None) -> dict | None
     if run["name"] == "CI":
         # CI now owns reusable publication/catalog jobs. A validation failure
         # alone still belongs in GitHub; inspect only this exact run attempt.
-        ready = any(job.get("name") == "ci-ready" and job.get("status") == "completed"
-                    and job.get("conclusion") == "success" for job in jobs or [])
-        failed_delivery = [job for job in jobs or []
-            if job["conclusion"] in FAILED_CONCLUSIONS
-            and job["status"] == "completed"
-            and (job["name"].rsplit(" / ", 1)[-1].startswith(PUBLICATION_JOBS)
-                 or (ready and job["name"] not in VALIDATION_JOBS))]
-        if not failed_delivery:
+        if not failed_ci_delivery_jobs(jobs or []):
             return None
     name = str(run["name"]).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return {
