@@ -38,8 +38,15 @@ the current UTC date.
 
 ## Publishing Behavior
 
-The job first reads ArcGIS layer metadata and source statistics, then builds a
-source fingerprint from:
+The job first checks the requested date's run record. An existing `success` or
+`skipped` record is a completed outcome: retries return that original record
+without polling ArcGIS, rebuilding artifacts, or replacing the record. This also
+applies when the source changes later that day. Such changes require a different,
+unused `RUN_DATE`, normally the next scheduled run. Other existing statuses fail
+and require investigation rather than being treated as completed.
+
+For an unused date, the job reads ArcGIS layer metadata and source statistics,
+then builds a source fingerprint from:
 
 - service item ID
 - `editingInfo.dataLastEditDate`
