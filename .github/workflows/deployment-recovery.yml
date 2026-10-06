@@ -13,6 +13,7 @@ permissions:
   actions: read
   deployments: write
   id-token: write
+  attestations: write
 
 jobs:
   reconcile:
@@ -40,6 +41,9 @@ jobs:
         with:
           ref: ${{ github.workflow_sha }}
           fetch-depth: 0
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Resolve original tested deployment
         id: original
         run: python scripts/deployment_revision.py recovery-inputs --deployment-id "$DEPLOYMENT_ID"
@@ -77,4 +81,12 @@ jobs:
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan "${args[@]}"
           terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
       - name: Reconcile complete target state and applicable runtime evidence
+        id: deployment-outcome
         run: python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --plan-json "$RUNNER_TEMP/reconciliation.json"
+
+      - name: Attest reconciled deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

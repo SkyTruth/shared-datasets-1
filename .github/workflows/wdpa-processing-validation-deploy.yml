@@ -43,6 +43,7 @@ permissions:
   actions: read
   deployments: write
   id-token: write
+  attestations: write
 
 env:
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
@@ -79,6 +80,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Verify executor before candidate checkout
         env:
           GH_TOKEN: ${{ github.token }}
@@ -187,6 +191,13 @@ jobs:
           [[ "$actual_source" == "$expected_source" ]]
           docker run --rm --volume "$PWD/catalog/wdpa-staged-validation.json:/app/catalog/wdpa-staged-validation.json:ro" \
             wdpa-processing-benchmark:local python scripts/wdpa_processing_gate.py --pre-cloud
+      - name: Verify run-bound signing capability without mutation
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: wdpa-processing-validation-deploy.yml
+
       - name: Publish the tested immutable validation image
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: |
@@ -258,17 +269,25 @@ jobs:
           python scripts/deployment_revision.py start --target wdpa-processing-validation --workflow wdpa-processing-validation-deploy.yml \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
             --artifact "$VALIDATION_IMAGE" --plan-json "$RUNNER_TEMP/wdpa-validation-plan.json"
-      - name: Apply the saved protected plan
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
         if: ${{ steps.revision.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.revision.outputs.receipt_path }}
+
+      - name: Apply the saved protected plan
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/wdpa-validation.tfplan"
       - name: Confirm deployed digest
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: |
           set -euo pipefail
           actual="$(gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" --format='value(spec.template.spec.template.spec.containers[0].image)')"
           [[ "$actual" == "$VALIDATION_IMAGE" ]]
       - name: Plan the scratch upload probe with unchanged image and resources
-        if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && inputs.run_validation }}
         run: |
           set -euo pipefail
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan -input=false -refresh=true \
@@ -288,13 +307,13 @@ jobs:
             --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT" --staging-probe
           python scripts/deployment_permissions.py --target wdpa-processing-validation --plan-json "$RUNNER_TEMP/staging-probe-plan.json"
       - name: Apply the saved scratch probe command
-        if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && inputs.run_validation }}
         run: |
           set -euo pipefail
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/staging-probe.tfplan"
           echo STAGING_PROBE_DEPLOYED=true >> "$GITHUB_ENV"
       - name: Verify a real upload before processing
-        if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && inputs.run_validation }}
         run: |
           set -euo pipefail
           gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
@@ -309,7 +328,7 @@ jobs:
           print('Scratch upload probe succeeded: ' + execution['metadata']['name'])
           PYPROBE
       - name: Restore the processing command after the terminal probe
-        if: ${{ always() && steps.revision.outputs.proceed == 'true' && env.STAGING_PROBE_DEPLOYED == 'true' }}
+        if: ${{ always() && steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && env.STAGING_PROBE_DEPLOYED == 'true' }}
         run: |
           set -euo pipefail
           gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
@@ -336,7 +355,7 @@ jobs:
           python scripts/deployment_permissions.py --target wdpa-processing-validation --plan-json "$RUNNER_TEMP/restore-processing-plan.json"
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/restore-processing.tfplan"
       - name: Start the unattended validation execution
-        if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && inputs.run_validation }}
         run: |
           set -euo pipefail
           gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
@@ -354,6 +373,7 @@ jobs:
           echo "Frozen processing validation: ${execution}; follow it to terminal status and collect wdpa_cloud_validation_report from Cloud Logging."
 
       - name: Record deployment outcome
+        id: deployment-outcome
         if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -365,3 +385,10 @@ jobs:
           args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
           if [[ -n "${VALIDATION_CANARY_EXECUTION:-}" ]]; then args+=(--execution "$VALIDATION_CANARY_EXECUTION"); fi
           python scripts/deployment_revision.py "${args[@]}"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

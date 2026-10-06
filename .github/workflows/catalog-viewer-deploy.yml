@@ -18,6 +18,7 @@ permissions:
   actions: read
   deployments: write
   id-token: write
+  attestations: write
 
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -72,6 +73,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Verify trusted tested source authority
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,6 +155,13 @@ jobs:
           local_digest="$(docker image inspect "${image_tag}" --format '{{.Id}}')"
           echo "CATALOG_VIEWER_LOCAL_DIGEST=${local_digest}" >> "${GITHUB_ENV}"
 
+      - name: Verify run-bound signing capability without mutation
+        if: steps.replay.outputs.proceed == 'true'
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: catalog-viewer-deploy.yml
+
       - name: Record serialized viewer deployment attempt
         if: steps.replay.outputs.proceed == 'true'
         id: deployment
@@ -161,8 +172,16 @@ jobs:
             --target catalog-viewer --artifact "catalog-viewer-image@${CATALOG_VIEWER_LOCAL_DIGEST}" \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
+        if: ${{ steps.deployment.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment.outputs.receipt_path }}
+
       - name: Push tested catalog-viewer image
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           set -euo pipefail
           image_tag="${CATALOG_VIEWER_IMAGE_TAG}"
@@ -179,21 +198,21 @@ jobs:
           echo "CATALOG_VIEWER_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: terraform -chdir=terraform/envs/prod init -input=false
 
       - name: Verify existing project IAM bootstrap authority
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target iam-bootstrap
 
       - name: Terraform plan Secret Manager IAM bootstrap
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
@@ -205,11 +224,11 @@ jobs:
             -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
 
       - name: Export Secret Manager IAM bootstrap plan JSON
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan" > "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
 
       - name: Enforce Secret Manager IAM bootstrap allowlist
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           python - "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json" <<'PY'
           import json
@@ -238,23 +257,23 @@ jobs:
           PY
 
       - name: Verify permissions required by the saved viewer bootstrap plan
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target iam-bootstrap --plan-json "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan.json"
 
       - name: Terraform apply Secret Manager IAM bootstrap
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer-secret-manager-iam-bootstrap.tfplan"
 
       - name: Wait for Secret Manager IAM propagation
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: sleep 30
 
       - name: Verify catalog-viewer live dependencies
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target catalog-viewer
 
       - name: Terraform plan
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
@@ -276,11 +295,11 @@ jobs:
             -var="eamlis_monthly_image=unused-by-catalog-viewer-deploy"
 
       - name: Export Terraform plan JSON
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/catalog-viewer.tfplan" > "${RUNNER_TEMP}/catalog-viewer.tfplan.json"
 
       - name: Enforce catalog-viewer resource-change allowlist
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           python - "${RUNNER_TEMP}/catalog-viewer.tfplan.json" <<'PY'
           import json
@@ -321,15 +340,15 @@ jobs:
           PY
 
       - name: Verify permissions required by the saved viewer plan
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: python scripts/deployment_permissions.py --target catalog-viewer --plan-json "${RUNNER_TEMP}/catalog-viewer.tfplan.json"
 
       - name: Terraform apply
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/catalog-viewer.tfplan"
 
       - name: Verify ready revision uses tested image
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           gcloud run services describe catalog-viewer --project "$GOOGLE_CLOUD_PROJECT" --region "$REGION" --format=json > "${RUNNER_TEMP}/catalog-viewer-service.json"
           python - "${RUNNER_TEMP}/catalog-viewer-service.json" <<'PYVERIFY'
@@ -345,6 +364,7 @@ jobs:
           PYVERIFY
 
       - name: Record terminal deployment outcome
+        id: deployment-outcome
         if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -354,3 +374,10 @@ jobs:
           phase=failed
           if [[ "$JOB_STATUS" == success ]]; then phase=verified; fi
           python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

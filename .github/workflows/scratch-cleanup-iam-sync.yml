@@ -35,11 +35,12 @@ permissions:
   deployments: write
   contents: read
   id-token: write
+  attestations: write
 
 jobs:
   sync:
     name: Apply scratch cleanup IAM sync
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: scratch-cleanup-iam-sync.yml
