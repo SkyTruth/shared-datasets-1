@@ -1,5 +1,6 @@
 """Retained bytes must survive a producer/consumer round trip and reject substitution."""
 import hashlib
+import gzip
 import io
 import json
 from pathlib import Path
@@ -198,11 +199,12 @@ def test_real_packing_function_produces_consumer_accepted_manifest_and_bytes(tmp
     raw, image = docker_tar("eamlis-monthly")
     monkeypatch.setattr(bundle.subprocess, "check_output", lambda *args, **kwargs: image["image_id"])
     def save(args, **kwargs):
-        assert args == ["docker", "image", "save", "--output", str(tmp_path / image["archive"]), image["source_tag"]]
-        (tmp_path / image["archive"]).write_bytes(raw)
+        assert args[:4] == ["docker", "image", "save", "--output"] and args[-1] == image["source_tag"]
+        assert Path(args[4]).parent.parent == tmp_path
+        Path(args[4]).write_bytes(raw)
     monkeypatch.setattr(bundle.subprocess, "run", save)
     actual = bundle.pack_image("eamlis-monthly", SHA, image["image_id"], tmp_path)
-    assert actual == image
+    assert actual["image_id"] == image["image_id"] and actual["source_tag"] == image["source_tag"]
     bundle.validate_manifest({"schema_version": 1, "tested_sha": SHA, "images": {"eamlis-monthly": actual}}, SHA)
     bundle.verify_archive(tmp_path / actual["archive"], actual)
 
@@ -237,3 +239,82 @@ def test_loaded_tag_must_resolve_to_exact_tested_platform_and_config(handoff, mo
     monkeypatch.setattr(bundle.subprocess, "check_output", lambda args, **kwargs: original(args, **kwargs) if args[0] == "git" else json.dumps([{"Id": "sha256:" + "0" * 64, "Architecture": "arm64", "Os": "linux"}]).encode())
     with pytest.raises(bundle.ImageError, match="loaded image differs"):
         download(handoff)
+
+
+@pytest.mark.parametrize("format", ["legacy", "docker28", "containerd-gzip"])
+def test_exporter_normalization_preserves_tested_config_and_rootfs(tmp_path, format):
+    raw, image = docker_tar("catalog-viewer")
+    with tarfile.open(fileobj=io.BytesIO(raw)) as original:
+        config = original.extractfile(image["image_id"][7:] + ".json").read()
+        layer = original.extractfile("b" * 64 + "/layer.tar").read()
+    if format != "legacy":
+        stored_layer = gzip.compress(layer) if format == "containerd-gzip" else layer
+        layer_digest = hashlib.sha256(stored_layer).hexdigest()
+        config_path = "blobs/sha256/" + image["image_id"][7:]
+        layer_path = "blobs/sha256/" + layer_digest
+        modern = {config_path: config, layer_path: stored_layer,
+                  "manifest.json": json.dumps([{"Config": config_path, "RepoTags": [image["source_tag"]], "Layers": [layer_path],
+                                               "LayerSources": {"sha256:" + hashlib.sha256(layer).hexdigest(): {"digest": "sha256:" + layer_digest, "size": len(stored_layer)}}}]).encode(),
+                  "oci-layout": b'{"imageLayoutVersion":"1.0.0"}', "index.json": b'{"schemaVersion":2,"manifests":[]}',
+                  "blobs/sha256/" + "f" * 64: b'{"legacy-config":"discarded"}'}
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            for name, value in modern.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(value)
+                archive.addfile(entry, io.BytesIO(value))
+        raw = buffer.getvalue()
+    source = tmp_path / "raw.tar"
+    destination = tmp_path / "canonical.tar"
+    source.write_bytes(raw)
+    bundle.canonicalize_archive(source, destination, image["image_id"], image["source_tag"])
+    image.update(archive_size=destination.stat().st_size, archive_sha256=bundle.hash_file(destination))
+    bundle.verify_archive(destination, image)
+    with tarfile.open(destination) as canonical:
+        manifest = json.loads(canonical.extractfile("manifest.json").read())[0]
+        assert canonical.extractfile(manifest["Config"]).read() == config
+        assert canonical.extractfile(manifest["Layers"][0]).read() == layer
+        assert set(canonical.getnames()) == {"manifest.json", manifest["Config"], manifest["Layers"][0]}
+
+
+@pytest.mark.parametrize("change", ["tag", "platform", "layer"])
+def test_normalization_rejects_substitution_before_retaining(tmp_path, change):
+    raw, image = docker_tar("catalog-viewer", architecture="arm64" if change == "platform" else "amd64",
+                            tag="extra:tag" if change == "tag" else None)
+    if change == "layer":
+        raw = raw.replace(b"rootfs tar bytes", b"changed tar XYZ ")
+    source = tmp_path / "raw.tar"
+    source.write_bytes(raw)
+    expected_id = docker_tar("catalog-viewer")[1]["image_id"]
+    with pytest.raises(bundle.ImageError):
+        bundle.canonicalize_archive(source, tmp_path / "canonical.tar", expected_id, image["source_tag"])
+
+
+def test_streamed_download_bounds_bytes_and_stops_only_its_process(tmp_path, monkeypatch):
+    process = Mock(stdout=io.BytesIO(b"more than allowed"))
+    process.__enter__ = Mock(return_value=process)
+    process.__exit__ = Mock(return_value=False)
+    process.poll.return_value = None
+    monkeypatch.setattr(consumer.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(consumer, "MAX_ARTIFACT", 4)
+    with pytest.raises(DeploymentError, match="download exceeds"):
+        consumer.GitHub().archive_to(REPO, 3, tmp_path / "archive.zip")
+    process.kill.assert_called_once()
+    process.wait.assert_called_once()
+
+
+def test_failed_github_stream_command_remains_a_failure(tmp_path, monkeypatch):
+    process = Mock(stdout=io.BytesIO(b"partial bytes"), returncode=1)
+    process.__enter__ = Mock(return_value=process)
+    process.__exit__ = Mock(return_value=False)
+    process.wait.return_value = 1
+    process.poll.return_value = 1
+    commands = []
+    def popen(command, **kwargs):
+        commands.append(command)
+        return process
+    monkeypatch.setattr(consumer.subprocess, "Popen", popen)
+    with pytest.raises(subprocess.CalledProcessError):
+        consumer.GitHub().archive_to(REPO, 3, tmp_path / "archive.zip")
+    assert commands == [["gh", "api", f"repos/{REPO}/actions/artifacts/3/zip"]]
+    process.kill.assert_not_called()
