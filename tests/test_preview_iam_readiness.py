@@ -15,8 +15,18 @@ from scripts import deployment_permissions as live
 
 ROOT = Path(__file__).resolve().parents[1]
 FAILURE = json.loads((ROOT / "tests/fixtures/ci_failures/preview_iam_pool_read.json").read_text())
+ATTESTATION_FAILURE = json.loads((ROOT / "tests/fixtures/ci_failures/preview_iam_pool_attestation_read.json").read_text())
+READ_CONTRACT = json.loads((ROOT / "tests/fixtures/ci_failures/preview_iam_provider_read_contract.json").read_text())
 POOL_URL = "https://iam.googleapis.com/v1/" + FAILURE["resource"] + ":testIamPermissions"
 POOL_READ = FAILURE["permission"]
+POOL_READS = (POOL_READ, ATTESTATION_FAILURE["permission"])
+
+
+def require_reviewed_provider(lock):
+    provider = re.findall(r'provider "registry\.terraform\.io/hashicorp/google" \{([^}]+)\}', lock)
+    versions = re.findall(r'version\s*=\s*"([^"]+)"', provider[0]) if len(provider) == 1 else []
+    if versions != [READ_CONTRACT["version"]]:
+        raise AssertionError("Re-audit the complete preview refresh read contract for the locked Google provider.")
 
 
 class PreviewIamReadinessTests(unittest.TestCase):
@@ -24,19 +34,19 @@ class PreviewIamReadinessTests(unittest.TestCase):
         source = (ROOT / "terraform/envs/prod/preview_terraform_iam.tf").read_text()
         role = source.split('resource "google_project_iam_custom_role" "preview_terraform" {', 1)[1].split('\nmodule "', 1)[0]
         permissions = re.findall(r'"(iam\.[^"]+)"', role)
-        self.assertEqual({p for p in permissions if p.startswith("iam.workloadIdentityPools.")}, {POOL_READ})
+        self.assertEqual({p for p in permissions if p.startswith("iam.workloadIdentityPools.")}, set(POOL_READS))
         # Preserve the managed identity-pool dependency and exact reviewed member.
         self.assertIn('member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_publish_environment}"', source)
         self.assertIn('role               = "roles/iam.workloadIdentityUser"', source)
 
     def test_read_probe_uses_actual_pool_and_all_observed_refresh_dependencies(self):
         required = dict(live.checks("preview-service-account-iam"))
-        self.assertEqual(required[POOL_URL], (POOL_READ,))
+        self.assertEqual(required[POOL_URL], POOL_READS)
         project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{live.PROJECT}:testIamPermissions"
         self.assertEqual(set(required[project_url]), {
             "iam.serviceAccounts.create", "iam.serviceAccounts.get",
             "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy",
-            "iam.roles.get", "serviceusage.services.get",
+            "iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list",
         })
         self.assertEqual(len(required), 2)
 
@@ -49,7 +59,49 @@ class PreviewIamReadinessTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "iam.workloadIdentityPools.get"):
             live.verify("preview-service-account-iam", project_only, attempts=1)
-        self.assertIn((POOL_URL, (POOL_READ,)), calls)
+        self.assertIn((POOL_URL, POOL_READS), calls)
+
+    def test_pinned_provider_read_fixture_covers_the_complete_refresh_closure(self):
+        require_reviewed_provider((ROOT / "terraform/envs/prod/.terraform.lock.hcl").read_text())
+        self.assertEqual(READ_CONTRACT["provider"], "registry.terraform.io/hashicorp/google")
+        self.assertEqual(READ_CONTRACT["upstream_repository"], "hashicorp/terraform-provider-google")
+        self.assertRegex(READ_CONTRACT["upstream_tree_sha"], r"^[0-9a-f]{40}$")
+        calls = [call for source in READ_CONTRACT["sources"] for call in source["calls"]]
+        actual_reads = {call["permission"] for call in calls}
+        self.assertEqual(actual_reads, set(READ_CONTRACT["required_read_permissions"]))
+        self.assertEqual(actual_reads, {
+            "iam.roles.get", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy",
+            *POOL_READS, "resourcemanager.projects.get", "serviceusage.services.list",
+        })
+        required = {permission for _, permissions in live.checks("preview-service-account-iam") for permission in permissions}
+        self.assertTrue(actual_reads.issubset(required))
+        pool = next(source for source in READ_CONTRACT["sources"] if source["path"].endswith("resource_iam_workload_identity_pool.go"))
+        self.assertEqual(pool["calls"], [
+            {"method": "GET", "resource": "projects/{project}/locations/global/workloadIdentityPools/{pool}", "permission": POOL_READ},
+            {"method": "GET", "resource": "projects/{project}/locations/global/workloadIdentityPools/{pool}:listAttestationRules", "permission": ATTESTATION_FAILURE["permission"]},
+        ])
+        for source in READ_CONTRACT["sources"]:
+            with self.subTest(source=source["path"]):
+                self.assertRegex(source["git_blob_sha"], r"^[0-9a-f]{40}$")
+                self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
+                self.assertEqual(source["url"], f"https://github.com/hashicorp/terraform-provider-google/blob/v{READ_CONTRACT['version']}/{source['path']}")
+                self.assertTrue(source["functions"])
+
+    def test_provider_version_change_requires_refresh_contract_reaudit(self):
+        lock = (ROOT / "terraform/envs/prod/.terraform.lock.hcl").read_text()
+        changed = lock.replace(f'version     = "{READ_CONTRACT["version"]}"', 'version     = "7.32.0"')
+        self.assertNotEqual(lock, changed)
+        with self.assertRaisesRegex(AssertionError, "Re-audit the complete preview refresh read contract"):
+            require_reviewed_provider(changed)
+
+    def test_targeted_preview_graph_matches_the_independently_audited_closure(self):
+        wrapper = yaml.safe_load((ROOT / ".github/workflows/preview-terraform-iam-sync.yml").read_text())
+        self.assertEqual(wrapper["jobs"]["sync"]["with"]["targets"].split(), READ_CONTRACT["targets"])
+        source = (ROOT / "terraform/envs/prod/preview_terraform_iam.tf").read_text()
+        self.assertIn("${google_iam_workload_identity_pool.github.name}", source)
+        self.assertIn("google_project_iam_custom_role.catalog_viewer_sign_blob.name", source)
+        for path in ("canonical_mutation_iam.tf", "catalog_viewer.tf"):
+            self.assertIn("depends_on = [google_project_service.required]", (ROOT / "terraform/envs/prod" / path).read_text())
 
     def test_complete_live_read_contract_passes_without_mutation(self):
         probe = Mock(return_value=[])
@@ -58,18 +110,34 @@ class PreviewIamReadinessTests(unittest.TestCase):
         self.assertTrue(all(call.args[0].endswith(":testIamPermissions") for call in probe.call_args_list))
 
     def test_missing_other_refresh_reads_fail_before_reporting_ready(self):
-        for permission in ("iam.roles.get", "serviceusage.services.get"):
+        for permission in ("iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list"):
             with self.subTest(permission=permission), self.assertRaisesRegex(RuntimeError, re.escape(permission)):
                 live.verify("preview-service-account-iam", lambda url, required: [permission] if permission in required else [], attempts=1)
 
     def test_exact_supported_pool_permission_request_has_no_mutation_body(self):
-        with patch.object(live.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps({"permissions": [POOL_READ]}).encode())) as open_url:
-            self.assertEqual(live.request(POOL_URL, (POOL_READ,), "fixture-token"), [])
+        with patch.object(live.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps({"permissions": POOL_READS}).encode())) as open_url:
+            self.assertEqual(live.request(POOL_URL, POOL_READS, "fixture-token"), [])
         request = open_url.call_args.args[0]
         self.assertEqual(request.full_url, POOL_URL)
         self.assertEqual(request.get_method(), "POST")
-        self.assertEqual(json.loads(request.data), {"permissions": [POOL_READ]})
+        self.assertEqual(json.loads(request.data), {"permissions": list(POOL_READS)})
         self.assertEqual(open_url.call_args.kwargs, {"timeout": 30})
+
+    def test_previous_get_only_pool_response_fails_before_plan(self):
+        def previous_response(request, **kwargs):
+            granted = [POOL_READ] if request.full_url == POOL_URL else json.loads(request.data)["permissions"]
+            return io.BytesIO(json.dumps({"permissions": granted}).encode())
+
+        with patch.object(live.urllib.request, "urlopen", side_effect=previous_response), self.assertRaisesRegex(RuntimeError, re.escape(ATTESTATION_FAILURE["permission"])):
+            live.verify("preview-service-account-iam", lambda url, permissions: live.request(url, permissions, "fixture-token"), attempts=1)
+
+    def test_service_get_hint_does_not_satisfy_provider_enabled_services_list(self):
+        def old_service_hint(request, **kwargs):
+            granted = [permission for permission in json.loads(request.data)["permissions"] if permission != "serviceusage.services.list"]
+            return io.BytesIO(json.dumps({"permissions": [*granted, "serviceusage.services.get"]}).encode())
+
+        with patch.object(live.urllib.request, "urlopen", side_effect=old_service_hint), self.assertRaisesRegex(RuntimeError, "serviceusage.services.list"):
+            live.verify("preview-service-account-iam", lambda url, permissions: live.request(url, permissions, "fixture-token"), attempts=1)
 
     def test_denied_permission_response_and_recorded_403_remain_failures(self):
         with patch.object(live.urllib.request, "urlopen", return_value=io.BytesIO(b'{"permissions":[]}')):

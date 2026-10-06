@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "provider": "registry.terraform.io/hashicorp/google",
+  "version": "7.31.0",
+  "upstream_repository": "hashicorp/terraform-provider-google",
+  "upstream_tree_sha": "af12f74c6bc84f5cb6f29d61c8da332416933201",
+  "sources": [
+    {
+      "path": "google/services/iambeta/resource_iam_workload_identity_pool.go",
+      "git_blob_sha": "ac4fbafe83b476bc45619bd317981a2dbb1718bd",
+      "sha256": "196a8d8430ea6e546439491fd50cef6353460fd283066a31fa56ca4f6ebc70c4",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/iambeta/resource_iam_workload_identity_pool.go",
+      "functions": [
+        "resourceIAMBetaWorkloadIdentityPoolRead"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "resource": "projects/{project}/locations/global/workloadIdentityPools/{pool}",
+          "permission": "iam.workloadIdentityPools.get"
+        },
+        {
+          "method": "GET",
+          "resource": "projects/{project}/locations/global/workloadIdentityPools/{pool}:listAttestationRules",
+          "permission": "iam.workloadIdentityPools.getAttestationRules"
+        }
+      ]
+    },
+    {
+      "path": "google/services/resourcemanager/resource_google_service_account.go",
+      "git_blob_sha": "aded43783ce12f206255c22dac93ecfe6374bc97",
+      "sha256": "e1210a00f3c7e61c51ad770508091b2fda4e31177844135edfc585b2ff6e1dba",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/resource_google_service_account.go",
+      "functions": [
+        "resourceGoogleServiceAccountRead"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "resource": "projects/{project}/serviceAccounts/{service_account}",
+          "permission": "iam.serviceAccounts.get"
+        }
+      ]
+    },
+    {
+      "path": "google/services/resourcemanager/iam_service_account.go",
+      "git_blob_sha": "02c0940fdb2a591f96b99f1f323f1850a889865b",
+      "sha256": "aaf76d115dc2028983e36b12d0edad323f525388d6d0bd96667ee131f481c81a",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/iam_service_account.go",
+      "functions": [
+        "ServiceAccountIamUpdater.GetResourceIamPolicy"
+      ],
+      "calls": [
+        {
+          "method": "POST",
+          "resource": "projects/{project}/serviceAccounts/{service_account}:getIamPolicy?options.requestedPolicyVersion=3",
+          "permission": "iam.serviceAccounts.getIamPolicy"
+        }
+      ]
+    },
+    {
+      "path": "google/services/resourcemanager/resource_google_project_iam_custom_role.go",
+      "git_blob_sha": "3133b0191c66c76502d75156d8907c27fbe49a7b",
+      "sha256": "d9a42fdd24f7fef1b9da537b92e3919bac154894848a64b957b5b362016a2992",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/resource_google_project_iam_custom_role.go",
+      "functions": [
+        "resourceGoogleProjectIamCustomRoleRead"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "resource": "projects/{project}/roles/{role}",
+          "permission": "iam.roles.get"
+        }
+      ]
+    },
+    {
+      "path": "google/services/resourcemanager/resource_google_project_service.go",
+      "git_blob_sha": "6757ee21ab88aeeae7572642c5e1142d56e4bdea",
+      "sha256": "9804929772cf771537bd484ad25261539e56aabf259b35e6dec422503a917212",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/resource_google_project_service.go",
+      "functions": [
+        "resourceGoogleProjectServiceRead"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "resource": "projects/{project}",
+          "permission": "resourcemanager.projects.get"
+        }
+      ]
+    },
+    {
+      "path": "google/services/resourcemanager/serviceusage_batching.go",
+      "git_blob_sha": "fbea14376375d928752082ba49b866c3c634a33a",
+      "sha256": "8e66143fbb8cbc90b8d6c46e0a38f47323e54815d03bf7064e904e381ee693fc",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/serviceusage_batching.go",
+      "functions": [
+        "BatchRequestReadServices",
+        "sendListServices"
+      ],
+      "calls": []
+    },
+    {
+      "path": "google/services/resourcemanager/resource_google_project.go",
+      "git_blob_sha": "117e521d34306b5fc863fb90de22291f7f5fd36b",
+      "sha256": "b25c43a259b1250db5043f6b65b9dc23f61f6de4901d2af6093e5812729d5d12",
+      "url": "https://github.com/hashicorp/terraform-provider-google/blob/v7.31.0/google/services/resourcemanager/resource_google_project.go",
+      "functions": [
+        "ListCurrentlyEnabledServices"
+      ],
+      "calls": [
+        {
+          "method": "GET",
+          "resource": "projects/{project}/services?filter=state:ENABLED",
+          "permission": "serviceusage.services.list"
+        }
+      ]
+    }
+  ],
+  "required_read_permissions": [
+    "iam.roles.get",
+    "iam.serviceAccounts.get",
+    "iam.serviceAccounts.getIamPolicy",
+    "iam.workloadIdentityPools.get",
+    "iam.workloadIdentityPools.getAttestationRules",
+    "resourcemanager.projects.get",
+    "serviceusage.services.list"
+  ],
+  "targets": [
+    "module.feature_preview_service_account.google_service_account.this",
+    "module.feature_preview_loader_service_account.google_service_account.this",
+    "google_service_account_iam_member.feature_preview_loader_github_wif",
+    "google_service_account_iam_member.feature_preview_service_self_sign_blob"
+  ],
+  "refresh_dependencies": [
+    "google_iam_workload_identity_pool.github",
+    "google_project_iam_custom_role.catalog_viewer_sign_blob",
+    "google_project_service.required"
+  ]
+}
