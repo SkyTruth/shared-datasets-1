@@ -63,12 +63,12 @@ def test_cli_dry_run_and_delivery_failure(tmp_path, monkeypatch, capsys):
     path = tmp_path / "event.json"
     path.write_text(json.dumps(event()))
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path), "--dry-run"])
-    with mock.patch.object(alerts, "notify") as notify:
+    with mock.patch.object(alerts, "notify") as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
         alerts.main()
         notify.assert_not_called()
     assert "actions/runs/123" in capsys.readouterr().out
     monkeypatch.setattr("sys.argv", ["alert", "--event-path", str(path)])
-    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify:
+    with mock.patch.object(alerts, "notify", side_effect=RuntimeError("delivery failed")) as notify, mock.patch.object(alerts, "verify_source_event", return_value=True):
         with pytest.raises(RuntimeError, match="delivery failed"):
             alerts.main()
         assert notify.call_args.kwargs["strict"] is True
@@ -112,20 +112,52 @@ def test_ci_publication_failure_alerts_without_alerting_validation_only():
     assert alerts.alert_for_run(payload, jobs=[{**publication, "conclusion": "skipped"}]) is None
 
 
+def source_api(run, **updates):
+    api = mock.Mock()
+    repository = {"id": 9, "full_name": alerts.REPOSITORY}
+    authoritative = {**run, "repository": repository, "head_repository": repository,
+                     "workflow_id": 7, "path": ".github/workflows/" + alerts.WORKFLOW_PATHS[run["name"]], **updates}
+    api.get.side_effect = [authoritative, {"id": 7, "path": authoritative["path"]}, repository]
+    return api
+
+
 def test_ci_alert_checks_source_identity_and_suppresses_obsolete_attempts():
     run = event(name="CI", event="push", head_sha="a" * 40, run_attempt=1)["workflow_run"]
-    api = mock.Mock()
-    api.get.side_effect = [{**run, "workflow_id": 9, "run_attempt": 2, "status": "in_progress", "conclusion": None},
-                           {"path": ".github/workflows/ci.yml"}]
+    api = source_api(run, run_attempt=2, status="in_progress", conclusion=None)
     assert alerts.ci_jobs_for_event(api, run) == []
     api.pages.assert_not_called()
-    api.get.side_effect = [{**run, "workflow_id": 9}, {"path": ".github/workflows/untrusted.yml"}]
-    with pytest.raises(ValueError, match="trusted main-push"):
+    api = source_api(run, path=".github/workflows/untrusted.yml")
+    with pytest.raises(ValueError, match="trusted main source"):
         alerts.ci_jobs_for_event(api, run)
-    api.get.side_effect = [{**run, "workflow_id": 9}, {"path": ".github/workflows/ci.yml"}]
+    api = source_api(run)
     alerts.ci_jobs_for_event(api, run)
     api.pages.assert_called_once_with(
         "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
+
+
+@pytest.mark.parametrize("name", sorted(alerts.OBSERVER_WORKFLOWS))
+def test_failed_terminal_observation_and_explicit_reconciliation_remain_visible(name):
+    payload = event(name=name, event="workflow_dispatch", head_sha="a" * 40, run_attempt=1)
+    assert alerts.alert_for_run(payload) is not None
+    assert alerts.verify_source_event(source_api(payload["workflow_run"]), payload["workflow_run"])
+    assert not alerts.verify_source_event(source_api(payload["workflow_run"], run_attempt=2), payload["workflow_run"])
+
+
+@pytest.mark.parametrize("updates", [{"head_sha": "b" * 40}, {"head_branch": "feature"}, {"conclusion": "success"}, {"head_repository": {"id": 10, "full_name": alerts.REPOSITORY}}])
+def test_observer_events_must_match_actual_current_main_source(updates):
+    run = event(name="Deployment terminal verification", event="schedule", head_sha="a" * 40, run_attempt=1)["workflow_run"]
+    with pytest.raises(ValueError):
+        alerts.verify_source_event(source_api(run, **updates), run)
+
+
+def test_ci_covers_any_real_post_validation_deployment_failure():
+    ready = {"name": "ci-ready", "status": "completed", "conclusion": "success"}
+    deploy = {"name": "wdpa-validation / deploy", "status": "completed", "conclusion": "failure"}
+    payload = event(name="CI", event="push")
+    assert alerts.alert_for_run(payload, jobs=[ready, deploy]) is not None
+    assert alerts.alert_for_run(payload, jobs=[{**ready, "conclusion": "failure"}, deploy]) is None
+    assert alerts.alert_for_run(payload, jobs=[ready, {**deploy, "name": "sdk-validation (Node 24)"}]) is None
+    assert alerts.alert_for_run(event(name="Cron alert delivery test", event="workflow_dispatch")) is None
 
 
 @pytest.mark.parametrize("filename,step_name", [
@@ -140,7 +172,7 @@ def test_real_synchronous_canary_shell_marks_only_execution_and_propagates_failu
     env = {**os.environ, "JOB_NAME": "test-job", "REGION": "us-central1",
            "GOOGLE_CLOUD_PROJECT": "test-project", "CANARY_RUN_DATE": date,
            "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY,
-           "GITHUB_RUN_ID": "123"}
+           "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull}
     result = subprocess.run(["bash", "-c", recorder + step["run"]], env=env, capture_output=True, text=True)
     if date.startswith("invalid"):
         assert result.returncode != 0

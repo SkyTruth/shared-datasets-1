@@ -17,17 +17,21 @@ RUN set -eux; \
     echo "pmtiles binary not found" >&2; \
     exit 1
 
+# Keep dependency compilation cached while embedding the pinned source version.
+RUN set -eux; \
+    cd /go/pkg/mod/github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+    GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
+        go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .
+
 FROM python:3.12-slim-bookworm
 
 ARG PMTILES_VERSION=v1.30.1
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 
-ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PMTILES_BUILD_VERSION=${PMTILES_VERSION} \
-    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
+    PMTILES_BUILD_VERSION=${PMTILES_VERSION}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -74,6 +78,11 @@ COPY scripts/local_ingestion_smoke.py ./scripts/local_ingestion_smoke.py
 COPY scripts/cloud_wdpa_validation.py ./scripts/cloud_wdpa_validation.py
 COPY scripts/download_public_wdpa_benchmark.py ./scripts/download_public_wdpa_benchmark.py
 COPY docs/wdpa-processing-public-inputs.json ./docs/wdpa-processing-public-inputs.json
+COPY scripts/wdpa_input_memory_probe.py /app/scripts/wdpa_input_memory_probe.py
 COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
+
+# Revision identity does not affect dependency compilation or source bytes.
+ARG SHARED_DATASETS_EXECUTOR_SHA
+ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

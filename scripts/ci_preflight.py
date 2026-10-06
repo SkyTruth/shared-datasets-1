@@ -21,11 +21,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
+from scripts.ci_host_runtime import isolated_host_environment
 from scripts.ci_runtime import local_runtime, prove_runtime, run_container, suite_platform
 from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
-    NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
-    select_suites, verify_results, write_json,
+    DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
+    select_deployments, select_suites, verify_results, write_json,
 )
 
 
@@ -58,12 +60,20 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         resolved_base = base
         paths = None
     suites, reason = select_suites(paths)
+    catalog_snapshots = None
+    if paths and "catalog/shared-datasets-catalog.csv" in paths:
+        try:
+            catalog_snapshots = tuple(git(root, "show", f"{revision}:catalog/shared-datasets-catalog.csv", raw=True) for revision in (resolved_base, tested_sha))
+        except subprocess.CalledProcessError:
+            # A new or unavailable snapshot conservatively selects its known consumers.
+            pass
     return {
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "suites": suites,
         "selection_reason": reason, "changed_paths": paths,
+        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots),
     }
 
 
@@ -112,11 +122,18 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
+        add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
         diff = ["uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-diff", "--base", base, "--head", head]
         if os.environ.get("GITHUB_EVENT_PATH"):
             diff.extend(["--event-path", os.environ["GITHUB_EVENT_PATH"]])
         commands.append((diff, root))
         add("uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-static")
+        release_targets = {"eamlis": "eamlis", "wdpa": "wdpa", "sea_ice": "sea-ice", "wdpa_processing": "wdpa-processing", "ingestion_iam": "iam"}
+        selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
+        if selected_targets:
+            add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
+        if "wdpa_processing" in plan.get("deployments", []):
+            add("uv", "run", "--no-sync", "python", "scripts/wdpa_staged_image_readiness.py")
         add("uv", "run", "--no-sync", "pytest", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
@@ -142,6 +159,9 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("pmtiles", "version")
         add("uv", "sync", "--locked", "--all-groups", "--extra", "wdpa-native")
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
+    elif suite == "production-images":
+        add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(output))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -201,6 +221,9 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             tool: shutil.which(executable_names.get(tool, tool), path=environment["PATH"])
             for tool in result["tools"]
         }
+        if suite == "production-images":
+            result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
+            result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
         for index, (command, cwd) in enumerate(suite_commands(suite, root, plan, output)):
             print(f"[{suite}] {' '.join(command)}", flush=True)
             log = output / f"command-{index:02d}.log"
@@ -214,6 +237,11 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
             if suite == "geospatial-integration":
                 check_results(output / "pytest.xml")
+        if suite == "production-images":
+            manifest = json.loads((output / "images/manifest.json").read_text())
+            if set(validate_manifest(manifest, plan["tested_sha"])) != IMAGE_TARGETS:
+                raise ValueError("complete tested production-image set is missing")
+            result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
             if len(candidates) != 1:
@@ -230,7 +258,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             result["package"] = candidate
         validate_checkout(root, plan)
         result["status"] = "success"
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+    except (ImageError, ValueError, OSError, subprocess.SubprocessError) as exc:
         result["error"] = str(exc)
         print(f"{suite}: {exc}", file=sys.stderr)
     finally:
@@ -282,9 +310,23 @@ def preflight(args: argparse.Namespace) -> int:
     for suite in plan["suites"]:
         output = work / suite
         output.mkdir()
-        platform = suite_platform(suite, runtime)
-        selected_image = native_image if suite == "geospatial-integration" else arm_image if platform == "linux/arm64" else image
-        runtime["suites"][suite] = run_container(root, work, suite, selected_image, platform, runtime_arguments)
+        if suite == "production-images":
+            # The host owns Docker and source paths. A nested container would
+            # need privileged Docker access and paths outside its namespace.
+            with isolated_host_environment(work, dict(os.environ)) as environment:
+                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"], "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
+                                    "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
+                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=root, env=environment, check=True)
+                command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
+                completed = subprocess.run(command, cwd=root, env=environment, check=False)
+            report = output / "result.json"
+            if not report.exists():
+                raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
+            runtime["suites"][suite] = {"transport": "host-docker", "exit_code": completed.returncode}
+        else:
+            platform = suite_platform(suite, runtime)
+            selected_image = native_image if suite == "geospatial-integration" else arm_image if platform == "linux/arm64" else image
+            runtime["suites"][suite] = run_container(root, work, suite, selected_image, platform, runtime_arguments)
         write_json(work / "runtime.json", runtime)
         report = output / "result.json"
         if not report.exists():
@@ -347,6 +389,8 @@ def main() -> int:
                 with args.github_output.open("a") as output:
                     for suite in SUITES:
                         output.write(f"{suite}={'true' if suite in plan['suites'] else 'false'}\n")
+                    for target in DEPLOYMENTS:
+                        output.write(f"{target}={'true' if target in plan['deployments'] else 'false'}\n")
                     output.write(f"should_run={'true' if 'geospatial-integration' in plan['suites'] else 'false'}\n")
                     output.write(f"tested_sha={plan['tested_sha']}\n")
             return 0

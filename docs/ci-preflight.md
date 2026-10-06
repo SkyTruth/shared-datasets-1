@@ -26,8 +26,25 @@ Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require
-network access. Tool versions and the classifier are owned by
-`scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
+network access. Tool versions are owned by the dependency-free
+`scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
+CI setup and image pins are checked against that contract.
+The production-image suite uses the host Docker client and an isolated host
+environment with the same pinned Python and locked dependencies. Its process-owned
+HOME, Docker, XDG and gcloud configuration directories contain no caller ADC or
+registry authentication. Only explicit tool paths, locale/temp settings, proxy/CA
+settings and the resolved Docker connection are retained; GitHub/cloud credentials,
+event identity and SSH agents are excluded. Unix and TCP connections are supported;
+required daemon TLS files are copied separately and removed after the suite.
+Unsupported authentication transport fails before validation. The host process
+retains normal filesystem and Docker API capabilities; environment isolation is
+an operational credential boundary, not a sandbox for malicious code. It builds and
+tests the actual Linux AMD64 deployment recipes without mounting the Docker
+socket into a validation container. Its evidence retains the three deployable
+images with their config and rootfs hashes; missing image evidence fails
+`ci-ready`. The suite also exercises the deployment loader on the actual CI
+Docker daemon before admitting each retained image. Deployment consumes these
+tested bytes without rebuilding.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local

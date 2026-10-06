@@ -17,6 +17,7 @@ from scripts.ci_contract import (
     verify_results,
 )
 from workflow_helpers import load_workflow, workflow_triggers
+from ci_result_fixtures import production_images
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,16 +32,20 @@ def plan(suites=SUITES):
 
 
 def results_for(validation):
-    return [{
+    results = [{
         **{field: validation[field] for field in ("base", "head", "tested_sha", "tree", "contract_digest")},
         "suite": suite, "status": "success", "tools": expected_tools(suite),
         "commands": [{"argv": ["executed-test"], "exit_code": 0}],
     } for suite in validation["suites"]]
+    for result in results:
+        if result["suite"] == "production-images":
+            result["production_images"] = production_images(validation["tested_sha"])
+    return results
 
 
 def jobs_for(validation):
     jobs = {"geospatial-changes": {"result": "success"}}
-    for suite in ("lint", "tests", "geospatial-integration", "browser"):
+    for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser"):
         jobs[suite] = {"result": "success" if suite in validation["suites"] else "skipped"}
     jobs["sdk-validation"] = {"result": "success" if "sdk-node22" in validation["suites"] else "skipped"}
     return jobs
@@ -54,8 +59,8 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
 
 def test_cross_component_dependencies_and_explicit_unselected_suites():
     assert set(select_suites(["docs/consumer-guide.md"])[0]) == ALWAYS
-    assert set(select_suites(["api/python/src/skytruth_shared_datasets/snapshot.py"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser"}
-    assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser"}
+    assert set(select_suites(["api/python/src/skytruth_shared_datasets/snapshot.py"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
+    assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == set(SUITES)
     assert "geospatial-integration" in select_suites(["ingestion/common/reset.py"])[0]
     assert "geospatial-integration" in select_suites(["tests/test_wdpa_translation_inputs.py"])[0]
 
@@ -254,7 +259,7 @@ def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():
     assert workflow["jobs"]["geospatial-changes"]["name"] == "geospatial-changes"
     assert ready["name"] == "ci-ready"
     assert ready["if"] == "always()"
-    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "geospatial-integration", "sdk-validation", "browser"}
+    assert set(ready["needs"]) == {"geospatial-changes", "lint", "tests", "geospatial-integration", "production-images", "sdk-validation", "browser"}
     assert workflow["jobs"]["sdk-validation"]["strategy"]["matrix"]["node"] == ["22", "24"]
     assert not (ROOT / ".github/workflows/sdk-validation.yml").exists()
     assert not (ROOT / ".github/workflows/catalog-browser-smoke.yml").exists()

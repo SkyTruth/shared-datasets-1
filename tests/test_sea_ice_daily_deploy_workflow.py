@@ -29,7 +29,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
                                         env={**os.environ, "JOB_NAME": "sea-ice-daily", "REGION": "us-central1",
                                              "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date,
                                              "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
-                                             "GITHUB_RUN_ID": "123"})
+                                             "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull})
                 if date.startswith("invalid"):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout, "")
@@ -46,8 +46,11 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         step_names = list(steps)
 
         self.assertEqual(workflow["name"], "Sea ice daily deploy")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
-        self.assertIn("catalog/feature-identity-resolutions/**", set(trigger["push"]["paths"]))
+        self.assertNotIn("push", trigger)
+        self.assertIn("workflow_call", trigger)
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
+        self.assertIn("Verify feature-ID publication state", steps)
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("resume_scheduler", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -55,14 +58,18 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
             deploy["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
         self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
         self.assertEqual(env["JOB_NAME"], "sea-ice-daily")
 
         build_run = steps["Build sea-ice-daily image"]["run"]
-        self.assertIn("-f ingestion/sea_ice_daily/Dockerfile", build_run)
-        self.assertIn("--platform linux/amd64", build_run)
-        self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", build_run)
+        self.assertIn("tested_image_authorization.py --workflow sea-ice-daily-deploy.yml --target sea-ice-daily", build_run)
+        self.assertNotIn("docker build", build_run)
+        self.assertEqual(steps["Build sea-ice-daily image"]["id"], "tested-image")
+        tag = steps["Tag the exact tested sea-ice-daily image"]
+        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
+        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
+        self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", tag["run"])
 
         self.assertIn("gdal_calc.py --help", steps["Smoke-test native tools in image"]["run"])
         synthetic_run = steps["Smoke-test synthetic sea-ice build path in image"]["run"]
@@ -73,6 +80,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("docker push", push_run)
         self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("SEA_ICE_DAILY_IMAGE=${image_ref}", push_run)
+        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(

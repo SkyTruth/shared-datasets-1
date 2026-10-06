@@ -120,6 +120,13 @@ if [[ "${GITHUB_REF}" != "refs/heads/main" ||
   echo "Execution must use this workflow from main." >&2
   exit 1
 fi'''
+WORKFLOW_CI_BOOTSTRAP_GUARD = '''set -euo pipefail
+if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+      ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/WORKFLOW_PATH@refs/heads/main" &&
+       "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+  echo "Execution must use this workflow or CI from main." >&2
+  exit 1
+fi'''
 WORKFLOW_REHEARSAL_BOOTSTRAP_GUARD = '''set -euo pipefail
 if [[ "${GITHUB_REF}" != "refs/heads/main" ||
       ( "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main" &&
@@ -490,9 +497,14 @@ def job_uses_prod_terraform(workflow: dict, job: dict) -> bool:
 
 def has_guarded_main_workflow_checkout(workflow: dict, relative_path: str) -> bool:
     """Recognize an immutable main bootstrap, not downstream executor provenance."""
-    expected_guard = (WORKFLOW_PUBLISHER_BOOTSTRAP_GUARD if relative_path == ".github/workflows/publish-dataset.yml"
-                      else WORKFLOW_REHEARSAL_BOOTSTRAP_GUARD if relative_path == ".github/workflows/deployment-receipt-rehearsal.yml"
-                      else WORKFLOW_MAIN_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", relative_path))
+    expected_guards = {WORKFLOW_MAIN_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", relative_path)}
+    if relative_path == ".github/workflows/publish-dataset.yml":
+        expected_guards.add(WORKFLOW_PUBLISHER_BOOTSTRAP_GUARD)
+    triggers = workflow.get("on", workflow.get(True, {}))
+    if isinstance(triggers, dict) and "workflow_call" in triggers:
+        expected_guards.add(WORKFLOW_CI_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", relative_path))
+    if relative_path == ".github/workflows/deployment-receipt-rehearsal.yml":
+        expected_guards.add(WORKFLOW_REHEARSAL_BOOTSTRAP_GUARD)
     for job in workflow["jobs"].values():
         if not isinstance(job, dict) or job.get("continue-on-error", False) is not False:
             continue
@@ -510,7 +522,7 @@ def has_guarded_main_workflow_checkout(workflow: dict, relative_path: str) -> bo
         ):
             continue
         run = guard.get("run")
-        if not isinstance(run, str) or run.strip() != expected_guard or guard.get("shell", "bash") != "bash":
+        if not isinstance(run, str) or run.strip() not in expected_guards or guard.get("shell", "bash") != "bash":
             continue
         uses = checkout.get("uses", "")
         options = checkout.get("with", {})
@@ -604,6 +616,12 @@ def check_workflow_boundaries(repo_root: Path) -> list[str]:
                 "main ref validation": (WORKFLOW_MAIN_REF_GUARD,),
                 "resource-change allowlist": ("allowed_exact", "python scripts/metadata_retirement_plan.py "),
             }
+            if (rel.as_posix() == ".github/workflows/deployment-recovery.yml"
+                    and "python scripts/deployment_revision.py reconcile " in job_text
+                    and not re.search(r"\bapply\b|terraform_prod_apply\.py", job_text)):
+                # Recovery's trusted consumer refuses every changed resource;
+                # it can only record an already-complete no-change target plan.
+                required["resource-change allowlist"] += ("python scripts/deployment_revision.py reconcile ",)
             for label, markers in required.items():
                 if not any(marker in job_text for marker in markers):
                     errors.append(f"{rel}: job {job_name}: prod Terraform job is missing {label}")

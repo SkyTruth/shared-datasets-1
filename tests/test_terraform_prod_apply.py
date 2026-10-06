@@ -11,9 +11,6 @@ from unittest import mock
 from scripts import terraform_prod_apply
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
 REQUIRED_VARS = [
     "--var",
     "wdpa_monthly_image=image",
@@ -215,12 +212,20 @@ class TerraformProdApplyTests(unittest.TestCase):
                 terraform_prod_apply.resolve_terraform_binary(str(binary))
 
     def test_binary_resolver_accepts_private_executable(self):
-        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as tmp:
+        # Isolated preflight checkouts may themselves live beneath /tmp. Model
+        # the trusted installed executable independently of checkout location.
+        binary = Path("/opt/private-tools/terraform")
+        mode = stat.S_IFREG | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR
+        with mock.patch.object(Path, "resolve", return_value=binary), mock.patch.object(Path, "stat", return_value=mock.Mock(st_mode=mode)), mock.patch.object(terraform_prod_apply.os, "access", return_value=True):
+            self.assertEqual(terraform_prod_apply.resolve_terraform_binary(str(binary)), str(binary))
+
+    def test_private_executable_in_shared_temp_is_still_rejected(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             binary = Path(tmp) / "terraform"
             binary.write_text("#!/bin/sh\n")
             binary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-
-            self.assertEqual(terraform_prod_apply.resolve_terraform_binary(str(binary)), str(binary.resolve()))
+            with self.assertRaisesRegex(ValueError, "shared temporary"):
+                terraform_prod_apply.resolve_terraform_binary(str(binary))
 
 
 if __name__ == "__main__":

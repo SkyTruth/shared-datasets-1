@@ -70,7 +70,10 @@ class GeospatialCiTests(unittest.TestCase):
         image_artifact = image_steps["Share the deployment image with staged checks"]["with"]["name"]
         self.assertEqual(steps["Download the shared deployment image"]["with"]["name"], image_artifact)
         self.assertIn("containerimage.config.digest", steps["Load and verify the identical deployment image"]["run"])
-        self.assertIn('[[ "$actual" == "$expected" ]]', steps["Load and verify the identical deployment image"]["run"])
+        image_proof = steps["Load and verify the identical deployment image"]["run"]
+        self.assertIn("verify_local_config", image_proof)
+        self.assertIn("' \"$expected\"", image_proof)
+        self.assertNotIn("{{.Id}}", image_proof)
         self.assertIn("fallocate -l 100G", steps["Provision a 100 GiB disk scratch filesystem"]["run"])
 
     def test_benchmark_uses_public_frozen_inputs_without_credentials(self):

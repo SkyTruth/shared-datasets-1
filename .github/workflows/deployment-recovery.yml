@@ -1,0 +1,92 @@
+name: Deployment read-only reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_id:
+        description: Failed or interrupted ingestion or registered Terraform deployment record to reconcile without mutation
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  id-token: write
+  attestations: write
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    concurrency:
+      group: prod-terraform-state
+      queue: max
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEPLOYMENT_ID: ${{ inputs.deployment_id }}
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-recovery.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Resolve original tested deployment
+        id: original
+        run: python scripts/deployment_revision.py recovery-inputs --deployment-id "$DEPLOYMENT_ID"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.original.outputs.executor_sha }}
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+      - name: Refresh original target scope without applying
+        env:
+          TARGETS_JSON: ${{ steps.original.outputs.targets }}
+          TARGET: ${{ steps.original.outputs.target }}
+          IMAGE: ${{ steps.original.outputs.image }}
+          KIND: ${{ steps.original.outputs.kind }}
+        run: |
+          set -euo pipefail
+          terraform -chdir=terraform/envs/prod init -input=false
+          args=(-input=false -refresh=true -out="$RUNNER_TEMP/reconciliation.tfplan")
+          while IFS= read -r target; do args+=("-target=$target"); done < <(python -c 'import json, os; print("\n".join(json.loads(os.environ["TARGETS_JSON"])))')
+          args+=(-var="wdpa_monthly_image=unused-by-reconciliation" -var="eamlis_monthly_image=unused-by-reconciliation" -var="sea_ice_daily_image=unused-by-reconciliation")
+          case "$TARGET" in
+            wdpa-monthly) args+=(-var="wdpa_monthly_image=$IMAGE") ;;
+            eamlis-monthly) args+=(-var="eamlis_monthly_image=$IMAGE") ;;
+            sea-ice-daily) args+=(-var="sea_ice_daily_image=$IMAGE") ;;
+            terraform-*) if [[ "$KIND" != "terraform" ]]; then exit 1; fi ;;
+            *) exit 1 ;;
+          esac
+          bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan "${args[@]}"
+          terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
+      - name: Reconcile complete target state and applicable runtime evidence
+        id: deployment-outcome
+        run: python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --plan-json "$RUNNER_TEMP/reconciliation.json"
+
+      - name: Attest reconciled deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

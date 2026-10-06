@@ -69,6 +69,18 @@ Before declaring live routing verified:
    through `unattended-workflow-alert.yml`. That privileged workflow checks out
    only `main`, reads event JSON as data, and never downloads source-run artifacts.
 
+Successful/skipped upstream outcomes are filtered before allocating alert
+workers. CI now includes reusable dataset publication, catalog refresh and
+deployment jobs. For a failed main-push CI run, the alert worker verifies the
+workflow identity and exact current run attempt, then checks its actual jobs.
+Publication failures and failed deployment jobs after passing `ci-ready` are
+announced; ordinary PR and validation-only
+failures stay in GitHub. Failed terminal deployment verification and explicit
+read-only reconciliation also remain visible in Slack. Every subscribed source
+workflow is checked against its authoritative API identity; completion events
+superseded by a newer attempt become no-ops. Dataset publication refreshes catalog data without
+redeploying the catalog viewer service.
+
 Local tests exercise routing decisions, real workflow shell failure propagation,
 marker placement, policy boundaries and protected-sync coverage. They do not
 verify Google Cloud's audit payloads or Slack delivery; record those separately.

@@ -14,19 +14,18 @@ from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
+from scripts.ci_toolchain import TOOLCHAIN
+from scripts.catalog_csv import read_catalog_rows_text
+from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
-TOOLCHAIN = {
-    "python": "3.12.12",
-    "uv": "0.11.8",
-    "node22": "22.12.0",
-    "node24": "24.13.1",
-    "terraform": "1.8.5",
-    "gitleaks": "8.30.1",
-    "actionlint": "1.7.12",
-}
 SUITES = (
-    "lint", "tests", "geospatial-integration", "sdk-node22", "sdk-node24", "browser",
+    "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
+)
+DEPLOYMENTS = (
+    "eamlis", "wdpa", "sea_ice", "wdpa_processing", "ingestion_iam",
+    "pmtiles_cdn", "catalog_viewer", "artifact_registry_iam", "preview_terraform_iam",
+    "scratch_cleanup_iam", "cron_alert_policy",
 )
 ALWAYS = {"lint", "tests"}
 NATIVE_TESTS = (
@@ -39,13 +38,21 @@ NATIVE_TESTS = (
     "tests/test_eamlis_monthly.py",
 )
 CONTRACT_FILES = (
-    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py",
+    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
     "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
     "scripts/check_workflow_syntax.py",
-    "scripts/ci_source_proof.py", "scripts/ci_runtime.py",
+    "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
+    "scripts/release_contracts.py", "scripts/deployment_permissions.py",
+    "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
+    "scripts/production_image_contracts.py",
+    "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
+    "scripts/cdn_plan_readiness.py",
+    "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
+    "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
+    ".github/actions/deployment-receipt/action.yml",
 )
 
 
@@ -57,18 +64,24 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
         if path in {"pyproject.toml", "uv.lock"} or path.startswith(".github/"):
             return list(SUITES), f"shared validation or workflow dependency: {path}"
         if path.startswith("ingestion/") or path in NATIVE_TESTS:
-            selected.add("geospatial-integration")
+            selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("api/"):
             selected.update({"sdk-node22", "sdk-node24", "browser"})
+            if path.startswith("api/python/"):
+                selected.add("production-images")
+        elif path.startswith("services/catalog_viewer/"):
+            selected.add("production-images")
         elif path.startswith(("web/", "tests/browser/", "catalog/", "templates/", "docs/assets/")):
             selected.update({"sdk-node22", "sdk-node24", "browser"})
+            if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
+                selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("scripts/"):
             # Scripts are imported by runtime, SDK fixtures, and browser rendering.
             # An explicit narrower rule must prove those dependencies absent.
             return list(SUITES), f"shared script dependency: {path}"
         elif path.startswith("tests/"):
             if any(word in path for word in ("geospatial", "raster", "wdpa", "sea_ice", "eamlis", "translation")):
-                selected.add("geospatial-integration")
+                selected.update({"geospatial-integration", "production-images"})
             elif any(word in path for word in ("typescript", "sdk", "snapshot", "catalog", "web", "preview")):
                 selected.update({"sdk-node22", "sdk-node24", "browser"})
             else:
@@ -80,6 +93,121 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
         else:
             return list(SUITES), f"unknown path: {path}"
     return [suite for suite in SUITES if suite in selected], "complete path classification"
+
+
+def catalog_deployment_targets(before: str, after: str) -> set[str]:
+    """Compare the catalog fields actually compiled into release consumers."""
+    def contracts(raw):
+        rows = read_catalog_rows_text(raw)
+        by_slug = {}
+        for row in rows:
+            slug = row.get("asset_slug")
+            if not slug or slug in by_slug:
+                raise ValueError("catalog release comparison requires unique nonempty asset slugs")
+            by_slug[slug] = row
+        def translation(slug):
+            row = by_slug.get(slug)
+            if row is None:
+                return None
+            return tuple(tuple(filter(None, row.get(field, "").split(";"))) for field in ("translation_locales", "translation_fields"))
+        routes_and_folders = frozenset(tuple(row.get(field, "") for field in (
+            "asset_slug", "canonical_path", "access_tier", "status", "has_pmtiles", "available_formats",
+        )) for row in rows)
+        return {
+            "eamlis": translation("eamlis-abandoned-mine-land-inventory"),
+            "wdpa": (translation("wdpa-marine"), translation("wdpa-terrestrial")),
+            "pmtiles_cdn": routes_and_folders,
+        }
+    previous, current = contracts(before), contracts(after)
+    return {target for target in previous if previous[target] != current[target]}
+
+
+def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str, str] | None = None) -> list[str]:
+    """Explicit release dependencies; unknown changes broaden tests, not mutations."""
+    selected = set()
+    iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
+    ingestion = {"eamlis", "sea_ice", "wdpa"}
+    for path in paths or []:
+        if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
+            selected.update(ingestion | {"catalog_viewer"})
+        if path in {"pyproject.toml", "uv.lock"}:
+            selected.update(ingestion | {"catalog_viewer"})
+        if path.startswith("ingestion/common/") or path in {
+            "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
+            "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
+            "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
+        }:
+            selected.update(ingestion)
+        if path == "scripts/catalog_csv.py":
+            selected.update({"eamlis", "wdpa"})
+        if path == "catalog/shared-datasets-catalog.csv":
+            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn"})
+        if path == "scripts/feature_metadata_translation_reuse.py":
+            selected.add("wdpa")
+        if path.startswith("catalog/feature-identity-resolutions/"):
+            selected.update({"sea_ice", "wdpa"})
+        if path == "docs/assets/ims-sea-ice-extent.md":
+            selected.add("sea_ice")
+        if path.startswith("ingestion/eamlis_monthly/") or path in {
+            ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
+        }:
+            selected.add("eamlis")
+        if path.startswith("ingestion/sea_ice_daily/") or path in {
+            ".github/workflows/sea-ice-daily-deploy.yml", "terraform/envs/prod/sea_ice_daily.tf",
+        }:
+            selected.add("sea_ice")
+        if (path.startswith("ingestion/wdpa_monthly/") and path not in {
+            "ingestion/wdpa_monthly/Dockerfile", "ingestion/wdpa_monthly/README.md",
+        }) or path in {
+            ".github/workflows/wdpa-monthly-deploy.yml", "terraform/envs/prod/wdpa_monthly.tf",
+        }:
+            selected.add("wdpa")
+        # New producer bytes require their own complete retained evidence. A
+        # producer/bootstrap change cannot launch an unready publication job.
+        if path == "catalog/wdpa-staged-validation.json":
+            selected.add("wdpa_processing")
+        if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
+            ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
+            "terraform/envs/prod/catalog_viewer_variables.tf",
+            "scripts/compare_releases.py", "scripts/release_feature_model.py",
+            "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
+            "terraform/envs/prod/pmtiles_cdn.tf", "terraform/envs/prod/pmtiles_cdn_variables.tf",
+            "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
+        }:
+            selected.add("catalog_viewer")
+        if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
+            ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
+            "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",
+            "terraform/envs/prod/shared_bucket_public.tf",
+            "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
+        }:
+            selected.add("pmtiles_cdn")
+        if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:
+            selected.add("ingestion_iam")
+        for target, filename in {
+            "artifact_registry_iam": "artifact_registry_iam.tf",
+            "preview_terraform_iam": "preview_terraform_iam.tf",
+            "scratch_cleanup_iam": "canonical_mutation_iam.tf",
+        }.items():
+            if path == f"terraform/envs/prod/{filename}" or path == f".github/workflows/{target.replace('_', '-')}-sync.yml":
+                selected.add(target)
+        if path in {
+            ".github/workflows/cron-alert-policy-sync.yml", "terraform/envs/prod/canonical_mutation_iam.tf",
+            "terraform/envs/prod/monitoring.tf", "terraform/envs/prod/monitoring_alert_policy_iam.tf",
+            "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
+        }:
+            selected.add("cron_alert_policy")
+        if path == "catalog/categories.yaml":
+            selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
+        if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
+            selected.update(iam)
+        if path == "terraform/envs/prod/main.tf":
+            selected.update({"artifact_registry_iam", "preview_terraform_iam"})
+    if selected & ingestion:
+        selected.add("ingestion_iam")
+    if selected & (ingestion | {"catalog_viewer", "wdpa_processing"}):
+        selected.add("artifact_registry_iam")
+    return [target for target in DEPLOYMENTS if target in selected]
 
 
 def contract_digest(root: Path) -> str:
@@ -154,8 +282,15 @@ def verify_results(
             raise ValueError(f"{suite} contains a failed command")
         if result.get("tools") != expected_tools(suite):
             raise ValueError(f"{suite} used an unexpected toolchain")
+        if suite == "production-images":
+            try:
+                images = validate_manifest(result.get("production_images"), plan["tested_sha"])
+            except ImageError as exc:
+                raise ValueError(f"invalid production-image evidence: {exc}") from exc
+            if set(images) != IMAGE_TARGETS:
+                raise ValueError("complete tested production-image set is missing")
     if jobs is not None:
-        expected = {"lint": "lint", "tests": "tests", "geospatial-integration": "geospatial-integration", "browser": "browser"}
+        expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}
         for suite, job in expected.items():
             required = "success" if suite in selected else "skipped"
             if jobs.get(job, {}).get("result") != required:
@@ -182,6 +317,8 @@ def expected_tools(suite: str) -> dict[str, str]:
         tools["gdal"] = "3.6.2"
         tools["tippecanoe"] = "2.52.0"
         tools["pmtiles"] = "1.30.1"
+    elif suite == "production-images":
+        pass  # Docker availability and the actual installed image tools are probed by the command.
     else:
         raise ValueError(f"unknown suite: {suite}")
     return tools

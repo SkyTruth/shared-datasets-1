@@ -1,26 +1,53 @@
 name: Scratch cleanup IAM sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - "terraform/envs/prod/canonical_mutation_iam.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
+  attestations: write
 
 jobs:
   sync:
     name: Apply scratch cleanup IAM sync
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: scratch-cleanup-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: bucket-iam
       sync_name: Scratch cleanup IAM sync
       refusal_prefix: Refusing automatic scratch cleanup IAM sync
       targets: |

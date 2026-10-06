@@ -4,6 +4,7 @@ import pytest
 
 from scripts import ci_source_proof as proof
 from scripts.ci_contract import SUITES, expected_tools, verify_results
+from ci_result_fixtures import production_images
 
 
 def plan(attempt=1):
@@ -15,12 +16,15 @@ def plan(attempt=1):
 
 
 def result(validation, suite, attempt=1, status="success"):
-    return {
+    value = {
         **{field: validation[field] for field in ("base", "head", "tested_sha", "tree", "contract_digest")},
         "suite": suite, "source": {"run_id": "123", "run_attempt": attempt},
         "status": status, "tools": expected_tools(suite),
         "commands": [{"exit_code": 0}],
     }
+    if suite == "production-images":
+        value["production_images"] = production_images(validation["tested_sha"])
+    return value
 
 
 def source_run(attempt=1):

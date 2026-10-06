@@ -1,83 +1,266 @@
 name: Publish TypeScript SDK
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "api/typescript/src/**"
-      - "api/typescript/README.md"
-      - "api/typescript/package.json"
-      - "api/typescript/package-lock.json"
-      - "api/typescript/tsconfig.json"
-      - "api/typescript/scripts/copy-snapshot-contract.mjs"
-      - "web/catalog/workspace-contract.js"
-      - ".github/workflows/publish-typescript-sdk.yml"
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision for selective recovery
+        required: true
+        type: string
+      source_run_id:
+        description: Main CI run that validated the executor
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
 
 permissions:
   contents: read
-  id-token: write
+  actions: read
+  deployments: read
+  attestations: read
 
 env:
-  NODE_VERSION: "24"
+  BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+  NODE_VERSION: "24.13.1"
+  EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt || github.event.workflow_run.run_attempt }}
 
 jobs:
-  publish:
-    if: github.repository == 'SkyTruth/shared-datasets-1' && github.ref == 'refs/heads/main'
+  candidate:
+    if: >-
+      ${{ github.repository == 'SkyTruth/shared-datasets-1' && github.ref == 'refs/heads/main' &&
+          ((github.event_name == 'workflow_dispatch') ||
+           (github.event.workflow_run.event == 'push' &&
+            github.event.workflow_run.head_branch == 'main' &&
+            github.event.workflow_run.head_repository.full_name == github.repository)) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: publish-typescript-sdk
-      cancel-in-progress: false
-    defaults:
-      run:
-        working-directory: api/typescript
+    timeout-minutes: 10
+    outputs:
+      release_needed: ${{ steps.candidate.outputs.release_needed }}
     steps:
-      - name: Check out reviewed revision
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then echo "Production requires main" >&2; exit 1; fi
+          case "$GITHUB_WORKFLOW_REF" in
+            "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main") ;;
+            *) echo "Untrusted production caller" >&2; exit 1 ;;
+          esac
+
+      - name: Check out trusted deployment verifier
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Admit verified CI completion
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Verify trusted tested source authority
+        if: steps.source.outputs.source_eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Check out exact tested revision
+        if: steps.source.outputs.source_eligible == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXECUTOR_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check already completed SDK publication
+        if: steps.source.outputs.source_eligible == 'true'
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py check --workflow publish-typescript-sdk.yml --target typescript-sdk \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Set up Node
+        if: steps.replay.outputs.proceed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Verify tested SDK candidate and reviewed version
+        if: steps.replay.outputs.proceed == 'true'
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --output "${RUNNER_TEMP}/tested-sdk"
+
+  publish:
+    needs: candidate
+    if: needs.candidate.outputs.release_needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      attestations: write
+    concurrency:
+      group: publish-typescript-sdk
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then echo "Production requires main" >&2; exit 1; fi
+          case "$GITHUB_WORKFLOW_REF" in
+            "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main") ;;
+            *) echo "Untrusted production caller" >&2; exit 1 ;;
+          esac
+
+      - name: Check out trusted deployment verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Admit verified CI completion
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Verify trusted tested source authority
+        if: steps.source.outputs.source_eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow publish-typescript-sdk.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Check out exact tested revision
+        if: steps.source.outputs.source_eligible == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXECUTOR_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check already completed SDK publication
+        if: steps.source.outputs.source_eligible == 'true'
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py check --workflow publish-typescript-sdk.yml --target typescript-sdk \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Set up Node
+        if: steps.replay.outputs.proceed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
-          cache: npm
-          cache-dependency-path: api/typescript/package-lock.json
-
-      - name: Require reviewed version increase
-        id: changes
-        if: github.event_name == 'push'
+      - name: Verify tested SDK candidate and reviewed version
+        if: steps.replay.outputs.proceed == 'true'
+        id: candidate
         env:
-          BASE_SHA: ${{ github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        run: node scripts/release-policy.mjs changes "$BASE_SHA" "$HEAD_SHA"
-
-      - name: Install dependencies
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.release_needed == 'true'
-        run: npm ci
-
-      - name: Test package
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.release_needed == 'true'
-        run: npm test
-
-      - name: Validate packed consumer
-        id: package
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.release_needed == 'true'
-        run: npm run test:pack
-
-      - name: Check registry version and integrity
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --output "${RUNNER_TEMP}/tested-sdk"
+      - name: Check registry version and exact tarball integrity
+        if: steps.replay.outputs.proceed == 'true' && steps.candidate.outputs.release_needed == 'true'
         id: registry
-        if: github.event_name == 'workflow_dispatch' || steps.changes.outputs.release_needed == 'true'
+        working-directory: api/typescript
         env:
-          CANDIDATE: ${{ steps.package.outputs.candidate }}
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: node scripts/release-policy.mjs registry "$CANDIDATE"
+      - name: Verify run-bound signing capability without mutation
+        if: steps.replay.outputs.proceed == 'true' && steps.candidate.outputs.release_needed == 'true'
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: publish-typescript-sdk.yml
 
-      - name: Publish validated package
-        if: steps.registry.outputs.should_publish == 'true'
+      - name: Record serialized SDK deployment attempt
+        if: steps.replay.outputs.proceed == 'true' && steps.candidate.outputs.release_needed == 'true'
+        id: deployment
         env:
-          TARBALL: ${{ steps.package.outputs.tarball }}
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ steps.candidate.outputs.artifact }}
+        run: |
+          python scripts/deployment_revision.py start --workflow publish-typescript-sdk.yml \
+            --target typescript-sdk --artifact "$ARTIFACT" \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
+        if: ${{ steps.deployment.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment.outputs.receipt_path }}
+
+      - name: Publish exact tested package
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.registry.outputs.should_publish == 'true'
+        working-directory: api/typescript
+        env:
+          TARBALL: ${{ steps.candidate.outputs.tarball }}
         run: npm publish "$TARBALL" --access public --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Verify registry retained the tested bytes
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
+        working-directory: api/typescript
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.candidate }}
+        run: |
+          set -euo pipefail
+          # Read-only propagation polling never republishes package bytes.
+          for attempt in {1..12}; do
+            if [[ "$(GITHUB_OUTPUT= node scripts/release-policy.mjs registry "$CANDIDATE")" == should_publish=false ]]; then exit 0; fi
+            sleep 5
+          done
+          echo "Registry has not confirmed the exact tested package integrity" >&2
+          exit 1
+      - name: Record terminal SDK outcome
+        id: deployment-outcome
+        if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase=failed
+          if [[ "$JOB_STATUS" == success ]]; then phase=verified; fi
+          python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

@@ -1,0 +1,94 @@
+name: Deployment terminal verification
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  deployments: read
+  attestations: read
+
+jobs:
+  pending:
+    runs-on: ubuntu-latest
+    outputs:
+      records: ${{ steps.pending.outputs.records }}
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-verification.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/deployment_revision.py pending
+
+  verify:
+    needs: pending
+    if: ${{ needs.pending.outputs.records != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        record: ${{ fromJSON(needs.pending.outputs.records) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: shared-datasets-production
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      attestations: write
+    concurrency:
+      group: deployment-verification-${{ matrix.record }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-verification.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify exact execution terminal outcome
+        id: deployment-outcome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ matrix.record }}
+        run: python scripts/deployment_revision.py observe --deployment-id "$DEPLOYMENT_ID"
+
+      - name: Attest verified execution outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

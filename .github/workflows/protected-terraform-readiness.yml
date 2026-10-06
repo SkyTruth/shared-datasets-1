@@ -1,64 +1,26 @@
 name: Protected Terraform readiness
 
+# Offline only: live prerequisites are verified by trusted main after bootstrap.
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/protected-terraform-readiness.yml"
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - ".github/workflows/artifact-registry-iam-sync.yml"
-      - ".github/workflows/metadata-stack-retire.yml"
-      - ".github/workflows/pmtiles-cdn-sync.yml"
-      - ".github/workflows/preview-terraform-iam-sync.yml"
-      - ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
-      - ".github/workflows/sea-ice-daily-deploy.yml"
-      - ".github/workflows/scratch-cleanup-iam-sync.yml"
-      - "catalog/shared-datasets-catalog.csv"
-      - "docs/assets/**"
-      - "ingestion/common/**"
-      - "ingestion/sea_ice_daily/**"
-      - "scripts/pmtiles_zoom.py"
-      - "scripts/release_feature_model.py"
-      - "scripts/vector_asset.py"
-      - "scripts/metadata_retirement_plan.py"
-      - "terraform/envs/metadata-retirement-iam/**"
-      - "terraform/envs/prod/artifact_registry_iam.tf"
-      - "terraform/envs/prod/canonical_mutation_iam.tf"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/metadata_service.tf"
-      - "terraform/envs/prod/monitoring.tf"
-      - "terraform/envs/prod/pmtiles_cdn.tf"
-      - "terraform/envs/prod/preview_terraform_iam.tf"
-      - "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"
-      - "terraform/envs/prod/scratch_cleanup_iam_sync/**"
-      - "terraform/envs/prod/sea_ice_daily.tf"
-      - "terraform/envs/prod/sea_ice_daily_variables.tf"
-      - "terraform/envs/prod/shared_bucket_public.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
+  workflow_call:
 
 permissions:
   contents: read
 
-env:
-  TERRAFORM_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
-  TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
-
 jobs:
   readiness:
-    name: Check protected Terraform readiness
+    name: release-contracts
     runs-on: ubuntu-latest
     steps:
-      - name: Validate Terraform auth configuration
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${TERRAFORM_WORKLOAD_IDENTITY_PROVIDER}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER" >&2
-            exit 1
-          fi
-          if [[ -z "${TERRAFORM_SERVICE_ACCOUNT}" ]]; then
-            echo "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT" >&2
-            exit 1
-          fi
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.8"
+      - run: uv sync --locked --all-groups
+      - name: Validate release evidence and permission dependencies
+        run: uv run --no-sync python scripts/release_contracts.py --target all

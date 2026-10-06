@@ -109,22 +109,18 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         step_names = list(steps)
 
         self.assertEqual(workflow["name"], "WDPA monthly deploy")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
+        self.assertNotIn("push", trigger)
+        self.assertIn("workflow_call", trigger)
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
-        push_paths = set(trigger["push"]["paths"])
-        self.assertIn(".github/workflows/wdpa-monthly-deploy.yml", push_paths)
-        self.assertIn("catalog/feature-identity-resolutions/**", push_paths)
-        self.assertIn("ingestion/common/**", push_paths)
-        self.assertIn("ingestion/wdpa_monthly/**", push_paths)
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(script_path, push_paths)
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
         self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
         self.assertEqual(env["IMAGE_NAME"], "wdpa-monthly")
         self.assertEqual(env["JOB_NAME"], "wdpa-monthly")
@@ -132,7 +128,10 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         promote_run = steps["Prepare reviewed WDPA publication image"]["run"]
         self.assertIn("catalog/wdpa-processing-acceptance.json", promote_run)
         self.assertIn("docker pull --platform linux/amd64", promote_run)
-        self.assertIn("docker image inspect", promote_run)
+        self.assertIn('docker buildx imagetools inspect --raw "${accepted_image}"', promote_run)
+        self.assertIn("verify_local_config", promote_run)
+        self.assertIn("require_manifest=True", promote_run)
+        self.assertNotIn("{{.Id}}", promote_run)
         self.assertIn("--print-source-digest", promote_run)
         self.assertIn("Dockerfile.promotion", promote_run)
         self.assertIn("ACCEPTED_BUILD_SOURCE_SHA256=${expected_source}", promote_run)
@@ -219,48 +218,96 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("gcloud run jobs executions describe", watch_run)
         self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
 
+    def test_canary_watch_requires_completed_exact_image_and_reports_cancellation(self):
+        script = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Watch wdpa-monthly canary"]["run"]
+        image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-monthly@sha256:" + "a" * 64
+        tools = """gcloud() { printf '%s\\n' "$EXECUTION_JSON"; echo call >> "$CALLS"; }
+sleep() { :; }
+"""
+        for status, actual_image, phase, exit_code, calls in (
+            ({"succeededCount": 1}, image, "verification_pending", 0, 20),
+            ({"succeededCount": 1, "completionTime": "now"}, image, "verified", 0, 1),
+            ({"cancelledCount": 1}, image, "failed", 1, 1),
+            ({"completionTime": "now"}, image, "unknown", 1, 1),
+            ({"succeededCount": 1, "completionTime": "now"}, image.replace("a" * 64, "b" * 64), None, 1, 1),
+        ):
+            with self.subTest(status=status, phase=phase), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                binary = directory / "bin"
+                binary.mkdir()
+                (binary / "python").symlink_to(sys.executable)
+                env_file, call_file = directory / "env", directory / "calls"
+                payload = {"spec": {"template": {"spec": {"containers": [{"image": actual_image}]}}}, "status": status}
+                result = subprocess.run(["bash", "-c", tools + script], cwd=REPO_ROOT, capture_output=True, text=True,
+                                        env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                                             "EXECUTION_JSON": json.dumps(payload), "CALLS": str(call_file),
+                                             "WDPA_MONTHLY_IMAGE": image, "WDPA_CANARY_EXECUTION": "wdpa-execution",
+                                             "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
+                                             "GITHUB_ENV": str(env_file)})
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                self.assertEqual(len(call_file.read_text().splitlines()), calls)
+                self.assertEqual(env_file.read_text().strip() if env_file.exists() else None,
+                                 f"DEPLOYMENT_PHASE={phase}" if phase else None)
+
     def test_producer_image_mismatch_fails_before_building_the_consumer(self):
         steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
         script = steps["Prepare reviewed WDPA publication image"]["run"]
         image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:" + "a" * 64
         config = "sha256:" + "b" * 64
-        fake_tools = '''docker() {
-          printf '%s\\n' "$*" >> "$TEST_DOCKER_CALLS"
-          case "$1" in
-            pull) return "$TEST_PULL_RESULT" ;;
-            image) printf '%s\\n' "$TEST_CONFIG" ;;
-            run) printf '%s\\n' "$TEST_SOURCE" ;;
-            build) return 0 ;;
-            *) return 1 ;;
-          esac
-        }
-        '''
-        for mismatch in (None, "config", "source", "pull"):
+        fake_docker = '''import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["TEST_DOCKER_CALLS"], "a") as calls:
+    calls.write(" ".join(args) + "\\n")
+if args[:3] == ["buildx", "imagetools", "inspect"]:
+    print(json.dumps({"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                      "config": {"digest": os.environ["TEST_REGISTRY_CONFIG"]}}))
+elif args[0] == "pull":
+    sys.exit(int(os.environ["TEST_PULL_RESULT"]))
+elif args[:2] == ["image", "inspect"]:
+    print(json.dumps([{"Id": os.environ["TEST_LOCAL_CONFIG"], "Os": "linux", "Architecture": "amd64"}]))
+elif args[0] == "run":
+    print(os.environ["TEST_SOURCE"])
+elif args[0] != "build":
+    sys.exit(1)
+'''
+        for mismatch in (None, "registry-config", "local-config", "source", "pull"):
             with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                binary = root / "bin"
+                binary.mkdir()
+                (binary / "python").symlink_to(sys.executable)
+                docker = binary / "docker"
+                docker.write_text(f"#!{sys.executable}\n" + fake_docker)
+                docker.chmod(0o755)
+                (root / "scripts").mkdir()
+                shutil.copyfile(REPO_ROOT / "scripts/tested_image_bundle.py", root / "scripts/tested_image_bundle.py")
                 (root / "catalog").mkdir()
                 (root / "catalog/wdpa-processing-acceptance.json").write_text(json.dumps({
                     "build": {"cloud_image": image, "image_digest": config, "source_tree_sha256": "expected-source"}}))
                 calls = root / "docker-calls"
                 env_file = root / "env"
                 result = subprocess.run(
-                    ["bash", "-c", fake_tools + script], cwd=root,
-                    env={**os.environ, "TEST_CONFIG": "wrong" if mismatch == "config" else config,
+                    ["bash", "-c", script], cwd=root,
+                    env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                         "RUNNER_TEMP": str(root),
+                         "TEST_REGISTRY_CONFIG": "sha256:" + "f" * 64 if mismatch == "registry-config" else config,
+                         "TEST_LOCAL_CONFIG": "sha256:" + "f" * 64 if mismatch == "local-config" else config,
                          "TEST_SOURCE": "wrong" if mismatch == "source" else "expected-source",
                          "TEST_PULL_RESULT": "1" if mismatch == "pull" else "0",
                          "TEST_DOCKER_CALLS": str(calls), "GITHUB_ENV": str(env_file),
                          "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
                          "ARTIFACT_REGISTRY_REPOSITORY": "shared-datasets-jobs",
-                         "IMAGE_NAME": "wdpa-monthly", "GITHUB_SHA": "c" * 40, "GITHUB_RUN_ID": "123"},
+                         "IMAGE_NAME": "wdpa-monthly", "EXECUTOR_SHA": "c" * 40, "GITHUB_RUN_ID": "123"},
                     capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stderr)
                 recorded = calls.read_text().splitlines()
-                self.assertEqual(recorded[0], f"pull --platform linux/amd64 {image}")
+                self.assertEqual(recorded[0], f"buildx imagetools inspect --raw {image}")
+                self.assertEqual(any(call.startswith("pull ") for call in recorded), mismatch != "registry-config")
                 self.assertEqual(any(call.startswith("build ") for call in recorded), mismatch is None)
                 self.assertEqual(env_file.exists(), mismatch is None)
                 self.assertFalse(any(call.startswith("push ") for call in recorded))
-                if mismatch == "config":
+                if mismatch in {"registry-config", "local-config", "pull"}:
                     self.assertFalse(any(call.startswith("run ") for call in recorded))
 
     def test_paused_schedule_requires_explicit_canary_date(self):

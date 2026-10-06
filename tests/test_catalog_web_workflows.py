@@ -54,57 +54,13 @@ def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -
     trigger = workflow_triggers(workflow)
     job = workflow["jobs"]["readiness"]
     steps = workflow_steps_by_name(workflow, "readiness")
-
     testcase.assertEqual(workflow["name"], "Protected Terraform readiness")
-    testcase.assertEqual(trigger["pull_request"]["branches"], ["main"])
-    testcase.assertEqual(
-        set(trigger["pull_request"]["paths"]),
-        {
-            ".github/workflows/protected-terraform-readiness.yml",
-            ".github/workflows/prod-terraform-target-apply.yml",
-            ".github/workflows/artifact-registry-iam-sync.yml",
-            ".github/workflows/metadata-stack-retire.yml",
-            ".github/workflows/pmtiles-cdn-sync.yml",
-            ".github/workflows/preview-terraform-iam-sync.yml",
-            ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml",
-            ".github/workflows/sea-ice-daily-deploy.yml",
-            ".github/workflows/scratch-cleanup-iam-sync.yml",
-            "catalog/shared-datasets-catalog.csv",
-            "docs/assets/**",
-            "ingestion/common/**",
-            "ingestion/sea_ice_daily/**",
-            "scripts/metadata_retirement_plan.py",
-            "scripts/pmtiles_zoom.py",
-            "scripts/release_feature_model.py",
-            "scripts/vector_asset.py",
-            "terraform/envs/metadata-retirement-iam/**",
-            "terraform/envs/prod/artifact_registry_iam.tf",
-            "terraform/envs/prod/canonical_mutation_iam.tf",
-            "terraform/envs/prod/main.tf",
-            "terraform/envs/prod/metadata_service.tf",
-            "terraform/envs/prod/monitoring.tf",
-            "terraform/envs/prod/pmtiles_cdn.tf",
-            "terraform/envs/prod/preview_terraform_iam.tf",
-            "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
-            "terraform/envs/prod/scratch_cleanup_iam_sync/**",
-            "terraform/envs/prod/sea_ice_daily.tf",
-            "terraform/envs/prod/sea_ice_daily_variables.tf",
-            "terraform/envs/prod/shared_bucket_public.tf",
-            "terraform/envs/prod/variables.tf",
-            "terraform/envs/prod/versions.tf",
-        },
-    )
-    testcase.assertNotIn("workflow_dispatch", trigger)
+    testcase.assertEqual(set(trigger), {"workflow_call"})
     testcase.assertNotIn("environment", job)
     testcase.assertEqual(workflow["permissions"], {"contents": "read"})
-    testcase.assertIn(
-        "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER",
-        steps["Validate Terraform auth configuration"]["run"],
-    )
-    testcase.assertIn(
-        "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT",
-        steps["Validate Terraform auth configuration"]["run"],
-    )
+    testcase.assertEqual(steps["Validate release evidence and permission dependencies"]["run"],
+                         "uv run --no-sync python scripts/release_contracts.py --target all")
+    testcase.assertNotIn("Validate Terraform auth configuration", steps)
     return workflow
 
 
@@ -130,11 +86,19 @@ def assert_protected_terraform_sync(
     enforce_run = steps[enforce_step_name]["run"]
 
     testcase.assertEqual(workflow["name"], expected_name)
-    testcase.assertEqual(trigger["push"]["branches"], ["main"])
-    testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
-    testcase.assertIn("workflow_dispatch", trigger)
-    testcase.assertNotIn("pull_request", trigger)
-    testcase.assertEqual(job["if"], expected_job_if)
+    if "workflow_call" in trigger:
+        testcase.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
+        testcase.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            testcase.assertTrue(trigger["workflow_dispatch"]["inputs"][name]["required"])
+            testcase.assertEqual(trigger["workflow_dispatch"]["inputs"][name]["type"], "string")
+        testcase.assertNotIn("if", job)
+    else:
+        testcase.assertEqual(trigger["push"]["branches"], ["main"])
+        testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
+        testcase.assertIn("workflow_dispatch", trigger)
+        testcase.assertNotIn("pull_request", trigger)
+        testcase.assertEqual(job["if"], expected_job_if)
     if expected_needs is None:
         testcase.assertNotIn("needs", job)
     else:
@@ -144,8 +108,12 @@ def assert_protected_terraform_sync(
         job["concurrency"],
         {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
-    testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
-    testcase.assertIn("may only apply from main", steps["Validate main ref"]["run"])
+    testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
+    guard = steps["Validate main ref"]["run"]
+    testcase.assertIn('"${GITHUB_REF}" != "refs/heads/main"', guard)
+    testcase.assertIn(f".github/workflows/{workflow_path.name}@refs/heads/main", guard)
+    testcase.assertIn(".github/workflows/ci.yml@refs/heads/main", guard)
+    testcase.assertIn("exit 1", guard)
 
     testcase.assertEqual(terraform_targets(plan_run), expected_targets)
     testcase.assertIn("-refresh=false", plan_run)
@@ -220,7 +188,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("uv run python scripts/catalog_site.py", steps["Build catalog web bundle"]["run"])
         self.assertIn("Collect release indexes", steps)
         self.assertIn(
-            'gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"',
+            'scripts/collect_release_indexes.py --bucket "$SHARED_DATASETS_BUCKET"',
             steps["Collect release indexes"]["run"],
         )
         self.assertIn(
@@ -228,6 +196,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             steps["Build catalog web bundle"]["run"],
         )
         self.assertIn("--latest-from-release-index", steps["Build catalog web bundle"]["run"])
+        self.assertIn('--generated-at "$(git show -s --format=%cI HEAD)"', steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--release-index-assets-only", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--allow-release-index-only-assets", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--metadata-sidecar-autoload-max-bytes", steps["Build catalog web bundle"]["run"])
@@ -295,7 +264,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "${{ github.event_name != 'pull_request' && "
                 "needs.detect_relevant_change.outputs.should_run == 'true' }}"
             ),
-            expected_needs="detect_relevant_change",
+            expected_needs=None,
             plan_name="pmtiles-cdn-sync",
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
@@ -311,22 +280,8 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             },
         )
         trigger = workflow_triggers(workflow)
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Catalog web deploy"])
-        self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
-        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        detect_steps = workflow_steps_by_name(workflow, "detect_relevant_change")
-        self.assertEqual(
-            workflow["jobs"]["detect_relevant_change"]["outputs"]["should_run"],
-            "${{ steps.filter.outputs.should_run }}",
-        )
-        self.assertIn(
-            "catalog/shared-datasets-catalog\\.csv|docs/assets/",
-            detect_steps["Detect relevant merged changes"]["run"],
-        )
-        self.assertIn(
-            'ref: ${{ github.event.workflow_run.head_sha || \'main\' }}',
-            (PMTILES_CDN_SYNC).read_text(encoding="utf-8"),
-        )
+        self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
+        self.assertNotIn("detect_relevant_change", workflow["jobs"])
         steps = workflow_steps_by_name(workflow, "sync")
         step_names = [
             step["name"]
