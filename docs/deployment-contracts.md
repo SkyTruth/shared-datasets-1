@@ -82,6 +82,42 @@ mutation or index rebuild may produce a distinct current-state catalog bundle
 under the same executor. A failed or interrupted attempt cannot be blanket
 retried.
 
+The Actions bot identity and a caller-supplied run URL do not prove who emitted a
+record. Each initial claim and outcome has a canonical receipt binding the exact
+deployment ID, status ID, target, executor, source CI attempt, artifact, target
+scope and phase. The protected leaf signs it using GitHub artifact attestations.
+Verification uses checksum-pinned GitHub CLI 2.96.0 and the cryptographically
+verified Fulcio certificate to require the repository ID, main ref, exact leaf
+and caller workflow revisions, GitHub-hosted runner, run ID and attempt. Observer
+and read-only recovery updates require their own exact protected signatures.
+A PR signature cannot copy a main run's metadata or replay another record's
+receipt. Unavailable attestations and invalid signatures fail closed.
+
+Receipts are reconstructed from durable Deployment API records and verified by
+their digest through the repository attestation API; ordinary Actions artifact
+retention does not discard their authorization evidence. The non-mutating
+protected receipt rehearsal lands before deployment rewiring, and each leaf
+must complete an exact-current-run rehearsal before starting a record. Its
+signed claim must verify before infrastructure, SDK or catalog mutation. Image
+staging first verifies the rehearsal and replay guard, then tests and pushes the
+same immutable bytes; ingestion claims retain the resolved registry digest.
+If claim signing fails, the same protected run may sign its failed/unknown
+outcome to permit later read-only reconciliation. That failure receipt proves
+record ownership and cannot satisfy success or bypass the claim barrier. If no
+receipt can be signed, the unsigned attempt remains a blocking unknown state.
+
+Validation jobs have read-only record/signing permissions. Writer tokens are
+restricted in the reviewed workflows to protected production jobs and explicit
+main-only reusable callers. The SDK retains its existing npm OIDC publisher
+boundary, requiring trusted main bootstrap code and exact successful CI before
+candidate checkout. Offline guardrails reject broader declarations.
+Signatures protect against forged records and outcomes, including copied
+Actions-bot metadata. They do not prevent destructive control-plane deletion:
+an administrator or token independently granted Deployment API write authority
+can inactivate and delete records. Such deletion is outside ordinary replay
+integrity and requires explicit administrative recovery; it must never be
+described as a successful deployment or a permitted stale retry.
+
 A valid older revision that reaches the queue after a newer attempted deployment
 finishes as an explicit `superseded` no-op. The verifier proves its exact tested
 source and every blocking record's repository, workflow and source attempt first.

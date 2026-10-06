@@ -14,6 +14,10 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import deployment_emission as emissions
 
 SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
@@ -107,7 +111,8 @@ def record_payload(record):
 
 
 
-def verify_record(api, repository, record):
+def verify_record_identity(api, repository, record):
+    """Check claimed API identity; this alone never proves protected emission."""
     payload = record_payload(record)
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     execution = api.get(f"repos/{repository}/actions/runs/{payload['execution_run_id']}/attempts/{payload['execution_run_attempt']}")
@@ -128,21 +133,46 @@ def verify_record(api, repository, record):
     return payload
 
 
+def verify_record(api, repository, record):
+    payload = verify_record_identity(api, repository, record)
+    statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
+    started = [status for status in statuses if status.get("description") == "started"]
+    require(len(started) == 1, "record lacks an unambiguous protected initial emission")
+    # If claim signing failed, the same protected execution can still sign its
+    # failed/unknown outcome. That proves ownership of the exact record without
+    # implying that the unsigned claim authorized any mutation. The workflow's
+    # signed-claim barrier remains mandatory before every apply.
+    original = emissions.invocation(repository, payload["execution_run_id"], payload["execution_run_attempt"])
+    failure_proofs = [status for status in statuses if status.get("description") in {"failed", "unknown"} and status.get("log_url") == original]
+    proof = max(failure_proofs, key=lambda status: status["id"]) if failure_proofs else started[0]
+    verify_receipt(api, repository, record, proof)
+    return payload
+
+
+def verify_receipt(api, repository, record, status):
+    payload = record_payload(record)
+    signer = "prod-terraform-target-apply.yml" if payload["target"] in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS.get(payload["target"])
+    require(signer is not None, "receipt target has no trusted signer contract")
+    try:
+        emissions.verify(api, repository, record, status, original_signer=".github/workflows/" + signer)
+    except emissions.EmissionError as error:
+        raise DeploymentError(str(error)) from error
+
+
+def status_log():
+    return emissions.invocation(os.environ["GITHUB_REPOSITORY"], int(os.environ["GITHUB_RUN_ID"]), int(os.environ["GITHUB_RUN_ATTEMPT"]))
+
+
+def post_status(api, repository, record, payload):
+    payload["log_url"] = status_log()
+    status = api.post(f"repos/{repository}/deployments/{record['id']}/statuses", payload)
+    emissions.emit(repository, record, {**payload, **status})
+
+
 def verified_statuses(api, repository, record):
     statuses = api.pages(f"repos/{repository}/deployments/{record['id']}/statuses?per_page=100")
-    if statuses and statuses[0].get("state") == "success":
-        status = statuses[0]
-        require(status.get("creator", {}).get("login") == "github-actions[bot]", "untrusted deployment success status")
-        match = re.fullmatch(r"https://github\.com/" + re.escape(repository) + r"/actions/runs/([1-9][0-9]*)", status.get("log_url", ""))
-        require(match is not None, "success status lacks execution provenance")
-        run = api.get(f"repos/{repository}/actions/runs/{match[1]}")
-        repo = api.get(f"repos/{repository}")
-        workflow = api.get(f"repos/{repository}/actions/workflows/{run.get('path', '').rsplit('/', 1)[-1]}")
-        require(workflow.get("id") == run.get("workflow_id") and workflow.get("path") == run.get("path"), "success status workflow identity mismatch")
-        require(all(run.get(key, {}).get("id") == repo.get("id") and run.get(key, {}).get("full_name") == repository for key in ("repository", "head_repository")), "success status repository identity mismatch")
-        expected = record["payload"] if isinstance(record["payload"], dict) else json.loads(record["payload"])
-        require(run.get("head_branch") == "main" and run.get("event") in {"push", "workflow_dispatch", "workflow_run", "schedule"}, "success status is not a trusted main execution")
-        require(int(match[1]) == expected["execution_run_id"] or run.get("path") in {".github/workflows/deployment-verification.yml", ".github/workflows/deployment-recovery.yml"}, "success status has an unrelated execution")
+    if statuses:
+        verify_receipt(api, repository, record, statuses[0])
     return statuses
 
 def replay_decision(records, executor, ancestor, statuses, *, artifact=None, target=None):
@@ -263,6 +293,11 @@ def start(args, api):
         return decision
     repository = os.environ["GITHUB_REPOSITORY"]
     environment = f"production-{args.target}"
+    signer = "prod-terraform-target-apply.yml" if args.target in TERRAFORM_WORKFLOWS else TARGET_WORKFLOWS[args.target]
+    try:
+        emissions.verify_rehearsal(api, repository, ".github/workflows/" + signer)
+    except emissions.EmissionError as error:
+        raise DeploymentError(str(error)) from error
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", args.artifact), "deployment artifact must be an immutable image digest")
     targets = []
     if args.plan_json:
@@ -277,23 +312,22 @@ def start(args, api):
         "payload": {"schema": SCHEMA, "target": args.target, "ci_run_id": args.source_run_id, "ci_run_attempt": args.source_run_attempt,
                     "artifact": args.artifact, "targets": targets, "execution_run_id": int(os.environ["GITHUB_RUN_ID"]), "execution_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
     })
-    api.post(f"repos/{repository}/deployments/{record['id']}/statuses", {"state": "in_progress", "description": "started", "auto_inactive": False})
+    post_status(api, repository, record, {"state": "in_progress", "description": "started", "auto_inactive": False, "environment_url": ""})
     return {"proceed": "true", "deployment_id": str(record["id"])}
 
 
 def finish(args, api):
     repository = os.environ["GITHUB_REPOSITORY"]
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
-    payload = record_payload(record)
+    payload = (verify_record_identity if args.phase in {"failed", "unknown"} else verify_record)(api, repository, record)
     require(payload.get("execution_run_id") == int(os.environ["GITHUB_RUN_ID"]) and payload.get("execution_run_attempt") == int(os.environ["GITHUB_RUN_ATTEMPT"]), "cannot finish another deployment attempt")
     state = {"applied": "success", "verified": "success", "verification_pending": "in_progress", "failed": "failure", "unknown": "error"}[args.phase]
     environment_url = ""
     if args.execution:
         require(TARGET.fullmatch(args.execution), "invalid Cloud Run execution identifier")
         environment_url = f"https://console.cloud.google.com/run/jobs/executions/details/us-central1/{args.execution}?project=shared-datasets-1"
-    api.post(f"repos/{repository}/deployments/{args.deployment_id}/statuses", {
+    post_status(api, repository, record, {
         "environment_url": environment_url, "state": state, "description": args.phase, "auto_inactive": False,
-        "log_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
     })
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -358,7 +392,7 @@ def observe(args, api):
     require(payload.get("target") in {"wdpa-monthly", "wdpa-processing-validation"}, "only detached WDPA executions need terminal observation")
     require(git_ancestor(record["sha"], "origin/main"), "record is not from main history")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
-    statuses = api.pages(f"repos/{repository}/deployments/{args.deployment_id}/statuses?per_page=100")
+    statuses = verified_statuses(api, repository, record)
     require(statuses and statuses[0].get("description") == "verification_pending", "deployment is not awaiting verification")
     match = re.fullmatch(r"https://console\.cloud\.google\.com/run/jobs/executions/details/us-central1/([a-z][a-z0-9-]{0,62})\?project=shared-datasets-1", statuses[0].get("environment_url", ""))
     require(match is not None, "pending deployment lacks exact canary execution identity")
@@ -367,10 +401,9 @@ def observe(args, api):
     if phase == "verification_pending":
         print(f"Execution {match[1]} is pending; terminal verification remains incomplete.")
         return
-    api.post(f"repos/{repository}/deployments/{args.deployment_id}/statuses", {
+    post_status(api, repository, record, {
         "state": {"verified": "success", "failed": "failure", "unknown": "error"}[phase],
         "description": phase, "auto_inactive": False, "environment_url": statuses[0]["environment_url"],
-        "log_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
     })
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
         stream.write(f"Canary `{match[1]}`: **{phase}**; image `{payload['artifact']}`; executor `{record['sha']}`.\n")
@@ -407,9 +440,9 @@ def recover(args, api):
     plan = json.loads(Path(args.plan_json).read_text())
     require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
     if payload["target"] in TERRAFORM_WORKFLOWS:
-        api.post(f"repos/{repository}/deployments/{args.deployment_id}/statuses", {
+        post_status(api, repository, record, {
             "state": "success", "description": "applied", "auto_inactive": False,
-            "log_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+            "environment_url": "",
         })
         print("Original tested Terraform target scope has no changes; record reconciled without mutation.")
         return
@@ -421,9 +454,9 @@ def recover(args, api):
     require(matching, "no execution of the exact image proves runtime success")
     latest = max(matching, key=lambda entry: entry.get("metadata", {}).get("creationTimestamp", ""))
     require(terminal_execution(latest, image) == "verified", "latest exact-image execution is incomplete or failed; fix or use reviewed recovery")
-    api.post(f"repos/{repository}/deployments/{args.deployment_id}/statuses", {
+    post_status(api, repository, record, {
         "state": "success", "description": "verified", "auto_inactive": False,
-        "log_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+        "environment_url": "",
     })
     print("Original image, no-change target plan and terminal success reconciled; no production mutations performed.")
 
