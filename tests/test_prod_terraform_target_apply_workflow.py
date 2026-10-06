@@ -17,6 +17,7 @@ ARTIFACT_REGISTRY = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.ym
 PREVIEW_TERRAFORM = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.yml"
 SCHEDULED_INGESTION = REPO_ROOT / ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
 SCRATCH_CLEANUP = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
+MAIN_DEPLOYMENT_EVENT = "${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}"
 
 
 
@@ -62,7 +63,12 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
         self.assertLess(names.index("Claim tested deployment revision"), names.index("Terraform apply"))
         self.assertNotIn("if", self.steps["Verify executor before candidate checkout"])
         self.assertNotIn("if", self.steps["Verify tested main revision"])
-        self.assertEqual(self.steps["Terraform apply"]["if"], "${{ steps.revision.outputs.proceed == 'true' }}")
+        claim = self.steps["Attest serialized deployment claim before mutation"]
+        self.assertEqual(claim["id"], "claim-receipt")
+        self.assertEqual(claim["with"]["receipt-path"], "${{ steps.revision.outputs.receipt_path }}")
+        self.assertLess(names.index("Claim tested deployment revision"), names.index("Attest serialized deployment claim before mutation"))
+        self.assertLess(names.index("Attest serialized deployment claim before mutation"), names.index("Terraform apply"))
+        self.assertEqual(self.steps["Terraform apply"]["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}")
         self.assertIn('--workflow "$CALLER_WORKFLOW"', self.steps["Verify tested main revision"]["run"])
         self.assertIn('--plan-scope "$TARGETS"', self.steps["Claim tested deployment revision"]["run"])
 
@@ -108,6 +114,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             push_paths=None,
             sync_name="Scheduled ingestion deploy IAM sync",
             expected_needs="bootstrap",
+            expected_job_if=MAIN_DEPLOYMENT_EVENT,
             refusal_prefix="Refusing automatic scheduled ingestion deploy IAM sync",
             expected_targets={
                 "google_project_iam_custom_role.scheduled_ingestion_deployer",
@@ -162,6 +169,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             refusal_prefix="Refusing automatic preview Terraform IAM sync",
             expected_block_deletes=True,
             expected_needs="bootstrap",
+            expected_job_if=MAIN_DEPLOYMENT_EVENT,
             expected_targets={
                 "module.feature_preview_service_account.google_service_account.this",
                 "module.feature_preview_loader_service_account.google_service_account.this",
@@ -193,6 +201,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_name="Scratch cleanup IAM sync",
             push_paths=None,
             sync_name="Scratch cleanup IAM sync",
+            expected_job_if=MAIN_DEPLOYMENT_EVENT,
             refusal_prefix="Refusing automatic scratch cleanup IAM sync",
             expected_targets={
                 "google_storage_bucket_iam_member.shared_datasets_publisher_pending_publish_viewer",
@@ -222,6 +231,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_name="Artifact Registry IAM sync",
             push_paths=None,
             job_name="bootstrap",
+            expected_job_if=MAIN_DEPLOYMENT_EVENT,
             sync_name="Artifact Registry IAM sync",
             refusal_prefix="Refusing automatic Artifact Registry IAM bootstrap",
             expected_post_apply_wait_seconds=30,
@@ -237,7 +247,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             expected_name="Artifact Registry IAM sync",
             push_paths=None,
             job_name="writer",
-            expected_job_if=None,
+            expected_job_if=MAIN_DEPLOYMENT_EVENT,
             expected_needs="bootstrap",
             sync_name="Artifact Registry writer binding sync",
             refusal_prefix="Refusing automatic Artifact Registry IAM writer sync",

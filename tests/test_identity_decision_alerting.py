@@ -205,7 +205,7 @@ class AlertPolicyTests(unittest.TestCase):
             ALERT_POLICY_SYNC,
             expected_name="Cron alert policy sync",
             push_paths=None,
-            expected_job_if=None,
+            expected_job_if="${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}",
             expected_needs="bootstrap",
             sync_name="Cron alert policy sync",
             refusal_prefix="Refusing automatic cron alert policy sync",

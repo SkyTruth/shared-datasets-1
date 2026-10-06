@@ -225,7 +225,10 @@ class CanaryDuplicationGuardTests(unittest.TestCase):
 
                 self.assertIn("status.runningCount", guard)
                 self.assertIn("run_canary=false", guard)
-                self.assertEqual(canary["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}")
+                receipt = steps["Attest serialized deployment claim before mutation"]
+                self.assertEqual(receipt["id"], "claim-receipt")
+                self.assertEqual(receipt["with"]["receipt-path"], "${{ steps.revision.outputs.receipt_path }}")
+                self.assertEqual(canary["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.inflight.outputs.run_canary == 'true' }}")
 
     def test_cancelling_is_available_but_opt_in(self):
         for name in self.DEPLOYS:
