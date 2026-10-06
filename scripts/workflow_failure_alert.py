@@ -21,7 +21,7 @@ PUBLICATION_JOBS = ("Apply approved PR mutation plans", "Install reviewed featur
                     "Build image and apply", "Prepare publication image and apply",
                     "Apply PMTiles CDN route sync", "Apply Scheduled ingestion deploy IAM sync",
                     "Apply Translation notice secret IAM bootstrap")
-VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "browser", "ci-ready",
+VALIDATION_JOBS = {"lint", "tests", "geospatial-changes", "geospatial-integration", "production-images", "browser", "ci-ready",
                    "sdk-validation (Node 22)", "sdk-validation (Node 24)"}
 OBSERVER_WORKFLOWS = {"Deployment terminal verification", "Deployment read-only reconciliation"}
 WORKFLOW_PATHS = {
