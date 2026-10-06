@@ -85,6 +85,7 @@ jobs:
         with:
           artifact-ids: ${{ inputs.authorization_artifact_id }}
           path: authorization
+          merge-multiple: true
 
       - name: Verify successful mutation provenance
         if: ${{ inputs.mutation_completed == true }}
