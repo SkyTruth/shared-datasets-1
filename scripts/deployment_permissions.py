@@ -74,13 +74,16 @@ def checks(target):
         # The preview WIF binding references the managed GitHub pool, while
         # its signing binding references a managed custom role. Terraform
         # refreshes both and their enabled-service dependencies before planning.
+        # The locked Google provider also lists pool attestation rules and
+        # enabled services unconditionally, even when only IAM members target
+        # the pool. Keep the complete read closure bound in the provider fixture.
         # Test the pool on its actual resource so conditional authority cannot
         # pass merely because a project-wide permission hint succeeded.
         # https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools/testIamPermissions
         pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
         return [
-            (project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "serviceusage.services.get")),
-            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get",)),
+            (project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "resourcemanager.projects.get", "serviceusage.services.list")),
+            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get", "iam.workloadIdentityPools.getAttestationRules")),
         ]
     if target == "bucket-iam":
         expected = ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy")
