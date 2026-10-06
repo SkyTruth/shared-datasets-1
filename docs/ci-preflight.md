@@ -82,3 +82,12 @@ The pinned actionlint version predates GitHub's `concurrency.queue` field.
 with explicit `cancel-in-progress: false`, then omits only that validated scalar
 line in disposable parser input. All remaining syntax errors fail normally;
 production workflow files and concurrency behavior are unchanged.
+
+The receipt bootstrap lands before dependent deployments adopt signed deployment
+records. After this workflow is on main, `jonaraphael` dispatches
+`Deployment receipt rehearsal` through the existing protected production
+environment. It signs a synthetic receipt and verifies its exact bytes, main
+revision, workflow identity and producing run with the pinned official verifier.
+It has no GCP authentication or deployment-write permission. A successful
+protected rehearsal is required before enabling dependent production mutations;
+an unsigned fixture or a locally passing test cannot replace this live proof.
