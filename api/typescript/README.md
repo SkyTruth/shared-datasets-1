@@ -595,11 +595,6 @@ reviewed version to `main` publishes the validated tarball. The workflow does
 not make version commits or bypass branch protection. See the repository README
 for registry comparison, retry, and trusted-publisher configuration.
 
-The release listener verifies the exact main-push `ci-ready` result and consumes
-the retained Node 24 tarball bytes. Verified CI validation failures, cancellations,
-and obsolete completion events finish release detection as no-ops. An unrelated
-deployment failure after passing validation keeps the tested package eligible.
-
 ## Show a dataset on a map
 
 The optional `@skytruth/shared-datasets/maplibre` entrypoint handles protocol
