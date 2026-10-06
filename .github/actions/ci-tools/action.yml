@@ -30,3 +30,6 @@ runs:
         set -euo pipefail
         python scripts/ci_install_tools.py --destination "$RUNNER_TEMP/ci-tools" $BINARIES
         echo "$RUNNER_TEMP/ci-tools/bin" >> "$GITHUB_PATH"
+        # Old local amd64 emulators can corrupt Go's asynchronous preemption.
+        # Use the same runtime setting in CI; validation rules are unchanged.
+        echo "GODEBUG=asyncpreemptoff=1" >> "$GITHUB_ENV"

@@ -207,6 +207,7 @@ def test_prospective_merge_preserves_source_index_and_contains_both_branches(tmp
     assert validation["head"] == head
     assert validation["tested_sha"] != head
     assert "main-only.txt" not in validation["changed_paths"]
+    assert "" not in validation["changed_paths"]
     preflight.validate_checkout(checkout, validation)
     (checkout / "feature-only.txt").write_text("edited after validation\n")
     with pytest.raises(ValueError, match="clean checkout"):
@@ -232,6 +233,18 @@ def test_unavailable_comparison_selects_all_without_claiming_history_check_succe
     commands = preflight.suite_commands("tests", source, validation, tmp_path)
     admission = next(args for args, _ in commands if "scripts/admission_check.py" in args)
     assert admission[admission.index("--base") + 1] == "f" * 40
+
+
+def test_real_diff_docs_only_does_not_select_suites_for_trailing_nul(tmp_path):
+    source, run = fixture_repo(tmp_path)
+    base = run("rev-parse", "HEAD")
+    (source / "docs").mkdir()
+    (source / "docs/guide.md").write_text("documentation\n")
+    run("add", ".")
+    run("commit", "-m", "docs")
+    validation = preflight.make_plan(source, base, "HEAD")
+    assert validation["changed_paths"] == ["docs/guide.md"]
+    assert set(validation["suites"]) == ALWAYS
 
 
 def test_required_workflow_has_no_path_filters_and_gate_is_always_evaluated():

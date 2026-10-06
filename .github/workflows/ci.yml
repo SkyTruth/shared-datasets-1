@@ -309,7 +309,7 @@ jobs:
             --output "$RUNNER_TEMP/ci-plan/plan.json" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: ci-validation-plan
+          name: ci-validation-plan-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-plan/plan.json
           if-no-files-found: error
           retention-days: 14
@@ -326,14 +326,14 @@ jobs:
       - uses: ./.github/actions/ci-tools
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - name: Run shared lint, workflow syntax and Terraform validation
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plan/plan.json" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ci-result-lint
+          name: ci-result-lint-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/lint
           if-no-files-found: error
           retention-days: 14
@@ -352,14 +352,14 @@ jobs:
           binaries: gitleaks
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - name: Run shared secret history, admission, guardrails and Python validation
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plan/plan.json" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ci-result-tests
+          name: ci-result-tests-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/tests
           if-no-files-found: error
           retention-days: 14
@@ -376,8 +376,8 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - uses: docker/setup-buildx-action@v3
       - name: Build geospatial CI image
         uses: docker/build-push-action@v6
@@ -396,18 +396,20 @@ jobs:
             -e UV_CACHE_DIR=/evidence/native-uv-cache -e UV_LINK_MODE=copy \
             -e UV_PROJECT_ENVIRONMENT=/evidence/native-venv \
             -e SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1 \
+            -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \
             shared-datasets-geospatial-ci:local python scripts/ci_preflight.py run-suite \
-            --plan /evidence/ci-plan/plan.json --suite geospatial-integration \
+            --plan /evidence/ci-plans --suite geospatial-integration \
             --output /evidence/ci-results/geospatial-integration
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ci-result-geospatial-integration
+          name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/geospatial-integration
           if-no-files-found: error
           retention-days: 14
 
   sdk-validation:
+    name: sdk-validation (Node ${{ matrix.node }})
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.sdk == 'true'
     runs-on: ubuntu-24.04
@@ -427,14 +429,14 @@ jobs:
           binaries: gitleaks
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - name: Run shared SDK version, runtime and packed consumer validation
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plan/plan.json" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ci-result-sdk-node${{ matrix.node }}
+          name: ci-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}
           if-no-files-found: error
           retention-days: 14
@@ -454,20 +456,23 @@ jobs:
           binaries: gitleaks
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - name: Run shared real-browser validation
-        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plan/plan.json" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ci-result-browser
+          name: ci-result-browser-attempt${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-results/browser
           if-no-files-found: error
           retention-days: 14
 
   ci-ready:
     name: ci-ready
+    permissions:
+      contents: read
+      actions: read
     if: always()
     needs: [geospatial-changes, lint, tests, geospatial-integration, sdk-validation, browser]
     runs-on: ubuntu-24.04
@@ -484,8 +489,8 @@ jobs:
           python-version: '3.12.12'
       - uses: actions/download-artifact@v4
         with:
-          name: ci-validation-plan
-          path: ${{ runner.temp }}/ci-plan
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
       - uses: actions/download-artifact@v4
         with:
           pattern: ci-result-*
@@ -493,7 +498,15 @@ jobs:
       - name: Require every selected suite and matrix entry
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ci-jobs.json").write_text(os.environ["JOB_RESULTS"])'
-          python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plan/plan.json" \
-            --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json"
+          python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
+            --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json" \
+            --output "$RUNNER_TEMP/ci-ready/evidence.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-ready-evidence-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-ready/evidence.json
+          if-no-files-found: error
+          retention-days: 14

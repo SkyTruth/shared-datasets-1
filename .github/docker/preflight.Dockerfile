@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
-COPY scripts/ci_install_tools.py scripts/ci_contract.py scripts/check_geospatial_test_results.py /opt/ci-source/scripts/
+COPY scripts/ci_install_tools.py scripts/ci_contract.py scripts/check_geospatial_test_results.py scripts/ci_source_proof.py /opt/ci-source/scripts/
 RUN cd /opt/ci-source && python scripts/ci_install_tools.py --destination /opt/ci \
     node22 node24 terraform gitleaks actionlint
 
@@ -18,6 +18,7 @@ ENV PATH="/opt/ci/node22/bin:/opt/ci/bin:${PATH}" \
     UV_CACHE_DIR="/work/uv-cache" \
     UV_PROJECT_ENVIRONMENT="/work/venv" \
     UV_LINK_MODE="copy" \
+    GODEBUG="asyncpreemptoff=1" \
     SHARED_DATASETS_WORKDIR="/work/shared-datasets-1" \
     PYTHONUNBUFFERED="1"
 

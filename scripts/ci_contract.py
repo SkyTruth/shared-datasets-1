@@ -13,6 +13,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
+from scripts.ci_source_proof import job_name
 
 
 TOOLCHAIN = {
@@ -43,6 +44,7 @@ CONTRACT_FILES = (
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
     "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
     "scripts/check_workflow_syntax.py",
+    "scripts/ci_source_proof.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
 )
 
@@ -94,13 +96,19 @@ def check_junit(report: Path, *, native: bool) -> None:
     allowed_skips = set() if native else set(REQUIRED_TESTS)
     for case in cases:
         identity = (case.get("classname"), case.get("name"))
+        if not all(identity):
+            raise ValueError("test result is missing its case identity")
         if case.find("failure") is not None or case.find("error") is not None:
             raise ValueError(f"failed test: {'.'.join(identity)}")
         if case.find("skipped") is not None and identity not in allowed_skips:
             raise ValueError(f"unexpected skipped test: {'.'.join(identity)}")
 
 
-def verify_results(plan: dict, results: list[dict], jobs: dict | None = None) -> None:
+def verify_results(
+    plan: dict, results: list[dict], jobs: dict | None = None, *,
+    source_proofs: dict[int, set[str]] | None = None,
+    run_id: str | None = None, run_attempt: int | None = None,
+) -> dict[str, dict]:
     if plan.get("schema_version") != 1 or not plan.get("suites"):
         raise ValueError("invalid validation plan")
     selected = plan["suites"]
@@ -111,15 +119,33 @@ def verify_results(plan: dict, results: list[dict], jobs: dict | None = None) ->
     if ("sdk-node22" in selected) != ("sdk-node24" in selected):
         raise ValueError("both SDK runtime suites must be selected together")
     by_suite: dict[str, dict] = {}
+    seen_attempts = set()
     for result in results:
         suite = result.get("suite")
-        if suite in by_suite or suite not in selected:
+        if suite not in selected:
+            raise ValueError(f"duplicate or unexpected suite result: {suite}")
+        if source_proofs is not None:
+            source = result.get("source", {})
+            attempt = source.get("run_attempt")
+            if source.get("run_id") != run_id or type(attempt) is not int or not 1 <= attempt <= run_attempt:
+                raise ValueError(f"invalid {suite} source attempt")
+            key = (suite, attempt)
+            if key in seen_attempts:
+                raise ValueError(f"duplicate {suite} result in attempt {attempt}")
+            seen_attempts.add(key)
+            if any(result.get(field) != plan.get(field) for field in ("base", "head", "tested_sha", "tree", "contract_digest")):
+                raise ValueError(f"stale or mismatched {suite} evidence")
+            if suite in by_suite and by_suite[suite]["source"]["run_attempt"] > attempt:
+                continue
+        elif suite in by_suite:
             raise ValueError(f"duplicate or unexpected suite result: {suite}")
         by_suite[suite] = result
     if set(by_suite) != set(selected):
         raise ValueError(f"missing suite results: {sorted(set(selected) - set(by_suite))}")
     identity = ("base", "head", "tested_sha", "tree", "contract_digest")
     for suite, result in by_suite.items():
+        if source_proofs is not None and job_name(suite) not in source_proofs.get(result["source"]["run_attempt"], set()):
+            raise ValueError(f"{suite} has no successful producing job in its source attempt")
         if result.get("status") != "success" or not result.get("commands"):
             raise ValueError(f"{suite} did not execute successfully")
         if any(result.get(field) != plan.get(field) for field in identity):
@@ -139,6 +165,7 @@ def verify_results(plan: dict, results: list[dict], jobs: dict | None = None) ->
             raise ValueError("SDK matrix failed, was cancelled, missing, or unexpectedly skipped")
         if jobs.get("geospatial-changes", {}).get("result") != "success":
             raise ValueError("validation selection did not succeed")
+    return by_suite
 
 
 def expected_tools(suite: str) -> dict[str, str]:

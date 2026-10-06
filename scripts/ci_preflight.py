@@ -21,17 +21,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
+from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.ci_contract import (
     NATIVE_TESTS, SUITES, check_junit, contract_digest, expected_tools,
     select_suites, verify_results, write_json,
 )
 
 
-def git(root: Path, *arguments: str) -> str:
-    return subprocess.check_output(
+def git(root: Path, *arguments: str, raw: bool = False) -> str:
+    output = subprocess.check_output(
         [os.environ.get("CI_GIT", "git"), "-c", f"safe.directory={root}", "-C", str(root), *arguments], text=True,
         stderr=subprocess.PIPE,
-    ).strip()
+    )
+    return output if raw else output.strip()
 
 
 def require_complete_history(root: Path) -> None:
@@ -42,13 +44,13 @@ def require_complete_history(root: Path) -> None:
 def make_plan(root: Path, base: str, head: str, *, original_head: str | None = None) -> dict:
     require_complete_history(root)
     tested_sha = git(root, "rev-parse", "HEAD")
-    resolved_head = git(root, "rev-parse", f"{head}^{{commit}}")
+    resolved_head = git(root, "rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}")
     if resolved_head != tested_sha:
         raise ValueError("head must be the checked-out tested revision")
     try:
-        resolved_base = git(root, "rev-parse", f"{base}^{{commit}}")
-        changed = git(root, "diff", "--name-only", "-z", resolved_base, resolved_head)
-        paths = changed.split("\0") if changed else []
+        resolved_base = git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
+        changed = git(root, "diff", "--name-only", "-z", resolved_base, resolved_head, raw=True)
+        paths = [path for path in changed.split("\0") if path]
     except subprocess.CalledProcessError:
         # An absent comparison selects all, but individual history-dependent
         # commands still fail when their required base cannot be resolved.
@@ -139,7 +141,13 @@ def probe_tools(suite: str, environment: dict[str, str]) -> dict[str, str]:
     }
     for tool, expected in expected_tools(suite).items():
         output = subprocess.check_output(probes[tool], env=environment, text=True, stderr=subprocess.STDOUT)
-        actual = json.loads(output)["terraform_version"] if tool == "terraform" else re.search(r"\d+\.\d+\.\d+", output).group()
+        if tool == "terraform":
+            actual = json.loads(output)["terraform_version"]
+        else:
+            match = re.search(r"\d+\.\d+\.\d+", output)
+            if match is None:
+                raise ValueError(f"{tool}: missing version in probe output")
+            actual = match.group()
         if actual != expected:
             raise ValueError(f"{tool}: required {expected}, found {actual}")
         versions[tool] = actual
@@ -152,6 +160,8 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     result = {key: plan[key] for key in ("base", "head", "tested_sha", "tree", "contract_digest")}
     result.update({"schema_version": 1, "suite": suite, "status": "failure", "commands": [], "tools": {}})
+    if os.environ.get("GITHUB_RUN_ID"):
+        result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
     environment = dict(os.environ)
     # This exact process-owned path is bind-mounted across differing host and
     # container UIDs. The setting also applies to Git invoked by SDK policy.
@@ -213,8 +223,8 @@ def isolated_merge(source: Path, base: str, head: str, destination: Path) -> tup
     require_complete_history(source)
     if git(source, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("source checkout must be clean; commit changes before preflight")
-    base_sha = git(source, "rev-parse", f"{base}^{{commit}}")
-    head_sha = git(source, "rev-parse", f"{head}^{{commit}}")
+    base_sha = git(source, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}")
+    head_sha = git(source, "rev-parse", "--verify", "--end-of-options", f"{head}^{{commit}}")
     executable = os.environ.get("CI_GIT", "git")
     subprocess.run([executable, "clone", "--no-local", "--no-hardlinks", "--no-checkout", str(source), str(destination)], check=True)
     subprocess.run([executable, "-C", str(destination), "checkout", "--detach", base_sha], check=True)
@@ -263,6 +273,16 @@ def preflight(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_plan(path: Path) -> dict:
+    candidates = [json.loads(candidate.read_text()) for candidate in sorted(path.rglob("plan.json"))] if path.is_dir() else [json.loads(path.read_text())]
+    run_id = os.environ.get("GITHUB_RUN_ID")
+    if run_id:
+        return select_plan(candidates, run_id=run_id, attempt=int(os.environ["GITHUB_RUN_ATTEMPT"]))
+    if len(candidates) != 1:
+        raise ValueError("local validation requires exactly one plan")
+    return candidates[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base")
@@ -283,11 +303,14 @@ def main() -> int:
     verifier.add_argument("--plan", type=Path, required=True)
     verifier.add_argument("--results", type=Path, required=True)
     verifier.add_argument("--jobs", type=Path)
+    verifier.add_argument("--output", type=Path)
     args = parser.parse_args()
     root = Path.cwd()
     try:
         if args.command == "plan":
             plan = make_plan(root, args.base, args.head, original_head=args.source_head)
+            if os.environ.get("GITHUB_RUN_ID"):
+                plan["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
             write_json(args.output, plan)
             if args.github_output:
                 with args.github_output.open("a") as output:
@@ -297,16 +320,35 @@ def main() -> int:
                     output.write(f"tested_sha={plan['tested_sha']}\n")
             return 0
         if args.command == "run-suite":
-            plan = json.loads(args.plan.read_text())
+            plan = load_plan(args.plan)
             return 0 if run_suite(root, plan, args.suite, args.output)["status"] == "success" else 1
         if args.command == "verify":
-            plan = json.loads(args.plan.read_text())
+            run_id = os.environ.get("GITHUB_RUN_ID")
+            current_attempt = int(os.environ["GITHUB_RUN_ATTEMPT"]) if run_id else None
+            plan = load_plan(args.plan)
             validate_checkout(root, plan)
-            if make_plan(root, plan["base"], "HEAD", original_head=plan["head"]) != plan:
+            if make_plan(root, plan["base"], "HEAD", original_head=plan["head"]) != {key: value for key, value in plan.items() if key != "source"}:
                 raise ValueError("selection plan does not match the current comparison")
             results = [json.loads(report.read_text()) for report in sorted(args.results.rglob("result.json"))]
             jobs = json.loads(args.jobs.read_text()) if args.jobs else None
-            verify_results(plan, results, jobs)
+            proofs = None
+            if run_id:
+                attempts = {plan["source"]["run_attempt"], *(result.get("source", {}).get("run_attempt") for result in results)}
+                if any(type(attempt) is not int or not 1 <= attempt <= current_attempt for attempt in attempts):
+                    raise ValueError("invalid result source attempt")
+                proofs = prove_attempts(os.environ["GITHUB_REPOSITORY"], run_id, attempts, plan)
+                if "geospatial-changes" not in proofs[plan["source"]["run_attempt"]]:
+                    raise ValueError("selected plan has no successful source selection job")
+            chosen = verify_results(plan, results, jobs, source_proofs=proofs, run_id=run_id, run_attempt=current_attempt)
+            if args.output:
+                evidence = {**plan, "status": "success"}
+                if run_id:
+                    evidence.update({
+                        "source": {"run_id": run_id, "run_attempt": current_attempt},
+                        "plan_artifact": f"ci-validation-plan-attempt{plan['source']['run_attempt']}",
+                        "suite_artifacts": {suite: f"ci-result-{suite}-attempt{result['source']['run_attempt']}" for suite, result in chosen.items()},
+                    })
+                write_json(args.output, evidence)
             print("Every selected suite passed for the exact tested revision and contract.")
             return 0
         if not args.base or not args.head:

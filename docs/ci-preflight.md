@@ -19,6 +19,8 @@ fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credenti
 are not forwarded. Downloads and Terraform provider initialization require
 network access. Tool versions and the classifier are owned by
 `scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
+Both boundaries disable Go asynchronous preemption for compatibility with local
+amd64 emulation. This runtime setting does not suppress validation errors.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
 scanning, admission and diff/static guardrails, and Python tests. It adds native,
@@ -47,6 +49,13 @@ during migration. Add `ci-ready` while retaining them, verify positive and
 negative behavior, then remove redundant requirements. The complete CI workflow
 remains active on every PR; it has no workflow-level path filters. SDK and browser
 validation are consolidated into this workflow, preserving Node 22/24 coverage.
+
+GitHub artifacts include their producing run attempt. Selective validation
+reruns may reuse a prior passing suite only when the Actions API proves its
+exact CI workflow, source revision and successful producing job, and its
+base/tree/toolchain contract matches. The latest result for each suite wins;
+a newer failed result cannot reuse an older success. `ci-ready-evidence` names
+the exact selected plan and suite artifacts for consumers of tested bytes.
 
 The pinned actionlint version predates GitHub's `concurrency.queue` field.
 `scripts/check_workflow_syntax.py` independently requires `queue: max` together
