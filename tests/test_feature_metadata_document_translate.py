@@ -42,6 +42,16 @@ def read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 class FeatureMetadataDocumentTranslateTests(unittest.TestCase):
+    def test_workbook_roundtrip_preserves_source_hash_with_carriage_returns(self):
+        text = "Name\r\nNorth Forest\rUnit & &#13; <east>"
+        source_hash = feature_metadata_localization.source_value_hash(text)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source.xlsx"
+            feature_metadata_document_translate.write_xlsx_rows(path, [["hash", "text"], [source_hash, text]])
+            rows = feature_metadata_document_translate.read_xlsx_rows(path)
+        self.assertEqual(rows[1], [source_hash, text])
+        self.assertEqual(feature_metadata_localization.source_value_hash(rows[1][1]), source_hash)
+
     def test_export_writes_two_column_workbook_and_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
