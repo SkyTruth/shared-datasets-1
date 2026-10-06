@@ -400,6 +400,56 @@ class EamlisMonthlyTests(unittest.TestCase):
         self.assertEqual(state.field_schema_hash, eamlis.stable_hash(fields))
         self.assertEqual(state.fingerprint["max_date_revised"], 1777546800000)
 
+    def test_same_date_completed_run_returns_original_record_without_polling_or_rebuilding(self):
+        for status in ("success", "skipped"):
+            with self.subTest(status=status):
+                bucket = FakeBucket()
+                current = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
+                record = {
+                    "run_date": "2026-05-02", "status": status,
+                    "source_fingerprint_hash": "earlier-source",
+                    "reason": "generated FGB hash unchanged" if status == "skipped" else None,
+                    "release_path": "gs://test-bucket/releases/2026-05-01/",
+                    "source_fingerprint": {"feature_count": 2},
+                }
+                current.exists, current.text = True, json.dumps(record)
+                with (
+                    mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
+                    mock.patch.object(eamlis, "require_binary"),
+                    mock.patch.object(eamlis.storage, "Client", return_value=FakeClient(bucket)),
+                    mock.patch.object(eamlis, "fetch_source_state", return_value=sample_source_state(
+                        fingerprint_hash="later-source", feature_count=3,
+                    )) as fetch,
+                    mock.patch.object(eamlis, "download_source_geojson") as download,
+                    mock.patch.object(eamlis, "build_asset_output") as build,
+                    mock.patch.object(GcsPublisher, "record_existing_successful_release", return_value=None) as index,
+                ):
+                    records = eamlis.run()
+                self.assertEqual(records, [record])
+                fetch.assert_not_called()
+                download.assert_not_called()
+                build.assert_not_called()
+                self.assertEqual(index.call_count, int(status == "success"))
+                self.assertEqual(current.text, json.dumps(record))
+                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+
+    def test_same_date_noncompleted_record_fails_without_polling_or_writes(self):
+        for record in ({}, *({"status": status} for status in ("failed", "partial", "running", "unknown", None))):
+            with self.subTest(record=record):
+                bucket = FakeBucket()
+                current = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 5, 2)))
+                current.exists, current.text = True, json.dumps(record)
+                with (
+                    mock.patch.dict(eamlis.os.environ, {"RUN_DATE": "2026-05-02"}, clear=True),
+                    mock.patch.object(eamlis, "require_binary"),
+                    mock.patch.object(eamlis.storage, "Client", return_value=FakeClient(bucket)),
+                    mock.patch.object(eamlis, "fetch_source_state") as fetch,
+                    self.assertRaisesRegex(RuntimeError, "Run record already exists"),
+                ):
+                    eamlis.run()
+                fetch.assert_not_called()
+                self.assertFalse(any(blob.uploads for blob in bucket.blobs.values()))
+
     def test_run_skips_when_latest_success_fingerprint_matches(self):
         bucket = FakeBucket()
         previous = bucket.blob(eamlis.ASSET.run_record_object(dt.date(2026, 4, 2)))

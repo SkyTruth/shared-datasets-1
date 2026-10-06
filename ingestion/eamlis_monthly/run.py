@@ -754,23 +754,19 @@ def assert_current_record_allows_run(
     current_record: dict[str, Any] | None,
     *,
     run_date: dt.date,
-    source: SourceState,
 ) -> dict[str, Any] | None:
-    if not current_record:
+    if current_record is None:
         return None
     status = current_record.get("status")
-    if status == "success":
-        LOGGER.info("%s already has a successful run record for %s", ASSET.slug, run_date)
-        return current_record
-    if (
-        status == "skipped"
-        and current_record.get("source_fingerprint_hash") == source.fingerprint_hash
-    ):
-        LOGGER.info("%s already has a skipped run record for %s", ASSET.slug, run_date)
+    if status in {"success", "skipped"}:
+        LOGGER.info(
+            "%s already has a %s run record for %s; source changes require a different RUN_DATE",
+            ASSET.slug, status, run_date,
+        )
         return current_record
     raise RuntimeError(
         f"Run record already exists for {run_date.isoformat()} with status {status!r}. "
-        "Use a different RUN_DATE if this source state should be published."
+        "Investigate the existing record before choosing a different RUN_DATE."
     )
 
 
@@ -810,12 +806,10 @@ def run() -> list[dict[str, Any]]:
         logger=LOGGER,
     )
 
-    source = fetch_source_state(layer_url, where)
     current_record = load_current_run_record(publisher, ASSET, run_date)
     existing_record = assert_current_record_allows_run(
         current_record,
         run_date=run_date,
-        source=source,
     )
     if existing_record:
         if existing_record.get("status") == "success":
@@ -828,6 +822,7 @@ def run() -> list[dict[str, Any]]:
                 existing_record["release_index"] = release_index_info
         return [existing_record]
 
+    source = fetch_source_state(layer_url, where)
     previous_record = latest_success_record(publisher, ASSET, exclude_run_date=run_date)
     contract_refresh = needs_metadata_contract_refresh(publisher, previous_record)
     if previous_record and previous_record.get("source_fingerprint_hash") == source.fingerprint_hash:
