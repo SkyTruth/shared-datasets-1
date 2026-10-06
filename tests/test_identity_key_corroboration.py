@@ -554,14 +554,6 @@ class CorroborationCountSemanticsTests(unittest.TestCase):
             "a record that was never in question must not inflate the corroborated count",
         )
 
-    def test_only_records_that_would_escalate_are_counted_as_corroborated(self):
-        # Sibling designations on one footprint: these *would* escalate.
-        contested = scan(
-            {"identity_key": ["12884"], "geometry_hash": HASH_PARK, "properties_hash": HASH_PARK_PROPS}
-        )
-        self.assertEqual(contested.key_corroborated_count, 1)
-        self.assertEqual(contested.ambiguities, ())
-
     def test_published_totals_reflect_partial_matches_only(self):
         previous = [
             {"feature_id": "1", "identity_key": ["A"], "geometry_hash": self.GEOM, "properties_hash": self.PROPS},

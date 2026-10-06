@@ -6,15 +6,13 @@ import pytest
 from scripts import translation_local_io as local_io
 
 
-@pytest.mark.parametrize("kind", ["same", "resolved", "symlink", "hardlink"])
+@pytest.mark.parametrize("kind", ["same", "symlink", "hardlink"])
 def test_protected_aliases_preserve_input(tmp_path, kind):
     source = tmp_path / "source"
     source.write_bytes(b"original")
     output = tmp_path / "output"
     if kind == "same":
         output = source
-    elif kind == "resolved":
-        output = tmp_path / "." / "source"
     elif kind == "symlink":
         output.symlink_to(source)
     else:

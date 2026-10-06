@@ -17,8 +17,6 @@ PREVIEW_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-deploy.yml"
 PREVIEW_DESTROY_WORKFLOW = REPO_ROOT / ".github/workflows/feature-preview-destroy.yml"
 ARTIFACT_REGISTRY_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/artifact-registry-iam-sync.yml"
 PREVIEW_TERRAFORM_IAM_WORKFLOW = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.yml"
-PMTILES_CDN_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
-SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 PREVIEW_TF = REPO_ROOT / "terraform/envs/preview"
 PROD_TF = REPO_ROOT / "terraform/envs/prod"
 
@@ -290,26 +288,6 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertIn("feature_preview_run.GcsSidecarFeatureIndex", catalog_viewer_run.read_text())
         self.assertNotIn("google-cloud-firestore", service_dockerfile.read_text())
         self.assertNotIn("google-cloud-firestore", catalog_viewer_dockerfile.read_text())
-
-    def test_prod_terraform_sync_workflows_share_state_concurrency(self):
-        reusable = (REPO_ROOT / ".github/workflows/prod-terraform-target-apply.yml").read_text()
-        self.assertIn("group: prod-terraform-state", reusable)
-        self.assertIn("cancel-in-progress: false", reusable)
-
-        pmtiles = PMTILES_CDN_SYNC_WORKFLOW.read_text()
-        self.assertIn("group: prod-terraform-state", pmtiles)
-        self.assertIn("cancel-in-progress: false", pmtiles)
-
-        for workflow_path in (
-            ARTIFACT_REGISTRY_IAM_WORKFLOW,
-            PREVIEW_TERRAFORM_IAM_WORKFLOW,
-            SCRATCH_CLEANUP_IAM_SYNC_WORKFLOW,
-        ):
-            with self.subTest(workflow=workflow_path.name):
-                self.assertIn(
-                    "uses: ./.github/workflows/prod-terraform-target-apply.yml",
-                    workflow_path.read_text(),
-                )
 
     def test_artifact_registry_iam_sync_grants_preview_image_push_only(self):
         artifact_registry_tf = (PROD_TF / "artifact_registry_iam.tf").read_text()

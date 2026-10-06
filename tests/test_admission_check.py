@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts import admission_check
 
@@ -60,62 +61,19 @@ def check(root: Path, changes, exists_at_base=None):
 
 
 class AdmissionCheckTests(unittest.TestCase):
-    def test_added_asset_doc_with_full_admission_passes(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = write_doc(root)
-
-            result = check(root, [admission_check.ChangedFile("A", path)])
-
-        self.assertEqual(result.errors, ())
-
-    def test_added_asset_doc_without_citation_is_not_admission_checked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = write_doc(root, FULL_ADMISSION.replace("citation: Example citation\n", "citation: TBD\n"))
-
-            result = check(root, [admission_check.ChangedFile("A", path)])
-
-        self.assertEqual(result.errors, ())
-
-    def test_added_asset_doc_without_admission_is_not_admission_checked(self):
+    def test_asset_doc_only_changes_do_not_read_admission_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = write_doc(root, FULL_ADMISSION.replace("admission:\n", "legacy: true\n# admission removed:\n"))
 
-            result = check(root, [admission_check.ChangedFile("A", path)])
+            with mock.patch.object(admission_check, "evidence_from_asset_doc") as read_evidence:
+                result = check(root, [admission_check.ChangedFile("A", path)])
+
+            read_evidence.assert_not_called()
 
         self.assertEqual(result.errors, ())
-
-    def test_added_asset_doc_with_nonnumeric_footprint_is_not_admission_checked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = write_doc(
-                root,
-                FULL_ADMISSION.replace("  estimated_published_size_gb: 1.5\n", "  estimated_published_size_gb: unknown\n"),
-            )
-
-            result = check(root, [admission_check.ChangedFile("A", path)])
-
-        self.assertEqual(result.errors, ())
-
-    def test_small_footprint_allows_blank_large_data_exception(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = write_doc(root)
-
-            result = check(root, [admission_check.ChangedFile("A", path)])
-
-        self.assertEqual(result.errors, ())
-
-    def test_added_asset_doc_with_large_footprint_is_not_admission_checked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            path = write_doc(root, FULL_ADMISSION.replace("  estimated_published_size_gb: 1.5\n", "  estimated_published_size_gb: 10\n"))
-
-            result = check(root, [admission_check.ChangedFile("A", path)])
-
-        self.assertEqual(result.errors, ())
+        self.assertEqual(result.added_asset_docs, (path,))
+        self.assertEqual(result.new_ingestion_jobs, ())
 
     def test_new_ingestion_pipeline_without_asset_doc_admission_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

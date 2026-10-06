@@ -1,10 +1,12 @@
 # Firestore Metadata Stack Retirement
 
-This branch retires the standalone Firestore metadata endpoint and its loaders.
-It preserves the current consumer contract: generation-pinned release sidecars,
+The standalone Firestore metadata endpoint and its loaders have been retired.
+The protected retirement completed on 2026-10-01; its one-time workflow has
+been removed. This document records the retirement scope and evidence.
+The current consumer contract remains: generation-pinned release sidecars,
 both viewers' same-origin lookup routes, signed/public download resolution,
-localization, SDK readers, and release publication. Repository cleanup does not
-perform the live infrastructure retirement.
+localization, SDK readers, and release publication. Preview database-preservation
+safeguards remain active independently of the completed retirement.
 
 ## Repository Scope
 
@@ -40,9 +42,10 @@ and `feature-preview` databases and their data, while ending Terraform ownership
 Terraform 1.7 or newer is required; CI and protected workflows use 1.8.5.
 [HashiCorp documents this state-removal behavior](https://developer.hashicorp.com/terraform/language/block/removed).
 
-The manual, opt-in `.github/workflows/metadata-stack-retire.yml` runs only from
-reviewed `main` in `shared-datasets-production`, sharing the production state
-queue. `scripts/metadata_retirement_plan.py` allows only these removals:
+The completed manual retirement ran from reviewed `main` in
+`shared-datasets-production`, sharing the production state queue.
+`scripts/metadata_retirement_plan.py` constrained it to these removals and
+continues to validate the preview workflows' state-only database detachment:
 
 ```text
 module.metadata_service_account.google_service_account.this
@@ -74,30 +77,30 @@ addresses after the original retirement PR merged. Their principals are
 older Firestore grants name the absent `feature-metadata-preview` database.
 Neither older identity appears in live Cloud Run service/job consumers or
 preview bucket IAM. Their source resources had already been removed; the
-follow-up expands the protected target list to clean up this orphaned state.
+follow-up expanded the protected target list to clean up this orphaned state.
 The validator requires the observed project, account/role/member, database
 condition, or Workload Identity binding before allowing each legacy deletion.
 No replacement, active-preview identity removal, or database deletion is allowed
 in the retirement plan. Temporary account-scoped deletion authority is validated
 separately as described below.
 
-Two updates are also allowed: remove only `datastore.*` permissions from the
-preview Terraform custom role, and remove only the production metadata loader's
+Retirement also allowed two updates: remove only `datastore.*` permissions from
+the preview Terraform custom role, and remove only the production metadata loader's
 exemption from the canonical-write alert filter. All other creates, updates,
 replacements, deletions, or database destruction are rejected. Required root
 ingestion-image inputs use placeholders because ingestion jobs are outside the
-targeted scope. The workflow validates each saved plan and applies that same plan.
+targeted scope. The workflow validated each saved plan and applied that same plan.
 
 The first protected retirement run on 2026-10-01 detached the production database
 and removed ten obsolete IAM grants. Its apply then failed because
 `shared-datasets-terraform` lacked `iam.serviceAccounts.delete` on the three
 remaining retired accounts. Both databases survived; production state contained
-only these three retired service-account resources afterward. Retrying without
-changing that authority cannot complete retirement.
+only these three retired service-account resources afterward. Completing
+retirement required repairing that authority.
 
-The permission repair uses `terraform/envs/metadata-retirement-iam` with its own
+The permission repair used `terraform/envs/metadata-retirement-iam` with its own
 state prefix, `000-system/terraform/state/metadata-retirement-iam`, under the same
-protected production queue. It grants `roles/iam.serviceAccountDeleter` to
+protected production queue. It granted `roles/iam.serviceAccountDeleter` to
 `shared-datasets-terraform` on individual retired accounts, never on the project.
 The three permitted immutable IDs are:
 
@@ -117,24 +120,23 @@ An account recreated with the same email fails that postcondition.
 [Google documents account-level IAM grants](https://docs.cloud.google.com/iam/docs/manage-access-service-accounts)
 and the [deletion permission](https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/delete).
 
-After applying the saved IAM plan, the workflow polls the authenticated caller's
+After applying the saved IAM plan, the workflow polled the authenticated caller's
 deletion permission with a five-minute deadline and 30-second request timeouts,
 using `testIamPermissions` without logging the access token. API errors and timeout
-stop before the retirement apply. The workflow then applies the original saved
-retirement plan. It finishes with an empty-input IAM plan, validated as
-delete-only, to remove temporary authority and clear its state. If a run stops
-partway through, remote IAM state supports a subsequent reviewed retry;
-any surviving grant can affect only a still-existing reviewed retired account.
-The new IAM root defaults to no grants and receives backend-disabled CI
+stopped before the retirement apply. The workflow then applied the original saved
+retirement plan. It finished with an empty-input IAM plan, validated as
+delete-only, to remove temporary authority and clear its state. Temporary grants
+could affect only the individually reviewed retired accounts.
+The IAM root defaults to no grants and still receives backend-disabled CI
 validation alongside production and preview.
 
 Preview deploy/destroy workflows detach the retired preview database with a
 separate validated saved plan before a reset or destroy can affect the slot.
-The production retirement workflow also detaches its database in a separate
+The completed production retirement also detached its database in a separate
 validated saved plan before service/IAM removal. Only these state-only database
 plans skip refresh: they cannot mutate a live resource and must remain usable
 after Terraform loses its Firestore read permissions. The production service/IAM
-retirement plan still refreshes live resources and rejects database changes.
+retirement plan refreshed live resources and rejected database changes.
 Source branches with a Firestore database resource are refused. Preview service
 accounts and their signing/WIF bindings remain. In particular,
 `feature-preview-loader` still publishes `_catalog/web/`; its bucket write grant
@@ -154,9 +156,9 @@ remain in manifest/release-index producers and validators. Changing them would
 be a persisted-format migration. Historical `index-loads/` paths continue to be
 recognized by object-layout validation and compliance audits.
 
-Consumers of the old standalone Cloud Run URL lose that endpoint after the
-protected retirement runs. Repository consumers already use sidecars or viewer
-routes, and the old resolver had no successful serving path. External callers,
+The old standalone Cloud Run endpoint was retired through the protected path.
+Repository consumers already use sidecars or viewer routes, and the old resolver
+had no successful serving path. External callers,
 out-of-repository loader users, and database contents remain unknown. GCP access
 was restored for rollout checks: the standalone service was already absent,
 neither older preview identity appeared in project Cloud Run service/job
@@ -196,17 +198,14 @@ not require CODEOWNER approval and the production environment has no reviewer
 gate. The repository's maintainer-review requirement therefore remains a
 manual prerequisite; these GitHub settings do not waive it.
 
-After maintainer review and merge, run the opt-in retirement workflow. It checks
-the fresh saved plan before applying; unexpected drift stops the run and requires
-a reviewed scope change. Use a preserve-mode preview deployment
-and the normal catalog viewer deployment to roll out the dependency/configuration
-cleanup. Verify authenticated same-origin lookup, exact returned sidecar identity,
-large-sidecar inspection, public/private download URLs, localized sidecars,
-preview catalog refresh, and unaffected publication/ingestion jobs. Do not
-dispatch loaders, remove IAM locally, or apply production Terraform locally.
+The [successful protected retirement run on 2026-10-01](https://github.com/SkyTruth/shared-datasets-1/actions/runs/36899723137)
+applied the validated saved plan with zero additions, zero updates, and deletion
+of the final three retired service accounts. Its temporary-authority cleanup
+completed successfully. The one-time retirement workflow is no longer an
+operational entry point. Preview deploy/destroy workflows retain their separate
+database-preservation checks; normal viewer deployments and sidecar publication
+remain active.
 
-The maintainer decision is whether to merge this sidecar-only serving contract
-and retire the standalone URL and loader identities through the protected path.
-Database data deletion is excluded. Reactivation would require a new reviewed
+Database data deletion remains excluded. Reactivation would require a new reviewed
 consumer requirement, an exact-generation serving contract, rebuild validation,
 cost/ownership decisions, and a protected deployment/loading path.

@@ -5,16 +5,8 @@ import re
 import unittest
 from pathlib import Path
 
-from workflow_helpers import (
-    load_workflow,
-)
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROD_TF_DIR = REPO_ROOT / "terraform/envs/prod"
-SCHEDULED_INGESTION_DEPLOY_IAM_SYNC_WORKFLOW = (
-    REPO_ROOT / ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
-)
 GCLOUD_COMPOSITE_TEMP_PREFIX = "gcloud/tmp/parallel_composite_uploads/see_gcloud_storage_cp_help_for_details/"
 
 
@@ -346,20 +338,6 @@ class ScheduledIngestionIamTerraformTests(unittest.TestCase):
         expression = next(line.strip() for line in block.splitlines() if line.strip().startswith("expression"))
         self.assertEqual(expression.split("=", 1)[1].strip(),
                          '"resource.name == \'${local.shared_bucket_object_resource_prefix}' + source_path + '\'"')
-
-    def test_scheduled_ingestion_deploy_iam_sync_workflow_uses_constrained_apply(self):
-        # Caller wiring is asserted in detail in
-        # tests/test_prod_terraform_target_apply_workflow.py; keep a pointer
-        # assertion here so IAM .tf changes stay linked to the sync workflow.
-        workflow = load_workflow(SCHEDULED_INGESTION_DEPLOY_IAM_SYNC_WORKFLOW)
-        job = workflow["jobs"]["sync"]
-
-        self.assertEqual(job["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
-        self.assertIn(
-            "google_project_iam_custom_role.scheduled_ingestion_deployer",
-            job["with"]["allowed_exact"],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
