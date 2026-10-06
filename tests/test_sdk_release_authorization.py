@@ -128,3 +128,76 @@ def test_candidate_must_match_recorded_test_result_even_with_consistent_new_hash
     artifacts[2]['digest'] = 'sha256:' + hashlib.sha256(payloads[2]).hexdigest()
     with pytest.raises(DeploymentError, match='recorded tested package'):
         release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)
+
+
+def admission_fixture(*, ready='success', conclusion='failure', current_attempt=1):
+    repository = {'id': 9, 'full_name': REPO}
+    workflow = {'id': 7, 'path': '.github/workflows/ci.yml'}
+    run = {'id': 123, 'run_attempt': 1, 'workflow_id': 7, 'path': workflow['path'], 'name': 'CI',
+           'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'status': 'completed', 'conclusion': conclusion,
+           'repository': repository, 'head_repository': repository}
+    api = Mock()
+    api.get.side_effect = lambda endpoint: repository if endpoint == f'repos/{REPO}' else workflow if endpoint.endswith('/workflows/ci.yml') else run if '/attempts/' in endpoint else {**run, 'run_attempt': current_attempt}
+    api.pages.return_value = [] if ready is None else [{'name': 'ci-ready', 'status': 'completed', 'conclusion': ready}]
+    event = {'workflow_run': dict(run), 'repository': repository}
+    return api, event
+
+
+@pytest.mark.parametrize('ready', ['failure', 'cancelled', 'skipped', None])
+def test_verified_validation_failure_does_not_authorize_or_fail_an_sdk_release(ready):
+    api, event = admission_fixture(ready=ready)
+    assert not release.admit_source(api, REPO, 123, 1, SHA, event)
+    api.pages.assert_called_once()
+    api.archive.assert_not_called()
+
+
+def test_failed_post_validation_deployment_keeps_tested_sdk_eligible():
+    api, event = admission_fixture()
+    assert release.admit_source(api, REPO, 123, 1, SHA, event)
+
+
+@pytest.mark.parametrize('conclusion,current_attempt', [('cancelled', 1), ('success', 2)])
+def test_cancelled_or_verified_obsolete_ci_completion_is_an_sdk_noop(conclusion, current_attempt):
+    api, event = admission_fixture(conclusion=conclusion, current_attempt=current_attempt)
+    assert not release.admit_source(api, REPO, 123, 1, SHA, event)
+    api.pages.assert_called_once()
+
+
+@pytest.mark.parametrize('change', ['head_sha', 'workflow_id', 'path', 'event', 'repository', 'run_attempt'])
+def test_sdk_admission_rejects_forged_event_identity_even_when_validation_failed(change):
+    api, event = admission_fixture(ready='failure')
+    event['workflow_run'][change] = {'id': 100, 'full_name': 'evil/fork'} if change == 'repository' else 'forged'
+    with pytest.raises(DeploymentError):
+        release.admit_source(api, REPO, 123, 1, SHA, event)
+
+
+def test_sdk_admission_does_not_hide_incomplete_job_enumeration_or_duplicate_gate():
+    api, event = admission_fixture(ready='failure')
+    api.pages.side_effect = DeploymentError('incomplete API enumeration')
+    with pytest.raises(DeploymentError, match='incomplete'):
+        release.admit_source(api, REPO, 123, 1, SHA, event)
+    api.pages.side_effect = None
+    api.pages.return_value *= 2
+    with pytest.raises(DeploymentError, match='ambiguous'):
+        release.admit_source(api, REPO, 123, 1, SHA, event)
+
+
+@pytest.mark.parametrize('admission_only', [False, True])
+def test_verified_failed_ci_completes_candidate_detection_without_release(tmp_path, monkeypatch, admission_only):
+    api, event = admission_fixture(ready='failure')
+    event_path = tmp_path / 'event.json'
+    event_path.write_text(json.dumps(event))
+    github_output = tmp_path / 'github-output'
+    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
+    monkeypatch.setenv('GITHUB_EVENT_PATH', str(event_path))
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    monkeypatch.setattr(release, 'GitHub', lambda: api)
+    strict = Mock(side_effect=AssertionError('non-ready CI must not enter deployment authorization'))
+    monkeypatch.setattr(release, 'verify_context', strict)
+    args = ['sdk_release_authorization.py', '--executor-sha', SHA, '--source-run-id', '123', '--source-run-attempt', '1']
+    args += ['--admit-source'] if admission_only else ['--output', str(tmp_path / 'package')]
+    monkeypatch.setattr(release.sys, 'argv', args)
+    release.main()
+    assert github_output.read_text() == 'source_eligible=false\nrelease_needed=false\n'
+    assert not (tmp_path / 'package').exists()
+    strict.assert_not_called()

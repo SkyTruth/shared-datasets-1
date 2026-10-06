@@ -46,7 +46,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Admit verified CI completion
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Verify trusted tested source authority
+        if: steps.source.outputs.source_eligible == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -54,12 +63,14 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Check out exact tested revision
+        if: steps.source.outputs.source_eligible == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ env.EXECUTOR_SHA }}
           fetch-depth: 0
           persist-credentials: false
       - name: Check already completed SDK publication
+        if: steps.source.outputs.source_eligible == 'true'
         id: replay
         env:
           GH_TOKEN: ${{ github.token }}
@@ -113,7 +124,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Admit verified CI completion
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/sdk_release_authorization.py --admit-source --executor-sha "$EXECUTOR_SHA" \
+            --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Verify trusted tested source authority
+        if: steps.source.outputs.source_eligible == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -121,12 +141,14 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Check out exact tested revision
+        if: steps.source.outputs.source_eligible == 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ env.EXECUTOR_SHA }}
           fetch-depth: 0
           persist-credentials: false
       - name: Check already completed SDK publication
+        if: steps.source.outputs.source_eligible == 'true'
         id: replay
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,14 +172,14 @@ jobs:
             --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
             --output "${RUNNER_TEMP}/tested-sdk"
       - name: Check registry version and exact tarball integrity
-        if: steps.replay.outputs.proceed == 'true'
+        if: steps.replay.outputs.proceed == 'true' && steps.candidate.outputs.release_needed == 'true'
         id: registry
         working-directory: api/typescript
         env:
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: node scripts/release-policy.mjs registry "$CANDIDATE"
       - name: Record serialized SDK deployment attempt
-        if: steps.replay.outputs.proceed == 'true'
+        if: steps.replay.outputs.proceed == 'true' && steps.candidate.outputs.release_needed == 'true'
         id: deployment
         env:
           GH_TOKEN: ${{ github.token }}

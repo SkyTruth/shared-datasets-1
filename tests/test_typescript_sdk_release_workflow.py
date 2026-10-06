@@ -45,3 +45,17 @@ def test_completed_sdk_revision_skips_expiring_artifacts_before_publish_allocati
         assert names.index('Check already completed SDK publication') < names.index('Verify tested SDK candidate and reviewed version')
         assert '--target typescript-sdk' in steps['Check already completed SDK publication']['run']
         assert steps['Verify tested SDK candidate and reviewed version']['if'] == "steps.replay.outputs.proceed == 'true'"
+
+
+def test_verified_nonready_ci_stops_before_strict_authorization_and_mutation():
+    workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
+    for job in ('candidate', 'publish'):
+        steps = workflow_steps_by_name(workflow, job)
+        names = list(steps)
+        assert names.index('Check out trusted deployment verifier') < names.index('Admit verified CI completion') < names.index('Verify trusted tested source authority')
+        assert '--admit-source' in steps['Admit verified CI completion']['run']
+        for name in ('Verify trusted tested source authority', 'Check out exact tested revision', 'Check already completed SDK publication'):
+            assert steps[name]['if'] == "steps.source.outputs.source_eligible == 'true'"
+    steps = workflow_steps_by_name(workflow, 'publish')
+    for name in ('Check registry version and exact tarball integrity', 'Record serialized SDK deployment attempt'):
+        assert "steps.candidate.outputs.release_needed == 'true'" in steps[name]['if']

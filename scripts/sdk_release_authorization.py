@@ -28,6 +28,45 @@ MAX_ARCHIVE = 100 * 1024 * 1024
 IDENTITY = ("schema_version", "base", "head", "tested_sha", "tree", "contract_digest")
 
 
+def admit_source(api, repository, run_id, attempt, sha, event):
+    """Filter verified CI completions before strict deployment authorization."""
+    require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0
+            and re.fullmatch(r"[0-9a-f]{40}", sha), "invalid SDK source identity")
+    repo = api.get(f"repos/{repository}")
+    workflow = api.get(f"repos/{repository}/actions/workflows/ci.yml")
+    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository,
+            "SDK repository identity mismatch")
+    require(type(workflow.get("id")) is int and workflow["id"] > 0 and workflow.get("path") == ".github/workflows/ci.yml",
+            "SDK source workflow identity mismatch")
+    source = event.get("workflow_run", {})
+    current = api.get(f"repos/{repository}/actions/runs/{run_id}")
+    original = api.get(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}")
+    for run in (source, current, original):
+        require(run.get("id") == run_id and run.get("head_sha") == sha
+                and run.get("name") == "CI" and run.get("path") == workflow["path"]
+                and run.get("workflow_id") == workflow["id"] and run.get("event") == "push"
+                and run.get("head_branch") == "main"
+                and all(run.get(key, {}).get("id") == repo["id"] and run.get(key, {}).get("full_name") == repository
+                        for key in ("repository", "head_repository")), "SDK event does not identify trusted main CI")
+    require(event.get("repository", {}).get("id") == repo["id"] and event["repository"].get("full_name") == repository,
+            "SDK event repository mismatch")
+    require(source.get("run_attempt") == attempt and original.get("run_attempt") == attempt
+            and source.get("status") == original.get("status") == "completed"
+            and source.get("conclusion") == original.get("conclusion"), "SDK source completion differs from its attempt")
+    require(original.get("conclusion") in {"success", "failure", "cancelled", "timed_out", "action_required", "stale", "startup_failure", "skipped", "neutral"},
+            "SDK source has no terminal conclusion")
+    require(type(current.get("run_attempt")) is int and current["run_attempt"] >= attempt,
+            "SDK source has an invalid current attempt")
+    jobs = api.pages(f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", field="jobs")
+    ready = [job for job in jobs if job.get("name") == "ci-ready"]
+    require(len(ready) <= 1, "ambiguous ci-ready source job")
+    if current["run_attempt"] > attempt or original["conclusion"] == "cancelled":
+        return False
+    require(current.get("status") == "completed" and current.get("conclusion") == original["conclusion"],
+            "SDK source no longer identifies the completed attempt")
+    return bool(ready and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success")
+
+
 def artifact_files(api, repository, run_id, artifacts, name):
     found = [artifact for artifact in artifacts if artifact.get("name") == name]
     require(len(found) == 1, "missing or ambiguous tested artifact: " + name)
@@ -114,15 +153,27 @@ def main():
     parser.add_argument("--executor-sha", required=True)
     parser.add_argument("--source-run-id", required=True, type=int)
     parser.add_argument("--source-run-attempt", required=True, type=int)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--admit-source", action="store_true")
     args = parser.parse_args()
+    if not args.admit_source and args.output is None:
+        parser.error("--output is required for tested package download")
     args.workflow = "publish-typescript-sdk.yml"
     try:
-        # Transport variants share the same strict boundary; named artifact
-        # pagination additionally needs the keyword-only field argument.
-        from scripts.deployment_revision import GitHub as DeploymentGitHub
-        verify_context(args, DeploymentGitHub())
-        outputs = download(GitHub(), os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, args.output, Path.cwd())
+        api = GitHub()
+        event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+        eligible = admit_source(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, event)
+        if not eligible:
+            print("Verified CI source is obsolete, cancelled, or lacks passing ci-ready; no SDK release is authorized.")
+            outputs = {"source_eligible": "false", "release_needed": "false"}
+        elif args.admit_source:
+            outputs = {"source_eligible": "true"}
+        else:
+            # Transport variants share the same strict boundary; named artifact
+            # pagination additionally needs the keyword-only field argument.
+            from scripts.deployment_revision import GitHub as DeploymentGitHub
+            verify_context(args, DeploymentGitHub())
+            outputs = download(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, args.output, Path.cwd())
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             for key, value in outputs.items():
                 stream.write(f"{key}={value}\n")
