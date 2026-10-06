@@ -281,7 +281,8 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in image
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in native
     assert f"astral-sh/uv:{TOOLCHAIN['uv']}" in image
-    assert 'go install -ldflags "-X main.version=${PMTILES_VERSION#v}"' in native
+    assert 'go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .' in native
+    assert 'cd /go/pkg/mod/github.com/protomaps/go-pmtiles@${PMTILES_VERSION}' in native
 
 
 def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):

@@ -6,8 +6,7 @@ ARG TARGETARCH
 
 RUN set -eux; \
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
-        go install -ldflags "-X main.version=${PMTILES_VERSION#v}" \
-            github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+        go install github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
     for candidate in \
         "/go/bin/${TARGETOS}_${TARGETARCH}/go-pmtiles" \
         "/go/bin/${TARGETOS}_${TARGETARCH}/pmtiles" \
@@ -17,6 +16,12 @@ RUN set -eux; \
     done; \
     echo "pmtiles binary not found" >&2; \
     exit 1
+
+# Keep dependency compilation cached while embedding the pinned source version.
+RUN set -eux; \
+    cd /go/pkg/mod/github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+    GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
+        go build -ldflags "-X main.version=${PMTILES_VERSION#v}" -o /pmtiles .
 
 FROM python:3.12.12-slim-bookworm
 
