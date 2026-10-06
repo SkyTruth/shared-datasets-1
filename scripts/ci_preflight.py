@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
+from scripts.ci_runtime import local_runtime, prove_runtime
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
@@ -92,7 +93,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "python", "scripts/check_workflow_syntax.py")
         add("terraform", "fmt", "-check", "-recursive", "terraform/")
         for environment in ("prod", "preview", "metadata-retirement-iam"):
-            add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false")
+            add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false", "-lockfile=readonly")
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
         add("terraform", "-chdir=terraform/envs/metadata-retirement-iam", "test")
     elif suite == "tests":
@@ -254,8 +255,12 @@ def preflight(args: argparse.Namespace) -> int:
     write_json(work / "plan.json", plan)
     if shutil.which("docker") is None:
         raise ValueError("Docker is required for the pinned Linux preflight toolchain")
+    runtime_arguments, runtime = local_runtime(work)
+    write_json(work / "runtime.json", runtime)
     image = f"shared-datasets-preflight:{plan['contract_digest'][:16]}"
     subprocess.run(["docker", "build", "--platform", "linux/amd64", "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
+    prove_runtime(runtime_arguments, runtime, image)
+    write_json(work / "runtime.json", runtime)
     native_image = f"shared-datasets-native:{plan['contract_digest'][:16]}"
     if "geospatial-integration" in plan["suites"]:
         subprocess.run(["docker", "build", "--platform", "linux/amd64", "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
@@ -277,7 +282,7 @@ def preflight(args: argparse.Namespace) -> int:
             results.append(json.loads(report.read_text()))
             continue
         selected_image = native_image if suite == "geospatial-integration" else image
-        command = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{root}:/workspace", "-v", f"{work}:/evidence", "-w", "/workspace", "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache", "-e", "UV_LINK_MODE=copy", "-e", "SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1", selected_image, "python", "scripts/ci_preflight.py", "run-suite", "--plan", "/evidence/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"]
+        command = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{root}:/workspace", "-v", f"{work}:/evidence", "-w", "/workspace", "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache", "-e", "UV_LINK_MODE=copy", "-e", "SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1", *runtime_arguments, selected_image, "/usr/local/bin/python", "scripts/ci_preflight.py", "run-suite", "--plan", "/evidence/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"]
         completed = subprocess.run(command, check=False)
         report = output / "result.json"
         if not report.exists():
@@ -289,7 +294,7 @@ def preflight(args: argparse.Namespace) -> int:
         raise ValueError("base or head changed during preflight; evidence is stale")
     if git(source, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("source changed during preflight; evidence is stale")
-    write_json(work / "preflight.json", {**plan, "status": "success", "results": results})
+    write_json(work / "preflight.json", {**plan, "status": "success", "results": results, "runtime": runtime})
     print(f"All {len(results)} selected suites passed. Evidence: {work / 'preflight.json'}")
     return 0
 

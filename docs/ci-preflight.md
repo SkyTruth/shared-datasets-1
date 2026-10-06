@@ -13,7 +13,10 @@ history, missing comparison, missing required tool, failed test, empty test
 collection, or unexpected skip fails validation. Resolve a missing base before
 retrying; selecting all suites does not make history-dependent checks optional.
 
-Docker must be running. Preflight installs its pinned Python, uv, Node 22/24,
+Docker must be running. ARM Docker hosts use the pinned, checksum-verified
+BuildKit direct-exec emulator retained in the run directory; child processes
+use that same emulator. No daemon settings or system binfmt registration change.
+The runtime release, version and hashes are recorded in `runtime.json`. Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require

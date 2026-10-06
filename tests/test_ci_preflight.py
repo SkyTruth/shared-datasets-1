@@ -281,3 +281,61 @@ def test_hosted_and_linux_image_pins_match_shared_toolchain():
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in image
     assert f"python:{TOOLCHAIN['python']}-slim-bookworm" in native
     assert f"astral-sh/uv:{TOOLCHAIN['uv']}" in image
+
+
+def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_path):
+    commands = preflight.suite_commands('lint', ROOT, plan(), tmp_path)
+    initializations = [args for args, _ in commands if args[0] == 'terraform' and 'init' in args]
+    assert len(initializations) == 3
+    assert all('-lockfile=readonly' in args for args in initializations)
+
+
+def test_local_runtime_uses_native_amd64_without_installing_a_handler(tmp_path):
+    from scripts import ci_runtime
+    server = {'Os': 'linux', 'Arch': 'amd64', 'Version': '20.10.22'}
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)), mock.patch.object(ci_runtime.urllib.request, 'urlopen') as download:
+        arguments, record = ci_runtime.local_runtime(tmp_path)
+    assert arguments == []
+    assert record['platform'] == 'linux/amd64'
+    download.assert_not_called()
+    assert not (tmp_path / 'runtime').exists()
+
+
+def test_local_emulator_rejects_unapproved_bytes_and_wrong_architecture(tmp_path):
+    import hashlib
+    import io
+    import tarfile
+    from scripts import ci_runtime
+
+    def archive_for(payload):
+        archive = tmp_path / 'emulator.tar.gz'
+        with tarfile.open(archive, 'w:gz') as bundle:
+            member = tarfile.TarInfo('bin/buildkit-qemu-x86_64')
+            member.size = len(payload)
+            bundle.addfile(member, io.BytesIO(payload))
+        return archive
+
+    elf = bytearray(64)
+    elf[:6] = b'\x7fELF\x02\x01'
+    elf[18:20] = b'\xb7\x00'
+    archive = archive_for(elf)
+    destination = tmp_path / 'emulator'
+    with pytest.raises(ValueError, match='checksum'):
+        ci_runtime.extract_emulator(archive, destination)
+    assert not destination.exists()
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    with mock.patch.object(ci_runtime, 'EMULATOR_ARCHIVE_SHA256', digest):
+        assert ci_runtime.extract_emulator(archive, destination) == hashlib.sha256(elf).hexdigest()
+    assert destination.read_bytes() == elf
+    destination.unlink()
+    elf[18:20] = b'\x3e\x00'
+    archive = archive_for(elf)
+    with mock.patch.object(ci_runtime, 'EMULATOR_ARCHIVE_SHA256', hashlib.sha256(archive.read_bytes()).hexdigest()), pytest.raises(ValueError, match='ARM64 ELF'):
+        ci_runtime.extract_emulator(archive, destination)
+    assert not destination.exists()
+
+
+def test_local_emulator_version_must_match_its_pin():
+    from scripts import ci_runtime
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value='qemu-x86_64 version 8.0.0'), pytest.raises(ValueError, match='unexpected version'):
+        ci_runtime.prove_runtime(['--entrypoint', '/ci-runtime/buildkit-qemu-x86_64'], {'emulator': {}}, 'pinned-image')
