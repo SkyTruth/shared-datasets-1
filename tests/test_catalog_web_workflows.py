@@ -184,15 +184,28 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertNotIn("push", trigger)
         self.assertEqual(
             trigger["workflow_run"]["workflows"],
-            ["Approved dataset mutation", "Release index rebuild"],
+            ["Release index rebuild"],
         )
         self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
         self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        self.assertIn("workflow_dispatch", trigger)
+        self.assertNotIn("workflow_dispatch", trigger)
+        self.assertEqual(set(trigger["workflow_call"]["inputs"]), {
+            "executor_sha", "authorization_artifact_id", "authorization_sha256", "pr_number", "mutation_completed",
+        })
         self.assertEqual(job["environment"], "shared-datasets-production")
         self.assertEqual(job["concurrency"]["group"], "catalog-web-deploy")
         self.assertFalse(job["concurrency"]["cancel-in-progress"])
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"],
+                         "${{ inputs.executor_sha || github.event.workflow_run.head_sha }}")
+        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
+        step_names = list(steps)
+        self.assertLess(step_names.index("Verify successful mutation provenance"),
+                        step_names.index("Authenticate to Google Cloud"))
+        self.assertLess(step_names.index("Verify successful release index rebuild provenance"),
+                        step_names.index("Authenticate to Google Cloud"))
+        self.assertIn("dataset_mutation_authorization.py verify", steps["Verify successful mutation provenance"]["run"])
+        self.assertIn("catalog_refresh_authorization.py", steps["Verify successful mutation provenance"]["run"])
+        self.assertIn("Verify live catalog after publication", steps)
         self.assertEqual(
             env["PUBLISHER_SERVICE_ACCOUNT"],
             "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
