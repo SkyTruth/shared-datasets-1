@@ -53,6 +53,16 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertTrue(any("runWithOverrides" in item for item in errors))
         self.assertTrue(any("bootstrap" in item for item in errors))
 
+    def test_missing_generic_proof_and_direct_policy_push_cannot_pass(self):
+        path = self.root / ".github/workflows/prod-terraform-target-apply.yml"
+        text = path.read_text().replace("      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: true", "      source_run_id:\n        description: Main-push CI run that tested executor_sha\n        required: false")
+        path.write_text(text)
+        caller = self.root / ".github/workflows/cron-alert-policy-sync.yml"
+        caller.write_text(caller.read_text().replace("  workflow_call:\n", "  push:\n    branches: [main]\n  workflow_call:\n", 1))
+        errors = contracts.iam_contract(self.root)
+        self.assertTrue(any("must require source_run_id" in item for item in errors))
+        self.assertTrue(any("ci-ready" in item for item in errors))
+
     def test_shallow_mutable_checkout_rejected(self):
         path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
         path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor_sha }}", "ref: main"))

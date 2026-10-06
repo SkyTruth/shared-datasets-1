@@ -1,19 +1,38 @@
 name: Artifact Registry IAM sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/artifact-registry-iam-sync.yml"
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - "terraform/envs/prod/artifact_registry_iam.tf"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
@@ -23,6 +42,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: artifact-registry-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
       sync_name: Artifact Registry IAM sync
       refusal_prefix: Refusing automatic Artifact Registry IAM bootstrap
       # Wait for IAM policy manager propagation before the writer binding plan.
@@ -43,6 +67,11 @@ jobs:
     needs: bootstrap
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: artifact-registry-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: artifact-registry
       sync_name: Artifact Registry writer binding sync
       refusal_prefix: Refusing automatic Artifact Registry IAM writer sync
       targets: |

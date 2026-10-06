@@ -1,22 +1,38 @@
 name: Cron alert policy sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/cron-alert-policy-sync.yml"
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - "terraform/envs/prod/canonical_mutation_iam.tf"
-      - "terraform/envs/prod/wdpa_execution_observer.tf"
-      - "terraform/envs/prod/monitoring.tf"
-      - "terraform/envs/prod/monitoring_alert_policy_iam.tf"
-      - "terraform/envs/prod/monitoring_variables.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
@@ -26,6 +42,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: cron-alert-policy-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
       sync_name: Monitoring alert policy IAM bootstrap
       refusal_prefix: Refusing automatic Monitoring alert policy IAM bootstrap
       # Wait for the role grant to propagate before the policies are applied.
@@ -46,6 +67,11 @@ jobs:
     needs: bootstrap
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: cron-alert-policy-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: monitoring-alerts
       sync_name: Cron alert policy sync
       refusal_prefix: Refusing automatic cron alert policy sync
       targets: |

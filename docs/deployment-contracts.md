@@ -41,6 +41,16 @@ caller never holds that same queue. The main pipeline invokes shared ingestion
 IAM once, before dependents; the secret authority bootstrap precedes runtime
 binding plans, with live permission verification between them.
 
+Artifact Registry IAM, preview IAM, scratch cleanup IAM and cron alert policies
+also use callable workflows after `ci-ready`, with explicit tested source inputs
+for restricted manual recovery. The generic target apply requires those inputs
+and a registered caller contract for every invocation. Target records bind each
+sync name to its actual trusted workflow. Artifact Registry and monitoring role
+bootstraps precede dependent policies; preview role authority precedes service
+account creation and bindings. Read-only probes check the actual registry or
+bucket policy resource and the declared project permissions before planning.
+These checks grant no additional authority and retain the existing allowlists.
+
 ## Deployment records and outcomes
 
 Each target records its exact tested revision, source CI attempt, execution run,
@@ -82,7 +92,12 @@ of that image to have terminal success. Only then can it reconcile the record
 as verified. It performs no production apply or dataset writes. Later attempts,
 drift, partial apply, missing scope, failed execution or incompatible state are
 refused and require a reviewed repair. IAM/CDN/publication recovery retains its
-own constrained reviewed workflow and durable transaction rules.
+own constrained reviewed workflow and durable transaction rules. Registered IAM
+and monitoring target records also support this read-only reconciliation: the
+workflow refreshes the original explicit target scope and accepts only a
+complete no-change plan. It performs no apply, does not grant new permissions,
+and cannot reconcile partial or incompatible state. CDN and dataset publication
+retain their separate reviewed transaction paths.
 
 Manual deployment recovery uses explicit `executor_sha`, `source_run_id` and
 `source_run_attempt` identifying successful main-push CI. It cannot authorize a

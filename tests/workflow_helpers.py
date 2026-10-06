@@ -94,6 +94,7 @@ def assert_target_apply_caller(
     if push_paths is None:
         testcase.assertNotIn("push", trigger)
         testcase.assertIn("workflow_call", trigger)
+        testcase.assertEqual(inputs["caller_workflow"], workflow_path.name)
         for name in ("executor_sha", "source_run_id", "source_run_attempt"):
             testcase.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
             testcase.assertEqual(inputs[name], "${{ inputs." + name + " }}")

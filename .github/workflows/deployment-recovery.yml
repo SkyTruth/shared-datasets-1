@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       deployment_id:
-        description: Failed or interrupted ingestion deployment record to reconcile without mutation
+        description: Failed or interrupted ingestion or registered Terraform deployment record to reconcile without mutation
         required: true
         type: string
 
@@ -62,6 +62,7 @@ jobs:
           TARGETS_JSON: ${{ steps.original.outputs.targets }}
           TARGET: ${{ steps.original.outputs.target }}
           IMAGE: ${{ steps.original.outputs.image }}
+          KIND: ${{ steps.original.outputs.kind }}
         run: |
           set -euo pipefail
           terraform -chdir=terraform/envs/prod init -input=false
@@ -72,9 +73,10 @@ jobs:
             wdpa-monthly) args+=(-var="wdpa_monthly_image=$IMAGE") ;;
             eamlis-monthly) args+=(-var="eamlis_monthly_image=$IMAGE") ;;
             sea-ice-daily) args+=(-var="sea_ice_daily_image=$IMAGE") ;;
+            terraform-*) if [[ "$KIND" != "terraform" ]]; then exit 1; fi ;;
             *) exit 1 ;;
           esac
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod plan "${args[@]}"
           terraform -chdir=terraform/envs/prod show -json "$RUNNER_TEMP/reconciliation.tfplan" > "$RUNNER_TEMP/reconciliation.json"
-      - name: Reconcile only a complete apply and successful exact-image execution
+      - name: Reconcile complete target state and applicable runtime evidence
         run: python scripts/deployment_revision.py reconcile --deployment-id "$DEPLOYMENT_ID" --plan-json "$RUNNER_TEMP/reconciliation.json"

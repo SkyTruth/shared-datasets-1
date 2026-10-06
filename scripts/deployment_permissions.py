@@ -24,6 +24,12 @@ BUCKET_PERMISSIONS = ("storage.buckets.get", "storage.managedFolders.create", "s
 SECRET_PERMISSIONS = (
     "secretmanager.secrets.get", "secretmanager.secrets.getIamPolicy", "secretmanager.secrets.setIamPolicy",
 )
+MONITORING_PERMISSIONS = (
+    "logging.notificationRules.create", "logging.notificationRules.delete",
+    "monitoring.alertPolicies.create", "monitoring.alertPolicies.delete",
+    "monitoring.alertPolicies.get", "monitoring.alertPolicies.list", "monitoring.alertPolicies.update",
+    "monitoring.notificationChannels.get", "monitoring.notificationChannels.list",
+)
 
 
 def request(url, permissions, token):
@@ -39,8 +45,18 @@ def request(url, permissions, token):
 
 def checks(target):
     secret = (f"https://secretmanager.googleapis.com/v1/projects/{PROJECT}/secrets/{SECRET}:testIamPermissions", SECRET_PERMISSIONS)
+    project_url = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
     if target == "iam-bootstrap":
-        return [(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
+        return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
+    if target == "artifact-registry":
+        return [(f"https://artifactregistry.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/repositories/shared-datasets-jobs:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
+    if target == "monitoring-alerts":
+        return [(project_url, MONITORING_PERMISSIONS)]
+    if target == "preview-service-account-iam":
+        return [(project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"))]
+    if target == "bucket-iam":
+        expected = ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy")
+        return [("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?" + urlencode([("permissions", value) for value in expected]), expected)]
     if target in {"pmtiles-cdn", "pmtiles-cdn-bootstrap"}:
         expected = BUCKET_PERMISSIONS if target == "pmtiles-cdn" else ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy", "storage.buckets.update")
         bucket = ("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?" + urlencode([("permissions", value) for value in expected]), expected)
@@ -50,6 +66,8 @@ def checks(target):
         return [(f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", ("run.services.get", "run.services.update", "run.services.getIamPolicy", "run.services.setIamPolicy", "run.operations.get")), signing_secret]
     if target == "translation-bootstrap":
         return [secret]
+    if target == "ingestion-iam":
+        return checks("iam-bootstrap") + checks("bucket-iam") + [secret]
     project = (f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions", PROJECT_PERMISSIONS)
     return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
 
@@ -68,7 +86,7 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", required=True, choices=["pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
+    parser.add_argument("--target", required=True, choices=["artifact-registry", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
     args = parser.parse_args()
     token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
     if not token:

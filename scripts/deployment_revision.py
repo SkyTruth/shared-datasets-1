@@ -8,6 +8,7 @@ publication transactions.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,21 @@ TARGET_WORKFLOWS = {
     "pmtiles-cdn": "pmtiles-cdn-sync.yml",
     "catalog-web": "catalog-web-deploy.yml",
     "catalog-viewer": "catalog-viewer-deploy.yml",
+}
+TERRAFORM_SYNCS = {
+    "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
+    "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
+    "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",
+    "Artifact Registry writer binding sync": "artifact-registry-iam-sync.yml",
+    "Preview Terraform IAM bootstrap": "preview-terraform-iam-sync.yml",
+    "Preview Terraform IAM sync": "preview-terraform-iam-sync.yml",
+    "Scratch cleanup IAM sync": "scratch-cleanup-iam-sync.yml",
+    "Monitoring alert policy IAM bootstrap": "cron-alert-policy-sync.yml",
+    "Cron alert policy sync": "cron-alert-policy-sync.yml",
+}
+TERRAFORM_WORKFLOWS = {
+    "terraform-" + hashlib.sha256(name.encode()).hexdigest()[:16]: workflow
+    for name, workflow in TERRAFORM_SYNCS.items()
 }
 
 
@@ -95,7 +111,7 @@ def verify_record(api, repository, record):
     payload = record_payload(record)
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     execution = api.get(f"repos/{repository}/actions/runs/{payload['execution_run_id']}/attempts/{payload['execution_run_attempt']}")
-    target_workflow = "scheduled-ingestion-deploy-iam-sync.yml" if payload["target"].startswith("terraform-") else TARGET_WORKFLOWS.get(payload["target"])
+    target_workflow = TERRAFORM_WORKFLOWS.get(payload["target"], TARGET_WORKFLOWS.get(payload["target"]))
     require(target_workflow is not None, "unknown deployment target contract")
     require(execution.get("id") == payload["execution_run_id"] and execution.get("run_attempt") == payload["execution_run_attempt"], "deployment execution attempt mismatch")
     allowed_callers = {".github/workflows/ci.yml", f".github/workflows/{target_workflow}"}
@@ -167,6 +183,7 @@ def git_ancestor(older, newer):
 
 def verify_context(args, api):
     repository = os.environ["GITHUB_REPOSITORY"]
+    require(args.workflow in set(TARGET_WORKFLOWS.values()) | set(TERRAFORM_SYNCS.values()), "unknown deployment workflow contract")
     require(os.environ.get("GITHUB_REF") == "refs/heads/main", "production requires main ref")
     current = api.get(f"repos/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
     allowed_path = f".github/workflows/{args.workflow}"
@@ -210,7 +227,8 @@ def verify_context(args, api):
 
 def check(args, api):
     repository = verify_context(args, api)
-    require(TARGET.fullmatch(args.target) and (args.target in TARGET_WORKFLOWS or args.target.startswith("terraform-")), "invalid deployment target")
+    require(TARGET.fullmatch(args.target) and args.target in (TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS), "invalid deployment target")
+    require((TARGET_WORKFLOWS | TERRAFORM_WORKFLOWS)[args.target] == args.workflow, "deployment target differs from its workflow contract")
     environment = f"production-{args.target}"
     records = api.pages(f"repos/{repository}/deployments?environment={environment}&per_page=100")
     for record in records:
@@ -238,6 +256,8 @@ def start(args, api):
     if args.plan_json:
         plan = json.loads(Path(args.plan_json).read_text())
         targets = [r["address"] for r in plan.get("resource_changes", []) if r.get("change", {}).get("actions") not in ([], ["no-op"], ["read"])]
+    if getattr(args, "plan_scope", None):
+        targets = [target for target in args.plan_scope.splitlines() if target]
     require(all(re.fullmatch(r'[A-Za-z0-9_.\[\]"-]+', target) for target in targets), "invalid saved-plan target")
     record = api.post(f"repos/{repository}/deployments", {
         "ref": args.executor_sha, "environment": environment,
@@ -351,7 +371,7 @@ def recovery_record(args, api):
             f"{repository}/.github/workflows/deployment-recovery.yml@refs/heads/main", "untrusted reconciliation workflow")
     record = api.get(f"repos/{repository}/deployments/{args.deployment_id}")
     payload = verify_record(api, repository, record)
-    require(payload.get("target") in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"}, "infrastructure recovery requires a reviewed targeted workflow")
+    require(payload.get("target") in {"wdpa-monthly", "eamlis-monthly", "sea-ice-daily"} | set(TERRAFORM_WORKFLOWS), "infrastructure recovery requires a reviewed targeted workflow")
     verify_ci(api, repository, record["sha"], payload["ci_run_id"], payload["ci_run_attempt"])
     require(re.fullmatch(r"[a-z0-9./_-]+@sha256:[0-9a-f]{64}", payload.get("artifact", "")), "missing immutable recovery artifact")
     targets = payload.get("targets")
@@ -366,6 +386,7 @@ def recover(args, api):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream:
             stream.write(f"executor_sha={record['sha']}\ntarget={payload['target']}\nimage={payload['artifact']}\n")
             stream.write("targets=" + json.dumps(payload["targets"]) + "\n")
+            stream.write("kind=" + ("terraform" if payload["target"] in TERRAFORM_WORKFLOWS else "ingestion") + "\n")
         return
     require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == record["sha"], "recovery checkout differs from original tested executor")
     for other in api.pages(f"repos/{repository}/deployments?environment={record['environment']}&per_page=100"):
@@ -373,6 +394,13 @@ def recover(args, api):
         require(other["id"] == record["id"] or (other["sha"] != record["sha"] and git_ancestor(other["sha"], record["sha"])), "a later attempt prevents reconciliation of this revision")
     plan = json.loads(Path(args.plan_json).read_text())
     require(all(r.get("change", {}).get("actions") in ([], ["no-op"], ["read"]) for r in plan.get("resource_changes", [])), "target has drift or an incomplete apply; reconciliation must not apply it automatically")
+    if payload["target"] in TERRAFORM_WORKFLOWS:
+        api.post(f"repos/{repository}/deployments/{args.deployment_id}/statuses", {
+            "state": "success", "description": "applied", "auto_inactive": False,
+            "log_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+        })
+        print("Original tested Terraform target scope has no changes; record reconciled without mutation.")
+        return
     raw = json.loads(subprocess.check_output(["gcloud", "run", "jobs", "describe", payload["target"], "--region=us-central1", "--project=shared-datasets-1", "--format=json"]))
     image = raw.get("spec", {}).get("template", {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("image")
     require(image == payload["artifact"], "live job does not use original tested artifact")
@@ -403,6 +431,7 @@ def main():
             begin.add_argument("--artifact", required=command == "start")
         if command == "start":
             begin.add_argument("--plan-json")
+            begin.add_argument("--plan-scope")
     end = commands.add_parser("finish")
     end.add_argument("--deployment-id", required=True, type=int)
     end.add_argument("--execution", default="")

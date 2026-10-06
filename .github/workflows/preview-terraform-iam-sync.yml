@@ -1,43 +1,88 @@
 name: Preview Terraform IAM sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/preview-terraform-iam-sync.yml"
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/preview_terraform_iam.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
 jobs:
+  bootstrap:
+    name: Bootstrap preview Terraform role authority
+    uses: ./.github/workflows/prod-terraform-target-apply.yml
+    with:
+      caller_workflow: preview-terraform-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
+      sync_name: Preview Terraform IAM bootstrap
+      refusal_prefix: Refusing automatic preview Terraform IAM bootstrap
+      block_deletes: true
+      post_apply_wait_seconds: 30
+      targets: |
+        google_project_iam_custom_role.preview_terraform
+        google_project_iam_member.github_actions_preview_terraform
+      allowed_exact: |
+        google_project_iam_custom_role.preview_terraform
+        google_project_iam_member.github_actions_preview_terraform
+      tf_vars: |
+        wdpa_monthly_image=unused-by-preview-terraform-iam-sync
+        sea_ice_daily_image=unused-by-preview-terraform-iam-sync
+        eamlis_monthly_image=unused-by-preview-terraform-iam-sync
+
   sync:
     name: Apply preview Terraform IAM sync
+    needs: bootstrap
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: preview-terraform-iam-sync.yml
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: preview-service-account-iam
       sync_name: Preview Terraform IAM sync
       refusal_prefix: Refusing automatic preview Terraform IAM sync
       block_deletes: true
       targets: |
-        google_project_iam_custom_role.preview_terraform
         module.feature_preview_service_account.google_service_account.this
         module.feature_preview_loader_service_account.google_service_account.this
-        google_project_iam_member.github_actions_preview_terraform
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
       allowed_exact: |
-        google_project_iam_custom_role.preview_terraform
         module.feature_preview_service_account.google_service_account.this
         module.feature_preview_loader_service_account.google_service_account.this
-        google_project_iam_member.github_actions_preview_terraform
         google_service_account_iam_member.feature_preview_loader_github_wif
         google_service_account_iam_member.feature_preview_service_self_sign_blob
       tf_vars: |

@@ -19,7 +19,8 @@ sys.path.insert(0, str(ROOT))
 import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
-from scripts.deployment_permissions import PROJECT_PERMISSIONS, SECRET_PERMISSIONS
+from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
+from scripts.deployment_revision import TERRAFORM_SYNCS
 
 DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -50,8 +51,34 @@ def iam_contract(root):
     bootstrap_targets = iam["bootstrap"].get("with", {}).get("targets", "")
     if "google_project_iam_member.github_actions_translation_notice_iam_manager" not in bootstrap_targets:
         errors.append("translation secret authority has no explicit bootstrap target")
-    if iam["sync"].get("with", {}).get("readiness_target") != "translation-bootstrap":
+    if iam["sync"].get("with", {}).get("readiness_target") != "ingestion-iam":
         errors.append("runtime grants must verify live secret permission readiness after bootstrap")
+    monitoring = (root / "terraform/envs/prod/monitoring_alert_policy_iam.tf").read_text()
+    missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
+    if missing:
+        errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
+    generic = workflow(root, "prod-terraform-target-apply.yml")
+    required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
+    for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
+        if not required[key].get("required"):
+            errors.append(f"generic Terraform apply must require {key}")
+    for filename in sorted(set(TERRAFORM_SYNCS.values())):
+        caller = workflow(root, filename)
+        triggers = caller.get("on", caller.get(True))
+        if set(triggers) != {"workflow_call", "workflow_dispatch"}:
+            errors.append(f"{filename}: automatic mutation must be called after ci-ready")
+        for name, job in caller["jobs"].items():
+            inputs = job["with"]
+            if inputs.get("caller_workflow") != filename or TERRAFORM_SYNCS.get(inputs["sync_name"]) != filename:
+                errors.append(f"{filename}/{name}: target does not belong to its trusted caller")
+            if not inputs.get("readiness_target"):
+                errors.append(f"{filename}/{name}: live permission prerequisite is missing")
+            for key in ("executor_sha", "source_run_id", "source_run_attempt"):
+                if inputs.get(key) != "${{ inputs." + key + " }}" or not all(triggers[event]["inputs"][key].get("required") for event in ("workflow_call", "workflow_dispatch")):
+                    errors.append(f"{filename}/{name}: exact tested {key} must be required and forwarded")
+    for filename, child in (("artifact-registry-iam-sync.yml", "writer"), ("cron-alert-policy-sync.yml", "sync"), ("preview-terraform-iam-sync.yml", "sync")):
+        if workflow(root, filename)["jobs"][child].get("needs") != "bootstrap":
+            errors.append(f"{filename}: bootstrap authority must precede dependent mutation")
     return errors
 
 

@@ -401,8 +401,10 @@ class FeaturePreviewTests(unittest.TestCase):
         self.assertNotIn("roles/editor", preview_terraform_tf)
         self.assertIn("Preview Terraform IAM sync", workflow)
         self.assertIn("uses: ./.github/workflows/prod-terraform-target-apply.yml", workflow)
-        self.assertIn("terraform/envs/prod/main.tf", workflow)
-        self.assertIn("terraform/envs/prod/preview_terraform_iam.tf", workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("source_run_attempt:", workflow)
+        self.assertIn("needs: bootstrap", workflow)
+        self.assertIn("caller_workflow: preview-terraform-iam-sync.yml", workflow)
         self.assertIn("allowed_exact", workflow)
         self.assertIn(
             "google_project_iam_custom_role.preview_terraform",

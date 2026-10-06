@@ -42,6 +42,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: scheduled-ingestion-deploy-iam-sync.yml
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
@@ -66,10 +67,11 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      caller_workflow: scheduled-ingestion-deploy-iam-sync.yml
       executor_sha: ${{ inputs.executor_sha }}
       source_run_id: ${{ inputs.source_run_id }}
       source_run_attempt: ${{ inputs.source_run_attempt }}
-      readiness_target: translation-bootstrap
+      readiness_target: ingestion-iam
       sync_name: Scheduled ingestion deploy IAM sync
       refusal_prefix: Refusing automatic scheduled ingestion deploy IAM sync
       targets: |

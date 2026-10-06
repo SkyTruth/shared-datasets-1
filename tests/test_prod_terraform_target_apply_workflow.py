@@ -18,7 +18,6 @@ PREVIEW_TERRAFORM = REPO_ROOT / ".github/workflows/preview-terraform-iam-sync.ym
 SCHEDULED_INGESTION = REPO_ROOT / ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
 SCRATCH_CLEANUP = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
 
-REUSABLE_PATH_ENTRY = ".github/workflows/prod-terraform-target-apply.yml"
 
 
 class ReusableTargetApplyWorkflowTests(unittest.TestCase):
@@ -35,7 +34,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
             self.job["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha || github.sha }}")
+        self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])
         self.assertIn("may only apply from main", self.steps["Validate main ref"]["run"])
         self.assertIn(
@@ -51,6 +50,21 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
             self.workflow["env"]["TERRAFORM_WORKLOAD_IDENTITY_PROVIDER"],
         )
         self.assertIn("GCP_TERRAFORM_SERVICE_ACCOUNT", self.workflow["env"]["TERRAFORM_SERVICE_ACCOUNT"])
+
+    def test_every_mutation_requires_trusted_source_proof_and_a_record(self):
+        inputs = self.trigger["workflow_call"]["inputs"]
+        for key in ("caller_workflow", "executor_sha", "source_run_id", "source_run_attempt", "readiness_target"):
+            self.assertTrue(inputs[key]["required"], key)
+        names = list(self.steps)
+        self.assertEqual(self.steps["Check out trusted verifier"]["with"]["ref"], "${{ github.workflow_sha }}")
+        self.assertLess(names.index("Verify executor before candidate checkout"), names.index("Check out repository"))
+        self.assertLess(names.index("Verify tested main revision"), names.index("Authenticate to Google Cloud"))
+        self.assertLess(names.index("Claim tested deployment revision"), names.index("Terraform apply"))
+        self.assertNotIn("if", self.steps["Verify executor before candidate checkout"])
+        self.assertNotIn("if", self.steps["Verify tested main revision"])
+        self.assertEqual(self.steps["Terraform apply"]["if"], "${{ steps.revision.outputs.proceed == 'true' }}")
+        self.assertIn('--workflow "$CALLER_WORKFLOW"', self.steps["Verify tested main revision"]["run"])
+        self.assertIn('--plan-scope "$TARGETS"', self.steps["Claim tested deployment revision"]["run"])
 
     def test_terraform_dir_is_restricted_to_prod(self):
         inputs = self.trigger["workflow_call"]["inputs"]
@@ -81,7 +95,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
     def test_optional_post_apply_wait(self):
         wait_step = self.steps["Wait after apply"]
         self.assertIn("inputs.post_apply_wait_seconds > 0", wait_step["if"])
-        self.assertIn("steps.replay.outputs.proceed == 'true'", wait_step["if"])
+        self.assertIn("steps.revision.outputs.proceed == 'true'", wait_step["if"])
         self.assertIn('sleep "${WAIT_SECONDS}"', wait_step["run"])
 
 
@@ -143,22 +157,14 @@ class TargetApplyCallerTests(unittest.TestCase):
             self,
             PREVIEW_TERRAFORM,
             expected_name="Preview Terraform IAM sync",
-            push_paths={
-                ".github/workflows/preview-terraform-iam-sync.yml",
-                REUSABLE_PATH_ENTRY,
-                "terraform/envs/prod/main.tf",
-                "terraform/envs/prod/preview_terraform_iam.tf",
-                "terraform/envs/prod/variables.tf",
-                "terraform/envs/prod/versions.tf",
-            },
+            push_paths=None,
             sync_name="Preview Terraform IAM sync",
             refusal_prefix="Refusing automatic preview Terraform IAM sync",
             expected_block_deletes=True,
+            expected_needs="bootstrap",
             expected_targets={
-                "google_project_iam_custom_role.preview_terraform",
                 "module.feature_preview_service_account.google_service_account.this",
                 "module.feature_preview_loader_service_account.google_service_account.this",
-                "google_project_iam_member.github_actions_preview_terraform",
                 "google_service_account_iam_member.feature_preview_loader_github_wif",
                 "google_service_account_iam_member.feature_preview_service_self_sign_blob",
             },
@@ -169,17 +175,23 @@ class TargetApplyCallerTests(unittest.TestCase):
             },
         )
 
+    def test_preview_role_bootstrap_retains_existing_narrow_authority(self):
+        workflow = load_workflow(PREVIEW_TERRAFORM)
+        bootstrap = workflow["jobs"]["bootstrap"]["with"]
+        self.assertEqual(set(bootstrap["targets"].split()), {
+            "google_project_iam_custom_role.preview_terraform", "google_project_iam_member.github_actions_preview_terraform",
+        })
+        self.assertEqual(bootstrap["targets"], bootstrap["allowed_exact"])
+        self.assertTrue(bootstrap["block_deletes"])
+        self.assertEqual(bootstrap["readiness_target"], "iam-bootstrap")
+        self.assertEqual(workflow["jobs"]["sync"]["with"]["readiness_target"], "preview-service-account-iam")
+
     def test_scratch_cleanup_iam_sync_caller_uses_full_prod_root(self):
         assert_target_apply_caller(
             self,
             SCRATCH_CLEANUP,
             expected_name="Scratch cleanup IAM sync",
-            push_paths={
-                REUSABLE_PATH_ENTRY,
-                "terraform/envs/prod/canonical_mutation_iam.tf",
-                "terraform/envs/prod/variables.tf",
-                "terraform/envs/prod/versions.tf",
-            },
+            push_paths=None,
             sync_name="Scratch cleanup IAM sync",
             refusal_prefix="Refusing automatic scratch cleanup IAM sync",
             expected_targets={
@@ -199,14 +211,6 @@ class TargetApplyCallerTests(unittest.TestCase):
         )
 
     def test_artifact_registry_iam_sync_runs_bootstrap_then_writer(self):
-        common_paths = {
-            ".github/workflows/artifact-registry-iam-sync.yml",
-            REUSABLE_PATH_ENTRY,
-            "terraform/envs/prod/artifact_registry_iam.tf",
-            "terraform/envs/prod/main.tf",
-            "terraform/envs/prod/variables.tf",
-            "terraform/envs/prod/versions.tf",
-        }
         tf_vars = {
             "wdpa_monthly_image=unused-by-artifact-registry-iam-sync",
             "sea_ice_daily_image=unused-by-artifact-registry-iam-sync",
@@ -216,7 +220,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             self,
             ARTIFACT_REGISTRY,
             expected_name="Artifact Registry IAM sync",
-            push_paths=common_paths,
+            push_paths=None,
             job_name="bootstrap",
             sync_name="Artifact Registry IAM sync",
             refusal_prefix="Refusing automatic Artifact Registry IAM bootstrap",
@@ -231,7 +235,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             self,
             ARTIFACT_REGISTRY,
             expected_name="Artifact Registry IAM sync",
-            push_paths=common_paths,
+            push_paths=None,
             job_name="writer",
             expected_job_if=None,
             expected_needs="bootstrap",

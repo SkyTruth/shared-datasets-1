@@ -125,6 +125,15 @@ class PermissionReadinessTests(unittest.TestCase):
         self.assertIn("/secrets/shared-datasets-slack-webhook-url:testIamPermissions", checks[0][0])
         self.assertIn("secretmanager.secrets.setIamPolicy", checks[0][1])
 
+    def test_artifact_and_bucket_policy_probes_use_actual_resources(self):
+        registry = permissions.checks("artifact-registry")
+        self.assertEqual(len(registry), 1)
+        self.assertIn("/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions", registry[0][0])
+        self.assertEqual(set(registry[0][1]), {"artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"})
+        bucket = permissions.checks("bucket-iam")
+        self.assertIn("/b/skytruth-shared-datasets-1/iam/testPermissions?", bucket[0][0])
+        self.assertIn("storage.buckets.setIamPolicy", bucket[0][1])
+
     def test_propagation_retries_reads_then_passes(self):
         probe = Mock(side_effect=[["secretmanager.secrets.get"], []])
         pause = Mock()
@@ -182,6 +191,30 @@ class CallerAndRecordTests(unittest.TestCase):
             with self.subTest(key=key), patch.object(self.api, "get", side_effect=route), self.assertRaises(d.DeploymentError):
                 d.verify_record(self.api, REPO, record)
 
+    def test_each_terraform_target_binds_its_actual_manual_caller(self):
+        for sync, workflow in d.TERRAFORM_SYNCS.items():
+            target = "terraform-" + d.hashlib.sha256(sync.encode()).hexdigest()[:16]
+            record = ReplayTests.record(CURRENT)
+            record["environment"] = "production-" + target
+            record["payload"].update(target=target, execution_run_id=14, execution_run_attempt=1)
+            execution = {**self.run, "id": 14, "run_attempt": 1, "event": "workflow_dispatch", "head_sha": NEW,
+                         "path": ".github/workflows/" + workflow, "workflow_id": 21}
+            def route(path):
+                if path.endswith("/actions/runs/14/attempts/1"):
+                    return execution
+                if path.endswith("/actions/workflows/" + workflow):
+                    return {"id": 21, "path": ".github/workflows/" + workflow}
+                return self.route(path)
+            with self.subTest(sync=sync), patch.object(self.api, "get", side_effect=route):
+                self.assertEqual(d.verify_record(self.api, REPO, record)["target"], target)
+
+    def test_unknown_terraform_record_cannot_satisfy_a_noop(self):
+        record = ReplayTests.record(CURRENT)
+        record["environment"] = "production-terraform-unregistered"
+        record["payload"]["target"] = "terraform-unregistered"
+        with self.assertRaisesRegex(d.DeploymentError, "unknown deployment target"):
+            d.verify_record(self.api, REPO, record)
+
     def test_fake_success_status_cannot_skip_a_deployment(self):
         record = ReplayTests.record(CURRENT)
         for status in [{"state": "success", "creator": {"login": "human"}},
@@ -191,6 +224,26 @@ class CallerAndRecordTests(unittest.TestCase):
 
 
 class ReconciliationTests(unittest.TestCase):
+    def test_completed_iam_apply_can_be_reconciled_without_mutation(self):
+        import json
+        from pathlib import Path
+        import tempfile
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as root:
+            plan = Path(root) / "plan.json"
+            plan.write_text(json.dumps({"resource_changes": []}))
+            args = SimpleNamespace(command="reconcile", deployment_id=1, plan_json=str(plan))
+            record = ReplayTests.record(CURRENT)
+            target = "terraform-" + d.hashlib.sha256(b"Cron alert policy sync").hexdigest()[:16]
+            record["environment"] = "production-" + target
+            record["payload"]["target"] = target
+            api = Mock()
+            api.pages.return_value = [record]
+            with patch.dict(d.os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "19"}), patch.object(d, "recovery_record", return_value=(record, record["payload"])), patch.object(d.subprocess, "check_output", return_value=CURRENT) as commands:
+                d.recover(args, api)
+            commands.assert_called_once_with(["git", "rev-parse", "HEAD"], text=True)
+            self.assertEqual(api.post.call_args.args[1]["description"], "applied")
+
     def test_changed_target_plan_cannot_be_marked_recovered(self):
         import json
         from pathlib import Path
