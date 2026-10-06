@@ -38,6 +38,9 @@ implementation because older Apple Linux VMs advertise unsupported extensions
 [upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
 The locked wheel, algorithms and test corpus remain unchanged; this setting is
 included in the recorded runtime evidence.
+Browser validation removes its process-owned uv download cache after installing
+the locked fixture environment, reducing Chromium's peak disk use without
+removing installed dependencies or changing test coverage.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
 scanning, admission and diff/static guardrails, and Python tests. It adds native,
