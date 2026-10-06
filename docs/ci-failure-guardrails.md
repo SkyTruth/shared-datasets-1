@@ -48,15 +48,18 @@ records use the canonical config digest. Strict single-image normalization and
 cross-daemon verification preserve the config and layers. WDPA retains its
 separately accepted private producer and staging evidence and exact-image checks.
 
-Retained acceptance also requires available bytes. Selected WDPA release
-validation must check live artifact availability and exact download identity
+Retained acceptance also requires available bytes. Selected `wdpa_processing`
+validation must check live staging-artifact availability and reviewed ZIP identity
 before dependent deployment; static acceptance metadata alone is insufficient.
-The accepted benchmark image, artifact 11263851699, expires on October 10, 2026
-at 04:03:21 UTC. Its verified uncompressed archive is 1,381,262,848 bytes, within
-the 2 GiB archive bound. An unavailable, expired or mismatched retained input must
-fail admission visibly. Renewed evidence must retain the review, source
-fingerprint and acceptance requirements; rebuilding or replacing it implicitly
-cannot preserve acceptance. These availability checks grant no mutation authority.
+Its accepted benchmark image archive, artifact 11263851699, expires on October 10,
+2026 at 04:03:21 UTC. Admission requires more than 24 hours remaining for the queue
+and download. Its verified uncompressed archive is 1,381,262,848 bytes, within the
+2 GiB archive bound. An unavailable, near-expiry, expired or mismatched staging
+input must fail admission visibly. Monthly WDPA promotion instead uses its
+approved persistent registry image; this staging-archive expiry does not apply to
+that image. Renewed staging evidence must retain the review, source fingerprint
+and acceptance requirements; rebuilding or replacing it implicitly cannot
+preserve acceptance. These availability checks grant no mutation authority.
 
 ## Seven-day comparison
 
