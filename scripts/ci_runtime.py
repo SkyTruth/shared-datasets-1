@@ -75,9 +75,9 @@ def prove_runtime(arguments: list[str], record: dict, image: str) -> None:
 
 def suite_platform(suite: str, record: dict) -> str:
     # Chromium requires native fork/GPU behavior, and Node child processes have
-    # faulted under cross-architecture emulation. Run unchanged pinned Python and
-    # Node suites natively; release CLI fixtures always exercise amd64.
-    if suite in {"tests", "browser", "sdk-node22", "sdk-node24"} and record["server_architecture"] == "arm64":
+    # faulted under cross-architecture emulation, as has UV during lint setup.
+    # Run unchanged pinned tools natively; release CLI fixtures exercise amd64.
+    if suite in {"lint", "tests", "browser", "sdk-node22", "sdk-node24"} and record["server_architecture"] == "arm64":
         return "linux/arm64"
     return "linux/amd64"
 
