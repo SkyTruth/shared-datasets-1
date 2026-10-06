@@ -239,6 +239,10 @@ jobs:
           uv run --no-sync python scripts/check_wdpa_validation_plan.py \
             "$RUNNER_TEMP/wdpa-validation-plan.json" --image "$VALIDATION_IMAGE" \
             --deployer "$TERRAFORM_SERVICE_ACCOUNT"
+      - name: Verify complete saved-plan mutation permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target wdpa-processing-validation --plan-json "$RUNNER_TEMP/wdpa-validation-plan.json"
+
       - name: Claim tested deployment revision
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         id: revision
@@ -278,6 +282,7 @@ jobs:
             --block-deletes --refusal-prefix='Refusing WDPA scratch upload probe'
           uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/staging-probe-plan.json" \
             --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT" --staging-probe
+          python scripts/deployment_permissions.py --target wdpa-processing-validation --plan-json "$RUNNER_TEMP/staging-probe-plan.json"
       - name: Apply the saved scratch probe command
         if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}
         run: |
@@ -324,6 +329,7 @@ jobs:
             --block-deletes --refusal-prefix='Refusing WDPA processing command restoration'
           uv run --no-sync python scripts/check_wdpa_validation_plan.py "$RUNNER_TEMP/restore-processing-plan.json" \
             --image "$VALIDATION_IMAGE" --deployer "$TERRAFORM_SERVICE_ACCOUNT"
+          python scripts/deployment_permissions.py --target wdpa-processing-validation --plan-json "$RUNNER_TEMP/restore-processing-plan.json"
           bash scripts/terraform_retry.sh -chdir=terraform/envs/prod apply -input=false "$RUNNER_TEMP/restore-processing.tfplan"
       - name: Start the unattended validation execution
         if: ${{ steps.revision.outputs.proceed == 'true' && inputs.run_validation }}

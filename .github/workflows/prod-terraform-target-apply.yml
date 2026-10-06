@@ -254,6 +254,12 @@ jobs:
           fi
           python scripts/terraform_plan_allowlist.py "${enforce_args[@]}"
 
+      - name: Verify complete saved-plan mutation permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          READINESS_TARGET: ${{ inputs.readiness_target }}
+        run: python scripts/deployment_permissions.py --target "$READINESS_TARGET" --plan-json "$RUNNER_TEMP/target-apply.tfplan.json"
+
       - name: Claim tested deployment revision
         id: revision
         if: ${{ steps.replay.outputs.proceed == 'true' }}
