@@ -91,13 +91,15 @@ a no-change plan and the original live image, and requires the latest execution
 of that image to have terminal success. Only then can it reconcile the record
 as verified. It performs no production apply or dataset writes. Later attempts,
 drift, partial apply, missing scope, failed execution or incompatible state are
-refused and require a reviewed repair. IAM/CDN/publication recovery retains its
-own constrained reviewed workflow and durable transaction rules. Registered IAM
+refused and require a reviewed repair. Registered IAM
 and monitoring target records also support this read-only reconciliation: the
 workflow refreshes the original explicit target scope and accepts only a
 complete no-change plan. It performs no apply, does not grant new permissions,
-and cannot reconcile partial or incompatible state. CDN and dataset publication
-retain their separate reviewed transaction paths.
+and cannot reconcile partial or incompatible state. Dataset publication retains
+its existing reviewed recovery and durable transaction rules. Failed or
+incomplete CDN, viewer, catalog and SDK deployment records remain blocked until
+a reviewed target-specific reconciliation is implemented; this workflow cannot
+clear them.
 
 Manual deployment recovery uses explicit `executor_sha`, `source_run_id` and
 `source_run_attempt` identifying successful main-push CI. It cannot authorize a

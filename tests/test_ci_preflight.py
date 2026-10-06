@@ -55,7 +55,7 @@ def test_unknown_paths_and_shared_dependencies_select_every_suite(path):
 def test_cross_component_dependencies_and_explicit_unselected_suites():
     assert set(select_suites(["docs/consumer-guide.md"])[0]) == ALWAYS
     assert set(select_suites(["api/python/src/skytruth_shared_datasets/snapshot.py"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser", "production-images"}
-    assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == ALWAYS | {"sdk-node22", "sdk-node24", "browser"}
+    assert set(select_suites(["catalog/shared-datasets-catalog.csv"])[0]) == set(SUITES)
     assert "geospatial-integration" in select_suites(["ingestion/common/reset.py"])[0]
     assert "geospatial-integration" in select_suites(["tests/test_wdpa_translation_inputs.py"])[0]
 

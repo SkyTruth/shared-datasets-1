@@ -53,6 +53,7 @@ CONTRACT_FILES = (
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
     "scripts/production_image_contracts.py",
+    "scripts/cdn_plan_readiness.py",
 )
 
 
@@ -73,6 +74,8 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             selected.add("production-images")
         elif path.startswith(("web/", "tests/browser/", "catalog/", "templates/", "docs/assets/")):
             selected.update({"sdk-node22", "sdk-node24", "browser"})
+            if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
+                selected.update({"geospatial-integration", "production-images"})
         elif path.startswith("scripts/"):
             # Scripts are imported by runtime, SDK fixtures, and browser rendering.
             # An explicit narrower rule must prove those dependencies absent.
@@ -106,8 +109,17 @@ def select_deployments(paths: list[str] | None) -> list[str]:
         if path.startswith("ingestion/common/") or path in {
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
             "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
+            "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
         }:
             selected.update(ingestion)
+        if path in {"scripts/catalog_csv.py", "catalog/shared-datasets-catalog.csv"}:
+            selected.update({"eamlis", "wdpa"})
+        if path == "scripts/feature_metadata_translation_reuse.py":
+            selected.add("wdpa")
+        if path.startswith("catalog/feature-identity-resolutions/"):
+            selected.update({"sea_ice", "wdpa"})
+        if path == "docs/assets/ims-sea-ice-extent.md":
+            selected.add("sea_ice")
         if path.startswith("ingestion/eamlis_monthly/") or path in {
             ".github/workflows/eamlis-monthly-deploy.yml", "terraform/envs/prod/eamlis_monthly.tf",
         }:
@@ -134,6 +146,8 @@ def select_deployments(paths: list[str] | None) -> list[str]:
         if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
             ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
             "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",
+            "catalog/shared-datasets-catalog.csv", "terraform/envs/prod/shared_bucket_public.tf",
+            "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
         }:
             selected.add("pmtiles_cdn")
         if path in {".github/workflows/scheduled-ingestion-deploy-iam-sync.yml", "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"}:

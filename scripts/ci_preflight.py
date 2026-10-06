@@ -100,6 +100,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")
         add("uv", "sync", "--locked", "--all-groups")
         add("uv", "run", "--no-sync", "python", "scripts/admission_check.py", "--base", base, "--head", head)
+        add("uv", "run", "--no-sync", "python", "scripts/cdn_plan_readiness.py", "check-diff", "--base", base, "--head", head)
         diff = ["uv", "run", "--no-sync", "python", "scripts/repo_guardrails.py", "check-diff", "--base", base, "--head", head]
         if os.environ.get("GITHUB_EVENT_PATH"):
             diff.extend(["--event-path", os.environ["GITHUB_EVENT_PATH"]])
@@ -191,6 +192,9 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             tool: shutil.which(executable_names.get(tool, tool), path=environment["PATH"])
             for tool in result["tools"]
         }
+        if suite == "production-images":
+            result["tool_paths"]["docker"] = shutil.which("docker", path=environment["PATH"])
+            result["runtime"] = json.loads(subprocess.check_output(["docker", "version", "--format", "{{json .}}"], env=environment, text=True))
         for index, (command, cwd) in enumerate(suite_commands(suite, root, plan, output)):
             print(f"[{suite}] {' '.join(command)}", flush=True)
             log = output / f"command-{index:02d}.log"

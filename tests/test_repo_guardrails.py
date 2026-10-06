@@ -394,6 +394,45 @@ class RepoGuardrailsTests(unittest.TestCase):
     def test_workflow_boundaries_accept_guarded_immutable_main_bootstrap(self):
         self.assertEqual(self.check_workflow_fixture(self.immutable_bootstrap_workflow()), [])
 
+    def test_ci_bootstrap_alternative_requires_a_reusable_workflow_and_immutable_checkout(self):
+        path = ".github/workflows/apply.yml"
+        workflow = self.immutable_bootstrap_workflow()
+        job = workflow["jobs"]["publish"]
+        job["steps"][0]["run"] = repo_guardrails.WORKFLOW_CI_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", path)
+        self.assertFalse(repo_guardrails.has_guarded_main_workflow_checkout(workflow, path))
+        workflow["on"]["workflow_call"] = {}
+        self.assertTrue(repo_guardrails.has_guarded_main_workflow_checkout(workflow, path))
+        for owner in ("guard", "checkout"):
+            changed = deepcopy(workflow)
+            changed["jobs"]["publish"]["steps"][0 if owner == "guard" else 1]["if"] = "${{ false }}"
+            with self.subTest(owner=owner):
+                self.assertFalse(repo_guardrails.has_guarded_main_workflow_checkout(changed, path))
+        changed = deepcopy(workflow)
+        changed["jobs"]["publish"]["steps"][1]["with"]["ref"] = "${{ inputs.executor_sha }}"
+        self.assertFalse(repo_guardrails.has_guarded_main_workflow_checkout(changed, path))
+        for workflow_ref, expected in (("apply.yml", 0), ("ci.yml", 0), ("untrusted.yml", 1)):
+            result = subprocess.run(["/bin/bash", "-c", job["steps"][0]["run"]],
+                                    env={"GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                                         "GITHUB_WORKFLOW_REF": f"SkyTruth/shared-datasets-1/.github/workflows/{workflow_ref}@refs/heads/main"},
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_read_only_recovery_exception_cannot_authorize_apply_or_other_workflows(self):
+        workflow = self.production_workflow("terraform -chdir=terraform/envs/prod plan -out=plan.tfplan")
+        step = workflow["jobs"]["apply"]["steps"][0]
+        step["run"] = step["run"].replace('allowed_exact="example"', 'python scripts/deployment_revision.py reconcile --deployment-id 1 --plan-json plan.json')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / ".github/workflows"
+            directory.mkdir(parents=True)
+            path = directory / "deployment-recovery.yml"
+            path.write_text(yaml.safe_dump(workflow))
+            self.assertEqual(repo_guardrails.check_workflow_boundaries(root), [])
+            step["run"] += "\nterraform -chdir=terraform/envs/prod apply plan.tfplan"
+            path.write_text(yaml.safe_dump(workflow))
+            self.assertTrue(any("missing resource-change allowlist" in error for error in repo_guardrails.check_workflow_boundaries(root)))
+        self.assertTrue(any("missing resource-change allowlist" in error for error in self.check_workflow_fixture(workflow)))
+
     def test_immutable_bootstrap_rejects_inherited_shell_overrides(self):
         for scope in ("workflow", "job"):
             workflow = self.immutable_bootstrap_workflow()

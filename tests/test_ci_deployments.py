@@ -33,7 +33,25 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
     assert set(select_deployments(["ingestion/common/publication.py"])) == {"eamlis", "wdpa", "sea_ice", "ingestion_iam"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
-    assert select_deployments(["catalog/shared-datasets-catalog.csv"]) == []
+    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn"}
+
+
+@pytest.mark.parametrize("path,targets", [
+    ("scripts/pmtiles_zoom.py", {"eamlis", "wdpa", "sea_ice"}),
+    ("scripts/slack_notify.py", {"eamlis", "wdpa", "sea_ice"}),
+    ("scripts/catalog_csv.py", {"eamlis", "wdpa"}),
+    ("scripts/feature_metadata_translation_reuse.py", {"wdpa"}),
+    ("catalog/feature-identity-resolutions/wdpa.json", {"wdpa", "sea_ice"}),
+    ("docs/assets/ims-sea-ice-extent.md", {"sea_ice"}),
+])
+def test_image_copies_are_release_and_native_validation_dependencies(path, targets):
+    assert set(select_deployments([path])) == targets | {"ingestion_iam"}
+    assert {"geospatial-integration", "production-images"} <= set(select_suites([path])[0])
+
+
+@pytest.mark.parametrize("path", ["catalog/shared-datasets-catalog.csv", "terraform/envs/prod/shared_bucket_public.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"])
+def test_cdn_catalog_and_shared_bucket_dependencies_select_route_sync(path):
+    assert "pmtiles_cdn" in select_deployments([path])
 
 
 def test_release_contracts_run_before_python_tests_for_selected_release_changes():
@@ -60,6 +78,12 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         assert {"executor_sha", "source_run_id", "source_run_attempt"} <= set(workflow_triggers(callee)["workflow_call"]["inputs"])
     for target in ("eamlis", "wdpa", "sea-ice"):
         assert "ingestion-iam" in jobs[target]["needs"]
+    publisher = jobs["publish-reviewed-dataset"]
+    assert "pmtiles-cdn" in publisher["needs"]
+    assert "always()" in publisher["if"]  # A legitimately unselected CDN job is skipped.
+    assert "needs.ci-ready.result == 'success'" in publisher["if"]
+    assert "needs.pmtiles-cdn.result == 'success'" in publisher["if"]
+    assert "needs.geospatial-changes.outputs.pmtiles_cdn != 'true'" in publisher["if"]
 
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
