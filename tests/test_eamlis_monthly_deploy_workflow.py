@@ -51,9 +51,13 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["ASSET_SLUG"], "eamlis-abandoned-mine-land-inventory")
 
         build_run = steps["Build eamlis-monthly image"]["run"]
-        self.assertIn("-f ingestion/eamlis_monthly/Dockerfile", build_run)
-        self.assertIn("--platform linux/amd64", build_run)
-        self.assertIn("EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}", build_run)
+        self.assertIn("tested_image_authorization.py --workflow eamlis-monthly-deploy.yml --target eamlis-monthly", build_run)
+        self.assertNotIn("docker build", build_run)
+        self.assertEqual(steps["Build eamlis-monthly image"]["id"], "tested-image")
+        tag = steps["Tag the exact tested eamlis-monthly image"]
+        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
+        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
+        self.assertIn("EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}", tag["run"])
 
         tools_run = steps["Smoke-test native tools in image"]["run"]
         self.assertIn("ogr2ogr --version", tools_run)
@@ -67,6 +71,7 @@ class EamlisMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("docker push", push_run)
         self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("EAMLIS_MONTHLY_IMAGE=${image_ref}", push_run)
+        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(

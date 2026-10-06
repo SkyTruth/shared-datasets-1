@@ -9,7 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     assert workflow['name'] == 'Publish TypeScript SDK'
-    assert workflow_triggers(workflow) == {'workflow_run': {'workflows': ['CI'], 'branches': ['main'], 'types': ['completed']}}
+    trigger = workflow_triggers(workflow)
+    assert set(trigger) == {'workflow_run', 'workflow_dispatch'}
+    assert trigger['workflow_run'] == {'workflows': ['CI'], 'branches': ['main'], 'types': ['completed']}
+    assert set(trigger['workflow_dispatch']['inputs']) == {'executor_sha', 'source_run_id', 'source_run_attempt'}
+    for name, field in trigger['workflow_dispatch']['inputs'].items():
+        assert field['required'] and field['type'] == 'string'
+        assert '${{ inputs.' + name in workflow['env'][name.upper()]
     assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read'}
     candidate, publish = workflow['jobs']['candidate'], workflow['jobs']['publish']
     assert 'id-token' not in candidate.get('permissions', {})

@@ -17,6 +17,7 @@ from scripts.ci_contract import (
     verify_results,
 )
 from workflow_helpers import load_workflow, workflow_triggers
+from ci_result_fixtures import production_images
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,11 +32,15 @@ def plan(suites=SUITES):
 
 
 def results_for(validation):
-    return [{
+    results = [{
         **{field: validation[field] for field in ("base", "head", "tested_sha", "tree", "contract_digest")},
         "suite": suite, "status": "success", "tools": expected_tools(suite),
         "commands": [{"argv": ["executed-test"], "exit_code": 0}],
     } for suite in validation["suites"]]
+    for result in results:
+        if result["suite"] == "production-images":
+            result["production_images"] = production_images(validation["tested_sha"])
+    return results
 
 
 def jobs_for(validation):

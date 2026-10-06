@@ -87,8 +87,11 @@ def assert_protected_terraform_sync(
 
     testcase.assertEqual(workflow["name"], expected_name)
     if "workflow_call" in trigger:
-        testcase.assertEqual(set(trigger), {"workflow_call"})
+        testcase.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
         testcase.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            testcase.assertTrue(trigger["workflow_dispatch"]["inputs"][name]["required"])
+            testcase.assertEqual(trigger["workflow_dispatch"]["inputs"][name]["type"], "string")
         testcase.assertNotIn("if", job)
     else:
         testcase.assertEqual(trigger["push"]["branches"], ["main"])
@@ -106,7 +109,11 @@ def assert_protected_terraform_sync(
         {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
     testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
-    testcase.assertIn("may only apply from main", steps["Validate main ref"]["run"])
+    guard = steps["Validate main ref"]["run"]
+    testcase.assertIn('"${GITHUB_REF}" != "refs/heads/main"', guard)
+    testcase.assertIn(f".github/workflows/{workflow_path.name}@refs/heads/main", guard)
+    testcase.assertIn(".github/workflows/ci.yml@refs/heads/main", guard)
+    testcase.assertIn("exit 1", guard)
 
     testcase.assertEqual(terraform_targets(plan_run), expected_targets)
     testcase.assertIn("-refresh=false", plan_run)
@@ -273,7 +280,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             },
         )
         trigger = workflow_triggers(workflow)
-        self.assertEqual(set(trigger), {"workflow_call"})
+        self.assertEqual(set(trigger), {"workflow_call", "workflow_dispatch"})
         self.assertNotIn("detect_relevant_change", workflow["jobs"])
         steps = workflow_steps_by_name(workflow, "sync")
         step_names = [
