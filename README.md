@@ -490,6 +490,12 @@ it refuses active executions and uses the existing pre-write failure override.
 Verify actual Slack delivery for the reported execution; a failed job alone is
 not delivery evidence. See [alert routing verification](docs/alert-routing.md).
 
+GitHub operational alerts also support persistent incident threads with searchable
+IDs, grouped retries, and a visible recovery reply after matching verified
+deployment success. See [Slack incident setup and reconciliation](docs/slack-incidents.md).
+The existing failure-only webhook remains active until incident mode is configured
+and explicitly enabled.
+
 The WDPA observer may write only its expected status object without an unapproved
 writer alert. Other writes by that identity remain alertable. The protected
 `cron-alert-policy-sync.yml` covers this policy and watches its identity inputs.

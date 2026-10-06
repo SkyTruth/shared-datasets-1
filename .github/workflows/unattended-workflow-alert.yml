@@ -12,8 +12,37 @@ on:
       - Publish TypeScript SDK
       - Deployment terminal verification
       - Deployment read-only reconciliation
+      - EAMLIS monthly deploy
+      - WDPA monthly deploy
+      - Sea ice daily deploy
+      - WDPA isolated processing validation deploy
+      - Artifact Registry IAM sync
+      - Scheduled ingestion deploy IAM sync
+      - Preview Terraform IAM sync
+      - Scratch cleanup IAM sync
+      - Cron alert policy sync
+      - Approved dataset mutation
     branches: [main]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: Exact incident ID with unconfirmed Slack delivery
+        required: true
+        type: string
+      operation:
+        description: Exact first claimed operation, or checkpoint:ID:SHA256 for reviewed checkpoint sealing
+        required: true
+        type: string
+      delivery_result:
+        description: Owner confirmation after inspecting the incident in Slack
+        required: true
+        type: choice
+        options: [delivered, not-delivered, seal-checkpoint]
+      message_ts:
+        description: Exact message timestamp when confirming delivered; empty otherwise
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +51,7 @@ permissions:
 jobs:
   notify:
     if: >-
+      vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED != 'true' &&
       github.event.workflow_run.status == 'completed' &&
       contains(fromJSON('["failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
       github.event.workflow_run.head_branch == 'main' &&
@@ -48,3 +78,96 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: python scripts/workflow_failure_alert.py --event-path "$GITHUB_EVENT_PATH"
+
+  incidents:
+    name: Reconcile Slack incident status
+    if: >-
+      vars.SHARED_DATASETS_SLACK_INCIDENTS_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.status == 'completed' &&
+          contains(fromJSON('["success","failure","timed_out","cancelled","action_required","startup_failure","stale"]'), github.event.workflow_run.conclusion) &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          (
+            github.event.workflow_run.event == 'schedule' ||
+            github.event.workflow_run.event == 'workflow_run' ||
+            github.event.workflow_run.event == 'workflow_dispatch' ||
+            (github.event.workflow_run.event == 'push' && github.event.workflow_run.name == 'CI')
+          )
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      attestations: write
+      id-token: write
+    concurrency:
+      group: slack-incidents-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/unattended-workflow-alert.yml@refs/heads/main" ]]; then
+            echo "Incident notifications require this workflow from main." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.8"
+          enable-cache: false
+      - name: Install locked notification dependencies
+        run: uv sync --locked --no-dev
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
+      - name: Prepare incident changes and claim posts
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+          SHARED_DATASETS_SLACK_INCIDENTS_SINCE: ${{ vars.SHARED_DATASETS_SLACK_INCIDENTS_SINCE }}
+        run: uv run --no-sync python scripts/slack_incidents.py prepare --work-dir "$RUNNER_TEMP/slack-incidents"
+      - name: Attest incident claims before Slack delivery
+        id: attest-claims
+        if: ${{ always() && steps.prepare.outputs.claims == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/slack-incidents/claims/*.json
+          create-storage-record: false
+      - name: Deliver or update incident messages
+        id: deliver
+        if: ${{ always() && steps.prepare.outputs.claims == 'true' && steps.attest-claims.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+        run: uv run --no-sync python scripts/slack_incidents.py deliver --work-dir "$RUNNER_TEMP/slack-incidents"
+      - name: Attest confirmed deliveries even after a later send fails
+        id: attest-outcomes
+        if: ${{ always() && steps.deliver.outputs.outcomes == 'true' }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ runner.temp }}/slack-incidents/outcomes/*.json
+          create-storage-record: false
+      - name: Verify durable incident checkpoints
+        if: ${{ always() && (steps.attest-claims.outcome == 'success' || steps.attest-outcomes.outcome == 'success') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/slack_incidents.py verify --work-dir "$RUNNER_TEMP/slack-incidents"
