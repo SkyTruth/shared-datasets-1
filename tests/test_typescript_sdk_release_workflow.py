@@ -10,11 +10,12 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     assert workflow['name'] == 'Publish TypeScript SDK'
     assert workflow_triggers(workflow) == {'workflow_run': {'workflows': ['CI'], 'branches': ['main'], 'types': ['completed']}}
-    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read'}
+    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read', 'attestations': 'read'}
     candidate, publish = workflow['jobs']['candidate'], workflow['jobs']['publish']
     assert 'id-token' not in candidate.get('permissions', {})
     assert publish['permissions']['id-token'] == 'write'
     assert publish['permissions']['deployments'] == 'write'
+    assert publish['permissions']['attestations'] == 'write'
     assert publish['needs'] == 'candidate'
     assert publish['if'] == "needs.candidate.outputs.release_needed == 'true'"
     assert publish['concurrency'] == {'group': 'publish-typescript-sdk', 'queue': 'max', 'cancel-in-progress': False}
@@ -32,7 +33,13 @@ def test_sdk_release_does_not_rebuild_and_registry_verifies_tested_bytes():
     publish = steps['Publish exact tested package']
     assert publish['env']['TARBALL'] == '${{ steps.candidate.outputs.tarball }}'
     assert '--ignore-scripts' in publish['run']
-    assert 'steps.deployment.outputs.proceed' in publish['if']
+    assert publish['if'] == "steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.registry.outputs.should_publish == 'true'"
+    assert list(steps).index('Record serialized SDK deployment attempt') < list(steps).index('Attest serialized deployment claim before mutation') < list(steps).index('Publish exact tested package')
+    receipt = steps['Attest serialized deployment claim before mutation']
+    assert receipt['id'] == 'claim-receipt'
+    assert receipt['uses'] == './.github/actions/deployment-receipt'
+    assert receipt['if'] == "${{ steps.deployment.outputs.proceed == 'true' }}"
+    assert receipt['with'] == {'mode': 'receipt', 'receipt-path': '${{ steps.deployment.outputs.receipt_path }}'}
     assert 'should_publish=false' in steps['Verify registry retained the tested bytes']['run']
     assert workflow['env']['NODE_VERSION'] == '24.13.1'
 
