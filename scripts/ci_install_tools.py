@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.ci_contract import TOOLCHAIN
+from scripts.ci_toolchain import TOOLCHAIN
 
 
 def download(url: str) -> bytes:

@@ -123,6 +123,13 @@ jobs:
           python scripts/deployment_revision.py check --target wdpa-processing-validation --workflow wdpa-processing-validation-deploy.yml \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
+      - name: Verify reviewed retained image availability before cloud authentication
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        id: staged-image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/wdpa_staged_image_readiness.py --github-output "$GITHUB_OUTPUT"
+
       - name: Authenticate to Google Cloud
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
@@ -152,30 +159,12 @@ jobs:
           if any(not execution.get('status', {}).get('completionTime') for execution in json.load(open(sys.argv[1]))):
               raise SystemExit('A validation execution is pending or running; wait before replacing its image or command')
           PY
-      - name: Resolve the reviewed staged image artifact
-        if: ${{ steps.replay.outputs.proceed == 'true' }}
-        id: staged-image
-        run: |
-          set -euo pipefail
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, re
-          from pathlib import Path
-          evidence = json.loads(Path('catalog/wdpa-staged-validation.json').read_text())
-          small, sample = evidence['small_fixture'], evidence['compatibility_sample']
-          if small['workflow_run_url'] != sample['workflow_run_url'] or small['head_sha'] != sample['head_sha']:
-              raise SystemExit('Staged checks must use one reviewed image build')
-          match = re.fullmatch(r'https://github.com/SkyTruth/shared-datasets-1/actions/runs/([0-9]+)', sample['workflow_run_url'])
-          if not match:
-              raise SystemExit('Unexpected staged image artifact origin')
-          print('run_id=' + match[1])
-          print('config_digest=' + sample['image_digest'])
-          print('source_digest=' + evidence['source_tree_sha256'])
-          PY
       - name: Download the tested deployment image
         if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: actions/download-artifact@v4
         with:
-          name: wdpa-benchmark-image
+          artifact-ids: ${{ steps.staged-image.outputs.artifact_id }}
+          merge-multiple: true
           run-id: ${{ steps.staged-image.outputs.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/wdpa-tested-image
@@ -184,8 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           gzip -dc "$RUNNER_TEMP/wdpa-tested-image/image.tar.gz" | docker load
-          config="$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')"
-          [[ "$config" == '${{ steps.staged-image.outputs.config_digest }}' ]]
+          python -c 'import os, sys; from scripts.tested_image_bundle import verify_local_config; verify_local_config("wdpa-processing-benchmark:local", sys.argv[1], directory=os.environ["RUNNER_TEMP"])' '${{ steps.staged-image.outputs.config_digest }}'
           actual_source="$(docker run --rm wdpa-processing-benchmark:local python scripts/wdpa_processing_gate.py --print-source-digest)"
           expected_source='${{ steps.staged-image.outputs.source_digest }}'
           [[ "$actual_source" == "$expected_source" ]]

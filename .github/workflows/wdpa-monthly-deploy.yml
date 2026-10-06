@@ -242,12 +242,17 @@ jobs:
 
           accepted_image="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["cloud_image"])')"
           expected_config="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["image_digest"])')"
+          docker buildx imagetools inspect --raw "${accepted_image}" > "$RUNNER_TEMP/accepted-wdpa-image-manifest.json"
+          python - "$RUNNER_TEMP/accepted-wdpa-image-manifest.json" "$accepted_image" "$expected_config" <<'PY'
+          import json, re, sys
+          manifest = json.load(open(sys.argv[1]))
+          if (not re.search(r'@sha256:[0-9a-f]{64}$', sys.argv[2])
+              or manifest.get('mediaType') not in {'application/vnd.docker.distribution.manifest.v2+json', 'application/vnd.oci.image.manifest.v1+json'}
+              or manifest.get('config', {}).get('digest') != sys.argv[3]):
+              raise SystemExit('Accepted WDPA registry manifest does not bind the reviewed configuration digest')
+          PY
           docker pull --platform linux/amd64 "${accepted_image}"
-          actual_config="$(docker image inspect "${accepted_image}" --format '{{.Id}}')"
-          if [[ "${actual_config}" != "${expected_config}" ]]; then
-            echo "Accepted WDPA image configuration digest does not match the registry image." >&2
-            exit 1
-          fi
+          python -c 'import os, sys; from scripts.tested_image_bundle import verify_local_config; verify_local_config(sys.argv[1], sys.argv[2], require_manifest=True, directory=os.environ["RUNNER_TEMP"])' "$accepted_image" "$expected_config"
           expected_source="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["source_tree_sha256"])')"
           actual_source="$(docker run --platform linux/amd64 --rm "${accepted_image}" python scripts/wdpa_processing_gate.py --print-source-digest)"
           if [[ "${actual_source}" != "${expected_source}" ]]; then

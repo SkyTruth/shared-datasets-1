@@ -5,6 +5,7 @@ import hashlib
 import gzip
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -16,6 +17,8 @@ MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
+IMAGE_MANIFEST_TYPES = frozenset({"application/vnd.docker.distribution.manifest.v2+json", "application/vnd.oci.image.manifest.v1+json"})
+IMAGE_INDEX_TYPES = frozenset({"application/vnd.docker.distribution.manifest.list.v2+json", "application/vnd.oci.image.index.v1+json"})
 
 
 class ImageError(RuntimeError):
@@ -64,9 +67,9 @@ def validate_manifest(manifest, sha):
     images = manifest["images"]
     require(isinstance(images, dict) and images and set(images) <= TARGETS, "invalid retained image selection")
     for target, image in images.items():
-        require(isinstance(image, dict) and set(image) == {"image_id", "source_tag", "archive", "archive_sha256", "archive_size", "platform"},
+        require(isinstance(image, dict) and set(image) == {"config_digest", "source_tag", "archive", "archive_sha256", "archive_size", "platform"},
                 "invalid retained image fields")
-        require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(image["image_id"]))
+        require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(image["config_digest"]))
                 and image["source_tag"] == source_tag(target, sha)
                 and image["archive"] == f"{target}.docker.tar"
                 and DIGEST.fullmatch(str(image["archive_sha256"]))
@@ -98,11 +101,11 @@ def verify_archive(path, image):
         require(isinstance(manifest, list) and len(manifest) == 1 and isinstance(manifest[0], dict)
                 and set(manifest[0]) == {"Config", "RepoTags", "Layers"}, "Docker-save must contain exactly one image")
         saved = manifest[0]
-        config_name = image["image_id"].removeprefix("sha256:") + ".json"
+        config_name = image["config_digest"].removeprefix("sha256:") + ".json"
         require(saved["Config"] == config_name and saved["RepoTags"] == [image["source_tag"]],
                 "Docker-save config or tag differs from tested image")
         config = metadata(config_name)
-        require(hash_stream(archive.extractfile(by_name[config_name])) == image["image_id"].removeprefix("sha256:")
+        require(hash_stream(archive.extractfile(by_name[config_name])) == image["config_digest"].removeprefix("sha256:")
                 and config.get("os") == "linux" and config.get("architecture") == "amd64", "Docker-save config identity or platform mismatch")
         layers = saved["Layers"]
         diff_ids = config.get("rootfs", {}).get("diff_ids")
@@ -128,7 +131,7 @@ def verify_archive(path, image):
                 "invalid Docker-save member type or size")
 
 
-def canonicalize_archive(raw_path, destination, image_id, tag):
+def canonicalize_archive(raw_path, destination, config_digest, tag, *, untagged=False):
     """Normalize Docker 20/28 transports without changing tested config or rootfs bytes.
 
     Modern Docker-save adds OCI graphs and legacy metadata, and may compress
@@ -136,6 +139,7 @@ def canonicalize_archive(raw_path, destination, image_id, tag):
     unused exporter metadata is never fed to Docker by the consumer.
     """
     require(Path(raw_path).stat().st_size <= MAX_IMAGE, "raw saved image exceeds limit")
+    require(config_digest is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(config_digest)), "invalid saved config digest")
     with tarfile.open(raw_path, mode="r:") as saved:
         members = saved.getmembers()
         names = [member.name for member in members]
@@ -155,10 +159,12 @@ def canonicalize_archive(raw_path, destination, image_id, tag):
                 and {"Config", "RepoTags", "Layers"} <= set(manifest[0]) <= {"Config", "RepoTags", "Layers", "LayerSources", "Parent"},
                 "raw Docker-save must contain exactly one supported image")
         image = manifest[0]
-        require(image["RepoTags"] == [tag], "raw saved image has another or additional tag")
+        require(image["RepoTags"] in (None, []) if untagged else image["RepoTags"] == [tag],
+                "raw saved image has another or additional tag")
         config_bytes = small_member(image["Config"])
         config = read_json(config_bytes)
-        require("sha256:" + hashlib.sha256(config_bytes).hexdigest() == image_id
+        saved_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+        require((config_digest is None or saved_digest == config_digest)
                 and config.get("os") == "linux" and config.get("architecture") == "amd64", "raw saved config differs from tested image")
         layers = image["Layers"]
         diff_ids = config.get("rootfs", {}).get("diff_ids")
@@ -166,7 +172,7 @@ def canonicalize_archive(raw_path, destination, image_id, tag):
                 and isinstance(diff_ids, list) and len(layers) == len(diff_ids)
                 and all(isinstance(name, str) and name in entries and entries[name].isfile() for name in layers)
                 and all(re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) for digest in diff_ids), "invalid raw saved rootfs")
-        config_name = image_id.removeprefix("sha256:") + ".json"
+        config_name = saved_digest.removeprefix("sha256:") + ".json"
         canonical_layers = [digest.removeprefix("sha256:") + "/layer.tar" for digest in diff_ids]
         total = 0
         written = set()
@@ -202,21 +208,41 @@ def canonicalize_archive(raw_path, destination, image_id, tag):
             canonical = json.dumps([{"Config": config_name, "RepoTags": [tag], "Layers": canonical_layers}], sort_keys=True).encode()
             add("manifest.json", len(canonical), io.BytesIO(canonical))
     require(Path(destination).stat().st_size <= MAX_IMAGE, "canonical saved image exceeds limit")
+    return saved_digest
+
+
+def inspect_image(reference):
+    """Docker's local ID names a config in classic stores, a target in containerd."""
+    result = read_json(subprocess.check_output(["docker", "image", "inspect", reference]))
+    require(isinstance(result, list) and len(result) == 1 and isinstance(result[0], dict), "invalid local image inspection")
+    image = result[0]
+    require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(image.get("Id")))
+            and image.get("Os") == "linux" and image.get("Architecture") == "amd64", "local image identity or platform mismatch")
+    descriptor = image.get("Descriptor")
+    if descriptor is not None:
+        require(isinstance(descriptor, dict) and descriptor.get("digest") == image["Id"]
+                and descriptor.get("mediaType") in IMAGE_MANIFEST_TYPES | IMAGE_INDEX_TYPES,
+                "local image descriptor does not match its immutable target")
+    return image
 
 
 def pack_image(target, sha, image_id, directory):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     tag = source_tag(target, sha)
-    resolved = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", tag], text=True).strip()
-    require(resolved == image_id, "tested image tag changed before retention")
+    inspected = inspect_image(tag)
+    require(inspected["Id"] == image_id and tag in inspected.get("RepoTags", []), "tested image tag changed before retention")
     path = directory / f"{target}.docker.tar"
     require(not path.exists(), "retained image archive already exists")
     with tempfile.TemporaryDirectory(prefix="image-save-", dir=directory) as work:
         raw_path = Path(work) / "raw.docker.tar"
-        subprocess.run(["docker", "image", "save", "--output", str(raw_path), tag], check=True)
-        canonicalize_archive(raw_path, path, image_id, tag)
-    image = {"image_id": image_id, "source_tag": tag, "archive": path.name,
+        # Save the immutable identity that passed the image smoke tests. Exporting
+        # an ID deliberately removes tags; the canonical archive assigns one.
+        subprocess.run(["docker", "image", "save", "--output", str(raw_path), image_id], check=True)
+        config_digest = canonicalize_archive(raw_path, path, image_id if inspected.get("Descriptor") is None else None, tag, untagged=True)
+    retained_tag = inspect_image(tag)
+    require(retained_tag["Id"] == image_id and tag in retained_tag.get("RepoTags", []), "tested image tag changed during retention")
+    image = {"config_digest": config_digest, "source_tag": tag, "archive": path.name,
              "archive_sha256": hash_file(path), "archive_size": path.stat().st_size, "platform": "linux/amd64"}
     validate_manifest({"schema_version": 1, "tested_sha": sha, "images": {target: image}}, sha)
     verify_archive(path, image)
@@ -226,8 +252,34 @@ def pack_image(target, sha, image_id, directory):
 def load_image(path, image):
     verify_archive(path, image)
     subprocess.run(["docker", "image", "load", "--input", str(path)], check=True)
-    for reference in (image["source_tag"], image["image_id"]):
-        loaded = read_json(subprocess.check_output(["docker", "image", "inspect", reference]))
-        require(isinstance(loaded, list) and len(loaded) == 1 and loaded[0].get("Id") == image["image_id"]
-                and loaded[0].get("Os") == "linux" and loaded[0].get("Architecture") == "amd64"
-                and image["source_tag"] in loaded[0].get("RepoTags", []), "loaded image differs from tested config, platform or tag")
+    return verify_local_config(image["source_tag"], image["config_digest"], require_manifest=True, directory=Path(path).parent)
+
+
+def verify_local_config(reference, config_digest, *, require_manifest=False, directory=None):
+    """Prove a pulled or loaded image's config; never equate it to a daemon ID.
+
+    Containerd image inspect identifies a manifest/index. Its immutable export
+    provides the exact config and ordered uncompressed rootfs for verification.
+    The export and normalized proof archive are temporary and never loaded.
+    """
+    require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(config_digest)), "invalid expected image config digest")
+    loaded = inspect_image(reference)
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", reference) and "@sha256:" not in reference:
+        require(reference in loaded.get("RepoTags", []), "loaded image differs from tested tag")
+    image_id = loaded["Id"]
+    if loaded.get("Descriptor") is None:
+        require(image_id == config_digest, "loaded image differs from tested config")
+    else:
+        # A normalized classic archive becomes a tagged child manifest, never
+        # an index. Docker's inspect ID is then its manifest SHA, not config SHA.
+        require(not require_manifest or loaded["Descriptor"]["mediaType"] in IMAGE_MANIFEST_TYPES, "loaded canonical image is an unexpected index")
+        if directory is None:
+            directory = Path(os.environ.get("RUNNER_TEMP") or os.environ.get("SHARED_DATASETS_WORKDIR") or Path(tempfile.gettempdir()) / "shared-datasets-1") / "_scratch" / "image-config-proof"
+            directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="image-load-proof-", dir=directory) as work:
+            raw_path = Path(work) / "raw.docker.tar"
+            subprocess.run(["docker", "image", "save", "--output", str(raw_path), image_id], check=True)
+            canonicalize_archive(raw_path, Path(work) / "canonical.docker.tar", config_digest, "shared-datasets-proof:verified", untagged=True)
+    require(inspect_image(reference)["Id"] == image_id
+            and inspect_image(image_id)["Id"] == image_id, "loaded image tag or immutable identity changed during verification")
+    return image_id

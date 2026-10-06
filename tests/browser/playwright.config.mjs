@@ -3,6 +3,9 @@ import { resolve } from 'node:path';
 import { baseURL, packageDir, workDir } from './paths.mjs';
 
 export default defineConfig({
+  // Preflight owns exact revision evidence. Playwright's CI diff capture uses
+  // a depth-one fetch, which must never truncate the validated checkout.
+  captureGitInfo: { commit: false, diff: false },
   testDir: '.',
   testMatch: 'catalog.spec.mjs',
   timeout: 30000,

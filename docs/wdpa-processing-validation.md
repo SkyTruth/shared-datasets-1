@@ -20,6 +20,18 @@ The image ZIP, actual configuration blob and report ZIPs were hash-verified;
 [original reports and image metadata](wdpa-processing-evidence/37095105175/compatibility.json)
 are retained unchanged. The configuration digest is not a deployed registry
 manifest digest or evidence of a completed cloud build.
+When staged evidence selects an isolated processing deployment, local preflight
+and required `ci-ready` independently check the exact reviewed GitHub artifact
+ID, original run/repository/head, ZIP digest and availability. Its expiration
+must be more than 24 hours away to allow the serialized deployment queue and
+download. The trusted processing workflow repeats this read-only check before
+cloud authentication and downloads that artifact ID. Missing, expired, changed
+or unavailable inputs fail validation; they require refreshed reviewed retained
+evidence. The check hashes the original producer's fixed public source snapshot
+and verifies its
+configuration blob without executing historical code or rebuilding the image.
+The accepted monthly publication image remains its pinned registry image and
+does not depend on this expiring staging archive.
 The original configuration includes the public Python signing-key fingerprint
 from the [official base image](https://github.com/docker-library/python/blob/master/3.12/slim-bookworm/Dockerfile).
 The secret scanner excludes only its exact verified finding; no credential rule

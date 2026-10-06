@@ -42,11 +42,14 @@ def image_contract(steps, target):
     assert len(tagged) == 1 and tagged[0] > loaded
     tag_step = steps[tagged[0]]
     assert tag_step.get("env", {}).get("TESTED_IMAGE_ID") == "${{ steps.tested-image.outputs.image_id }}"
-    assert 'docker tag "$TESTED_IMAGE_ID"' in runs[tagged[0]], "only the proven immutable config may be tagged"
+    assert 'docker tag "$TESTED_IMAGE_ID"' in runs[tagged[0]], "only the verified daemon image reference may be tagged"
+    if target == "catalog-viewer":
+        assert tag_step.get("env", {}).get("TESTED_IMAGE_CONFIG") == "${{ steps.tested-image.outputs.config_digest }}"
+        assert "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}" in runs[tagged[0]], "viewer claim must bind canonical config bytes"
     pushed = [index for index, run in enumerate(runs) if re.search(r"\bdocker\s+push\s", run)]
     assert len(pushed) == 1 and pushed[0] > tagged[0]
     push = steps[pushed[0]]
-    assert push.get("env", {}).get("TESTED_IMAGE_ID") == "${{ steps.tested-image.outputs.image_id }}"
+    assert push.get("env", {}).get("TESTED_IMAGE_CONFIG") == "${{ steps.tested-image.outputs.config_digest }}"
     assert re.search(r"\bimagetools\s+inspect\s+--raw\s", runs[pushed[0]]), "registry config must be read from the actual pushed manifest"
     assert 'manifest.get("config", {}).get("digest")' in runs[pushed[0]] and "assert actual == expected" in runs[pushed[0]], "registry must retain the tested config"
     assert runs[pushed[0]].index("assert actual == expected") < runs[pushed[0]].index("image_ref="), "unverified registry bytes cannot become a deployment input"
@@ -60,8 +63,16 @@ def test_deployments_load_authenticated_ci_bytes_and_verify_registry_config(targ
     image_contract(deployment_steps(target), target)
 
 
+def test_viewer_claim_cannot_bind_a_daemon_reference_instead_of_config_bytes():
+    steps = copy.deepcopy(deployment_steps("catalog-viewer"))
+    tag = next(step for step in steps if "docker tag" in step.get("run", ""))
+    tag["run"] = tag["run"].replace("CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}", "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_ID}")
+    with pytest.raises(AssertionError, match="canonical config bytes"):
+        image_contract(steps, "catalog-viewer")
+
+
 @pytest.mark.parametrize("target", TARGETS)
-@pytest.mark.parametrize("defect", ("rebuild", "missing-source", "loader-fallback", "mutable-tag", "no-registry-read", "unverified-config", "early-apply"))
+@pytest.mark.parametrize("defect", ("rebuild", "missing-source", "loader-fallback", "mutable-tag", "no-registry-read", "daemon-id-as-config", "unverified-config", "early-apply"))
 def test_image_contract_rejects_rebuild_fallback_and_missing_proof(target, defect):
     steps = copy.deepcopy(deployment_steps(target))
     loader = next(step for step in steps if step.get("id") == "tested-image")
@@ -77,6 +88,8 @@ def test_image_contract_rejects_rebuild_fallback_and_missing_proof(target, defec
         tag["env"]["TESTED_IMAGE_ID"] = "mutable:latest"
     elif defect == "no-registry-read":
         push["run"] = push["run"].replace("imagetools inspect --raw", "imagetools inspect")
+    elif defect == "daemon-id-as-config":
+        push["env"]["TESTED_IMAGE_CONFIG"] = "${{ steps.tested-image.outputs.image_id }}"
     elif defect == "unverified-config":
         push["run"] = push["run"].replace("assert actual == expected", "assert True")
     else:
@@ -94,7 +107,7 @@ def test_actual_registry_manifest_verifier_rejects_another_config(tmp_path, targ
     manifest = tmp_path / "manifest.json"
     for actual in (expected, "sha256:" + "2" * 64, None):
         manifest.write_text(json.dumps({"config": {"digest": actual}}))
-        completed = subprocess.run([sys.executable, "-c", source, str(manifest)], env={"TESTED_IMAGE_ID": expected},
+        completed = subprocess.run([sys.executable, "-c", source, str(manifest)], env={"TESTED_IMAGE_CONFIG": expected, "TESTED_IMAGE_ID": "sha256:" + "3" * 64},
                                    capture_output=True, text=True)
         assert (completed.returncode == 0) == (actual == expected), completed.stderr
 
@@ -116,7 +129,7 @@ def test_ci_ready_requires_complete_image_retention_evidence():
     assert set(verify_results(plan, results)) == set(plan["suites"])
 
 
-@pytest.mark.parametrize("defect", ("missing", "partial", "foreign-sha", "foreign-image-tag", "wrong-platform", "oversized", "duplicate-kind"))
+@pytest.mark.parametrize("defect", ("missing", "partial", "foreign-sha", "foreign-image-tag", "wrong-platform", "oversized", "duplicate-kind", "daemon-id-field"))
 def test_ci_ready_rejects_success_without_complete_exact_images(defect):
     plan, results, image_result = image_results()
     manifest = image_result["production_images"]
@@ -132,6 +145,9 @@ def test_ci_ready_rejects_success_without_complete_exact_images(defect):
         manifest["images"]["eamlis-monthly"]["platform"] = "linux/arm64"
     elif defect == "oversized":
         manifest["images"]["sea-ice-daily"]["archive_size"] = 3 * 1024 ** 3
+    elif defect == "daemon-id-field":
+        image = manifest["images"]["catalog-viewer"]
+        image["image_id"] = image.pop("config_digest")
     else:
         manifest["images"]["another-image"] = copy.deepcopy(manifest["images"]["catalog-viewer"])
     with pytest.raises(ValueError):

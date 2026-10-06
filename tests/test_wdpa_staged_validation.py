@@ -159,7 +159,9 @@ def test_cloud_deployment_reuses_the_tested_image_instead_of_rebuilding():
     )
     steps = workflow_steps_by_name(workflow, "deploy")
     download = steps["Download the tested deployment image"]
-    assert download["with"]["name"] == "wdpa-benchmark-image"
+    assert download["with"]["artifact-ids"] == "${{ steps.staged-image.outputs.artifact_id }}"
+    assert download["with"]["merge-multiple"] is True
+    assert "name" not in download["with"]
     assert "run-id" in download["with"] and "github-token" in download["with"]
     publish = steps["Publish the tested immutable validation image"]["run"]
     require = steps["Require small and sampled checks plus disk quota"]["run"]

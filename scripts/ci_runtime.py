@@ -75,9 +75,9 @@ def prove_runtime(arguments: list[str], record: dict, image: str) -> None:
 
 def suite_platform(suite: str, record: dict) -> str:
     # Chromium requires native fork/GPU behavior, and Node child processes have
-    # faulted under cross-architecture emulation. Run unchanged pinned Python and
-    # Node suites natively; release CLI fixtures always exercise amd64.
-    if suite in {"tests", "browser", "sdk-node22", "sdk-node24"} and record["server_architecture"] == "arm64":
+    # faulted under cross-architecture emulation, as has UV during lint setup.
+    # Run unchanged pinned tools natively; release CLI fixtures exercise amd64.
+    if suite in {"lint", "tests", "browser", "sdk-node22", "sdk-node24"} and record["server_architecture"] == "arm64":
         return "linux/arm64"
     return "linux/amd64"
 
@@ -91,23 +91,37 @@ def run_container(root: Path, work: Path, suite: str, image: str, platform: str,
     command = ["docker", "create", "--platform", platform, "-w", "/workspace",
                "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache",
                "-e", "UV_LINK_MODE=copy"]
+    environment = {"CI": "true"}
     if platform == "linux/arm64":
         # Older Apple Linux VMs report CPU extensions that bundled OpenSSL
         # cannot execute. Select its portable implementation, preserving the
         # locked cryptography wheel and the complete test corpus.
-        command.extend(["-e", "OPENSSL_armcap=0"])
+        environment["OPENSSL_armcap"] = "0"
+    if suite == "browser":
+        # Exercise GitHub's CI-only reporter behavior with owned public
+        # metadata. Never forward tokens, run IDs or the caller's real event.
+        plan = json.loads((work / "plan.json").read_text())
+        (work / "browser-event.json").write_text(json.dumps({"pull_request": {
+            "title": "Local preflight prospective merge", "number": 0,
+            "base": {"sha": plan["base"]}, "head": {"sha": plan["head"]},
+        }}) + "\n")
+        environment.update({"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": "/browser-event.json",
+                            "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "local/preflight",
+                            "GITHUB_SHA": plan["tested_sha"]})
+    for key, value in environment.items():
+        command.extend(["-e", f"{key}={value}"])
     emulator = platform == "linux/amd64" and bool(arguments)
     if emulator:
         command.extend(["--entrypoint", "/buildkit-qemu-x86_64"])
     command.extend([image, "/usr/local/bin/python", "scripts/ci_preflight.py", "run-suite",
                     "--plan", "/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"])
     identifier = subprocess.check_output(command, text=True).strip()
-    record = {"platform": platform, "image": image, "container": identifier}
-    if platform == "linux/arm64":
-        record["environment"] = {"OPENSSL_armcap": "0"}
+    record = {"platform": platform, "image": image, "container": identifier, "environment": environment}
     try:
         subprocess.run(["docker", "cp", f"{root}/.", f"{identifier}:/workspace"], check=True)
         subprocess.run(["docker", "cp", str(work / "plan.json"), f"{identifier}:/plan.json"], check=True)
+        if suite == "browser":
+            subprocess.run(["docker", "cp", str(work / "browser-event.json"), f"{identifier}:/browser-event.json"], check=True)
         if emulator:
             executable = Path(arguments[1].removesuffix(":/ci-runtime:ro")) / "buildkit-qemu-x86_64"
             subprocess.run(["docker", "cp", str(executable), f"{identifier}:/buildkit-qemu-x86_64"], check=True)

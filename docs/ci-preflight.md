@@ -15,25 +15,36 @@ retrying; selecting all suites does not make history-dependent checks optional.
 
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
-the Docker socket are never mounted. Standard Python, Node 22/24 and Chromium run
-on the Docker server's native Linux architecture. Geospatial release fixtures always
+the Docker socket are never mounted. Lint, standard Python, Node 22/24 and Chromium
+run on the Docker server's native Linux architecture. Geospatial release fixtures always
 run on Linux AMD64, matching production and hosted CI; ARM Docker hosts use the
-pinned, checksum-verified BuildKit direct-exec emulator for these fixtures and
-the lint suite. Emulated child processes use that same emulator. No daemon settings
+pinned, checksum-verified BuildKit direct-exec emulator for these fixtures.
+Emulated child processes use that same emulator. No daemon settings
 or system binfmt registration change. The per-suite architecture and image ID,
 runtime release, version and hashes are recorded in `runtime.json`.
 Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require
-network access. Tool versions and the classifier are owned by
-`scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
+network access. Tool versions are owned by the dependency-free
+`scripts/ci_toolchain.py`; suite selection is owned by `scripts/ci_contract.py`.
+CI setup and image pins are checked against that contract.
 The production-image suite uses the host Docker client and an isolated host
-environment with the same pinned Python and locked dependencies. It builds and
+environment with the same pinned Python and locked dependencies. Its process-owned
+HOME, Docker, XDG and gcloud configuration directories contain no caller ADC or
+registry authentication. Only explicit tool paths, locale/temp settings, proxy/CA
+settings and the resolved Docker connection are retained; GitHub/cloud credentials,
+event identity and SSH agents are excluded. Unix and TCP connections are supported;
+required daemon TLS files are copied separately and removed after the suite.
+Unsupported authentication transport fails before validation. The host process
+retains normal filesystem and Docker API capabilities; environment isolation is
+an operational credential boundary, not a sandbox for malicious code. It builds and
 tests the actual Linux AMD64 deployment recipes without mounting the Docker
 socket into a validation container. Its evidence retains the three deployable
 images with their config and rootfs hashes; missing image evidence fails
-`ci-ready`. Deployment consumes these tested bytes without rebuilding.
+`ci-ready`. The suite also exercises the deployment loader on the actual CI
+Docker daemon before admitting each retained image. Deployment consumes these
+tested bytes without rebuilding.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local
@@ -44,9 +55,21 @@ implementation because older Apple Linux VMs advertise unsupported extensions
 [upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
 The locked wheel, algorithms and test corpus remain unchanged; this setting is
 included in the recorded runtime evidence.
-Native Node execution also avoids observed subprocess faults under AMD64
-emulation. Both Node versions execute the same SDK tests and package-byte checks
+Every local suite explicitly runs with `CI=true`. uv selects the pinned Python
+version, and each locked sync is followed by a check of the executing interpreter;
+its actual version is retained in the command log and a mismatch fails validation.
+Browser validation also uses a
+process-owned synthetic GitHub PR event so CI-only reporter behavior is exercised
+without forwarding tokens, real run IDs or caller event data. Playwright Git
+commit/diff capture is disabled: its CI diff collector otherwise fetches the base
+with `--depth=1` and makes a full checkout shallow. The plan owns revision evidence,
+and the full-history invariant is still checked after browser execution.
+Native lint and Node execution also avoid observed UV and subprocess faults under
+AMD64 emulation. Both Node versions execute the same SDK tests and package-byte checks
 as hosted CI; a failed suite remains a failure and is never automatically retried.
+Terraform retains read-only initialization. Linux ARM and AMD64 provider package
+hashes cover the same pinned version and are verified against the reviewed archive
+checksums before inclusion in the locks.
 Browser validation removes its process-owned uv download cache after installing
 the locked fixture environment, reducing Chromium's peak disk use without
 removing installed dependencies or changing test coverage.

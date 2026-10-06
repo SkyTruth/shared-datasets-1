@@ -15,7 +15,7 @@ import sys
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.tested_image_bundle import TARGETS, pack_image
+from scripts.tested_image_bundle import TARGETS, load_image, pack_image
 
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
@@ -137,6 +137,10 @@ def main():
             subprocess.run(command, check=True)
         if args.output and target in TARGETS:
             retained[target] = pack_image(target, executor, image_id, args.output / "images")
+            # Exercise the deployment loader on this CI daemon before admitting
+            # the handoff. Docker's exporter/store representation can differ
+            # from the locally tested image's identity.
+            load_image(args.output / "images" / retained[target]["archive"], retained[target])
     if args.output and retained:
         (args.output / "images/manifest.json").write_text(json.dumps(
             {"schema_version": 1, "tested_sha": executor, "images": retained}, sort_keys=True

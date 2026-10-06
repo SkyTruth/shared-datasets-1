@@ -9,23 +9,49 @@ from scripts.deployment_artifact import fingerprint
 from workflow_helpers import load_workflow, workflow_steps_by_name
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = [('publish-typescript-sdk.yml', 'publish', 'Check out exact tested revision'), ('pmtiles-cdn-sync.yml', 'sync', 'Check out repository'), ('catalog-viewer-deploy.yml', 'deploy', 'Check out repository'), ('catalog-web-deploy.yml', 'deploy', 'Check out repository')]
+TARGETS = [
+    ('publish-typescript-sdk.yml', 'publish', 'Check out exact tested revision', 'Require trusted main workflow'),
+    ('pmtiles-cdn-sync.yml', 'sync', 'Check out repository', 'Validate main ref'),
+    ('catalog-viewer-deploy.yml', 'deploy', 'Check out repository', 'Validate main ref'),
+    ('catalog-web-deploy.yml', 'deploy', 'Check out repository', 'Require trusted main workflow'),
+]
 
 
-@pytest.mark.parametrize('filename,job,checkout', TARGETS)
-def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, job, checkout):
+@pytest.mark.parametrize('filename,job,checkout,guard_name', TARGETS)
+def test_authority_runs_from_trusted_main_before_candidate_checkout(filename, job, checkout, guard_name):
     workflow = load_workflow(ROOT / '.github/workflows' / filename)
     steps = workflow_steps_by_name(workflow, job)
     names = list(steps)
-    assert names.index('Require trusted main workflow') < names.index('Check out trusted deployment verifier') < names.index(checkout)
+    actual_steps = workflow['jobs'][job]['steps']
+    guard_index = 0
+    if filename == 'catalog-web-deploy.yml':
+        prelude = actual_steps[0]
+        assert prelude['name'] == 'Validate main ref'
+        assert set(prelude) == {'name', 'run'}
+        commands = [line.strip() for line in prelude['run'].splitlines() if line.strip()]
+        assert commands[0] == 'set -euo pipefail'
+        assert commands[1] == 'if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then'
+        assert commands[2].startswith('echo "') and commands[2].endswith('" >&2')
+        assert not any(token in commands[2] for token in ('$', '`'))
+        assert commands[3:] == ['exit 1', 'fi']
+        for ref, valid in [('refs/heads/main', True), ('refs/pull/10/merge', False)]:
+            result = subprocess.run(['bash', '-c', prelude['run']], env={**os.environ, 'GITHUB_REF': ref}, capture_output=True)
+            assert (result.returncode == 0) is valid
+        guard_index = 1
+    assert actual_steps[guard_index]['name'] == guard_name
+    assert actual_steps[guard_index + 1]['name'] == 'Check out trusted deployment verifier'
+    assert names.index(guard_name) < names.index('Check out trusted deployment verifier') < names.index(checkout)
     trusted = steps['Check out trusted deployment verifier']['with']
     assert trusted == {'ref': '${{ github.workflow_sha }}', 'fetch-depth': 0, 'persist-credentials': False}
     proof = 'Verify trusted catalog source authority' if filename == 'catalog-web-deploy.yml' else 'Verify trusted tested source authority'
     assert '--bootstrap' in steps[proof]['run']
     assert names.index(proof) < names.index(checkout)
     assert workflow['env']['BOOTSTRAP_WORKFLOW_SHA'] == '${{ github.workflow_sha }}'
-    guard = steps['Require trusted main workflow']['run']
-    for ref, caller, valid in [('refs/heads/main', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', True), ('refs/pull/10/merge', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', False), ('refs/heads/main', 'evil/fork/.github/workflows/ci.yml@refs/heads/main', False), ('refs/heads/main', 'SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/feature', False)]:
+    guard = steps[guard_name]['run']
+    cases = [('refs/heads/main', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', True), ('refs/pull/10/merge', f'SkyTruth/shared-datasets-1/.github/workflows/{filename}@refs/heads/main', False), ('refs/heads/main', 'evil/fork/.github/workflows/ci.yml@refs/heads/main', False), ('refs/heads/main', 'SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/feature', False)]
+    if filename in {'pmtiles-cdn-sync.yml', 'catalog-viewer-deploy.yml'}:
+        cases.append(('refs/heads/main', 'SkyTruth/shared-datasets-1/.github/workflows/ci.yml@refs/heads/main', True))
+    for ref, caller, valid in cases:
         result = subprocess.run(['bash', '-c', guard], env={**os.environ, 'GITHUB_REPOSITORY': 'SkyTruth/shared-datasets-1', 'GITHUB_REF': ref, 'GITHUB_WORKFLOW_REF': caller}, capture_output=True)
         assert (result.returncode == 0) is valid
 

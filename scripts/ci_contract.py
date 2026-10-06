@@ -14,19 +14,11 @@ from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
+from scripts.ci_toolchain import TOOLCHAIN
 from scripts.catalog_csv import read_catalog_rows_text
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
-TOOLCHAIN = {
-    "python": "3.12.12",
-    "uv": "0.11.8",
-    "node22": "22.12.0",
-    "node24": "24.13.1",
-    "terraform": "1.8.5",
-    "gitleaks": "8.30.1",
-    "actionlint": "1.7.12",
-}
 SUITES = (
     "lint", "tests", "geospatial-integration", "production-images", "sdk-node22", "sdk-node24", "browser",
 )
@@ -46,14 +38,15 @@ NATIVE_TESTS = (
     "tests/test_eamlis_monthly.py",
 )
 CONTRACT_FILES = (
-    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py",
+    "scripts/ci_contract.py", "scripts/ci_preflight.py", "scripts/ci_install_tools.py", "scripts/ci_toolchain.py",
     ".github/docker/preflight.Dockerfile", ".github/docker/geospatial-ci.Dockerfile",
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
     "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
     "scripts/check_workflow_syntax.py",
-    "scripts/ci_source_proof.py", "scripts/ci_runtime.py",
+    "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
+    "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
     "scripts/production_image_contracts.py",
     "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
     "scripts/cdn_plan_readiness.py",

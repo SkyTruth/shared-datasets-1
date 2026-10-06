@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
+from scripts.ci_host_runtime import isolated_host_environment
 from scripts.ci_runtime import local_runtime, prove_runtime, run_container, suite_platform
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
@@ -88,12 +89,25 @@ def validate_checkout(root: Path, plan: dict) -> None:
         raise ValueError("validation contract changed")
 
 
+def interpreter_command() -> list[str]:
+    program = (
+        "import platform\n"
+        "actual = platform.python_version()\n"
+        "print('Validation interpreter: ' + actual, flush=True)\n"
+        f"if actual != {TOOLCHAIN['python']!r}:\n"
+        f"    raise RuntimeError('Required validation interpreter {TOOLCHAIN['python']}; found ' + actual)\n"
+    )
+    return ["uv", "run", "--no-sync", "python", "-c", program]
+
+
 def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tuple[list[str], Path]]:
     base, head = plan["base"], plan["tested_sha"]
     commands: list[tuple[list[str], Path]] = []
 
     def add(*args: str, cwd: Path = root) -> None:
         commands.append((list(args), cwd))
+        if args[:2] == ("uv", "sync"):
+            commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
         add("uv", "sync", "--locked", "--all-groups")
@@ -118,6 +132,8 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         selected_targets = sorted({release_targets[target] for target in plan.get("deployments", []) if target in release_targets})
         if selected_targets:
             add("uv", "run", "--no-sync", "python", "scripts/release_contracts.py", *(argument for target in selected_targets for argument in ("--target", target)))
+        if "wdpa_processing" in plan.get("deployments", []):
+            add("uv", "run", "--no-sync", "python", "scripts/wdpa_staged_image_readiness.py")
         add("uv", "run", "--no-sync", "pytest", "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite in {"sdk-node22", "sdk-node24"}:
         package = root / "api/typescript"
@@ -183,7 +199,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
     result.update({"schema_version": 1, "suite": suite, "status": "failure", "commands": [], "tools": {}})
     if os.environ.get("GITHUB_RUN_ID"):
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-    environment = dict(os.environ)
+    environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
     # This exact process-owned path is bind-mounted across differing host and
     # container UIDs. The setting also applies to Git invoked by SDK policy.
     environment.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root)})
@@ -297,11 +313,12 @@ def preflight(args: argparse.Namespace) -> int:
         if suite == "production-images":
             # The host owns Docker and source paths. A nested container would
             # need privileged Docker access and paths outside its namespace.
-            environment = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
-                           "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")}
-            subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=root, env=environment, check=True)
-            command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
-            completed = subprocess.run(command, cwd=root, env=environment, check=False)
+            with isolated_host_environment(work, dict(os.environ)) as environment:
+                environment.update({"CI": "true", "UV_PYTHON": TOOLCHAIN["python"], "UV_PROJECT_ENVIRONMENT": str(work / "host-venv"),
+                                    "UV_CACHE_DIR": str(work / "host-uv-cache"), "UV_PYTHON_INSTALL_DIR": str(work / "host-python")})
+                subprocess.run(["uv", "sync", "--locked", "--all-groups", "--python", TOOLCHAIN["python"]], cwd=root, env=environment, check=True)
+                command = ["uv", "run", "--no-sync", "python", "scripts/ci_preflight.py", "run-suite", "--plan", str(work / "plan.json"), "--suite", suite, "--output", str(output)]
+                completed = subprocess.run(command, cwd=root, env=environment, check=False)
             report = output / "result.json"
             if not report.exists():
                 raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
