@@ -23,6 +23,33 @@ subprocess.run([str(script), "--help"], check=True, stdout=subprocess.DEVNULL)
 '''
 
 
+NATIVE_VERSION_PROBE = r'''
+import json, pathlib, re, shutil, subprocess
+tools = {}
+specifications = {
+    "ogr2ogr": ("--version", r"^GDAL ([^\s,]+)", "3.6.2"),
+    "tippecanoe": ("--version", r"^tippecanoe v([^\s,]+)", "2.52.0"),
+    "pmtiles": ("version", r"^pmtiles ([^\s,]+)", "1.30.1"),
+}
+for name in [*specifications, "tippecanoe-decode"]:
+    executable = shutil.which(name)
+    if executable is None:
+        raise RuntimeError(f"Missing native image tool: {name}")
+    path = str(pathlib.Path(executable).resolve(strict=True))
+    tools[name] = {"path": path}
+    if name in specifications:
+        argument, pattern, expected = specifications[name]
+        completed = subprocess.run([path, argument], check=True, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output = completed.stdout.strip()
+        matched = re.search(pattern, output, re.MULTILINE)
+        if matched is None or matched.group(1) != expected:
+            raise RuntimeError(f"{name} must report pinned version {expected}: {output!r}")
+        tools[name].update(version=matched.group(1), output=output)
+print(json.dumps({"schema_version": 1, "native_tools": tools}, sort_keys=True))
+'''
+
+
 VIEWER_HEALTH_PROBE = r'''import time, urllib.request
 for attempt in range(20):
     try:
@@ -76,7 +103,7 @@ def commands(target, executor, *, image_id=None):
     checks = [
         run + ["python", "-c", f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"],
         run + ["python", "-c", INTERPRETER_PROBE],
-        run + ["sh", "-c", "ogr2ogr --version && tippecanoe --version && pmtiles version && command -v tippecanoe-decode"],
+        run + ["python", "-c", NATIVE_VERSION_PROBE],
     ]
     if target == "wdpa-monthly":
         checks += [run + ["python", "scripts/wdpa_input_memory_probe.py", "--help"], run + ["python", "scripts/local_ingestion_smoke.py", "--workdir", "/work/smoke"]]
