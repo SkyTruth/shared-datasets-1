@@ -2,6 +2,7 @@ name: Deployment receipt rehearsal
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -25,8 +26,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
-                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main" ]]; then
-            echo "Execution must use this workflow from main." >&2
+                ( "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main" &&
+                  "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/main" ) ||
+                "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "Execution must use the exact rehearsal or its trusted main caller." >&2
             exit 1
           fi
       - name: Check out trusted workflow revision
