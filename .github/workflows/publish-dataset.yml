@@ -24,6 +24,7 @@ permissions:
   contents: read
   deployments: write
   id-token: write
+  attestations: write
   issues: write
   pull-requests: read
   actions: read
@@ -41,6 +42,10 @@ jobs:
   reviewed_pr_plans:
     name: Detect reviewed PR mutation plans
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     if: >-
       ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
           (github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.pr_number != '') }}

@@ -82,6 +82,13 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
   TERRAFORM_DIR: ${{ inputs.terraform_dir }}
 
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  id-token: write
+  attestations: write
+
 jobs:
   sync:
     name: Apply ${{ inputs.sync_name }}
@@ -133,6 +140,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Verify executor before candidate checkout
         env:
           GH_TOKEN: ${{ github.token }}
@@ -260,6 +270,13 @@ jobs:
           READINESS_TARGET: ${{ inputs.readiness_target }}
         run: python scripts/deployment_permissions.py --target "$READINESS_TARGET" --plan-json "$RUNNER_TEMP/target-apply.tfplan.json"
 
+      - name: Verify run-bound signing capability without mutation
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: prod-terraform-target-apply.yml
+
       - name: Claim tested deployment revision
         id: revision
         if: ${{ steps.replay.outputs.proceed == 'true' }}
@@ -276,17 +293,26 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
             --artifact "$artifact" --plan-json "$RUNNER_TEMP/target-apply.tfplan.json" --plan-scope "$TARGETS"
 
-      - name: Terraform apply
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
         if: ${{ steps.revision.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.revision.outputs.receipt_path }}
+
+      - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir="${TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/target-apply.tfplan"
 
       - name: Wait after apply
-        if: ${{ steps.revision.outputs.proceed == 'true' && inputs.post_apply_wait_seconds > 0 }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && inputs.post_apply_wait_seconds > 0 }}
         env:
           WAIT_SECONDS: ${{ inputs.post_apply_wait_seconds }}
         run: sleep "${WAIT_SECONDS}"
 
       - name: Record deployment outcome
+        id: deployment-outcome
         if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -296,3 +322,10 @@ jobs:
           phase=applied
           if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
           python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

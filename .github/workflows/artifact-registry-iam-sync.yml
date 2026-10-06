@@ -35,11 +35,12 @@ permissions:
   deployments: write
   contents: read
   id-token: write
+  attestations: write
 
 jobs:
   bootstrap:
     name: Apply Artifact Registry IAM policy manager bootstrap
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: artifact-registry-iam-sync.yml
@@ -65,6 +66,7 @@ jobs:
   writer:
     name: Apply Artifact Registry writer binding
     needs: bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: artifact-registry-iam-sync.yml

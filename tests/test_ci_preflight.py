@@ -292,6 +292,16 @@ def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_pat
     assert all('-lockfile=readonly' in args for args in initializations)
 
 
+def test_browser_releases_only_its_download_cache_before_installing_chromium(tmp_path):
+    commands = [args for args, _ in preflight.suite_commands('browser', ROOT, plan(), tmp_path)]
+    assert commands[:2] == [
+        ['uv', 'sync', '--locked', '--no-dev', '--group', 'browser'],
+        ['uv', 'cache', 'clean'],
+    ]
+    assert commands.index(['uv', 'cache', 'clean']) < next(index for index, args in enumerate(commands) if 'playwright' in args)
+    assert commands[-1] == ['npm', 'test']
+
+
 def test_local_runtime_uses_native_amd64_without_installing_a_handler(tmp_path):
     from scripts import ci_runtime
     server = {'Os': 'linux', 'Arch': 'amd64', 'Version': '20.10.22'}

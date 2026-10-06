@@ -1,12 +1,84 @@
 """The actual default viewer entrypoint must start and serve its credential-free health route."""
+import json
 import subprocess
 from unittest.mock import Mock
 
 import pytest
 
-from scripts.production_image_contracts import INTERPRETER_PROBE, VIEWER_HEALTH_PROBE, commands, main, resolve_image, verify_viewer_image
+from scripts.production_image_contracts import INTERPRETER_PROBE, NATIVE_VERSION_PROBE, VIEWER_HEALTH_PROBE, commands, main, resolve_image, verify_viewer_image
 
 IMAGE_ID = 'sha256:' + 'a' * 64
+
+
+@pytest.fixture
+def native_tool_outputs(tmp_path, monkeypatch):
+    outputs = {
+        'ogr2ogr': 'GDAL 3.6.2, released 2023/01/02\n',
+        'tippecanoe': 'tippecanoe v2.52.0\n',
+        'pmtiles': 'pmtiles 1.30.1, commit none, built at unknown\n',
+    }
+    paths = {}
+    for name in [*outputs, 'tippecanoe-decode']:
+        path = tmp_path / name
+        path.write_text('fixture native tool\n')
+        paths[name] = path
+    monkeypatch.setattr('shutil.which', lambda name: str(paths[name]) if name in paths else None)
+    def run(args, **kwargs):
+        assert kwargs['check'] is True
+        assert kwargs['stderr'] == subprocess.STDOUT
+        return subprocess.CompletedProcess(args, 0, stdout=outputs[args[0].split('/')[-1]])
+    monkeypatch.setattr('subprocess.run', run)
+    return outputs, paths
+
+
+def test_native_probe_records_actual_resolved_paths_and_pinned_versions(native_tool_outputs, capsys):
+    outputs, paths = native_tool_outputs
+    exec(NATIVE_VERSION_PROBE)
+    evidence = json.loads(capsys.readouterr().out)
+    assert evidence['schema_version'] == 1
+    assert {name: item['version'] for name, item in evidence['native_tools'].items() if 'version' in item} == {
+        'ogr2ogr': '3.6.2', 'tippecanoe': '2.52.0', 'pmtiles': '1.30.1',
+    }
+    for name, item in evidence['native_tools'].items():
+        assert item['path'] == str(paths[name].resolve())
+        if name in outputs:
+            assert item['output'] == outputs[name].strip()
+
+
+@pytest.mark.parametrize('tool,output', [
+    ('ogr2ogr', 'GDAL 3.5.3, released 2022/10/21'),
+    ('tippecanoe', 'tippecanoe v2.51.0'),
+    ('pmtiles', 'pmtiles dev, commit none, built at unknown'),
+    ('pmtiles', 'pmtiles 1.29.0, commit none, built at unknown'),
+    ('pmtiles', 'unrecognized version output'),
+])
+def test_wrong_native_versions_fail_before_fixture_execution(native_tool_outputs, tool, output):
+    outputs, _ = native_tool_outputs
+    outputs[tool] = output
+    with pytest.raises(RuntimeError, match=f'{tool} must report pinned version'):
+        exec(NATIVE_VERSION_PROBE)
+
+
+def test_native_probe_requires_installed_decoder(native_tool_outputs):
+    _, paths = native_tool_outputs
+    del paths['tippecanoe-decode']
+    with pytest.raises(RuntimeError, match='Missing native image tool: tippecanoe-decode'):
+        exec(NATIVE_VERSION_PROBE)
+
+
+def test_failed_native_version_command_remains_a_failure(native_tool_outputs, monkeypatch):
+    def failed(args, **kwargs):
+        raise subprocess.CalledProcessError(7, args)
+    monkeypatch.setattr('subprocess.run', failed)
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        exec(NATIVE_VERSION_PROBE)
+    assert raised.value.returncode == 7
+
+
+@pytest.mark.parametrize('target', ['sea-ice-daily', 'eamlis-monthly', 'wdpa-monthly'])
+def test_every_native_image_runs_the_strict_installed_version_probe(target):
+    checks = commands(target, 'b' * 40, image_id=IMAGE_ID)
+    assert sum(NATIVE_VERSION_PROBE in command for command in checks) == 1
 
 
 def test_viewer_recipe_and_default_entrypoint_health_are_selected():

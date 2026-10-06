@@ -35,11 +35,12 @@ permissions:
   deployments: write
   contents: read
   id-token: write
+  attestations: write
 
 jobs:
   bootstrap:
     name: Apply Monitoring alert policy IAM bootstrap
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml
@@ -65,6 +66,7 @@ jobs:
   sync:
     name: Apply cron alert policy sync
     needs: bootstrap
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
       caller_workflow: cron-alert-policy-sync.yml

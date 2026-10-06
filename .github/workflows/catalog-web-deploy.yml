@@ -32,6 +32,7 @@ permissions:
   deployments: write
   pull-requests: read
   id-token: write
+  attestations: write
 
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -91,6 +92,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Verify trusted catalog source authority
         id: bootstrap
         env:
@@ -217,6 +221,12 @@ jobs:
             --generated-at "$(git show -s --format=%cI HEAD)" \
             --out "${RUNNER_TEMP}/catalog-web"
 
+      - name: Verify run-bound signing capability without mutation
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: catalog-web-deploy.yml
+
       - name: Record serialized catalog deployment attempt
         id: deployment
         env:
@@ -230,8 +240,16 @@ jobs:
             --target catalog-web --artifact "$artifact" \
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
+        if: ${{ steps.deployment.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment.outputs.receipt_path }}
+
       - name: Publish catalog web bundle
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           uv run python scripts/catalog_web_publish.py \
             --source "${RUNNER_TEMP}/catalog-web" \
@@ -241,13 +259,14 @@ jobs:
             --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
 
       - name: Verify live catalog after publication
-        if: steps.deployment.outputs.proceed == 'true'
+        if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         run: |
           uv run python scripts/catalog_drift_guard.py \
             --release-index-dir "${RUNNER_TEMP}/release-indexes" \
             --latest-from-release-index
 
       - name: Record terminal catalog outcome
+        id: deployment-outcome
         if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -257,3 +276,10 @@ jobs:
           phase=failed
           if [[ "$JOB_STATUS" == success ]]; then phase=verified; fi
           python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}

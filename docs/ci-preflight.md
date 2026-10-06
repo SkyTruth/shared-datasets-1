@@ -38,6 +38,9 @@ implementation because older Apple Linux VMs advertise unsupported extensions
 [upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
 The locked wheel, algorithms and test corpus remain unchanged; this setting is
 included in the recorded runtime evidence.
+Browser validation removes its process-owned uv download cache after installing
+the locked fixture environment, reducing Chromium's peak disk use without
+removing installed dependencies or changing test coverage.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
 scanning, admission and diff/static guardrails, and Python tests. It adds native,
@@ -79,3 +82,12 @@ The pinned actionlint version predates GitHub's `concurrency.queue` field.
 with explicit `cancel-in-progress: false`, then omits only that validated scalar
 line in disposable parser input. All remaining syntax errors fail normally;
 production workflow files and concurrency behavior are unchanged.
+
+The receipt bootstrap lands before dependent deployments adopt signed deployment
+records. After this workflow is on main, `jonaraphael` dispatches
+`Deployment receipt rehearsal` through the existing protected production
+environment. It signs a synthetic receipt and verifies its exact bytes, main
+revision, workflow identity and producing run with the pinned official verifier.
+It has no GCP authentication or deployment-write permission. A successful
+protected rehearsal is required before enabling dependent production mutations;
+an unsigned fixture or a locally passing test cannot replace this live proof.

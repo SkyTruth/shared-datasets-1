@@ -191,7 +191,12 @@ class CallerAndRecordTests(unittest.TestCase):
 
     def test_deployment_record_requires_the_original_main_execution(self):
         record = ReplayTests.record(CURRENT)
-        self.assertEqual(d.verify_record(self.api, REPO, record)["artifact"], IMAGE)
+        def pages(path, field=None):
+            return [{"description": "started"}] if "/statuses?" in path else [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
+        self.api.pages.side_effect = pages
+        with patch.object(d, "verify_receipt") as receipt:
+            self.assertEqual(d.verify_record(self.api, REPO, record)["artifact"], IMAGE)
+        receipt.assert_called_once_with(self.api, REPO, record, {"description": "started"})
         for key, value in [("event", "pull_request"), ("workflow_id", 99), ("head_sha", NEW)]:
             def route(path):
                 result = self.route(path)
@@ -213,7 +218,9 @@ class CallerAndRecordTests(unittest.TestCase):
                 if path.endswith("/actions/workflows/" + workflow):
                     return {"id": 21, "path": ".github/workflows/" + workflow}
                 return self.route(path)
-            with self.subTest(sync=sync), patch.object(self.api, "get", side_effect=route):
+            def pages(path, field=None):
+                return [{"description": "started"}] if "/statuses?" in path else [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
+            with self.subTest(sync=sync), patch.object(self.api, "get", side_effect=route), patch.object(self.api, "pages", side_effect=pages), patch.object(d, "verify_receipt"):
                 self.assertEqual(d.verify_record(self.api, REPO, record)["target"], target)
 
     def test_unknown_terraform_record_cannot_satisfy_a_noop(self):
@@ -248,7 +255,7 @@ class VerifiedSupersessionTests(unittest.TestCase):
             if "/deployments?" in path:
                 return records
             if path.endswith("/statuses?per_page=100"):
-                return [{"state": "failure", "description": "failed"}]
+                return [{"state": "failure", "description": "failed"}, {"state": "in_progress", "description": "started"}]
             return [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
         def ancestry(older, newer):
             if newer == "origin/main":
@@ -257,7 +264,7 @@ class VerifiedSupersessionTests(unittest.TestCase):
         env = {"GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "13", "GITHUB_RUN_ATTEMPT": "2"}
         self.api.get.side_effect = route
         self.api.pages.side_effect = pages
-        with patch.dict(d.os.environ, env), patch.object(d.subprocess, "check_output", return_value=CURRENT), patch.object(d, "git_ancestor", side_effect=ancestry):
+        with patch.dict(d.os.environ, env), patch.object(d.subprocess, "check_output", return_value=CURRENT), patch.object(d, "git_ancestor", side_effect=ancestry), patch.object(d, "verify_receipt"):
             return d.start(args, self.api)
 
     @staticmethod
@@ -307,10 +314,14 @@ class ReconciliationTests(unittest.TestCase):
             record["payload"]["target"] = target
             api = Mock()
             api.pages.return_value = [record]
-            with patch.dict(d.os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "19"}), patch.object(d, "recovery_record", return_value=(record, record["payload"])), patch.object(d.subprocess, "check_output", return_value=CURRENT) as commands:
+            api.post.return_value = {"id": 81}
+            output = Path(root) / "outputs"
+            output.touch()
+            with patch.dict(d.os.environ, {"GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "19", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": root, "GITHUB_OUTPUT": str(output)}), patch.object(d, "recovery_record", return_value=(record, record["payload"])), patch.object(d.subprocess, "check_output", return_value=CURRENT) as commands:
                 d.recover(args, api)
             commands.assert_called_once_with(["git", "rev-parse", "HEAD"], text=True)
             self.assertEqual(api.post.call_args.args[1]["description"], "applied")
+            self.assertIn("receipt_path=", output.read_text())
 
     def test_changed_target_plan_cannot_be_marked_recovered(self):
         import json

@@ -1,0 +1,56 @@
+name: Signed deployment receipt
+description: Rehearse or attest exact protected-run deployment emission with durable Sigstore evidence
+inputs:
+  mode:
+    description: rehearsal or receipt
+    required: true
+  signer-workflow:
+    description: Exact protected leaf workflow filename, required for rehearsal
+    required: false
+  receipt-path:
+    description: Path emitted by the claim or outcome command, required for receipt
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Validate receipt mode
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        SIGNER: ${{ inputs.signer-workflow }}
+        RECEIPT: ${{ inputs.receipt-path }}
+      run: |
+        set -euo pipefail
+        if [[ "$MODE" == rehearsal && -n "$SIGNER" && -z "$RECEIPT" ]]; then exit 0; fi
+        if [[ "$MODE" == receipt && -n "$RECEIPT" && -z "$SIGNER" ]]; then exit 0; fi
+        echo "Require rehearsal with signer-workflow or receipt with receipt-path." >&2
+        exit 1
+    - name: Install exact receipt verifier
+      shell: bash
+      run: python scripts/install_deployment_verifier.py
+    - name: Prepare non-mutating rehearsal receipt
+      id: rehearsal
+      if: inputs.mode == 'rehearsal'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python scripts/deployment_emission.py prepare-rehearsal
+    - name: Attest exact receipt bytes
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+      with:
+        subject-path: ${{ inputs.mode == 'rehearsal' && steps.rehearsal.outputs.receipt_path || inputs.receipt-path }}
+        create-storage-record: false
+    - name: Verify protected emitter and exact receipt
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        MODE: ${{ inputs.mode }}
+        SIGNER: ${{ inputs.signer-workflow }}
+        RECEIPT: ${{ inputs.receipt-path }}
+      run: |
+        set -euo pipefail
+        if [[ "$MODE" == rehearsal ]]; then
+          python scripts/deployment_emission.py verify-rehearsal --signer-workflow "$SIGNER"
+        else
+          python scripts/deployment_emission.py verify-file --receipt "$RECEIPT"
+        fi

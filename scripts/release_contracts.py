@@ -21,6 +21,7 @@ from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS
+from scripts import deployment_receipt_contracts as receipts
 
 DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -223,7 +224,7 @@ def retained_evidence(root):
 
 
 def check(root, targets):
-    errors = iam_contract(root) + saved_plan_permission_contract(root) + image_permission_contract(root)
+    errors = iam_contract(root) + saved_plan_permission_contract(root) + image_permission_contract(root) + receipts.boundaries(root) + receipts.permissions(root)
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:

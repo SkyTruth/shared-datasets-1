@@ -46,6 +46,7 @@ permissions:
   deployments: write
   contents: read
   id-token: write
+  attestations: write
 
 env:
   EXECUTOR_SHA: ${{ inputs.executor_sha }}
@@ -94,6 +95,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+
+      - name: Install pinned durable receipt verifier
+        run: python scripts/install_deployment_verifier.py
       - name: Verify executor before candidate checkout
         env:
           GH_TOKEN: ${{ github.token }}
@@ -206,6 +210,13 @@ jobs:
           docker run --platform linux/amd64 --rm "${EAMLIS_MONTHLY_IMAGE_TAG}" python -c \
             'import ingestion.eamlis_monthly.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("eamlis-monthly imports ok")'
 
+      - name: Verify run-bound signing capability without mutation
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: eamlis-monthly-deploy.yml
+
       - name: Push eamlis-monthly image
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
@@ -310,12 +321,20 @@ jobs:
             --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
             --artifact "${EAMLIS_MONTHLY_IMAGE}" --plan-json "$RUNNER_TEMP/eamlis-monthly.tfplan.json"
 
-      - name: Terraform apply
+      - name: Attest serialized deployment claim before mutation
+        id: claim-receipt
         if: ${{ steps.revision.outputs.proceed == 'true' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.revision.outputs.receipt_path }}
+
+      - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
 
       - name: Confirm deployed digest
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: |
           set -euo pipefail
 
@@ -327,7 +346,7 @@ jobs:
           fi
 
       - name: Resolve in-flight canary
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
@@ -361,7 +380,7 @@ jobs:
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
 
       - name: Execute eamlis-monthly canary
-        if: ${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' && steps.inflight.outputs.run_canary == 'true' }}
         env:
           CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
@@ -386,24 +405,24 @@ jobs:
           echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
 
       - name: Set up Python
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Sync Python dependencies
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: uv sync --locked --all-groups
 
       - name: Validate latest EAMLIS release contract
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: |
           set -euo pipefail
 
@@ -474,7 +493,7 @@ jobs:
           PY
 
       - name: Run EAMLIS bucket hygiene audit
-        if: ${{ steps.revision.outputs.proceed == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success' }}
         run: |
           set -euo pipefail
 
@@ -499,6 +518,7 @@ jobs:
           PY
 
       - name: Record deployment outcome
+        id: deployment-outcome
         if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -510,3 +530,10 @@ jobs:
           args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
           if [[ -n "${EAMLIS_CANARY_EXECUTION:-}" ]]; then args+=(--execution "${EAMLIS_CANARY_EXECUTION##*/}"); fi
           python scripts/deployment_revision.py "${args[@]}"
+
+      - name: Attest terminal deployment outcome
+        if: ${{ always() && steps.deployment-outcome.outputs.receipt_path != '' }}
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: receipt
+          receipt-path: ${{ steps.deployment-outcome.outputs.receipt_path }}
