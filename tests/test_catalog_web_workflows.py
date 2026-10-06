@@ -130,11 +130,16 @@ def assert_protected_terraform_sync(
     enforce_run = steps[enforce_step_name]["run"]
 
     testcase.assertEqual(workflow["name"], expected_name)
-    testcase.assertEqual(trigger["push"]["branches"], ["main"])
-    testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
-    testcase.assertIn("workflow_dispatch", trigger)
-    testcase.assertNotIn("pull_request", trigger)
-    testcase.assertEqual(job["if"], expected_job_if)
+    if "workflow_call" in trigger:
+        testcase.assertEqual(set(trigger), {"workflow_call"})
+        testcase.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})
+        testcase.assertNotIn("if", job)
+    else:
+        testcase.assertEqual(trigger["push"]["branches"], ["main"])
+        testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
+        testcase.assertIn("workflow_dispatch", trigger)
+        testcase.assertNotIn("pull_request", trigger)
+        testcase.assertEqual(job["if"], expected_job_if)
     if expected_needs is None:
         testcase.assertNotIn("needs", job)
     else:
@@ -144,7 +149,7 @@ def assert_protected_terraform_sync(
         job["concurrency"],
         {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
     )
-    testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+    testcase.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}" if "workflow_call" in trigger else "main")
     testcase.assertIn("may only apply from main", steps["Validate main ref"]["run"])
 
     testcase.assertEqual(terraform_targets(plan_run), expected_targets)
@@ -295,7 +300,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
                 "${{ github.event_name != 'pull_request' && "
                 "needs.detect_relevant_change.outputs.should_run == 'true' }}"
             ),
-            expected_needs="detect_relevant_change",
+            expected_needs=None,
             plan_name="pmtiles-cdn-sync",
             enforce_step_name="Enforce PMTiles resource-change allowlist",
             expected_targets={
@@ -311,22 +316,8 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             },
         )
         trigger = workflow_triggers(workflow)
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Catalog web deploy"])
-        self.assertEqual(trigger["workflow_run"]["branches"], ["main"])
-        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        detect_steps = workflow_steps_by_name(workflow, "detect_relevant_change")
-        self.assertEqual(
-            workflow["jobs"]["detect_relevant_change"]["outputs"]["should_run"],
-            "${{ steps.filter.outputs.should_run }}",
-        )
-        self.assertIn(
-            "catalog/shared-datasets-catalog\\.csv|docs/assets/",
-            detect_steps["Detect relevant merged changes"]["run"],
-        )
-        self.assertIn(
-            'ref: ${{ github.event.workflow_run.head_sha || \'main\' }}',
-            (PMTILES_CDN_SYNC).read_text(encoding="utf-8"),
-        )
+        self.assertEqual(set(trigger), {"workflow_call"})
+        self.assertNotIn("detect_relevant_change", workflow["jobs"])
         steps = workflow_steps_by_name(workflow, "sync")
         step_names = [
             step["name"]

@@ -31,10 +31,9 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         enforce_run = steps["Enforce catalog-viewer resource-change allowlist"]["run"]
 
         self.assertEqual(workflow["name"], "Catalog viewer deploy")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
-        self.assertEqual(trigger["workflow_run"]["workflows"], ["Approved dataset mutation"])
-        self.assertEqual(trigger["workflow_run"]["types"], ["completed"])
-        self.assertEqual(trigger["workflow_dispatch"], {})
+        self.assertEqual(set(trigger), {"workflow_call"})
+        self.assertNotIn("workflow_run", trigger)
+        self.assertEqual(set(trigger["workflow_call"]["inputs"]), {"executor_sha", "source_run_id", "source_run_attempt"})
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
@@ -42,11 +41,13 @@ class CatalogViewerDeployWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(env["TF_REGISTRY_CLIENT_TIMEOUT"], "60")
         self.assertEqual(env["TF_REGISTRY_DISCOVERY_RETRY"], "5")
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
 
         build_run = steps["Build catalog-viewer image"]["run"]
         self.assertIn("-f services/catalog_viewer/Dockerfile", build_run)
         self.assertIn("--platform linux/amd64", build_run)
+        self.assertIn("docker run --rm --entrypoint python", build_run)
+        build_run += steps["Push tested catalog-viewer image"]["run"]
         self.assertIn("docker push", build_run)
         self.assertIn("docker buildx imagetools inspect", build_run)
         self.assertIn("CATALOG_VIEWER_IMAGE=${image_ref}", build_run)

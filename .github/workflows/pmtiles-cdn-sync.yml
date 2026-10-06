@@ -1,28 +1,29 @@
 name: PMTiles CDN sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "terraform/envs/prod/pmtiles_cdn.tf"
-      - "terraform/envs/prod/shared_bucket_public.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
-  workflow_run:
-    workflows:
-      - Catalog web deploy
-    branches:
-      - main
-    types:
-      - completed
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      executor_sha:
+        required: true
+        type: string
+      source_run_id:
+        required: true
+        type: number
+      source_run_attempt:
+        required: true
+        type: number
 
 permissions:
   contents: read
+  actions: read
+  deployments: write
   id-token: write
 
 env:
+  BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
@@ -31,59 +32,8 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
-  detect_relevant_change:
-    name: Detect PMTiles CDN sync need
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.filter.outputs.should_run }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || 'main' }}
-          fetch-depth: 2
-
-      - name: Detect relevant merged changes
-        id: filter
-        env:
-          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            echo "should_run=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if [[ "${WORKFLOW_RUN_CONCLUSION}" != "success" ]]; then
-            echo "should_run=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            echo "should_run=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          changed_files="$(git diff --name-only HEAD^ HEAD)"
-          sync_pattern='^(catalog/shared-datasets-catalog\.csv|docs/assets/|terraform/envs/prod/(pmtiles_cdn|shared_bucket_public|variables|versions)\.tf)$'
-
-          if printf '%s\n' "${changed_files}" | grep -E "${sync_pattern}" >/dev/null; then
-            echo "should_run=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "should_run=false" >> "${GITHUB_OUTPUT}"
-          fi
-
   sync:
     name: Apply PMTiles CDN route sync
-    needs: detect_relevant_change
-    if: ${{ github.event_name != 'pull_request' && needs.detect_relevant_change.outputs.should_run == 'true' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     concurrency:
@@ -101,12 +51,53 @@ jobs:
             exit 1
           fi
 
+      - name: Require trusted main workflow
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then echo "Production requires main" >&2; exit 1; fi
+          case "$GITHUB_WORKFLOW_REF" in
+            "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main") ;;
+            *) echo "Untrusted production caller" >&2; exit 1 ;;
+          esac
+
+      - name: Check out trusted deployment verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted tested source authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow pmtiles-cdn-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact passing CI revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow pmtiles-cdn-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
+      - name: Check already completed deployment
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py check --workflow pmtiles-cdn-sync.yml --target pmtiles-cdn \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Validate Terraform auth configuration
+        if: steps.replay.outputs.proceed == 'true'
         run: |
           set -euo pipefail
 
@@ -120,23 +111,32 @@ jobs:
           fi
 
       - name: Authenticate to Google Cloud
+        if: steps.replay.outputs.proceed == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
+        if: steps.replay.outputs.proceed == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Set up Terraform
+        if: steps.replay.outputs.proceed == 'true'
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
+        if: steps.replay.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod init -input=false
 
+      - name: Verify existing PMTiles bootstrap authority
+        if: steps.replay.outputs.proceed == 'true'
+        run: python scripts/deployment_permissions.py --target pmtiles-cdn-bootstrap
+
       - name: Terraform plan PMTiles managed-folder IAM bootstrap
+        if: steps.replay.outputs.proceed == 'true'
         run: |
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
@@ -150,9 +150,11 @@ jobs:
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
 
       - name: Export PMTiles managed-folder IAM bootstrap plan JSON
+        if: steps.replay.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
 
       - name: Enforce PMTiles managed-folder IAM bootstrap allowlist
+        if: steps.replay.outputs.proceed == 'true'
         run: |
           python - "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json" <<'PY'
           import json
@@ -192,13 +194,31 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Record serialized CDN deployment attempt
+        if: steps.replay.outputs.proceed == 'true'
+        id: deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact="terraform@sha256:$(python scripts/deployment_artifact.py terraform/envs/prod/*.tf terraform/envs/prod/.terraform.lock.hcl catalog/shared-datasets-catalog.csv)"
+          python scripts/deployment_revision.py start --workflow pmtiles-cdn-sync.yml \
+            --target pmtiles-cdn --artifact "$artifact" --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json" \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Terraform apply PMTiles managed-folder IAM bootstrap
+        if: steps.deployment.outputs.proceed == 'true'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"
 
       - name: Wait for PMTiles managed-folder IAM propagation
+        if: steps.deployment.outputs.proceed == 'true'
         run: sleep 30
 
+      - name: Verify PMTiles managed-folder dependencies
+        if: steps.deployment.outputs.proceed == 'true'
+        run: python scripts/deployment_permissions.py --target pmtiles-cdn
+
       - name: Terraform plan
+        if: steps.deployment.outputs.proceed == 'true'
         run: |
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod plan \
             -input=false \
@@ -213,9 +233,11 @@ jobs:
             -var="eamlis_monthly_image=unused-by-pmtiles-cdn-sync"
 
       - name: Export Terraform plan JSON
+        if: steps.deployment.outputs.proceed == 'true'
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan" > "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
 
       - name: Enforce PMTiles resource-change allowlist
+        if: steps.deployment.outputs.proceed == 'true'
         run: |
           python - "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json" <<'PY'
           import csv
@@ -301,15 +323,18 @@ jobs:
           PY
 
       - name: Terraform apply
+        if: steps.deployment.outputs.proceed == 'true'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"
 
       - name: Invalidate catalog CDN cache
+        if: steps.deployment.outputs.proceed == 'true'
         run: |
           gcloud compute url-maps invalidate-cdn-cache shared-datasets-pmtiles-cdn \
             --path="/_catalog/*" \
             --project="${GOOGLE_CLOUD_PROJECT}"
 
       - name: Verify catalog CDN routes
+        if: steps.deployment.outputs.proceed == 'true'
         run: |
           set -euo pipefail
 
@@ -415,3 +440,14 @@ jobs:
           }
 
           check_public_artifact_url "https://tiles.skytruth.org/artifacts/${public_metadata_path}"
+
+      - name: Record terminal deployment outcome
+        if: ${{ always() && steps.deployment.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase=failed
+          if [[ "$JOB_STATUS" == success ]]; then phase=verified; fi
+          python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"
