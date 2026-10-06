@@ -291,6 +291,18 @@ jobs:
       sdk: ${{ steps.plan.outputs.sdk-node22 }}
       browser: ${{ steps.plan.outputs.browser }}
       tested_sha: ${{ steps.plan.outputs.tested_sha }}
+      production_images: ${{ steps.plan.outputs.production-images }}
+      eamlis: ${{ steps.plan.outputs.eamlis }}
+      wdpa: ${{ steps.plan.outputs.wdpa }}
+      sea_ice: ${{ steps.plan.outputs.sea_ice }}
+      wdpa_processing: ${{ steps.plan.outputs.wdpa_processing }}
+      ingestion_iam: ${{ steps.plan.outputs.ingestion_iam }}
+      pmtiles_cdn: ${{ steps.plan.outputs.pmtiles_cdn }}
+      catalog_viewer: ${{ steps.plan.outputs.catalog_viewer }}
+      artifact_registry_iam: ${{ steps.plan.outputs.artifact_registry_iam }}
+      preview_terraform_iam: ${{ steps.plan.outputs.preview_terraform_iam }}
+      scratch_cleanup_iam: ${{ steps.plan.outputs.scratch_cleanup_iam }}
+      cron_alert_policy: ${{ steps.plan.outputs.cron_alert_policy }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -408,6 +420,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  production-images:
+    needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.production_images == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - name: Test the actual production image recipes
+        run: python scripts/ci_preflight.py run-suite --plan "$(find "$RUNNER_TEMP/ci-plans" -name plan.json | sort -V | tail -1)" --suite production-images --output "$RUNNER_TEMP/ci-results/production-images"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-result-production-images-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/production-images
+          if-no-files-found: error
+          retention-days: 14
+
   sdk-validation:
     name: sdk-validation (Node ${{ matrix.node }})
     needs: geospatial-changes
@@ -474,7 +511,7 @@ jobs:
       contents: read
       actions: read
     if: always()
-    needs: [geospatial-changes, lint, tests, geospatial-integration, sdk-validation, browser]
+    needs: [geospatial-changes, lint, tests, geospatial-integration, production-images, sdk-validation, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -544,6 +581,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      deployments: write
       pull-requests: read
       issues: write
       id-token: write
@@ -551,4 +589,171 @@ jobs:
     with:
       pr_number: ${{ matrix.pr_number }}
       executor_sha: ${{ github.sha }}
+    secrets: inherit
+
+  ingestion-iam:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  eamlis:
+    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/eamlis-monthly-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  wdpa:
+    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      pull-requests: read
+    uses: ./.github/workflows/wdpa-monthly-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  sea-ice:
+    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/sea-ice-daily-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  wdpa-processing:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa_processing == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      pull-requests: read
+    uses: ./.github/workflows/wdpa-processing-validation-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  pmtiles-cdn:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/pmtiles-cdn-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ github.run_id }}
+      source_run_attempt: ${{ github.run_attempt }}
+    secrets: inherit
+
+  catalog-viewer:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/catalog-viewer-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ github.run_id }}
+      source_run_attempt: ${{ github.run_attempt }}
+    secrets: inherit
+
+  artifact-registry-iam:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.artifact_registry_iam == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/artifact-registry-iam-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  preview-terraform-iam:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.preview_terraform_iam == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/preview-terraform-iam-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  scratch-cleanup-iam:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/scratch-cleanup-iam-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  cron-alert-policy:
+    needs: [ci-ready, geospatial-changes]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.cron_alert_policy == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+    uses: ./.github/workflows/cron-alert-policy-sync.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
