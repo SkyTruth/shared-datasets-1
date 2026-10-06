@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "run_id": 37438276210,
+  "run_attempt": 1,
+  "job_id": 112187253799,
+  "executor_sha": "39c8554b9988f774e5a1d8c8cf00d3b25810cec3",
+  "outcome": "permission probe HTTP 403 before dependent apply/cache invalidation",
+  "historical_error_body": null,
+  "cause_evidence": "Both saved plans reported no changes; cache invalidation was the only dependent operation probe. Its exact URL-map probe requires list permission, absent from the authenticated deployer role and other project roles. Original error body and matching Compute audit entries were unavailable; endpoint attribution follows the no-change mapper contract.",
+  "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/global/urlMaps/shared-datasets-pmtiles-cdn/testIamPermissions",
+  "operation_permissions": [
+    "compute.urlMaps.invalidateCache"
+  ],
+  "missing_probe_call_permission": "compute.urlMaps.list",
+  "existing_role": {
+    "name": "projects/shared-datasets-1/roles/sharedDatasetsPmtilesUrlMapSync",
+    "title": "Shared Datasets PMTiles URL Map Sync",
+    "description": "Allows GitHub Actions Terraform to update the PMTiles CDN URL map for catalog routing.",
+    "includedPermissions": [
+      "compute.backendBuckets.get",
+      "compute.backendBuckets.use",
+      "compute.backendServices.get",
+      "compute.globalOperations.get",
+      "compute.projects.get",
+      "compute.urlMaps.get",
+      "compute.urlMaps.invalidateCache",
+      "compute.urlMaps.update",
+      "compute.urlMaps.validate"
+    ],
+    "stage": "GA",
+    "etag": "BwZRob2wxjs="
+  },
+  "independent_bootstrap_authority": [
+    {
+      "role": "projects/shared-datasets-1/roles/sharedDatasetsPreviewTerraform",
+      "condition": null,
+      "permissions": [
+        "resourcemanager.projects.getIamPolicy",
+        "resourcemanager.projects.setIamPolicy"
+      ]
+    },
+    {
+      "role": "projects/shared-datasets-1/roles/sharedDatasetsTerraformScratchCleanupRoleSync",
+      "condition": null,
+      "permissions": [
+        "iam.roles.create",
+        "iam.roles.get",
+        "iam.roles.update"
+      ]
+    }
+  ],
+  "state_ownership": {
+    "source_uri": "gs://skytruth-shared-datasets-1/000-system/terraform/state/prod/default.tfstate",
+    "generation": 1791277272779744,
+    "state_sha256": "67fb861bd235279817207ac948081daf73a6a929041654d4c7d0f07b5679fe74",
+    "state_serial": 614,
+    "target_role": "projects/shared-datasets-1/roles/sharedDatasetsPmtilesUrlMapSync",
+    "matching_addresses": []
+  },
+  "normal_routing_update_source": "terraform/envs/prod/pmtiles_cdn.tf: google_compute_url_map.pmtiles_cdn path rules reference google_compute_backend_bucket.pmtiles_cdn.self_link; synthetic added asset route with the actual configured backend identity",
+  "normal_routing_update_plan": {
+    "format_version": "1.2",
+    "terraform_version": "1.8.5",
+    "resource_changes": [
+      {
+        "address": "google_compute_url_map.pmtiles_cdn",
+        "mode": "managed",
+        "type": "google_compute_url_map",
+        "change": {
+          "actions": [
+            "update"
+          ],
+          "before": {
+            "project": "shared-datasets-1",
+            "name": "shared-datasets-pmtiles-cdn",
+            "path_matcher": [
+              {
+                "name": "pmtiles",
+                "path_rule": [
+                  {
+                    "paths": [
+                      "/_catalog/*"
+                    ],
+                    "service": "https://www.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendBuckets/shared-datasets-pmtiles-cdn"
+                  }
+                ]
+              }
+            ]
+          },
+          "after": {
+            "project": "shared-datasets-1",
+            "name": "shared-datasets-pmtiles-cdn",
+            "path_matcher": [
+              {
+                "name": "pmtiles",
+                "path_rule": [
+                  {
+                    "paths": [
+                      "/_catalog/*"
+                    ],
+                    "service": "https://www.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendBuckets/shared-datasets-pmtiles-cdn"
+                  },
+                  {
+                    "paths": [
+                      "/pmtiles/public/reviewed-asset.pmtiles"
+                    ],
+                    "service": "https://www.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendBuckets/shared-datasets-pmtiles-cdn"
+                  }
+                ]
+              }
+            ]
+          },
+          "after_unknown": {}
+        }
+      }
+    ]
+  },
+  "production_routing_contract": {
+    "base_sha": "07e6fd6431c0d55c1589eafea62af5841c1a279e",
+    "effective_mode": "cdn",
+    "variable_default": "redirect",
+    "automatic_variable_file": "terraform/envs/prod/production.auto.tfvars",
+    "workflow_serving_mode_override": false,
+    "backend_bucket": "projects/shared-datasets-1/global/backendBuckets/shared-datasets-pmtiles-cdn",
+    "source_files": {
+      "terraform/envs/prod/pmtiles_cdn.tf": "723861920842aa903bb8ec4a05a01a85decaf4a959caddc5aaf911f99f42c85a",
+      "terraform/envs/prod/production.auto.tfvars": "d85b2e2c27d5998101961c123b09ec36d7c1946a2922a183b426a35bc546d2fd",
+      "terraform/envs/prod/variables.tf": "43b335b26c51d73c0014cfdf7048dd89d1366ae7c908ae7d7c336f5302597777"
+    },
+    "live_backend_closure": {
+      "checked_at": "2026-10-06T09:25:03.918169+00:00",
+      "api_url": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/global/urlMaps/shared-datasets-pmtiles-cdn",
+      "project": "shared-datasets-1",
+      "name": "shared-datasets-pmtiles-cdn",
+      "id": "8011556393278040914",
+      "fingerprint": "18YFS4Fbq7M=",
+      "reference_count": 55,
+      "unique_references": [
+        "https://www.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendBuckets/shared-datasets-pmtiles-cdn"
+      ]
+    }
+  }
+}

@@ -22,6 +22,7 @@ from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
 from scripts.deployment_revision import TERRAFORM_SYNCS
 from scripts import deployment_receipt_contracts as receipts
+from scripts import cdn_plan_readiness as cdn
 
 DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
@@ -113,6 +114,34 @@ def image_permission_contract(root):
 
 def iam_contract(root):
     errors = []
+    errors += cdn.bootstrap_definition_errors((root / 'terraform/envs/prod/shared_bucket_public.tf').read_text())
+    cdn_workflow = workflow(root, 'pmtiles-cdn-sync.yml')
+    errors += cdn.routing_contract_errors(root)
+    cdn_steps = {step.get('name'): step for step in cdn_workflow['jobs']['sync']['steps']}
+    bootstrap = cdn_steps.get('Terraform plan PMTiles managed-folder IAM bootstrap', {}).get('run', '')
+    if '-target=' + cdn.ROLE_ADDRESS not in bootstrap:
+        errors.append('CDN bootstrap must target the exact existing URL-map role')
+    guard = cdn_steps.get('Enforce PMTiles managed-folder IAM bootstrap allowlist', {})
+    expected = 'python scripts/cdn_plan_readiness.py check-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"'
+    if guard.get('run') != expected or guard.get('if') != "steps.replay.outputs.proceed == 'true'":
+        errors.append('CDN bootstrap must enforce exact role adoption on its saved plan')
+    ordered = [
+        'Export PMTiles managed-folder IAM bootstrap plan JSON',
+        'Enforce PMTiles managed-folder IAM bootstrap allowlist',
+        'Verify permissions required by the saved CDN bootstrap plan',
+        'Record serialized CDN deployment attempt',
+        'Attest serialized deployment claim before mutation',
+        'Terraform apply PMTiles managed-folder IAM bootstrap',
+    ]
+    names = [step.get('name') for step in cdn_workflow['jobs']['sync']['steps']]
+    if any(names.count(name) != 1 for name in ordered) or sorted(names.index(name) for name in ordered if name in names) != [names.index(name) for name in ordered if name in names]:
+        errors.append('CDN exact role guard must follow saved-plan export and precede permissions, signed claim and bootstrap apply')
+    exported = cdn_steps.get(ordered[0], {}).get('run')
+    if exported != 'terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan" > "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"':
+        errors.append('CDN role guard must consume JSON exported from the exact saved bootstrap plan')
+    for path in (root / '.github/workflows').glob('*.yml'):
+        if path.name != 'pmtiles-cdn-sync.yml' and cdn.ROLE_ADDRESS in path.read_text():
+            errors.append(f'{path.name}: URL-map role adoption belongs only to the constrained CDN bootstrap')
     text = (root / "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf").read_text()
     for role, expected in (("scheduled_ingestion_deployer", PROJECT_PERMISSIONS), ("translation_notice_iam_manager", SECRET_PERMISSIONS)):
         missing = set(expected) - role_permissions(text, role)

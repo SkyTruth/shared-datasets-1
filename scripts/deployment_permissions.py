@@ -12,11 +12,12 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.terraform_plan_permissions import plan_checks
+from scripts.terraform_plan_permissions import plan_checks, probe_call_checks
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -51,8 +52,24 @@ MONITORING_PERMISSIONS = (
 def request(url, permissions, token):
     raw = json.dumps({"permissions": list(permissions)}).encode()
     req = urllib.request.Request(url, data=None if "storage.googleapis.com" in url else raw, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, method="GET" if "storage.googleapis.com" in url else "POST")
-    with urllib.request.urlopen(req, timeout=30) as response:
-        payload = json.load(response)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        # Capture structured Google error diagnostics, never request headers or
+        # an incomplete body that might contain a truncated credential value.
+        body = error.read(16 * 1024 + 1)
+        diagnostic = 'response body unavailable, unstructured or over 16 KiB'
+        if len(body) <= 16 * 1024:
+            try:
+                vendor = json.loads(body)
+            except (ValueError, UnicodeDecodeError):
+                vendor = None
+            if isinstance(vendor, dict) and isinstance(vendor.get('error'), dict):
+                safe = {key: vendor['error'][key] for key in ('code', 'status', 'message', 'details') if key in vendor['error']}
+                encoded_token = json.dumps(token, ensure_ascii=True)[1:-1]
+                diagnostic = json.dumps(safe, ensure_ascii=True).replace(encoded_token, '[REDACTED]')[:4096]
+        raise RuntimeError(f'permission probe HTTP {error.code}: {url}; {diagnostic}') from error
     actual = payload.get("permissions", [])
     if not isinstance(actual, list) or not all(isinstance(value, str) for value in actual):
         raise RuntimeError("invalid testIamPermissions response")
@@ -104,15 +121,20 @@ def checks(target):
 
 
 def verify_checks(required, probe, *, attempts=7, pause=time.sleep):
-    for attempt in range(attempts):
-        missing = [(url, probe(url, permissions)) for url, permissions in required]
-        missing = [(url, permissions) for url, permissions in missing if permissions]
-        if not missing:
-            return
-        if attempt + 1 < attempts:
-            pause(10)
-    detail = "; ".join(f"{url}: {', '.join(permissions)}" for url, permissions in missing)
-    raise RuntimeError(f"deployment identity is not ready after bounded propagation checks: {detail}")
+    # Calling Compute testIamPermissions without its list prerequisite returns
+    # 403 before it can report the actual resource-operation permissions. Keep
+    # these phases ordered; success in the first phase cannot satisfy the second.
+    for phase, checks in (("permission-probe call", probe_call_checks(required)), ("resource operation", required)):
+        for attempt in range(attempts):
+            missing = [(url, probe(url, permissions)) for url, permissions in checks]
+            missing = [(url, permissions) for url, permissions in missing if permissions]
+            if not missing:
+                break
+            if attempt + 1 < attempts:
+                pause(10)
+        else:
+            detail = "; ".join(f"{url}: {', '.join(permissions)}" for url, permissions in missing)
+            raise RuntimeError(f"deployment identity is not ready for {phase} after bounded propagation checks: {detail}")
 
 
 def verify(target, probe, *, attempts=7, pause=time.sleep):

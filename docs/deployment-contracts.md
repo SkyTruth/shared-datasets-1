@@ -70,6 +70,10 @@ Missing parent authority, unknown identities, deferred changes and unsupported
 mutation classes stop the apply. The checked-in roles are also validated against
 their owned dependency contracts, without adding grants. For CDN sync, cache
 invalidation authority is checked even when the URL map itself is unchanged.
+Compute permission probes also require their method-specific list permission
+before they can report operation authority. The two-phase
+[probe-call contract](compute-probe-call-contract.md) checks that prerequisite
+first and preserves the actual-resource operation check.
 These checks prove mutation authority; runtime acceptance and installed state
 remain separate prerequisites.
 

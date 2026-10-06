@@ -15,11 +15,45 @@ PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 PROJECT_URL = f"https://cloudresourcemanager.googleapis.com/v1/projects/{PROJECT}:testIamPermissions"
 NAME = re.compile(r"[A-Za-z0-9_.@-]+")
+# Compute's resource permission probes themselves require collection-list
+# authority. The regional names are independent IAM permissions, not aliases
+# for their global counterparts. Sources and API discovery paths are retained
+# in tests/fixtures/ci_failures/compute_probe_call_contract.json.
+COMPUTE_PROBE_PERMISSIONS = {
+    ("global", "urlMaps"): "compute.urlMaps.list",
+    ("global", "backendBuckets"): "compute.backendBuckets.list",
+    ("global", "backendServices"): "compute.backendServices.list",
+    ("regions", "backendBuckets"): "compute.regionBackendBuckets.list",
+    ("regions", "backendServices"): "compute.regionBackendServices.list",
+}
 
 
 def require(condition, message):
     if not condition:
         raise ValueError("PLAN_PERMISSION_CONTRACT: " + message)
+
+
+def probe_call_checks(required):
+    """Prove Compute probe-call prerequisites before invoking resource checks.
+
+    These project-level reads authorize calling testIamPermissions only. They
+    never replace the permission check on the actual mutation resource.
+    """
+    permissions = set()
+    for url, _ in required:
+        if not url.startswith("https://compute.googleapis.com/"):
+            continue
+        match = re.fullmatch(
+            r"https://compute\.googleapis\.com/compute/v1/projects/" + PROJECT
+            + r"/(global|regions/" + REGION + r")/(urlMaps|backendBuckets|backendServices)/([A-Za-z0-9_.-]+)/testIamPermissions",
+            url,
+        )
+        require(match is not None, "unsupported Compute permission-probe endpoint")
+        scope = "global" if match[1] == "global" else "regions"
+        permission = COMPUTE_PROBE_PERMISSIONS.get((scope, match[2]))
+        require(permission is not None, "unsupported Compute permission-probe collection")
+        permissions.add(permission)
+    return [(PROJECT_URL, tuple(sorted(permissions)))] if permissions else []
 
 
 def text(value, field):

@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "scope": "all permission-probe endpoint families emitted by saved-plan mapper and target readiness checks; operation permissions remain independently resource-scoped",
+  "compute_discovery": {
+    "url": "https://www.googleapis.com/discovery/v1/apis/compute/v1/rest",
+    "revision": "20260922",
+    "sha256": "cd11330dbe64fe8c028ff7cb644cfbf7516216cd2f7b7c0b2f2ab60f8371f9a4",
+    "methods": [
+      {
+        "id": "compute.urlMaps.testIamPermissions",
+        "path": "projects/{project}/global/urlMaps/{resource}/testIamPermissions",
+        "httpMethod": "POST"
+      },
+      {
+        "id": "compute.backendBuckets.testIamPermissions",
+        "path": "projects/{project}/global/backendBuckets/{resource}/testIamPermissions",
+        "httpMethod": "POST"
+      },
+      {
+        "id": "compute.backendServices.testIamPermissions",
+        "path": "projects/{project}/global/backendServices/{resource}/testIamPermissions",
+        "httpMethod": "POST"
+      },
+      {
+        "id": "compute.regionBackendBuckets.testIamPermissions",
+        "path": "projects/{project}/regions/{region}/backendBuckets/{resource}/testIamPermissions",
+        "httpMethod": "POST"
+      },
+      {
+        "id": "compute.regionBackendServices.testIamPermissions",
+        "path": "projects/{project}/regions/{region}/backendServices/{resource}/testIamPermissions",
+        "httpMethod": "POST"
+      }
+    ]
+  },
+  "iam_custom_role_support": {
+    "resource": "//cloudresourcemanager.googleapis.com/projects/shared-datasets-1",
+    "enumerated_permissions": 13720,
+    "complete": true,
+    "wanted": [
+      "compute.backendBuckets.list",
+      "compute.backendServices.list",
+      "compute.regionBackendBuckets.list",
+      "compute.regionBackendBuckets.use",
+      "compute.regionBackendServices.list",
+      "compute.regionBackendServices.use",
+      "compute.urlMaps.list"
+    ],
+    "found": {
+      "compute.backendBuckets.list": {
+        "name": "compute.backendBuckets.list",
+        "stage": "GA"
+      },
+      "compute.backendServices.list": {
+        "name": "compute.backendServices.list",
+        "stage": "GA"
+      },
+      "compute.regionBackendBuckets.list": {
+        "name": "compute.regionBackendBuckets.list",
+        "stage": "GA"
+      },
+      "compute.regionBackendBuckets.use": {
+        "name": "compute.regionBackendBuckets.use",
+        "stage": "GA"
+      },
+      "compute.regionBackendServices.list": {
+        "name": "compute.regionBackendServices.list",
+        "stage": "GA"
+      },
+      "compute.regionBackendServices.use": {
+        "name": "compute.regionBackendServices.use",
+        "stage": "GA"
+      },
+      "compute.urlMaps.list": {
+        "name": "compute.urlMaps.list",
+        "stage": "GA",
+        "customRolesSupportLevel": "TESTING"
+      }
+    },
+    "not_found": []
+  },
+  "iam_enum_default": {
+    "source": "https://raw.githubusercontent.com/googleapis/googleapis/master/google/iam/admin/v1/iam.proto",
+    "sha256": "bd35049017b9a20b19505c58de9f88d19d048a4052731a9295074fa120e48c45",
+    "omitted_customRolesSupportLevel": "SUPPORTED (enum value 0)",
+    "url_maps_list_support": "TESTING, not NOT_SUPPORTED"
+  },
+  "families": [
+    {
+      "family": "compute.urlMaps",
+      "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/global/urlMaps/fixture/testIamPermissions",
+      "probe_call_permissions": [
+        "compute.urlMaps.list"
+      ],
+      "documentation": "https://docs.cloud.google.com/compute/docs/reference/rest/v1/urlMaps/testIamPermissions",
+      "evidence": "explicit method IAM prerequisite",
+      "discovery_method": "compute.urlMaps.testIamPermissions"
+    },
+    {
+      "family": "compute.backendBuckets",
+      "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendBuckets/fixture/testIamPermissions",
+      "probe_call_permissions": [
+        "compute.backendBuckets.list"
+      ],
+      "documentation": "https://docs.cloud.google.com/compute/docs/reference/rest/v1/backendBuckets/testIamPermissions",
+      "evidence": "explicit method IAM prerequisite",
+      "discovery_method": "compute.backendBuckets.testIamPermissions"
+    },
+    {
+      "family": "compute.backendServices",
+      "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/global/backendServices/fixture/testIamPermissions",
+      "probe_call_permissions": [
+        "compute.backendServices.list"
+      ],
+      "documentation": "https://docs.cloud.google.com/compute/docs/reference/rest/v1/backendServices/testIamPermissions",
+      "evidence": "explicit method IAM prerequisite",
+      "discovery_method": "compute.backendServices.testIamPermissions"
+    },
+    {
+      "family": "compute.regionBackendBuckets",
+      "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/regions/us-central1/backendBuckets/fixture/testIamPermissions",
+      "probe_call_permissions": [
+        "compute.regionBackendBuckets.list"
+      ],
+      "documentation": "https://docs.cloud.google.com/compute/docs/reference/rest/2026-10-01-preview/regionBackendBuckets/testIamPermissions",
+      "evidence": "explicit method IAM prerequisite",
+      "discovery_method": "compute.regionBackendBuckets.testIamPermissions"
+    },
+    {
+      "family": "compute.regionBackendServices",
+      "endpoint": "https://compute.googleapis.com/compute/v1/projects/shared-datasets-1/regions/us-central1/backendServices/fixture/testIamPermissions",
+      "probe_call_permissions": [
+        "compute.regionBackendServices.list"
+      ],
+      "documentation": "https://docs.cloud.google.com/compute/docs/reference/rest/v1/regionBackendServices/testIamPermissions",
+      "evidence": "explicit method IAM prerequisite",
+      "discovery_method": "compute.regionBackendServices.testIamPermissions"
+    },
+    {
+      "family": "project",
+      "endpoint": "https://cloudresourcemanager.googleapis.com/v1/projects/shared-datasets-1:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/resource-manager/reference/rest/v1/projects/testIamPermissions",
+      "evidence": "explicit no IAM permission required to call"
+    },
+    {
+      "family": "storage.bucket",
+      "endpoint": "https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?permissions=storage.buckets.get",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/storage/docs/json_api/v1/buckets/testIamPermissions",
+      "evidence": "explicit no IAM permission required to call"
+    },
+    {
+      "family": "storage.managedFolder",
+      "endpoint": "https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/managedFolders/_catalog%2F/iam/testPermissions?permissions=storage.managedFolders.get",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/storage/docs/json_api/v1/managedFolder/testIamPermissions",
+      "evidence": "explicit no IAM permission required to call"
+    },
+    {
+      "family": "iam.serviceAccount",
+      "endpoint": "https://iam.googleapis.com/v1/projects/shared-datasets-1/serviceAccounts/catalog-viewer@shared-datasets-1.iam.gserviceaccount.com:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.serviceAccounts/testIamPermissions",
+      "evidence": "OAuth scope documented; no additional call-specific IAM permission listed"
+    },
+    {
+      "family": "iam.workloadIdentityPool",
+      "endpoint": "https://iam.googleapis.com/v1/projects/shared-datasets-1/locations/global/workloadIdentityPools/github:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools/testIamPermissions",
+      "evidence": "OAuth scope documented; no additional call-specific IAM permission listed"
+    },
+    {
+      "family": "artifactRegistry.repository",
+      "endpoint": "https://artifactregistry.googleapis.com/v1/projects/shared-datasets-1/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/artifact-registry/docs/reference/rest/v1/projects.locations.repositories/testIamPermissions",
+      "evidence": "OAuth scope documented; no additional call-specific IAM permission listed"
+    },
+    {
+      "family": "secretManager.secret",
+      "endpoint": "https://secretmanager.googleapis.com/v1/projects/shared-datasets-1/secrets/pmtiles-cdn-signed-request-key:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/secret-manager/docs/reference/rest/v1/projects.secrets/testIamPermissions",
+      "evidence": "OAuth scope documented; no additional call-specific IAM permission listed"
+    },
+    {
+      "family": "cloudRun.job",
+      "endpoint": "https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/jobs/wdpa-monthly:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs/testIamPermissions",
+      "evidence": "explicit no IAM permission required to call"
+    },
+    {
+      "family": "cloudRun.service",
+      "endpoint": "https://run.googleapis.com/v2/projects/shared-datasets-1/locations/us-central1/services/catalog-viewer:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/testIamPermissions",
+      "evidence": "explicit no IAM permission required to call"
+    },
+    {
+      "family": "iap.cloudRunService",
+      "endpoint": "https://iap.googleapis.com/v1/projects/123456789/iap_web/cloud_run-us-central1/services/catalog-viewer:testIamPermissions",
+      "probe_call_permissions": [],
+      "documentation": "https://docs.cloud.google.com/iap/docs/reference/rest/v1/TopLevel/testIamPermissions",
+      "evidence": "OAuth scope documented; no additional call-specific IAM permission listed"
+    }
+  ]
+}
