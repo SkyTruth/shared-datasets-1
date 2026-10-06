@@ -149,8 +149,16 @@ class PreviewIamReadinessTests(unittest.TestCase):
                 raise denied
             return io.BytesIO(json.dumps({"permissions": json.loads(request.data)["permissions"]}).encode())
 
-        with patch.object(live.urllib.request, "urlopen", side_effect=deny_only_pool), self.assertRaises(HTTPError):
-            live.verify("preview-service-account-iam", lambda url, required: live.request(url, required, "fixture-token"), attempts=1)
+        pause = Mock()
+        with patch.object(live.urllib.request, "urlopen", side_effect=deny_only_pool) as open_url, patch("builtins.print") as output:
+            with self.assertRaisesRegex(RuntimeError, "HTTP 403") as refusal:
+                live.verify("preview-service-account-iam", lambda url, required: live.request(url, required, "fixture-token"), pause=pause)
+        self.assertIn(POOL_URL, str(refusal.exception))
+        self.assertIs(refusal.exception.__cause__, denied)
+        self.assertNotIn("fixture-token", str(refusal.exception))
+        self.assertEqual(sum(call.args[0].full_url == POOL_URL for call in open_url.call_args_list), 1)
+        pause.assert_not_called()
+        output.assert_not_called()
 
     def test_cli_never_prints_ready_when_exact_pool_read_is_denied(self):
         request = Mock(side_effect=lambda url, permissions, token: [POOL_READ] if url == POOL_URL else [])
