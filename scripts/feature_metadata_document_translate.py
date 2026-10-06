@@ -35,7 +35,9 @@ class FeatureMetadataDocumentTranslateError(ValueError):
 
 
 def xml_text(value: str) -> str:
-    return escape(XML_ILLEGAL_RE.sub(" ", value), {"'": "&apos;", '"': "&quot;"})
+    # XML parsers normalize literal CR/CRLF line endings. Preserve CR as an
+    # entity so workbook text still matches its canonical source-value hash.
+    return escape(XML_ILLEGAL_RE.sub(" ", value), {"'": "&apos;", '"': "&quot;"}).replace("\r", "&#13;")
 
 
 def column_name(index: int) -> str:

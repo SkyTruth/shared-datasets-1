@@ -57,8 +57,9 @@ when the canonical value changes. Successful rows require a nonblank `value`.
 A failed machine task uses `review_state=translation_failed` and an empty `value`;
 it is retryable work, never an applied translation. Older helpers reject these
 rows, so update the local translation helpers together. When completing a failed
-row manually, supply the translated value and change its state to
-`human_reviewed`.
+row, supply the translated value and use its actual provenance. Agent-generated
+or agent-corrected text remains `machine_translated`; use `human_reviewed` only
+after actual human language review.
 
 Generated locale sidecars are derived artifacts:
 
@@ -69,14 +70,51 @@ Generated locale sidecars are derived artifacts:
 Do not edit generated localized sidecars manually. Regenerate them from the
 canonical sidecar, schema or translatable-field allowlist, and translation CSV.
 
+## Reduce The Workload And Choose The Method
+
+Identify current missing/failed work and deduplicate before choosing a translation
+tool. Measure unique source text times target locales, with the field context
+needed to interpret it. Reconsider the method after a material reduction; raw
+dataset row counts do not describe the remaining language workload.
+
+For English-only requests, translate reviewed English words or phrases. ASCII
+text, dictionary membership, or a classifier score alone is insufficient. Keep
+names, identifiers, numbers, punctuation and excluded spans intact, and retain
+field/context evidence. Excluded text stays canonical fallback and must not be
+counted as a completed translation.
+
+A bounded glossary may be translated directly by the agent when language
+confidence is adequate. Include the user's file handling and review effort when
+choosing a method; do not hand a small glossary back merely because the original
+dataset was large. Honor explicit provider and human-review requirements. Review
+domain meanings in context, translate prose as whole sentences, and preserve
+names, numbers, units and the limits of truncated source text.
+
+Before scaling a paid classifier, verify its actual request/response contract,
+output cardinality and identifiers with known positive, negative and ambiguous
+examples. HTTP or parsing success does not prove useful classification. Stop on
+malformed or degenerate output, cache results bound to their inputs, and include
+failed/discarded calls in usage reporting. Do not silently send a new bulk corpus
+outside the authorized scope.
+
 ## Update Workflow
+
+For a maintainer-requested English-only batch dominated by names and codes,
+follow `docs/english-translation-glossary.md`. Use Jev classifications as review
+evidence, then export only reviewed English phrases with their reconstruction
+manifest. Preserve names/codes and successful existing translations. An excluded
+source label is not a completed translation. Keep `TYPESAFE_API_KEY` in a local
+environment or GitHub Actions secret, never source control. Do not enable paid
+classification in ordinary builds/tests or silently send a new bulk corpus to
+an external provider.
 
 1. Work under the standard temp root, usually
    `${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/vector-assets/{asset-slug}/`.
 2. Start from the current canonical sidecar, schema, and translation source.
 3. Add or update CSV rows only for maintainer-approved locales and fields.
-   For machine-generated first-pass rows, use the local helper with the exact
-   asset, fields, and locales recorded by the publishing concierge:
+   When the reduced workload suits the machine helper, use it for first-pass
+   rows with the exact asset, fields, and locales recorded by the publishing
+   concierge:
 
 ```bash
 UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
@@ -98,16 +136,17 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    `--translator-target locale=target_code` when a field-safe locale such as
    `pt_br` must map to a deep-translator target such as `pt`.
 
-   For really large translation workloads, do not force the local
-   `deep-translator` helper through a huge request queue. Use Google
-   Translate's document workflow instead:
+   For workloads that remain large after reduction, do not force the local
+   `deep-translator` helper through a huge request queue. Consider Google
+   Translate's document workflow:
    `https://translate.google.com/?op=docs`. Export the approved source rows to
-   `.xlsx` shards of roughly 60,000 rows and about 1 MB each, translate those
-   document shards, then import the translated values back into
+   `.xlsx` shards of roughly 60,000 rows, measuring actual file sizes against
+   the provider's current upload limits. Translate those document shards,
+   then import the translated values back into
    `{asset-slug}.metadata-translations.csv` while preserving the original
    `feature_id`, `field`, `locale`, and `source_value_hash` keys.
-   Treat an estimated direct machine-translation run longer than 30 minutes as
-   too large for the local helper. Use
+   An estimated direct machine-translation run longer than 30 minutes is a
+   reason to reconsider the method, not an automatic handoff to the user. Use
    `scripts/feature_metadata_document_translate.py export` to create the
    two-column `hash,text` workbook shard(s) and manifest, and use its `import`
    command to ingest returned translated workbooks by intact hashes. The exact
@@ -116,6 +155,7 @@ UV_CACHE_DIR=.uv-cache uv run --with deep-translator --with tqdm \
    Every exported shard and hash must appear exactly once, with no extra rows.
    The v2 manifest binds the canonical/schema snapshots, task keys, completed
    exclusions, and collection options. Keep it alongside the workbooks.
+   Follow Document Run Checks below before scaling a browser-based batch.
 
    V1 manifests cannot prove that task history. Re-export using current
    canonical/schema/CSV files and the same approved locales/fields. Keep old
@@ -200,6 +240,64 @@ UV_CACHE_DIR=.uv-cache uv run python scripts/feature_metadata_localization.py \
    completion hook reports debt at the inclusive 1% threshold once per release;
    see `docs/feature-metadata-api.md` for privacy and claim/delivery semantics.
 
+## Document Run Checks
+
+Before a large document batch, prove the full upload, translation, download and
+local-read path with a representative shard. A tiny workbook does not establish
+that large shards work. Confirm the intended source/target language settings,
+inspect representative translated values, and verify the workbook keys before
+scaling. Do not infer success from a download button or completion message.
+
+Prefer background browser controls and filesystem tools. Test whether the
+intended download directory is readable from the terminal before using a file
+manager. Respect user limits on all screen interaction, not just Finder.
+Consolidate unavoidable visible work and batch file transfers. Use the standard
+temp workspace where possible; a user-selected download location is temporary
+staging, not a new permanent workspace convention.
+
+Validate every returned file after download:
+
+- Preserve the raw download and its original export.
+- Compare file hashes before normalization. A byte-identical source download
+  is not evidence of completed translation.
+- Check exact hash membership, uniqueness, full shard coverage and nonblank
+  values with the shared importer.
+- Inspect content separately from structure. An entirely unchanged text column
+  needs investigation; proper names and codes can legitimately remain unchanged,
+  so do not impose a universal minimum percentage of changed text.
+- Review domain meanings in context and check that names, numbers and units
+  survive. Structural validity does not establish language quality.
+- Keep damaged-key restoration separate from import. Record the original,
+  returned value and evidence establishing correspondence. Never use row position
+  or unverified fuzzy matching. Retranslate when correspondence is uncertain.
+
+Do not import a suspect workbook, label its rows as completed, or build its
+sidecars merely because structural validation passes. Retry only failed or
+suspect workbooks and retain already validated results.
+
+## Missing-Only Completion And Reporting
+
+For a missing-only request, identify current missing/failed keys before sending
+text externally. Deduplicate translation work. Reuse an existing translation
+only when the field, locale and current source-value hash match unambiguously;
+retain its provenance. Preserve successful existing rows and historical rows,
+including review states and notes. Read CSV files with newline handling that
+preserves embedded source text.
+
+Before materialization, compare the candidate CSV against its baseline and prove
+that successful existing rows were not changed. Complete the intended CSV
+changes before generating the required maintained locale bundle, so each
+affected sidecar is built once per accepted input revision. Leave unrelated
+completed assets and base geometry/tiles untouched. A retry should reuse
+validated artifacts whose inputs have not changed.
+
+Report separate stages: downloaded, content-validated, imported, materialized,
+staged, ready for review, merged, and published/verified. Derive counts and
+checkpoint status from validated artifacts and current workflow evidence rather
+than accumulating independent flags. Full current coverage does not establish
+human-reviewed language quality or production publication. Do not promise that
+browser work is finished until returned-file validation has passed.
+
 ## Frontend Contract
 
 Do not add frontend merge logic or a translation overlay fetch. The app or
@@ -211,9 +309,9 @@ resolver asks for one metadata sidecar for the active locale and receives either
 
 - Do not put full translated metadata back into PMTiles.
 - Do not dynamically generate localized sidecars per request.
-- Do not spend Codex tokens translating full metadata tables when
-  `scripts/feature_metadata_machine_translate.py` can generate the
-  maintainer-approved rows locally with `deep-translator`.
+- Do not translate full metadata tables row by row when shared helpers or a
+  reusable glossary can complete the approved work. This does not prohibit
+  direct agent translation of a bounded glossary or contextual exceptions.
 - Do not make local canonical GCS writes; use reviewed scratch staging and the
   approved publisher workflow.
 - Keep generated publishable bytes outside the repo except tiny fixtures.

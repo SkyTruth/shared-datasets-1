@@ -20,8 +20,8 @@ through reviewed PRs merged to `main` and protected GitHub Actions workflows.
 Load `.claude/skills/protected-terraform-apply/SKILL.md` before suggesting,
 planning, documenting, or running any production Terraform apply.
 
-Use `gcloud storage` only for human diagnostics, emergency downloads, and
-documented break-glass operations.
+Use `gcloud storage` for human diagnostics, emergency downloads, documented
+break-glass operations, or the narrow scratch-transfer recovery below.
 
 Do not use Terraform, Pulumi, or Cloud Storage FUSE for routine canonical
 dataset uploads/edits. Do not perform canonical writes from a local human or
@@ -62,6 +62,12 @@ Local authentication:
 gcloud auth application-default login
 gcloud config set project shared-datasets-1
 ```
+
+Application Default Credentials and the CLI's saved login are separate. Check
+which credential source the failing tool uses before asking for reauthentication.
+Reuse an authorized working identity without changing global accounts or
+permissions. If a supported temporary access-token file is needed, never print
+or commit it, restrict it to mode `0600`, and remove it after use.
 
 CI/runtime authentication:
 
@@ -224,6 +230,7 @@ metadata changes.
 - Emergency download.
 - Debugging authentication.
 - Comparing behavior with the Python CLI.
+- The documented scratch-transfer recovery below.
 
 Examples:
 
@@ -240,6 +247,30 @@ promote them only through an explicit PR and the approved publisher workflow
 after merge. For documented break-glass or approved publisher-identity work,
 prefer `scripts/gcs_asset.py` so generation preconditions and metadata are
 explicit.
+
+## Large Scratch Transfers
+
+Preserve validated artifacts when transport fails. Measure transferred bytes and
+throughput separately from local file reads; a file offset at EOF is not evidence
+that an upload is complete. After an unknown outcome, inspect the exact remote
+destination and reuse it only after verification, recording its generation.
+
+For user-authorized manual staging of validated bytes under
+`_scratch/pending-publishes/`, a one-off retry may use supported chunk/timeout
+controls or `gcloud storage`. This is transport recovery, not canonical write
+authority or an alternative production publishing path. For compressible text,
+consider `--gzip-in-flight` after verifying current support; retain the original
+stored bytes, object name, content type and expected SHA-256.
+
+Use generation zero for a new object and the exact reviewed generation for an
+authorized replacement. Disable parallel composite uploads unless their extra
+objects and cleanup are explicitly planned. Verify remote size and CRC32C
+against local bytes, plus content type, content encoding, metadata and generation.
+Supplied SHA metadata alone is not independent integrity verification.
+
+Resume the normal staging/publication workflow after verification. Retry only
+the transfer; do not rebuild unchanged validated artifacts for network or
+authentication failures.
 
 ## Cloud Storage FUSE
 
