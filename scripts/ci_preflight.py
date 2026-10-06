@@ -113,6 +113,9 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("npm", "run", "test:pack", cwd=package)
     elif suite == "browser":
         add("uv", "sync", "--locked", "--no-dev", "--group", "browser")
+        # Installed dependencies use copy links; discard only this runtime's
+        # download cache before Chromium's larger installation allocates space.
+        add("uv", "cache", "clean")
         add("npm", "ci", "--ignore-scripts", "--prefix", "tests/browser")
         add("npm", "ci", "--ignore-scripts", "--prefix", "api/typescript")
         add("npm", "run", "build", "--prefix", "api/typescript")
@@ -175,6 +178,8 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
         environment["RUN_GDAL_INTEGRATION_TESTS"] = "1"
     else:
         environment.pop("RUN_GDAL_INTEGRATION_TESTS", None)
+    if suite == "browser":
+        environment["UV_CACHE_DIR"] = str(output / "uv-cache")
     try:
         validate_checkout(root, plan)
         result["tools"] = probe_tools(suite, environment)
