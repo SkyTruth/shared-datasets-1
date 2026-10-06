@@ -1,0 +1,32 @@
+name: Pinned validation tools
+description: Install the repository validation toolchain without production credentials
+inputs:
+  node:
+    description: Node major used by this suite
+    default: '22'
+  binaries:
+    description: Official pinned release binaries to install
+    default: 'actionlint terraform gitleaks'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12.12'
+    - uses: astral-sh/setup-uv@v5
+      with:
+        version: '0.11.8'
+        enable-cache: true
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node == '24' && '24.13.1' || '22.12.0' }}
+        cache: npm
+        cache-dependency-path: api/typescript/package-lock.json
+    - name: Install verified release binaries
+      shell: bash
+      env:
+        BINARIES: ${{ inputs.binaries }}
+      run: |
+        set -euo pipefail
+        python scripts/ci_install_tools.py --destination "$RUNNER_TEMP/ci-tools" $BINARIES
+        echo "$RUNNER_TEMP/ci-tools/bin" >> "$GITHUB_PATH"

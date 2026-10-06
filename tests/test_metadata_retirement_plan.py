@@ -206,13 +206,10 @@ class RetirementPlanTests(unittest.TestCase):
         self.assertIn(
             'prefix = "000-system/terraform/state/metadata-retirement-iam"', source
         )
-        ci = load_workflow(root / ".github/workflows/ci.yml")
-        self.assertIn(
-            "terraform/envs/metadata-retirement-iam",
-            workflow_steps_by_name(ci, "lint")["Validate Terraform configurations"][
-                "run"
-            ],
-        )
+        from scripts.ci_preflight import suite_commands
+        commands = [args for args, _ in suite_commands('lint', root, {'base':'base','tested_sha':'head'}, root)]
+        self.assertIn(['terraform', '-chdir=terraform/envs/metadata-retirement-iam', 'validate'], commands)
+        self.assertIn(['terraform', '-chdir=terraform/envs/metadata-retirement-iam', 'test'], commands)
 
     def test_delete_permission_wait_is_bounded_and_only_checks_planned_ids(self):
         address, identity = next(iter(retirement.DELETE_ACCOUNT_IDENTITIES.items()))

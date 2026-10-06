@@ -17,7 +17,7 @@ RUN set -eux; \
     echo "pmtiles binary not found" >&2; \
     exit 1
 
-FROM python:3.12-slim-bookworm
+FROM python:3.12.12-slim-bookworm
 
 ARG GDAL_APT_VERSION=3.6.2+dfsg-1+b2
 ARG TIPPECANOE_APT_VERSION=2.52.0-1~bpo12+1
@@ -29,6 +29,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        git \
         gdal-bin="${GDAL_APT_VERSION}" \
         python3-gdal="${GDAL_APT_VERSION}" \
         libgdal-dev="${GDAL_APT_VERSION}" \

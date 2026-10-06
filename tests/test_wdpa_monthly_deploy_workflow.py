@@ -314,16 +314,12 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), "declared copies import successfully")
 
     def test_ci_filter_selects_helper_and_its_behavior_tests(self):
-        ci = load_workflow(REPO_ROOT / ".github/workflows/ci.yml")
-        runs = [str(step.get("run", "")) for job in ci["jobs"].values() for step in job.get("steps", [])]
-        detection = next(run for run in runs if "geospatial_pattern=" in run)
-        pattern = re.search(r"geospatial_pattern='([^']+)'", detection).group(1)
-        for path in ("scripts/translation_local_io.py", "tests/test_translation_local_io.py", "scripts/feature_metadata_translation_reuse.py", "tests/test_feature_metadata_translation_reuse.py", "tests/test_wdpa_translation_inputs.py"):
+        from scripts.ci_contract import NATIVE_TESTS, select_suites
+        for path in ('scripts/translation_local_io.py', 'tests/test_translation_local_io.py', 'scripts/feature_metadata_translation_reuse.py', 'tests/test_feature_metadata_translation_reuse.py', 'tests/test_wdpa_translation_inputs.py'):
             with self.subTest(path=path):
-                self.assertIsNotNone(re.fullmatch(pattern, path))
-        self.assertIsNone(re.fullmatch(pattern, "docs/unrelated.md"))
-        geospatial_pytest = next(run for run in runs if "geospatial-pytest.xml" in run)
-        self.assertIn("tests/test_translation_local_io.py", geospatial_pytest)
+                self.assertIn('geospatial-integration', select_suites([path])[0])
+        self.assertNotIn('geospatial-integration', select_suites(['docs/unrelated.md'])[0])
+        self.assertIn('tests/test_translation_local_io.py', NATIVE_TESTS)
 
     def test_wdpa_monthly_dockerfile_copies_scripts_import_closure(self):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
