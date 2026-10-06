@@ -29,11 +29,9 @@ ARG PMTILES_VERSION=v1.30.1
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 
-ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PMTILES_BUILD_VERSION=${PMTILES_VERSION} \
-    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
+    PMTILES_BUILD_VERSION=${PMTILES_VERSION}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -82,5 +80,9 @@ COPY scripts/download_public_wdpa_benchmark.py ./scripts/download_public_wdpa_be
 COPY docs/wdpa-processing-public-inputs.json ./docs/wdpa-processing-public-inputs.json
 COPY scripts/wdpa_input_memory_probe.py /app/scripts/wdpa_input_memory_probe.py
 COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
+
+# Revision identity does not affect dependency compilation or source bytes.
+ARG SHARED_DATASETS_EXECUTOR_SHA
+ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

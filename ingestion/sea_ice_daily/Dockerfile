@@ -27,10 +27,8 @@ FROM python:3.12-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
 
-ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -60,5 +58,9 @@ COPY catalog/feature-identity-resolutions ./catalog/feature-identity-resolutions
 COPY docs/assets/ims-sea-ice-extent.md /tmp/ims-asset-doc.md
 RUN python -c 'from pathlib import Path; text = Path("/tmp/ims-asset-doc.md").read_text(); assert text.startswith("---\n"); body = text.split("\n---\n", 1)[1].strip() + "\n"; Path("/app/asset_README.md").write_text(body)' \
     && rm /tmp/ims-asset-doc.md
+
+# Revision identity does not affect installed dependencies or generated docs.
+ARG SHARED_DATASETS_EXECUTOR_SHA
+ENV SHARED_DATASETS_EXECUTOR_SHA=${SHARED_DATASETS_EXECUTOR_SHA}
 
 CMD ["python", "-m", "ingestion.sea_ice_daily.run"]
