@@ -1,4 +1,4 @@
-"""Pinned local execution of the same amd64 images used by hosted CI.
+"""Pinned local Linux execution without host file-sharing dependencies.
 
 ARM Docker hosts use a process-owned, checksum-verified BuildKit emulator.
 Nothing installs or changes a system-wide binfmt handler.
@@ -60,8 +60,65 @@ def local_runtime(work: Path) -> tuple[list[str], dict]:
 def prove_runtime(arguments: list[str], record: dict, image: str) -> None:
     if not arguments:
         return
-    output = subprocess.check_output(["docker", "run", "--rm", "--platform", "linux/amd64", *arguments, image, "--version"], text=True)
+    executable = Path(arguments[1].removesuffix(":/ci-runtime:ro")) / "buildkit-qemu-x86_64"
+    identifier = subprocess.check_output(["docker", "create", "--platform", "linux/amd64", "--entrypoint", "/buildkit-qemu-x86_64", image, "--version"], text=True).strip()
+    try:
+        subprocess.run(["docker", "cp", str(executable), f"{identifier}:/buildkit-qemu-x86_64"], check=True)
+        output = subprocess.check_output(["docker", "start", "-a", identifier], text=True)
+    finally:
+        subprocess.run(["docker", "rm", "-f", identifier], check=True)
     match = re.search(r"qemu-x86_64 version (\d+\.\d+\.\d+)", output)
     if match is None or match.group(1) != EMULATOR_VERSION:
         raise ValueError("local emulator reported an unexpected version")
     record["emulator"]["version"] = match.group(1)
+
+
+def suite_platform(suite: str, record: dict) -> str:
+    # Chromium requires native fork/GPU behavior. Standard Python uses the same
+    # locked packages natively; release CLI fixtures always exercise amd64.
+    if suite in {"tests", "browser"} and record["server_architecture"] == "arm64":
+        return "linux/arm64"
+    return "linux/amd64"
+
+
+def run_container(root: Path, work: Path, suite: str, image: str, platform: str, arguments: list[str]) -> dict:
+    """Copy a clean checkout into an owned container and retain its evidence.
+
+    No host directories, Docker socket, environment credentials or user config
+    are mounted. Each architecture gets its own dependency environment.
+    """
+    command = ["docker", "create", "--platform", platform, "-w", "/workspace",
+               "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache",
+               "-e", "UV_LINK_MODE=copy"]
+    if platform == "linux/arm64":
+        # Older Apple Linux VMs report CPU extensions that bundled OpenSSL
+        # cannot execute. Select its portable implementation, preserving the
+        # locked cryptography wheel and the complete test corpus.
+        command.extend(["-e", "OPENSSL_armcap=0"])
+    emulator = platform == "linux/amd64" and bool(arguments)
+    if emulator:
+        command.extend(["--entrypoint", "/buildkit-qemu-x86_64"])
+    command.extend([image, "/usr/local/bin/python", "scripts/ci_preflight.py", "run-suite",
+                    "--plan", "/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"])
+    identifier = subprocess.check_output(command, text=True).strip()
+    record = {"platform": platform, "image": image, "container": identifier}
+    if platform == "linux/arm64":
+        record["environment"] = {"OPENSSL_armcap": "0"}
+    try:
+        subprocess.run(["docker", "cp", f"{root}/.", f"{identifier}:/workspace"], check=True)
+        subprocess.run(["docker", "cp", str(work / "plan.json"), f"{identifier}:/plan.json"], check=True)
+        if emulator:
+            executable = Path(arguments[1].removesuffix(":/ci-runtime:ro")) / "buildkit-qemu-x86_64"
+            subprocess.run(["docker", "cp", str(executable), f"{identifier}:/buildkit-qemu-x86_64"], check=True)
+        subprocess.run(["docker", "start", "-a", identifier], check=False)
+        state = json.loads(subprocess.check_output(["docker", "inspect", "--format", "{{json .State}}", identifier], text=True))
+        if state["Running"] or state["Status"] != "exited":
+            raise ValueError(f"{suite}: container did not reach a terminal state")
+        record["exit_code"] = state["ExitCode"]
+        record["image_id"] = subprocess.check_output(["docker", "inspect", "--format", "{{.Image}}", identifier], text=True).strip()
+        subprocess.run(["docker", "cp", f"{identifier}:/evidence/{suite}/.", str(work / suite)], check=True)
+    finally:
+        subprocess.run(["docker", "rm", "-f", identifier], check=True)
+    if record["exit_code"] != 0:
+        raise ValueError(f"{suite}: container failed ({record['exit_code']}); evidence: {work / suite}")
+    return record

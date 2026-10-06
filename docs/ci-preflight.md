@@ -13,17 +13,31 @@ history, missing comparison, missing required tool, failed test, empty test
 collection, or unexpected skip fails validation. Resolve a missing base before
 retrying; selecting all suites does not make history-dependent checks optional.
 
-Docker must be running. ARM Docker hosts use the pinned, checksum-verified
-BuildKit direct-exec emulator retained in the run directory; child processes
-use that same emulator. No daemon settings or system binfmt registration change.
-The runtime release, version and hashes are recorded in `runtime.json`. Preflight installs its pinned Python, uv, Node 22/24,
+Docker must be running. Preflight copies its clean checkout into disposable
+containers and copies suite evidence back; host file sharing, credentials and
+the Docker socket are never mounted. Standard Python and Chromium run on the
+Docker server's native Linux architecture. Geospatial release fixtures always
+run on Linux AMD64, matching production and hosted CI; ARM Docker hosts use the
+pinned, checksum-verified BuildKit direct-exec emulator for these fixtures and
+the lint/SDK suites. Child processes use that same emulator. No daemon settings
+or system binfmt registration change. The per-suite architecture and image ID,
+runtime release, version and hashes are recorded in `runtime.json`.
+Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
 are not forwarded. Downloads and Terraform provider initialization require
 network access. Tool versions and the classifier are owned by
 `scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
-Both boundaries disable Go asynchronous preemption for compatibility with local
+The general Linux image includes pinned GDAL headers so the locked Rasterio
+dependency can build on ARM. Browser fixture dependencies have an explicit
+locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local
 amd64 emulation. This runtime setting does not suppress validation errors.
+Native ARM containers set `OPENSSL_armcap=0`, selecting OpenSSL's portable CPU
+implementation because older Apple Linux VMs advertise unsupported extensions
+([OpenSSL CPU documentation](https://docs.openssl.org/master/man3/OPENSSL_armcap/),
+[upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
+The locked wheel, algorithms and test corpus remain unchanged; this setting is
+included in the recorded runtime evidence.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
 scanning, admission and diff/static guardrails, and Python tests. It adds native,

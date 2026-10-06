@@ -1,10 +1,13 @@
 FROM python:3.12.12-slim-bookworm
 
+ARG GDAL_APT_VERSION=3.6.2+dfsg-1+b2
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git unzip libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
     libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
     libatspi2.0-0 libwayland-client0 libcups2 libdbus-1-3 libpango-1.0-0 \
     libcairo2 fonts-liberation fonts-noto-color-emoji \
+    gdal-bin="${GDAL_APT_VERSION}" libgdal-dev="${GDAL_APT_VERSION}" build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
