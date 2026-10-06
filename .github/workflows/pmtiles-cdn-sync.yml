@@ -194,6 +194,10 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Verify permissions required by the saved CDN bootstrap plan
+        if: steps.replay.outputs.proceed == 'true'
+        run: python scripts/deployment_permissions.py --target pmtiles-cdn-bootstrap --plan-json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan.json"
+
       - name: Record serialized CDN deployment attempt
         if: steps.replay.outputs.proceed == 'true'
         id: deployment
@@ -324,7 +328,7 @@ jobs:
 
       - name: Verify permissions required by the saved CDN plan
         if: steps.deployment.outputs.proceed == 'true'
-        run: python scripts/cdn_plan_readiness.py verify-plan --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
+        run: python scripts/deployment_permissions.py --target pmtiles-cdn --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
 
       - name: Terraform apply
         if: steps.deployment.outputs.proceed == 'true'

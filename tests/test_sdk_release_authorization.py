@@ -57,6 +57,32 @@ def test_selective_retry_releases_original_successful_sdk_bytes(tmp_path, monkey
     assert set((tmp_path / 'output').iterdir()) == {Path(outputs['tarball']), Path(outputs['candidate'])}
 
 
+def test_consumer_accepts_the_actual_preflight_package_producer(tmp_path, monkeypatch):
+    from scripts import ci_preflight
+
+    api, candidate, package, artifacts, payloads = fixture(tmp_path, monkeypatch)
+    with zipfile.ZipFile(io.BytesIO(payloads[1])) as zipped:
+        plan = json.loads(zipped.read('plan.json'))
+    output = tmp_path / 'producer'
+    smoke = output / 'work/_scratch/sdk-package-smoke-produced'
+    smoke.mkdir(parents=True)
+    tarball = smoke / 'sdk.tgz'
+    tarball.write_bytes(package)
+    (smoke / 'candidate.json').write_text(json.dumps({**candidate, 'tarball': str(tarball)}))
+    monkeypatch.setenv('GITHUB_RUN_ID', '123')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '1')
+    monkeypatch.setattr(ci_preflight, 'validate_checkout', lambda *_: None)
+    monkeypatch.setattr(ci_preflight, 'probe_tools', lambda *_: release.expected_tools('sdk-node24'))
+    monkeypatch.setattr(ci_preflight, 'suite_commands', lambda *_: [(['npm', 'test'], tmp_path)])
+    monkeypatch.setattr(ci_preflight.subprocess, 'run', lambda *args, **kwargs: Mock(returncode=0))
+    result = ci_preflight.run_suite(tmp_path, plan, 'sdk-node24', output)
+    assert result['status'] == 'success'
+    payloads[2] = archive({'result.json': (output / 'result.json').read_bytes(), 'package/candidate.json': (output / 'package/candidate.json').read_bytes(), 'package/sdk.tgz': (output / 'package/sdk.tgz').read_bytes()})
+    artifacts[2]['digest'] = 'sha256:' + hashlib.sha256(payloads[2]).hexdigest()
+    actual = release.download(api, REPO, 123, 2, SHA, tmp_path / 'consumer', tmp_path)
+    assert Path(actual['tarball']).read_bytes() == package
+
+
 @pytest.mark.parametrize('change', ['tarball', 'integrity', 'sha256', 'tested_sha', 'version'])
 def test_candidate_tampering_is_rejected(tmp_path, monkeypatch, change):
     _, candidate, package, *_ = fixture(tmp_path, monkeypatch)

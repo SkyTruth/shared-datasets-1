@@ -62,3 +62,17 @@ def test_missing_required_evidence_cannot_be_omitted_from_fingerprint(tmp_path):
     present.write_bytes(b'saved plan')
     with pytest.raises(ValueError, match='missing'):
         fingerprint([present, tmp_path / 'missing.lock'])
+
+
+@pytest.mark.parametrize('filename,job,allowlist,check,mutation,plan,target,guard', [
+    ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles managed-folder IAM bootstrap allowlist', 'Verify permissions required by the saved CDN bootstrap plan', 'Record serialized CDN deployment attempt', 'pmtiles-managed-folder-bootstrap.tfplan.json', 'pmtiles-cdn-bootstrap', 'replay'),
+    ('pmtiles-cdn-sync.yml', 'sync', 'Enforce PMTiles resource-change allowlist', 'Verify permissions required by the saved CDN plan', 'Terraform apply', 'pmtiles-cdn-sync.tfplan.json', 'pmtiles-cdn', 'deployment'),
+    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce Secret Manager IAM bootstrap allowlist', 'Verify permissions required by the saved viewer bootstrap plan', 'Terraform apply Secret Manager IAM bootstrap', 'catalog-viewer-secret-manager-iam-bootstrap.tfplan.json', 'iam-bootstrap', 'deployment'),
+    ('catalog-viewer-deploy.yml', 'deploy', 'Enforce catalog-viewer resource-change allowlist', 'Verify permissions required by the saved viewer plan', 'Terraform apply', 'catalog-viewer.tfplan.json', 'catalog-viewer', 'deployment'),
+])
+def test_actual_saved_plan_permissions_are_verified_before_mutation(filename, job, allowlist, check, mutation, plan, target, guard):
+    steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows' / filename), job)
+    names = list(steps)
+    assert names.index(allowlist) < names.index(check) < names.index(mutation)
+    assert steps[check]['if'] == f"steps.{guard}.outputs.proceed == 'true'"
+    assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']
