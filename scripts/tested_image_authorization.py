@@ -97,9 +97,9 @@ def download(api, repository, run_id, attempt, sha, target, directory, root):
     directory.mkdir(parents=True, exist_ok=True)
     archive = directory / f"{target}.docker.tar"
     image = selected_image(api, repository, run_id, artifacts, reference, archive, target, sha, plan, suite_attempt)
-    load_image(archive, image)
-    return {"image_id": image["image_id"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
-            "artifact": target + "@" + image["image_id"], "tested_sha": sha}
+    image_id = load_image(archive, image)
+    return {"image_id": image_id, "config_digest": image["config_digest"], "source_tag": image["source_tag"], "archive": str(archive.resolve()),
+            "artifact": target + "@" + image["config_digest"], "tested_sha": sha}
 
 
 def main():

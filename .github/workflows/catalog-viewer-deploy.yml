@@ -161,12 +161,13 @@ jobs:
         if: steps.replay.outputs.proceed == 'true'
         env:
           TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+          TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
         run: |
           set -euo pipefail
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}"
           docker tag "$TESTED_IMAGE_ID" "$image_tag"
           echo "CATALOG_VIEWER_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
-          echo "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_ID}" >> "${GITHUB_ENV}"
+          echo "CATALOG_VIEWER_LOCAL_DIGEST=${TESTED_IMAGE_CONFIG}" >> "${GITHUB_ENV}"
 
       - name: Verify run-bound signing capability without mutation
         if: steps.replay.outputs.proceed == 'true'
@@ -196,13 +197,13 @@ jobs:
       - name: Push tested catalog-viewer image
         if: steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'
         env:
-          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+          TESTED_IMAGE_CONFIG: ${{ steps.tested-image.outputs.config_digest }}
         run: |
           set -euo pipefail
           image_tag="${CATALOG_VIEWER_IMAGE_TAG}"
           docker push "${image_tag}"
           docker buildx imagetools inspect --raw "${image_tag}" > "$RUNNER_TEMP/catalog-viewer-manifest.json"
-          python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_ID"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/catalog-viewer-manifest.json"
+          python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_CONFIG"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/catalog-viewer-manifest.json"
           image_digest="$(docker buildx imagetools inspect "${image_tag}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
             image_digest="$(docker buildx imagetools inspect "${image_tag}" | awk '/^Digest:/ {print $2; exit}')"

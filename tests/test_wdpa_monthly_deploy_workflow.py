@@ -128,7 +128,10 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         promote_run = steps["Prepare reviewed WDPA publication image"]["run"]
         self.assertIn("catalog/wdpa-processing-acceptance.json", promote_run)
         self.assertIn("docker pull --platform linux/amd64", promote_run)
-        self.assertIn("docker image inspect", promote_run)
+        self.assertIn('docker buildx imagetools inspect --raw "${accepted_image}"', promote_run)
+        self.assertIn("verify_local_config", promote_run)
+        self.assertIn("require_manifest=True", promote_run)
+        self.assertNotIn("{{.Id}}", promote_run)
         self.assertIn("--print-source-digest", promote_run)
         self.assertIn("Dockerfile.promotion", promote_run)
         self.assertIn("ACCEPTED_BUILD_SOURCE_SHA256=${expected_source}", promote_run)
@@ -251,28 +254,44 @@ sleep() { :; }
         script = steps["Prepare reviewed WDPA publication image"]["run"]
         image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-validation@sha256:" + "a" * 64
         config = "sha256:" + "b" * 64
-        fake_tools = '''docker() {
-          printf '%s\\n' "$*" >> "$TEST_DOCKER_CALLS"
-          case "$1" in
-            pull) return "$TEST_PULL_RESULT" ;;
-            image) printf '%s\\n' "$TEST_CONFIG" ;;
-            run) printf '%s\\n' "$TEST_SOURCE" ;;
-            build) return 0 ;;
-            *) return 1 ;;
-          esac
-        }
-        '''
-        for mismatch in (None, "config", "source", "pull"):
+        fake_docker = '''import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["TEST_DOCKER_CALLS"], "a") as calls:
+    calls.write(" ".join(args) + "\\n")
+if args[:3] == ["buildx", "imagetools", "inspect"]:
+    print(json.dumps({"mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                      "config": {"digest": os.environ["TEST_REGISTRY_CONFIG"]}}))
+elif args[0] == "pull":
+    sys.exit(int(os.environ["TEST_PULL_RESULT"]))
+elif args[:2] == ["image", "inspect"]:
+    print(json.dumps([{"Id": os.environ["TEST_LOCAL_CONFIG"], "Os": "linux", "Architecture": "amd64"}]))
+elif args[0] == "run":
+    print(os.environ["TEST_SOURCE"])
+elif args[0] != "build":
+    sys.exit(1)
+'''
+        for mismatch in (None, "registry-config", "local-config", "source", "pull"):
             with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                binary = root / "bin"
+                binary.mkdir()
+                (binary / "python").symlink_to(sys.executable)
+                docker = binary / "docker"
+                docker.write_text(f"#!{sys.executable}\n" + fake_docker)
+                docker.chmod(0o755)
+                (root / "scripts").mkdir()
+                shutil.copyfile(REPO_ROOT / "scripts/tested_image_bundle.py", root / "scripts/tested_image_bundle.py")
                 (root / "catalog").mkdir()
                 (root / "catalog/wdpa-processing-acceptance.json").write_text(json.dumps({
                     "build": {"cloud_image": image, "image_digest": config, "source_tree_sha256": "expected-source"}}))
                 calls = root / "docker-calls"
                 env_file = root / "env"
                 result = subprocess.run(
-                    ["bash", "-c", fake_tools + script], cwd=root,
-                    env={**os.environ, "TEST_CONFIG": "wrong" if mismatch == "config" else config,
+                    ["bash", "-c", script], cwd=root,
+                    env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                         "RUNNER_TEMP": str(root),
+                         "TEST_REGISTRY_CONFIG": "sha256:" + "f" * 64 if mismatch == "registry-config" else config,
+                         "TEST_LOCAL_CONFIG": "sha256:" + "f" * 64 if mismatch == "local-config" else config,
                          "TEST_SOURCE": "wrong" if mismatch == "source" else "expected-source",
                          "TEST_PULL_RESULT": "1" if mismatch == "pull" else "0",
                          "TEST_DOCKER_CALLS": str(calls), "GITHUB_ENV": str(env_file),
@@ -283,11 +302,12 @@ sleep() { :; }
                 )
                 self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stderr)
                 recorded = calls.read_text().splitlines()
-                self.assertEqual(recorded[0], f"pull --platform linux/amd64 {image}")
+                self.assertEqual(recorded[0], f"buildx imagetools inspect --raw {image}")
+                self.assertEqual(any(call.startswith("pull ") for call in recorded), mismatch != "registry-config")
                 self.assertEqual(any(call.startswith("build ") for call in recorded), mismatch is None)
                 self.assertEqual(env_file.exists(), mismatch is None)
                 self.assertFalse(any(call.startswith("push ") for call in recorded))
-                if mismatch == "config":
+                if mismatch in {"registry-config", "local-config", "pull"}:
                     self.assertFalse(any(call.startswith("run ") for call in recorded))
 
     def test_paused_schedule_requires_explicit_canary_date(self):

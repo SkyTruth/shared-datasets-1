@@ -18,35 +18,37 @@ PREFERRED_MEMORY_PEAK_BYTES = 6.4 * 1024**3
 MEMORY_LIMIT_BYTES = 8 * 1024**3
 
 
+def source_paths(inventory):
+    """The producer contract's paths, including an original revision's globs."""
+    paths = {
+        "ingestion/wdpa_monthly/Dockerfile", "pyproject.toml", "uv.lock",
+        "scripts/release_feature_model.py", "scripts/feature_metadata_translation_reuse.py",
+        "scripts/feature_metadata_localization.py", "scripts/local_wdpa_sample.py",
+        "scripts/local_ingestion_smoke.py", "scripts/cloud_wdpa_validation.py",
+        "scripts/download_public_wdpa_benchmark.py", "docs/wdpa-processing-public-inputs.json",
+        "ingestion/sea_ice_daily/run.py", "scripts/translation_local_io.py",
+        "scripts/pmtiles_zoom.py", "scripts/vector_asset.py", "scripts/slack_notify.py",
+        "scripts/wdpa_processing_gate.py",
+    }
+    for relative in inventory:
+        path = Path(relative)
+        if (path.parent.as_posix() in {"ingestion/common", "ingestion/wdpa_monthly"} and path.suffix == ".py") or (
+            path.parent.as_posix() == "catalog/feature-identity-resolutions"
+            and path.name.startswith("wdpa-") and path.suffix == ".json"
+        ):
+            paths.add(path.as_posix())
+    return sorted(paths)
+
+
 def source_digest():
-    paths = sorted(
-        [
-            *ROOT.glob("ingestion/common/*.py"),
-            *ROOT.glob("ingestion/wdpa_monthly/*.py"),
-            *ROOT.glob("catalog/feature-identity-resolutions/wdpa-*.json"),
-            ROOT / "ingestion/wdpa_monthly/Dockerfile",
-            ROOT / "pyproject.toml",
-            ROOT / "uv.lock",
-            ROOT / "scripts/release_feature_model.py",
-            ROOT / "scripts/feature_metadata_translation_reuse.py",
-            ROOT / "scripts/feature_metadata_localization.py",
-            ROOT / "scripts/local_wdpa_sample.py",
-            ROOT / "scripts/local_ingestion_smoke.py",
-            ROOT / "scripts/cloud_wdpa_validation.py",
-            ROOT / "scripts/download_public_wdpa_benchmark.py",
-            ROOT / "docs/wdpa-processing-public-inputs.json",
-            ROOT / "ingestion/sea_ice_daily/run.py",
-            ROOT / "scripts/translation_local_io.py",
-            ROOT / "scripts/pmtiles_zoom.py",
-            ROOT / "scripts/vector_asset.py",
-            ROOT / "scripts/slack_notify.py",
-            ROOT / "scripts/wdpa_processing_gate.py",
-        ]
-    )
+    inventory = (str(path.relative_to(ROOT)) for directory in (
+        "ingestion/common", "ingestion/wdpa_monthly", "catalog/feature-identity-resolutions"
+    ) for path in (ROOT / directory).glob("*"))
     digest = hashlib.sha256()
-    for path in paths:
+    for relative in source_paths(inventory):
+        path = ROOT / relative
         digest.update(
-            str(path.relative_to(ROOT)).encode() + b"\0" + path.read_bytes() + b"\0"
+            relative.encode() + b"\0" + path.read_bytes() + b"\0"
         )
     return digest.hexdigest()
 
@@ -242,12 +244,14 @@ def check(evidence):
     )
 
 
-def check_precloud(evidence):
+def check_precloud(evidence, *, producer_source_sha256=None):
     """Small/sampled checks permit one artifact build, never publication."""
     errors = []
     if (
         evidence.get("schema_version") != 3
-        or evidence.get("source_tree_sha256") != source_digest()
+        or evidence.get("source_tree_sha256") != (
+            source_digest() if producer_source_sha256 is None else producer_source_sha256
+        )
     ):
         errors.append("staged validation does not match the processing source tree")
     if evidence.get("disk_quota_approved") is not True:

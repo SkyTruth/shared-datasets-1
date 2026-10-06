@@ -39,9 +39,74 @@ def docker_tar(target, *, architecture="amd64", extra=None, tag=None):
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
     raw = output.getvalue()
-    image = {"image_id": image_id, "source_tag": bundle.source_tag(target, SHA), "archive": target + ".docker.tar",
+    image = {"config_digest": image_id, "source_tag": bundle.source_tag(target, SHA), "archive": target + ".docker.tar",
              "archive_sha256": hashlib.sha256(raw).hexdigest(), "archive_size": len(raw), "platform": "linux/amd64"}
     return raw, image
+
+
+def untagged_tar(raw):
+    """Docker save by immutable ID drops RepoTags in both image stores."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(raw)) as original, tarfile.open(fileobj=output, mode="w") as archive:
+        for entry in original.getmembers():
+            content = original.extractfile(entry).read()
+            if entry.name == "manifest.json":
+                manifest = json.loads(content)
+                manifest[0]["RepoTags"] = None
+                content = json.dumps(manifest).encode()
+            info = tarfile.TarInfo(entry.name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+    return output.getvalue()
+
+
+def inspected(image, *, daemon_id=None, descriptor=None):
+    payload = {"Id": daemon_id or image["config_digest"], "Architecture": "amd64", "Os": "linux", "RepoTags": [image["source_tag"]]}
+    if descriptor is not None:
+        payload["Descriptor"] = descriptor
+    return json.dumps([payload]).encode()
+
+
+def containerd_tar(raw, *, config_change=None):
+    """Real Docker28 store shape: the local ID is a manifest, not its config.
+
+    The graph has actual content-addressed descriptors; image save by immutable
+    ID omits tags. Gzip transport can differ across daemons while config/diff_ids
+    remain identical.
+    """
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        original = json.loads(archive.extractfile("manifest.json").read())[0]
+        config = archive.extractfile(original["Config"]).read()
+        layer = archive.extractfile(original["Layers"][0]).read()
+    if config_change is not None:
+        payload = json.loads(config)
+        config_change(payload)
+        config = json.dumps(payload).encode()
+    compressed = gzip.compress(layer, mtime=0)
+
+    def descriptor(content, media_type):
+        return {"mediaType": media_type, "digest": "sha256:" + hashlib.sha256(content).hexdigest(), "size": len(content)}
+
+    config_descriptor = descriptor(config, "application/vnd.docker.container.image.v1+json")
+    layer_descriptor = descriptor(compressed, "application/vnd.docker.image.rootfs.diff.tar.gzip")
+    manifest = json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                           "config": config_descriptor, "layers": [layer_descriptor]}, separators=(",", ":")).encode()
+    manifest_descriptor = descriptor(manifest, "application/vnd.docker.distribution.manifest.v2+json")
+    manifest_descriptor["platform"] = {"architecture": "amd64", "os": "linux"}
+    config_path = "blobs/sha256/" + config_descriptor["digest"][7:]
+    layer_path = "blobs/sha256/" + layer_descriptor["digest"][7:]
+    files = {config_path: config, layer_path: compressed,
+             "blobs/sha256/" + manifest_descriptor["digest"][7:]: manifest,
+             "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+             "index.json": json.dumps({"schemaVersion": 2, "manifests": [manifest_descriptor]}).encode(),
+             "manifest.json": json.dumps([{"Config": config_path, "RepoTags": None, "Layers": [layer_path]}]).encode()}
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as archive:
+        for name, content in files.items():
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+    return output.getvalue(), manifest_descriptor
 
 
 def zipped(files):
@@ -88,8 +153,8 @@ def handoff(tmp_path, monkeypatch):
     def output(args, **kwargs):
         if args[0] == "git":
             return "tree"
-        image = next(image for image in images.values() if args[-1] in {image["source_tag"], image["image_id"]})
-        return json.dumps([{"Id": image["image_id"], "Architecture": "amd64", "Os": "linux", "RepoTags": [image["source_tag"]]}]).encode()
+        image = next(image for image in images.values() if args[-1] in {image["source_tag"], image["config_digest"]})
+        return json.dumps([{"Id": image["config_digest"], "Architecture": "amd64", "Os": "linux", "RepoTags": [image["source_tag"]]}]).encode()
 
     monkeypatch.setattr(bundle.subprocess, "check_output", output)
     monkeypatch.setattr(bundle.subprocess, "run", lambda args, **kwargs: calls.append(args))
@@ -109,8 +174,8 @@ def download(fixture, target="sea-ice-daily"):
 def test_selective_retry_loads_only_proven_tested_bytes_while_ci_deployments_still_run(handoff):
     result = download(handoff)
     image = handoff["manifest"]["images"]["sea-ice-daily"]
-    assert result["image_id"] == image["image_id"]
-    assert result["artifact"] == "sea-ice-daily@" + image["image_id"]
+    assert result["image_id"] == image["config_digest"]
+    assert result["artifact"] == "sea-ice-daily@" + image["config_digest"]
     assert Path(result["archive"]).read_bytes() == handoff["files"]["images/sea-ice-daily.docker.tar"]
     assert list((handoff["root"] / "loaded").iterdir()) == [Path(result["archive"])]
     assert handoff["calls"] == [["docker", "image", "load", "--input", result["archive"]]]
@@ -179,7 +244,7 @@ def test_consistent_archive_hash_does_not_authorize_changed_runtime_bytes(tmp_pa
     if kind in {"layer", "config"}:
         with tarfile.open(fileobj=io.BytesIO(raw)) as saved:
             files = {entry.name: saved.extractfile(entry).read() for entry in saved.getmembers()}
-        member = next(name for name in files if name.endswith("layer.tar")) if kind == "layer" else image["image_id"][7:] + ".json"
+        member = next(name for name in files if name.endswith("layer.tar")) if kind == "layer" else image["config_digest"][7:] + ".json"
         files[member] += b" "
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode="w") as archive:
@@ -197,14 +262,14 @@ def test_consistent_archive_hash_does_not_authorize_changed_runtime_bytes(tmp_pa
 
 def test_real_packing_function_produces_consumer_accepted_manifest_and_bytes(tmp_path, monkeypatch):
     raw, image = docker_tar("eamlis-monthly")
-    monkeypatch.setattr(bundle.subprocess, "check_output", lambda *args, **kwargs: image["image_id"])
+    monkeypatch.setattr(bundle.subprocess, "check_output", lambda *args, **kwargs: inspected(image))
     def save(args, **kwargs):
-        assert args[:4] == ["docker", "image", "save", "--output"] and args[-1] == image["source_tag"]
+        assert args[:4] == ["docker", "image", "save", "--output"] and args[-1] == image["config_digest"]
         assert Path(args[4]).parent.parent == tmp_path
-        Path(args[4]).write_bytes(raw)
+        Path(args[4]).write_bytes(untagged_tar(raw))
     monkeypatch.setattr(bundle.subprocess, "run", save)
-    actual = bundle.pack_image("eamlis-monthly", SHA, image["image_id"], tmp_path)
-    assert actual["image_id"] == image["image_id"] and actual["source_tag"] == image["source_tag"]
+    actual = bundle.pack_image("eamlis-monthly", SHA, image["config_digest"], tmp_path)
+    assert actual["config_digest"] == image["config_digest"] and actual["source_tag"] == image["source_tag"]
     bundle.validate_manifest({"schema_version": 1, "tested_sha": SHA, "images": {"eamlis-monthly": actual}}, SHA)
     bundle.verify_archive(tmp_path / actual["archive"], actual)
 
@@ -229,7 +294,7 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
             return "{}"
         if args[:4] == ["docker", "image", "inspect", "--format"]:
             target = args[-1].partition("/")[2].partition(":")[0]
-            return handoff["manifest"]["images"].get(target, {"image_id": "sha256:" + "c" * 64})["image_id"]
+            return handoff["manifest"]["images"].get(target, {"config_digest": "sha256:" + "c" * 64})["config_digest"]
         return original_output(args, **kwargs)
 
     def run(args, **kwargs):
@@ -238,8 +303,8 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
                 context.setattr(producer.sys, "argv", args[1:])
                 producer.main()
         elif args[:3] == ["docker", "image", "save"]:
-            target = args[-1].partition("/")[2].partition(":")[0]
-            Path(args[4]).write_bytes(handoff["files"]["images/" + target + ".docker.tar"])
+            target = next(target for target, image in handoff["manifest"]["images"].items() if image["config_digest"] == args[-1])
+            Path(args[4]).write_bytes(untagged_tar(handoff["files"]["images/" + target + ".docker.tar"]))
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(bundle.subprocess, "check_output", inspect)
@@ -249,7 +314,7 @@ def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(ha
     handoff["payloads"][2] = zipped({path.relative_to(output).as_posix(): path.read_bytes() for path in output.rglob("*") if path.is_file()})
     handoff["artifacts"][2].update(size_in_bytes=len(handoff["payloads"][2]), digest="sha256:" + hashlib.sha256(handoff["payloads"][2]).hexdigest())
     loaded = download(handoff)
-    assert loaded["image_id"] == actual["production_images"]["images"]["sea-ice-daily"]["image_id"]
+    assert loaded["image_id"] == actual["production_images"]["images"]["sea-ice-daily"]["config_digest"]
 
 
 def test_failed_installed_checks_prevent_retaining_untested_image(tmp_path, monkeypatch):
@@ -267,6 +332,20 @@ def test_failed_installed_checks_prevent_retaining_untested_image(tmp_path, monk
     assert not (tmp_path / "images/manifest.json").exists()
 
 
+def test_failed_ci_image_roundtrip_cannot_produce_a_deployable_manifest(tmp_path, monkeypatch):
+    _, image = docker_tar("sea-ice-daily")
+    monkeypatch.setattr(producer.subprocess, "check_output", lambda args, **kwargs: SHA if args[0] == "git" else image["config_digest"])
+    monkeypatch.setattr(producer.subprocess, "run", Mock())
+    monkeypatch.setattr(producer, "pack_image", Mock(return_value=image))
+    loader = Mock(side_effect=bundle.ImageError("CI daemon cannot load the retained image"))
+    monkeypatch.setattr(producer, "load_image", loader)
+    monkeypatch.setattr(producer.sys, "argv", ["images", "--target", "sea-ice-daily", "--output", str(tmp_path)])
+    with pytest.raises(bundle.ImageError, match="CI daemon cannot load"):
+        producer.main()
+    loader.assert_called_once_with(tmp_path / "images" / image["archive"], image)
+    assert not (tmp_path / "images/manifest.json").exists()
+
+
 def test_failed_docker_load_is_terminal_without_build_or_push(handoff, monkeypatch):
     def failed(args, **kwargs):
         handoff["calls"].append(args)
@@ -280,7 +359,7 @@ def test_failed_docker_load_is_terminal_without_build_or_push(handoff, monkeypat
 def test_loaded_tag_must_resolve_to_exact_tested_platform_and_config(handoff, monkeypatch):
     original = bundle.subprocess.check_output
     monkeypatch.setattr(bundle.subprocess, "check_output", lambda args, **kwargs: original(args, **kwargs) if args[0] == "git" else json.dumps([{"Id": "sha256:" + "0" * 64, "Architecture": "arm64", "Os": "linux"}]).encode())
-    with pytest.raises(bundle.ImageError, match="loaded image differs"):
+    with pytest.raises(bundle.ImageError, match="local image identity or platform mismatch"):
         download(handoff)
 
 
@@ -288,12 +367,12 @@ def test_loaded_tag_must_resolve_to_exact_tested_platform_and_config(handoff, mo
 def test_exporter_normalization_preserves_tested_config_and_rootfs(tmp_path, format):
     raw, image = docker_tar("catalog-viewer")
     with tarfile.open(fileobj=io.BytesIO(raw)) as original:
-        config = original.extractfile(image["image_id"][7:] + ".json").read()
+        config = original.extractfile(image["config_digest"][7:] + ".json").read()
         layer = original.extractfile("b" * 64 + "/layer.tar").read()
     if format != "legacy":
         stored_layer = gzip.compress(layer) if format == "containerd-gzip" else layer
         layer_digest = hashlib.sha256(stored_layer).hexdigest()
-        config_path = "blobs/sha256/" + image["image_id"][7:]
+        config_path = "blobs/sha256/" + image["config_digest"][7:]
         layer_path = "blobs/sha256/" + layer_digest
         modern = {config_path: config, layer_path: stored_layer,
                   "manifest.json": json.dumps([{"Config": config_path, "RepoTags": [image["source_tag"]], "Layers": [layer_path],
@@ -310,7 +389,7 @@ def test_exporter_normalization_preserves_tested_config_and_rootfs(tmp_path, for
     source = tmp_path / "raw.tar"
     destination = tmp_path / "canonical.tar"
     source.write_bytes(raw)
-    bundle.canonicalize_archive(source, destination, image["image_id"], image["source_tag"])
+    bundle.canonicalize_archive(source, destination, image["config_digest"], image["source_tag"])
     image.update(archive_size=destination.stat().st_size, archive_sha256=bundle.hash_file(destination))
     bundle.verify_archive(destination, image)
     with tarfile.open(destination) as canonical:
@@ -328,9 +407,125 @@ def test_normalization_rejects_substitution_before_retaining(tmp_path, change):
         raw = raw.replace(b"rootfs tar bytes", b"changed tar XYZ ")
     source = tmp_path / "raw.tar"
     source.write_bytes(raw)
-    expected_id = docker_tar("catalog-viewer")[1]["image_id"]
+    expected_id = docker_tar("catalog-viewer")[1]["config_digest"]
     with pytest.raises(bundle.ImageError):
         bundle.canonicalize_archive(source, tmp_path / "canonical.tar", expected_id, image["source_tag"])
+
+
+def test_containerd_producer_retains_config_digest_from_exact_smoked_daemon_target(tmp_path, monkeypatch):
+    raw, image = docker_tar("catalog-viewer")
+    exported, descriptor = containerd_tar(raw)
+    daemon_id = descriptor["digest"]
+    assert daemon_id != image["config_digest"]
+    inspections = []
+    monkeypatch.setattr(bundle.subprocess, "check_output", lambda args, **kwargs: inspections.append(args[-1]) or inspected(image, daemon_id=daemon_id, descriptor=descriptor))
+    commands = []
+    def save(args, **kwargs):
+        commands.append(args)
+        assert args[-1] == daemon_id
+        Path(args[4]).write_bytes(exported)
+    monkeypatch.setattr(bundle.subprocess, "run", save)
+    retained = bundle.pack_image("catalog-viewer", SHA, daemon_id, tmp_path)
+    assert retained["config_digest"] == image["config_digest"] and "image_id" not in retained
+    assert inspections == [image["source_tag"], image["source_tag"]]
+    assert len(commands) == 1 and commands[0][:4] == ["docker", "image", "save", "--output"]
+    bundle.verify_archive(tmp_path / retained["archive"], retained)
+
+
+@pytest.mark.parametrize("when", ["before", "during"])
+def test_containerd_producer_rejects_tag_reassignment_around_immutable_retention(tmp_path, monkeypatch, when):
+    raw, image = docker_tar("catalog-viewer")
+    exported, descriptor = containerd_tar(raw)
+    daemon_id = descriptor["digest"]
+    calls = []
+    count = 0
+    def output(args, **kwargs):
+        nonlocal count
+        count += 1
+        observed = "sha256:" + "1" * 64 if when == "before" or count > 1 else daemon_id
+        return inspected(image, daemon_id=observed, descriptor={**descriptor, "digest": observed})
+    def save(args, **kwargs):
+        calls.append(args)
+        assert args[-1] == daemon_id
+        Path(args[4]).write_bytes(exported)
+    monkeypatch.setattr(bundle.subprocess, "check_output", output)
+    monkeypatch.setattr(bundle.subprocess, "run", save)
+    with pytest.raises(bundle.ImageError, match="tested image tag changed"):
+        bundle.pack_image("catalog-viewer", SHA, daemon_id, tmp_path)
+    assert len(calls) == (1 if when == "during" else 0)
+
+
+def test_containerd_consumer_proves_config_and_rootfs_then_returns_distinct_local_id(handoff, monkeypatch):
+    target = "sea-ice-daily"
+    image = handoff["manifest"]["images"][target]
+    exported, descriptor = containerd_tar(handoff["files"]["images/" + image["archive"]])
+    daemon_id = descriptor["digest"]
+    original_output = bundle.subprocess.check_output
+    def output(args, **kwargs):
+        if args[0] == "git":
+            return original_output(args, **kwargs)
+        assert args[-1] in {image["source_tag"], daemon_id}
+        return inspected(image, daemon_id=daemon_id, descriptor=descriptor)
+    def run(args, **kwargs):
+        handoff["calls"].append(args)
+        if args[:3] == ["docker", "image", "save"]:
+            assert args[-1] == daemon_id
+            Path(args[4]).write_bytes(exported)
+    monkeypatch.setattr(bundle.subprocess, "check_output", output)
+    monkeypatch.setattr(bundle.subprocess, "run", run)
+    result = download(handoff, target)
+    assert result["image_id"] == daemon_id != image["config_digest"]
+    assert result["config_digest"] == image["config_digest"]
+    assert result["artifact"] == target + "@" + image["config_digest"]
+    assert [command[:3] for command in handoff["calls"]] == [["docker", "image", "load"], ["docker", "image", "save"]]
+    assert list((handoff["root"] / "loaded").iterdir()) == [Path(result["archive"])]
+
+
+@pytest.mark.parametrize("change", ["config", "layer", "tag", "index", "descriptor", "retag"])
+def test_containerd_post_load_substitution_cannot_reach_push(handoff, monkeypatch, change):
+    image = handoff["manifest"]["images"]["sea-ice-daily"]
+    exported, descriptor = containerd_tar(handoff["files"]["images/" + image["archive"]],
+                                         config_change=(lambda config: config.update(config={"Cmd": ["unreviewed"]})) if change == "config" else None)
+    if change in {"layer", "tag"}:
+        # Alter runtime bytes/metadata while keeping the TAR container intact.
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=io.BytesIO(exported)) as original, tarfile.open(fileobj=buffer, mode="w") as archive:
+            for entry in original.getmembers():
+                content = original.extractfile(entry).read()
+                if change == "layer" and content.startswith(b"\x1f\x8b"):
+                    content = gzip.compress(b"unreviewed rootfs", mtime=0)
+                if change == "tag" and entry.name == "manifest.json":
+                    payload = json.loads(content)
+                    payload[0]["RepoTags"] = ["unreviewed:tag"]
+                    content = json.dumps(payload).encode()
+                info = tarfile.TarInfo(entry.name)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+        exported = buffer.getvalue()
+    daemon_id = descriptor["digest"]
+    descriptor = dict(descriptor)
+    if change == "index":
+        descriptor["mediaType"] = "application/vnd.oci.image.index.v1+json"
+    if change == "descriptor":
+        descriptor["digest"] = "sha256:" + "0" * 64
+    checks = []
+    original_output = bundle.subprocess.check_output
+    def output(args, **kwargs):
+        if args[0] == "git":
+            return original_output(args, **kwargs)
+        checks.append(args[-1])
+        actual_id = "sha256:" + "1" * 64 if change == "retag" and len(checks) > 1 else daemon_id
+        actual_descriptor = {**descriptor, "digest": actual_id} if change == "retag" else descriptor
+        return inspected(image, daemon_id=actual_id, descriptor=actual_descriptor)
+    def run(args, **kwargs):
+        handoff["calls"].append(args)
+        if args[:3] == ["docker", "image", "save"]:
+            Path(args[4]).write_bytes(exported)
+    monkeypatch.setattr(bundle.subprocess, "check_output", output)
+    monkeypatch.setattr(bundle.subprocess, "run", run)
+    with pytest.raises((bundle.ImageError, OSError, tarfile.TarError)):
+        download(handoff)
+    assert all(command[:2] != ["docker", "push"] for command in handoff["calls"])
 
 
 def test_streamed_download_bounds_bytes_and_stops_only_its_process(tmp_path, monkeypatch):

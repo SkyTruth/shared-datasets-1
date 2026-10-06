@@ -299,7 +299,7 @@ def test_terraform_initialization_cannot_rewrite_approved_provider_locks(tmp_pat
 
 def test_browser_releases_only_its_download_cache_before_installing_chromium(tmp_path):
     commands = [args for args, _ in preflight.suite_commands('browser', ROOT, plan(), tmp_path)]
-    assert commands[:2] == [
+    assert [commands[0], commands[2]] == [
         ['uv', 'sync', '--locked', '--no-dev', '--group', 'browser'],
         ['uv', 'cache', 'clean'],
     ]
@@ -372,6 +372,7 @@ def test_local_browser_and_python_use_native_linux_but_release_clis_require_amd6
 @pytest.mark.parametrize('exit_code', [0, 7])
 def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_path, exit_code):
     from scripts import ci_runtime
+    (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': exit_code}
     with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(ci_runtime.subprocess, 'run') as run:
         if exit_code:
@@ -380,9 +381,30 @@ def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_pat
         else:
             record = ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64', [])
             assert record['image_id'] == 'sha256:test-image'
-            assert record['environment'] == {'OPENSSL_armcap': '0'}
+            assert record['environment']['CI'] == 'true'
+            assert record['environment']['OPENSSL_armcap'] == '0'
+            assert record['environment']['GITHUB_ACTIONS'] == 'true'
+            assert 'GITHUB_RUN_ID' not in record['environment']
+            assert not any('TOKEN' in key for key in record['environment'])
         commands = [call.args[0] for call in run.call_args_list]
     assert ['docker', 'cp', f'{ROOT}/.', 'owned-container:/workspace'] in commands
+    assert ['docker', 'cp', str(tmp_path / 'browser-event.json'), 'owned-container:/browser-event.json'] in commands
+    event = json.loads((tmp_path / 'browser-event.json').read_text())
+    assert event['pull_request']['base']['sha'] == plan()['base']
+    assert event['pull_request']['head']['sha'] == plan()['head']
     assert ['docker', 'cp', 'owned-container:/evidence/browser/.', str(tmp_path / 'browser')] in commands
     assert commands[-1] == ['docker', 'rm', '-f', 'owned-container']
     assert not any('-v' in command or '--volume' in command for command in commands)
+
+
+@pytest.mark.parametrize('suite', SUITES)
+def test_every_local_suite_runs_in_ci_mode_without_forwarded_credentials(tmp_path, suite):
+    from scripts import ci_runtime
+    (tmp_path / 'plan.json').write_text(json.dumps(plan()))
+    state = {'Running': False, 'Status': 'exited', 'ExitCode': 0}
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', json.dumps(state), 'sha256:test-image']) as execute, mock.patch.object(ci_runtime.subprocess, 'run'):
+        record = ci_runtime.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64', [])
+    create = execute.call_args_list[0].args[0]
+    assert 'CI=true' in create
+    assert record['environment']['CI'] == 'true'
+    assert not any('TOKEN' in value or 'GITHUB_RUN_ID' in value for value in create)

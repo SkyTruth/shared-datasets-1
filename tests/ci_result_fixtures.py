@@ -7,7 +7,7 @@ def production_images(tested_sha):
     images = {}
     for target in ("eamlis-monthly", "sea-ice-daily", "catalog-viewer"):
         images[target] = {
-            "image_id": "sha256:" + hashlib.sha256((target + "config").encode()).hexdigest(),
+            "config_digest": "sha256:" + hashlib.sha256((target + "config").encode()).hexdigest(),
             "source_tag": f"shared-datasets-preflight/{target}:{tested_sha}",
             "archive": f"{target}.docker.tar",
             "archive_sha256": hashlib.sha256((target + "archive").encode()).hexdigest(),

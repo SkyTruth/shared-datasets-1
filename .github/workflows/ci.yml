@@ -90,6 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Check out the tested image verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Download the shared deployment image
         uses: actions/download-artifact@v4
         with:
@@ -100,7 +106,7 @@ jobs:
           set -euo pipefail
           gzip -dc "$RUNNER_TEMP/wdpa-image/image.tar.gz" | docker load
           expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' "$RUNNER_TEMP/wdpa-image/image.json")"
-          [[ "$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')" == "$expected" ]]
+          python3 -c 'import os, sys; from scripts.tested_image_bundle import verify_local_config; verify_local_config("wdpa-processing-benchmark:local", sys.argv[1], directory=os.environ["RUNNER_TEMP"])' "$expected"
           mkdir -p "$RUNNER_TEMP/wdpa-small"
           mkdir -p "$RUNNER_TEMP/wdpa-small/shared-datasets-1"
           cp "$RUNNER_TEMP/wdpa-image/image.json" "$RUNNER_TEMP/wdpa-small/shared-datasets-1/image.json"
@@ -154,8 +160,7 @@ jobs:
           set -euo pipefail
           gzip -dc "$RUNNER_TEMP/wdpa-image/image.tar.gz" | docker load
           expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' "$RUNNER_TEMP/wdpa-image/image.json")"
-          actual="$(docker image inspect wdpa-processing-benchmark:local --format '{{.Id}}')"
-          [[ "$actual" == "$expected" ]] || { echo 'Loaded deployment image digest mismatch'; exit 1; }
+          python3 -c 'import os, sys; from scripts.tested_image_bundle import verify_local_config; verify_local_config("wdpa-processing-benchmark:local", sys.argv[1], directory=os.environ["RUNNER_TEMP"])' "$expected"
           cp "$RUNNER_TEMP/wdpa-image/image.json" "$RUNNER_TEMP/wdpa-reports/image.json"
           rm "$RUNNER_TEMP/wdpa-image/image.tar.gz"
       - name: Provision a 100 GiB disk scratch filesystem
@@ -542,6 +547,11 @@ jobs:
           python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
             --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json" \
             --output "$RUNNER_TEMP/ci-ready/evidence.json"
+      - name: Recheck retained WDPA image availability before deployment allocation
+        if: ${{ needs.geospatial-changes.outputs.wdpa_processing == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/wdpa_staged_image_readiness.py
       - uses: actions/upload-artifact@v4
         with:
           name: ci-ready-evidence-attempt${{ github.run_attempt }}
