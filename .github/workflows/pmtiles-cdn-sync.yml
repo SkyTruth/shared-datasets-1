@@ -322,6 +322,10 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Verify permissions required by the saved CDN plan
+        if: steps.deployment.outputs.proceed == 'true'
+        run: python scripts/cdn_plan_readiness.py verify-plan --plan-json "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan.json"
+
       - name: Terraform apply
         if: steps.deployment.outputs.proceed == 'true'
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/pmtiles-cdn-sync.tfplan"

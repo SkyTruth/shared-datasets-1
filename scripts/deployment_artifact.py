@@ -11,6 +11,8 @@ def fingerprint(paths: list[Path]) -> str:
     digest = hashlib.sha256()
     entries = []
     for source in paths:
+        if not source.exists() and not source.is_symlink():
+            raise ValueError("deployment evidence path is missing")
         if source.is_symlink():
             raise ValueError("deployment evidence must not contain symlinks")
         files = sorted(source.rglob("*")) if source.is_dir() else [source]

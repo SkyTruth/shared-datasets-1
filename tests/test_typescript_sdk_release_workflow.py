@@ -10,7 +10,7 @@ def test_sdk_publisher_keeps_workflow_identity_and_oidc_only_for_mutation():
     workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
     assert workflow['name'] == 'Publish TypeScript SDK'
     assert workflow_triggers(workflow) == {'workflow_run': {'workflows': ['CI'], 'branches': ['main'], 'types': ['completed']}}
-    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read'}
+    assert workflow['permissions'] == {'contents': 'read', 'actions': 'read', 'deployments': 'read'}
     candidate, publish = workflow['jobs']['candidate'], workflow['jobs']['publish']
     assert 'id-token' not in candidate.get('permissions', {})
     assert publish['permissions']['id-token'] == 'write'
@@ -35,3 +35,13 @@ def test_sdk_release_does_not_rebuild_and_registry_verifies_tested_bytes():
     assert 'steps.deployment.outputs.proceed' in publish['if']
     assert 'should_publish=false' in steps['Verify registry retained the tested bytes']['run']
     assert workflow['env']['NODE_VERSION'] == '24.13.1'
+
+
+def test_completed_sdk_revision_skips_expiring_artifacts_before_publish_allocation():
+    workflow = load_workflow(ROOT / '.github/workflows/publish-typescript-sdk.yml')
+    for job in ('candidate', 'publish'):
+        steps = workflow_steps_by_name(workflow, job)
+        names = list(steps)
+        assert names.index('Check already completed SDK publication') < names.index('Verify tested SDK candidate and reviewed version')
+        assert '--target typescript-sdk' in steps['Check already completed SDK publication']['run']
+        assert steps['Verify tested SDK candidate and reviewed version']['if'] == "steps.replay.outputs.proceed == 'true'"

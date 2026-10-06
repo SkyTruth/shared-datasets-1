@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   actions: read
+  deployments: read
 
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -58,11 +59,21 @@ jobs:
           ref: ${{ env.EXECUTOR_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Check already completed SDK publication
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py check --workflow publish-typescript-sdk.yml --target typescript-sdk \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Set up Node
+        if: steps.replay.outputs.proceed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
       - name: Verify tested SDK candidate and reviewed version
+        if: steps.replay.outputs.proceed == 'true'
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,12 +126,22 @@ jobs:
           ref: ${{ env.EXECUTOR_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Check already completed SDK publication
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/deployment_revision.py check --workflow publish-typescript-sdk.yml --target typescript-sdk \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Set up Node
+        if: steps.replay.outputs.proceed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: https://registry.npmjs.org
       - name: Verify tested SDK candidate and reviewed version
+        if: steps.replay.outputs.proceed == 'true'
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,12 +150,14 @@ jobs:
             --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
             --output "${RUNNER_TEMP}/tested-sdk"
       - name: Check registry version and exact tarball integrity
+        if: steps.replay.outputs.proceed == 'true'
         id: registry
         working-directory: api/typescript
         env:
           CANDIDATE: ${{ steps.candidate.outputs.candidate }}
         run: node scripts/release-policy.mjs registry "$CANDIDATE"
       - name: Record serialized SDK deployment attempt
+        if: steps.replay.outputs.proceed == 'true'
         id: deployment
         env:
           GH_TOKEN: ${{ github.token }}

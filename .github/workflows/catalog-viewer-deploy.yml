@@ -142,6 +142,7 @@ jobs:
             .
           # Exercise imports in the actual runtime before publishing this image.
           docker run --rm --entrypoint python "${image_tag}" -c 'from services.catalog_viewer import run; assert callable(run.main)'
+          python scripts/production_image_contracts.py --viewer-image "${image_tag}"
           echo "CATALOG_VIEWER_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
           local_digest="$(docker image inspect "${image_tag}" --format '{{.Id}}')"
           echo "CATALOG_VIEWER_LOCAL_DIGEST=${local_digest}" >> "${GITHUB_ENV}"

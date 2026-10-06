@@ -55,3 +55,10 @@ def test_first_mutation_requires_record_under_noncancelling_serialization(filena
     names = list(steps)
     assert names.index(record) < names.index(mutation)
     assert steps[mutation]['if'] == "steps.deployment.outputs.proceed == 'true'"
+
+
+def test_missing_required_evidence_cannot_be_omitted_from_fingerprint(tmp_path):
+    present = tmp_path / 'plan.tfplan'
+    present.write_bytes(b'saved plan')
+    with pytest.raises(ValueError, match='missing'):
+        fingerprint([present, tmp_path / 'missing.lock'])
