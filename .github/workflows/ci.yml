@@ -31,8 +31,8 @@ permissions:
 env:
   UV_CACHE_DIR: .uv-cache
   UV_VERSION: "0.11.8"
-  PYTHON_VERSION: "3.12"
-  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.12.12"
+  NODE_VERSION: "22.12.0"
   TERRAFORM_VERSION: "1.8.5"
 
 jobs:
@@ -283,230 +283,233 @@ jobs:
           sudo umount /work 2>/dev/null || true
           if [[ -n "${WDPA_SCRATCH_DEVICE:-}" ]]; then sudo losetup -d "$WDPA_SCRATCH_DEVICE"; fi
 
-  lint:
-    runs-on: ubuntu-latest
+  geospatial-changes:
+    name: geospatial-changes
+    runs-on: ubuntu-24.04
+    outputs:
+      should_run: ${{ steps.plan.outputs.should_run }}
+      sdk: ${{ steps.plan.outputs.sdk-node22 }}
+      browser: ${{ steps.plan.outputs.browser }}
+      tested_sha: ${{ steps.plan.outputs.tested_sha }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
         with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Sync dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Run ruff lint
-        run: uv run ruff check .
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-
-      - name: Check Terraform formatting
-        run: terraform fmt -check -recursive terraform/
-
-      - name: Validate Terraform configurations
+          python-version: '3.12.12'
+      - name: Select validation for the tested merge tree
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before || github.sha }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          set -euo pipefail
-          for env_dir in terraform/envs/prod terraform/envs/preview terraform/envs/metadata-retirement-iam; do
-            echo "Validating ${env_dir}"
-            terraform -chdir="${env_dir}" init -backend=false -input=false >/dev/null
-            terraform -chdir="${env_dir}" validate
-          done
+          python scripts/ci_preflight.py plan --base "$BASE_SHA" --head "$GITHUB_SHA" --source-head "$SOURCE_HEAD" \
+            --output "$RUNNER_TEMP/ci-plan/plan.json" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-validation-plan-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-plan/plan.json
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Test account-scoped retirement authority
-        run: terraform -chdir=terraform/envs/metadata-retirement-iam test
+  lint:
+    needs: geospatial-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - name: Run shared lint, workflow syntax and Terraform validation
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite lint --output "$RUNNER_TEMP/ci-results/lint"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-result-lint-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/lint
+          if-no-files-found: error
+          retention-days: 14
 
   tests:
-    runs-on: ubuntu-latest
+    needs: geospatial-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Run full-history secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-      - name: Fetch PR base for admission check
-        if: github.event_name == 'pull_request'
-        run: git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+          binaries: gitleaks
+      - uses: actions/download-artifact@v4
         with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - name: Run shared secret history, admission, guardrails and Python validation
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite tests --output "$RUNNER_TEMP/ci-results/tests"
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: api/typescript/package-lock.json
-
-      - name: Sync dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Install TypeScript package dependencies
-        working-directory: api/typescript
-        run: npm ci
-
-      - name: Check dataset admission evidence
-        if: github.event_name == 'pull_request'
-        run: |
-          uv run python scripts/admission_check.py \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --head HEAD
-
-      - name: Check repo guardrails for this diff
-        if: github.event_name == 'pull_request'
-        run: |
-          uv run python scripts/repo_guardrails.py check-diff \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --head HEAD \
-            --event-path "$GITHUB_EVENT_PATH"
-
-      - name: Check static repo guardrails
-        run: uv run python scripts/repo_guardrails.py check-static
-
-      - name: Run tests
-        run: |
-          mkdir -p test-results
-          uv run pytest --junitxml=test-results/pytest.xml
-
-      - name: Run TypeScript package tests
-        working-directory: api/typescript
-        run: npm test
-
-      - name: Upload test results
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-results
-          path: test-results/pytest.xml
-          if-no-files-found: ignore
-
-  geospatial-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.filter.outputs.should_run }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect geospatial changes
-        id: filter
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          geospatial_pattern='^(\.github/(docker/geospatial-ci\.Dockerfile|workflows/ci\.yml)|pyproject\.toml|uv\.lock|ingestion/.*|scripts/(vector_asset|release_feature_model|check_geospatial_test_results|feature_metadata_localization|feature_metadata_translation_reuse|translation_local_io|raster_asset|dataset_alerts)\.py|tests/test_(geospatial_ci|feature_metadata_localization|feature_metadata_translation_reuse|translation_local_io|raster_standards|wdpa_monthly|wdpa_disk_processing|wdpa_translation_inputs|sea_ice_daily|eamlis_monthly)\.py)$'
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            git fetch origin "${{ github.base_ref }}" --depth=1
-            changed_files="$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            if [[ "${{ github.event.before }}" == "0000000000000000000000000000000000000000" ]]; then
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            changed_files="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
-          else
-            changed_files=""
-          fi
-
-          if printf '%s\n' "$changed_files" | grep -E "$geospatial_pattern" >/dev/null; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+          name: ci-result-tests-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/tests
+          if-no-files-found: error
+          retention-days: 14
 
   geospatial-integration:
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - uses: docker/setup-buildx-action@v3
       - name: Build geospatial CI image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: .github/docker/geospatial-ci.Dockerfile
-          tags: shared-datasets-geospatial-ci:latest
+          tags: shared-datasets-geospatial-ci:local
           load: true
           cache-from: type=gha,scope=geospatial-ci
           cache-to: type=gha,mode=max,scope=geospatial-ci,ignore-error=true
-
-      - name: Run geospatial integration tests
+      - name: Run shared native validation
         run: |
-          mkdir -p test-results
-          docker run --rm \
-            -v "$PWD:/workspace" \
-            -w /workspace \
-            -e UV_CACHE_DIR=.uv-cache \
-            -e UV_LINK_MODE=copy \
-            -e UV_PROJECT_ENVIRONMENT=/tmp/shared-datasets-geospatial-venv \
-            -e RUN_GDAL_INTEGRATION_TESTS=1 \
-            shared-datasets-geospatial-ci \
-            bash -lc 'uv sync --locked --all-groups --extra wdpa-native && uv run pytest tests/test_feature_metadata_localization.py tests/test_translation_local_io.py tests/test_raster_standards.py tests/test_wdpa_monthly.py tests/test_wdpa_disk_processing.py tests/test_sea_ice_daily.py tests/test_eamlis_monthly.py -o xfail_strict=true --junitxml=test-results/geospatial-pytest.xml && uv run python scripts/check_geospatial_test_results.py test-results/geospatial-pytest.xml'
-
-      - name: Upload geospatial test results
-        if: failure()
-        uses: actions/upload-artifact@v4
+          mkdir -p "$RUNNER_TEMP/ci-results/geospatial-integration"
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/workspace" -v "$RUNNER_TEMP:/evidence" -w /workspace \
+            -e UV_CACHE_DIR=/evidence/native-uv-cache -e UV_LINK_MODE=copy \
+            -e UV_PROJECT_ENVIRONMENT=/evidence/native-venv \
+            -e SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1 \
+            -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \
+            shared-datasets-geospatial-ci:local python scripts/ci_preflight.py run-suite \
+            --plan /evidence/ci-plans --suite geospatial-integration \
+            --output /evidence/ci-results/geospatial-integration
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: geospatial-pytest-results
-          path: test-results/geospatial-pytest.xml
-          if-no-files-found: ignore
+          name: ci-result-geospatial-integration-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/geospatial-integration
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk-validation:
+    name: sdk-validation (Node ${{ matrix.node }})
+    needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.sdk == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
+        with:
+          node: ${{ matrix.node }}
+          binaries: gitleaks
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - name: Run shared SDK version, runtime and packed consumer validation
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite "sdk-node${{ matrix.node }}" --output "$RUNNER_TEMP/ci-results/sdk-node${{ matrix.node }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-result-sdk-node${{ matrix.node }}-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/sdk-node${{ matrix.node }}
+          if-no-files-found: error
+          retention-days: 14
+
+  browser:
+    needs: geospatial-changes
+    if: needs.geospatial-changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ci-tools
+        with:
+          binaries: gitleaks
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - name: Run shared real-browser validation
+        run: python scripts/ci_preflight.py run-suite --plan "$RUNNER_TEMP/ci-plans" --suite browser --output "$RUNNER_TEMP/ci-results/browser"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-result-browser-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/browser
+          if-no-files-found: error
+          retention-days: 14
 
   ci-ready:
     name: ci-ready
-    needs: [lint, tests, geospatial-changes, geospatial-integration]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    if: always()
+    needs: [geospatial-changes, lint, tests, geospatial-integration, sdk-validation, browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tested_sha: ${{ needs.geospatial-changes.outputs.tested_sha }}
     steps:
-      - name: Require every applicable validation result
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-validation-plan-attempt*
+          path: ${{ runner.temp }}/ci-plans
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-result-*
+          path: ${{ runner.temp }}/ci-results
+      - name: Require every selected suite and matrix entry
         env:
-          LINT: ${{ needs.lint.result }}
-          TESTS: ${{ needs.tests.result }}
-          CLASSIFIER: ${{ needs.geospatial-changes.result }}
-          NATIVE_SELECTED: ${{ needs.geospatial-changes.outputs.should_run }}
-          NATIVE: ${{ needs.geospatial-integration.result }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          [[ "$LINT" == success && "$TESTS" == success && "$CLASSIFIER" == success ]]
-          if [[ "$NATIVE_SELECTED" == true ]]; then [[ "$NATIVE" == success ]];
-          elif [[ "$NATIVE_SELECTED" == false ]]; then [[ "$NATIVE" == skipped ]];
-          else exit 1; fi
+          python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"],"ci-jobs.json").write_text(os.environ["JOB_RESULTS"])'
+          python scripts/ci_preflight.py verify --plan "$RUNNER_TEMP/ci-plans" \
+            --results "$RUNNER_TEMP/ci-results" --jobs "$RUNNER_TEMP/ci-jobs.json" \
+            --output "$RUNNER_TEMP/ci-ready/evidence.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-ready-evidence-attempt${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-ready/evidence.json
+          if-no-files-found: error
+          retention-days: 14
 
   dataset-mutation-selection:
     needs: ci-ready

@@ -6,7 +6,7 @@ from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_tri
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/publish-typescript-sdk.yml"
-VALIDATION_PATH = REPO_ROOT / ".github/workflows/sdk-validation.yml"
+VALIDATION_PATH = REPO_ROOT / ".github/workflows/ci.yml"
 
 
 class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
@@ -52,22 +52,25 @@ class TypeScriptSdkReleaseWorkflowTest(unittest.TestCase):
         self.assertEqual(publish["run"], 'npm publish "$TARBALL" --access public --ignore-scripts --registry=https://registry.npmjs.org')
         self.assertEqual(workflow["env"]["NODE_VERSION"], "24")
 
-    def test_node24_validation_runs_on_all_prs_with_no_publish_permission(self):
+    def test_sdk_validation_is_shared_and_required_for_both_node_versions(self):
+        from scripts.ci_preflight import suite_commands
         workflow = load_workflow(VALIDATION_PATH)
         trigger = workflow_triggers(workflow)
-        self.assertIn("pull_request", trigger)
-        self.assertIsNone(trigger["pull_request"])
-        self.assertEqual(trigger["push"], {"branches": ["main"]})
-        self.assertEqual(workflow["permissions"], {"contents": "read"})
-        job = workflow["jobs"]["sdk-validation"]
-        self.assertEqual(job["timeout-minutes"], 15)
-        steps = workflow_steps_by_name(workflow, "sdk-validation")
-        self.assertEqual(steps["Set up Node"]["with"]["node-version"], "24")
-        self.assertFalse(steps["Check out repository"]["with"]["persist-credentials"])
-        self.assertEqual(steps["Require reviewed version increase"]["env"]["BASE_SHA"], "${{ github.event.pull_request.base.sha }}")
-        self.assertEqual(steps["Test package on release runtime"]["run"], "npm test")
-        self.assertEqual(steps["Validate packed consumer"]["run"], "npm run test:pack")
-        self.assertNotIn("npm publish", "\n".join(str(step.get("run", "")) for step in job["steps"]))
+        self.assertIn('pull_request', trigger)
+        self.assertIsNone(trigger['pull_request'])
+        self.assertEqual(workflow['permissions'], {'contents':'read'})
+        job = workflow['jobs']['sdk-validation']
+        self.assertEqual(job['strategy']['matrix']['node'], ['22', '24'])
+        self.assertFalse(job['strategy']['fail-fast'])
+        steps = workflow_steps_by_name(workflow, 'sdk-validation')
+        self.assertIn('scripts/ci_preflight.py run-suite', steps['Run shared SDK version, runtime and packed consumer validation']['run'])
+        for suite in ('sdk-node22', 'sdk-node24'):
+            commands = [args for args, _ in suite_commands(suite, REPO_ROOT, {'base':'base','tested_sha':'head'}, REPO_ROOT)]
+            self.assertIn(['node', 'scripts/release-policy.mjs', 'changes', 'base', 'head'], commands)
+            self.assertIn(['npm','test'], commands)
+            self.assertIn(['npm','run','test:pack'], commands)
+            self.assertNotIn(['npm','publish'], commands)
+        self.assertIn('sdk-validation', workflow['jobs']['ci-ready']['needs'])
 
 
 if __name__ == "__main__":

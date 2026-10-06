@@ -1,0 +1,53 @@
+{
+  "verified_by": "gh attestation verify gh_2.96.0_linux_amd64.tar.gz --repo cli/cli --deny-self-hosted-runners --format json",
+  "verified_on": "2026-10-06",
+  "archive_sha256": "83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60",
+  "certificate": {
+    "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+    "subjectAlternativeName": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "githubWorkflowTrigger": "workflow_dispatch",
+    "githubWorkflowSHA": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+    "githubWorkflowName": "Deployment",
+    "githubWorkflowRepository": "cli/cli",
+    "githubWorkflowRef": "refs/heads/trunk",
+    "buildSignerURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+    "buildSignerDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+    "runnerEnvironment": "github-hosted",
+    "sourceRepositoryURI": "https://github.com/cli/cli",
+    "sourceRepositoryDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+    "sourceRepositoryRef": "refs/heads/trunk",
+    "sourceRepositoryIdentifier": "212613049",
+    "sourceRepositoryOwnerURI": "https://github.com/cli",
+    "sourceRepositoryOwnerIdentifier": "59704711",
+    "buildConfigURI": "https://github.com/cli/cli/.github/workflows/deployment.yml@refs/heads/trunk",
+    "buildConfigDigest": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+    "buildTrigger": "workflow_dispatch",
+    "runInvocationURI": "https://github.com/cli/cli/actions/runs/28622199740/attempts/1",
+    "sourceRepositoryVisibilityAtSigning": "public"
+  },
+  "verifiedTimestamps": [
+    {
+      "type": "Tlog",
+      "uri": "https://rekor.sigstore.dev",
+      "timestamp": "2026-07-02T17:29:15-04:00"
+    }
+  ],
+  "api_run": {
+    "event": "workflow_dispatch",
+    "head_branch": "trunk",
+    "head_sha": "b300f2ec7ec9dc9addc39b2ad88c54097ded7ca0",
+    "id": 28622199740,
+    "path": ".github/workflows/deployment.yml",
+    "run_attempt": 1,
+    "workflow_id": 54774190,
+    "repository": {
+      "full_name": "cli/cli",
+      "id": 212613049
+    },
+    "head_repository": {
+      "full_name": "cli/cli",
+      "id": 212613049
+    }
+  }
+}

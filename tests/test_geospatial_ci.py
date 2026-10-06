@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,6 +11,8 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS, check_results
+from scripts.ci_contract import NATIVE_TESTS, select_suites
+from scripts.ci_preflight import suite_commands
 
 from workflow_helpers import load_workflow, workflow_steps_by_name, workflow_triggers
 
@@ -82,58 +83,26 @@ class GeospatialCiTests(unittest.TestCase):
         self.assertIn("--cpus=4 --memory=8g --memory-swap=8g", steps["Measure input preparation only"]["run"])
         self.assertIn("wdpa_input_memory_probe.py:/app/scripts/wdpa_input_memory_probe.py:ro", steps["Measure input preparation only"]["run"])
 
-    def test_geospatial_job_runs_all_native_tool_integration_tests(self):
-        run = workflow_steps_by_name(self.workflow, "geospatial-integration")[
-            "Run geospatial integration tests"
-        ]["run"]
+    def test_geospatial_job_runs_shared_native_contract(self):
+        job = self.workflow['jobs']['geospatial-integration']
+        self.assertEqual(job['needs'], 'geospatial-changes')
+        self.assertEqual(job['if'], "needs.geospatial-changes.outputs.should_run == 'true'")
+        run = workflow_steps_by_name(self.workflow, 'geospatial-integration')['Run shared native validation']['run']
+        self.assertIn('scripts/ci_preflight.py run-suite', run)
+        self.assertIn('--suite geospatial-integration', run)
+        self.assertNotIn('continue-on-error', job)
+        commands = suite_commands('geospatial-integration', REPO_ROOT, {'base':'base','tested_sha':'head'}, Path('/evidence'))
+        arguments = next(args for args, _ in commands if 'pytest' in args)
+        self.assertTrue(NATIVE_TOOL_TESTS <= set(arguments))
+        self.assertIn('xfail_strict=true', arguments)
+        self.assertIn('tests/test_translation_local_io.py', arguments)
+        self.assertIn(['gdal_calc.py', '--help'], [args for args, _ in commands])
 
-        self.assertIn("-e RUN_GDAL_INTEGRATION_TESTS=1", run)
-        self.assertIn("--junitxml=test-results/geospatial-pytest.xml", run)
-        self.assertIn("-o xfail_strict=true", run)
-        self.assertIn(
-            "--junitxml=test-results/geospatial-pytest.xml && uv run python "
-            "scripts/check_geospatial_test_results.py test-results/geospatial-pytest.xml",
-            run,
-        )
-        steps = workflow_steps_by_name(self.workflow, "geospatial-integration")
-        self.assertNotIn("continue-on-error", steps["Run geospatial integration tests"])
-        self.assertEqual(steps["Upload geospatial test results"]["if"], "failure()")
-        for test_path in sorted(NATIVE_TOOL_TESTS):
-            with self.subTest(test_path=test_path):
-                self.assertIn(test_path, run)
-
-    def test_geospatial_change_filter_covers_native_tool_tests_and_sources(self):
-        run = workflow_steps_by_name(self.workflow, "geospatial-changes")[
-            "Detect geospatial changes"
-        ]["run"]
-        match = re.search(r"geospatial_pattern='(?P<pattern>[^']+)'", run)
-
-        self.assertIsNotNone(match)
-        pattern = re.compile(match.group("pattern"))
-        expected_matches = {
-            ".github/docker/geospatial-ci.Dockerfile",
-            ".github/workflows/ci.yml",
-            "pyproject.toml",
-            "uv.lock",
-            "ingestion/wdpa_monthly/run.py",
-            "scripts/vector_asset.py",
-            "scripts/release_feature_model.py",
-            "scripts/check_geospatial_test_results.py",
-            "tests/test_geospatial_ci.py",
-            "scripts/feature_metadata_localization.py",
-            "scripts/raster_asset.py",
-            "scripts/dataset_alerts.py",
-            *NATIVE_TOOL_TESTS,
-        }
-        for path in sorted(expected_matches):
+    def test_shared_change_classifier_covers_native_dependencies(self):
+        for path in [*NATIVE_TESTS, '.github/docker/geospatial-ci.Dockerfile', '.github/workflows/ci.yml', 'pyproject.toml', 'uv.lock', 'ingestion/wdpa_monthly/run.py', 'scripts/vector_asset.py', 'scripts/release_feature_model.py', 'scripts/dataset_alerts.py']:
             with self.subTest(path=path):
-                self.assertTrue(pattern.match(path), path)
-        for path in (
-            "docs/assets/wdpa-marine.md",
-            "api/typescript/package.json",
-            "scripts/release_feature_model.py.md",
-        ):
-            self.assertFalse(pattern.match(path), path)
+                self.assertIn('geospatial-integration', select_suites([path])[0])
+        self.assertNotIn('geospatial-integration', select_suites(['docs/assets/wdpa-marine.md'])[0])
 
 
 class GeospatialResultTests(unittest.TestCase):
@@ -210,51 +179,6 @@ class GeospatialResultTests(unittest.TestCase):
                 result = self.run_checker()
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("Native geospatial test requirement failed", result.stderr)
-
-    def test_native_workflow_preserves_pytest_and_checker_failures(self):
-        run = workflow_steps_by_name(load_workflow(CI_WORKFLOW), "geospatial-integration")[
-            "Run geospatial integration tests"
-        ]["run"]
-        command = shlex.split(run.replace("\\\n", ""))[-1]
-        # Execute the real shell chain with controlled uv exit codes; no Docker needed.
-        fake_uv = self.work / "uv"
-        fake_uv.write_text(
-            f"#!{sys.executable}\n"
-            "import os, sys\n"
-            "from pathlib import Path\n"
-            "with Path(os.environ['CALL_LOG']).open('a') as log:\n"
-            "    log.write(' '.join(sys.argv[1:]) + '\\n')\n"
-            "if sys.argv[1] == 'sync':\n"
-            "    sys.exit(0)\n"
-            "if sys.argv[1:3] == ['run', 'pytest']:\n"
-            "    sys.exit(int(os.environ['PYTEST_EXIT']))\n"
-            "if sys.argv[1:4] == ['run', 'python', 'scripts/check_geospatial_test_results.py']:\n"
-            "    sys.exit(int(os.environ['CHECKER_EXIT']))\n"
-            "sys.exit(99)\n"
-        )
-        fake_uv.chmod(0o700)
-        log = self.work / "calls.txt"
-        for pytest_exit, checker_exit, expected_exit, expected_calls in (
-            (2, 0, 2, 2), (0, 1, 1, 3), (0, 0, 0, 3),
-        ):
-            with self.subTest(pytest_exit=pytest_exit, checker_exit=checker_exit):
-                log.write_text("")
-                result = subprocess.run(
-                    ["bash", "-c", command],
-                    cwd=self.work,
-                    env={
-                        **os.environ,
-                        "PATH": f"{self.work}{os.pathsep}{os.environ['PATH']}",
-                        "CALL_LOG": str(log),
-                        "PYTEST_EXIT": str(pytest_exit),
-                        "CHECKER_EXIT": str(checker_exit),
-                    },
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                self.assertEqual(result.returncode, expected_exit, result.stderr)
-                self.assertEqual(len(log.read_text().splitlines()), expected_calls)
 
     def test_real_pytest_reports_distinguish_pass_skip_xfail_failure_and_error(self):
         # These miniature suites exercise pytest's XML contract without native binaries.

@@ -7,6 +7,8 @@ provider "registry.terraform.io/hashicorp/google" {
   hashes = [
     "h1:2KhAwERIgDKkP8eQubOIp+dGmtH/mnDyHHj/C3rMGFg=",
     "h1:R+PzXlPKoFadZ/MibOxxy1waEutPTJuXH8gi3oO4Ck8=",
+    "h1:RgUU1HliaiH2Tmm6xz0aWTjuOwrBOrawrnRpHAZmjEM=",
+    "h1:jYNPNwp98euziWx/OFsn65uZmO4KrdVKyqP7JRYcGAI=",
     "zh:242939089e5e01c3badfec0c7f359c951d07226e738cc838d4e78d017dd41a11",
     "zh:3cfe5a3853f45e5d15ec4f1562197f238054a6523f7b40f3f0b810e7e84040e9",
     "zh:40b0a6301fddbe5af2ccd3e26ffe3d946b848256ddd1e4103749414d2b7cf094",

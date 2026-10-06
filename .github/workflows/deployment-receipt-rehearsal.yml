@@ -1,0 +1,63 @@
+name: Deployment receipt rehearsal
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  rehearsal:
+    name: Verify protected deployment receipt signing
+    runs-on: ubuntu-24.04
+    environment: shared-datasets-production
+    timeout-minutes: 10
+    concurrency:
+      group: deployment-receipt-rehearsal
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Validate main ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ( "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main" &&
+                  "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/main" ) ||
+                "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "Execution must use the exact rehearsal or its trusted main caller." >&2
+            exit 1
+          fi
+      - name: Check out trusted workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require owner dispatch and exact checkout
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ||
+                "$ACTOR" != jonaraphael || "$TRIGGERING_ACTOR" != jonaraphael ||
+                "$(git rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "Only the repository owner may dispatch this exact trusted main revision." >&2
+            exit 1
+          fi
+      - name: Set up pinned Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+      - name: Sign and verify non-mutating receipt
+        uses: ./.github/actions/deployment-receipt
+        with:
+          mode: rehearsal
+          signer-workflow: deployment-receipt-rehearsal.yml

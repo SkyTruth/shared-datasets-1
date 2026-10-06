@@ -645,6 +645,17 @@ For CI, use Workload Identity Federation or a CI-provided service account. Do no
 
 ### Local tests
 
+Before pushing, run the complete [isolated preflight](docs/ci-preflight.md) from a
+clean checkout with full history and a running Docker daemon:
+
+```bash
+uv run python scripts/ci_preflight.py --base <current-main-sha> --head <branch-head-sha>
+```
+
+Preflight tests the prospective merge with CI's pinned tools and shared suite
+commands. Rerun after code or base changes. GitHub `ci-ready` requires complete
+results for every selected suite, including native execution and Node 22/24.
+
 The default test suite is network-free: remote services, GCS, Slack, and source
 downloads are mocked or represented by local fixtures.
 
@@ -718,10 +729,10 @@ npm run test:pack
 ```
 
 Commit `package.json` and `package-lock.json` with the package changes. The
-`TypeScript SDK validation` workflow checks the PR's version increase, runs the
-SDK tests on Node 24, and installs the actual tarball into a separate consumer
+CI checks the PR's version increase, runs the
+SDK tests on Node 22 and 24, and installs the actual tarball into a separate consumer
 that exercises the root/server runtime exports and TypeScript declarations.
-Ordinary CI also retains Node 22 coverage. Test/workflow-only changes outside
+The `ci-ready` gate requires both selected SDK matrix results. Test/workflow-only changes outside
 the packed package do not require a release. Prerelease versions are not
 supported by this stable-release workflow.
 

@@ -347,6 +347,16 @@ Git and history:
   applying Terraform, or mutating canonical GCS objects from a local terminal.
 - When committing is explicitly requested, use `repo-alert-commit-messages`
   before creating the commit.
+- Before the first push, commit the focused changes and run
+  `uv run python scripts/ci_preflight.py --base <current-main-sha> --head <head-sha>`
+  from a clean checkout with full history. Read `docs/ci-preflight.md` for the
+  pinned Linux toolchain and evidence contract. Missing tools, failed checks,
+  empty collection and unexpected relevant skips must be fixed before pushing.
+- Revalidate before every subsequent push after code, comparison base, toolchain
+  or validation-contract changes. Preflight tests an isolated prospective merge
+  and must not modify unrelated working-tree or index state. Local hooks and
+  evidence are supplementary; GitHub `ci-ready` independently validates all
+  selected suites and remains authoritative.
 
 ## When To Ask For Human Input
 
