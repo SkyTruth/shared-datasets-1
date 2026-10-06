@@ -240,6 +240,13 @@ unresolved `feature_id`, `field`, `locale`, `source_value_hash`, and `source_val
 columns. These files support subsequent review; this build step does not send
 notifications or publish debt files.
 
+For name-heavy missing-translation workbooks, the optional
+[English-only glossary workflow](english-translation-glossary.md) uses Jev to
+classify candidate words, exports reviewed English phrases once per language,
+and reconstructs labels around preserved names and identifiers. It is an offline
+preparation step; excluded values remain source fallbacks and do not become
+completed translations merely because they were filtered out.
+
 ## Operations
 
 Both viewers construct `GcsSidecarFeatureIndex`. A lookup resolves a concrete
