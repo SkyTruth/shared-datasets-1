@@ -359,7 +359,8 @@ def test_local_browser_and_python_use_native_linux_but_release_clis_require_amd6
     arm = {'server_architecture': 'arm64'}
     assert suite_platform('browser', arm) == suite_platform('tests', arm) == 'linux/arm64'
     assert suite_platform('geospatial-integration', arm) == 'linux/amd64'
-    assert suite_platform('sdk-node24', arm) == 'linux/amd64'
+    assert suite_platform('sdk-node22', arm) == suite_platform('sdk-node24', arm) == 'linux/arm64'
+    assert suite_platform('lint', arm) == 'linux/amd64'
     assert all(suite_platform(suite, {'server_architecture': 'amd64'}) == 'linux/amd64' for suite in SUITES)
 
 
