@@ -746,8 +746,8 @@ jobs:
     uses: ./.github/workflows/pmtiles-cdn-sync.yml
     with:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ github.run_id }}
-      source_run_attempt: ${{ github.run_attempt }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
   catalog-viewer:
@@ -762,8 +762,8 @@ jobs:
     uses: ./.github/workflows/catalog-viewer-deploy.yml
     with:
       executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
-      source_run_id: ${{ github.run_id }}
-      source_run_attempt: ${{ github.run_attempt }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
   artifact-registry-iam:
