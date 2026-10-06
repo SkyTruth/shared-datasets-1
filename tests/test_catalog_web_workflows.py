@@ -261,7 +261,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             job["concurrency"],
             {"group": "release-index-rebuild-${{ inputs.asset_slug }}", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ github.sha }}")
         self.assertEqual(
             env["PUBLISHER_SERVICE_ACCOUNT"],
             "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",

@@ -1,16 +1,24 @@
 name: Approved dataset mutation
 
 on:
-  pull_request:
-    branches:
-      - main
-    types: [closed]
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      executor_sha:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       pr_number:
         description: "Same-repo PR number containing a publish/delete plan. Restricted to jonaraphael."
         required: false
         type: string
+      authorization_rehearsal:
+        description: Verify authorization in the protected environment without credentials or mutation
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,23 +41,8 @@ jobs:
     name: Detect reviewed PR mutation plans
     runs-on: ubuntu-latest
     if: >-
-      ${{
-        (
-          (
-            github.event_name == 'pull_request' &&
-            github.event.action == 'closed' &&
-            github.event.pull_request.merged == true &&
-            github.event.pull_request.head.repo.full_name == github.repository &&
-            github.event.pull_request.base.repo.full_name == github.repository &&
-            github.event.pull_request.base.ref == github.event.repository.default_branch
-          ) ||
-          (
-            github.event_name == 'workflow_dispatch' &&
-            github.actor == 'jonaraphael' &&
-            github.event.inputs.pr_number != ''
-          )
-        )
-      }}
+      ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && github.actor == 'jonaraphael' && inputs.pr_number != '') }}
     outputs:
       has_publish_plan: ${{ steps.capture.outputs.has_publish_plan }}
       has_delete_plan: ${{ steps.capture.outputs.has_delete_plan }}
@@ -62,21 +55,32 @@ jobs:
       - name: Validate main workflow bootstrap
         run: |
           set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            push) caller=.github/workflows/ci.yml ;;
+            workflow_dispatch) caller=.github/workflows/publish-dataset.yml ;;
+            *) exit 1 ;;
+          esac
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
-                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/publish-dataset.yml@refs/heads/main" ]]; then
-            echo "Execution must use this workflow from main." >&2
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/${caller}@refs/heads/main" ||
+                "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ||
+                "${EXECUTOR_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "Execution must use the tested main workflow and executor." >&2
             exit 1
           fi
+        env:
+          EXECUTOR_SHA: ${{ inputs.executor_sha || github.sha }}
 
       - name: Check out immutable workflow code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
 
       - name: Capture accepted immutable mutation plan
         id: capture
         env:
           GH_TOKEN: ${{ github.token }}
+          DATASET_PR_NUMBER: ${{ inputs.pr_number }}
         run: python scripts/dataset_mutation_authorization.py capture --directory authorization
 
       - name: Preserve exact authorization envelope
@@ -91,7 +95,7 @@ jobs:
   install-approved-identity-reset:
     name: Install reviewed feature-ID reset
     needs: reviewed_pr_plans
-    if: ${{ needs.reviewed_pr_plans.outputs.has_identity_reset_plan == 'true' }}
+    if: ${{ needs.reviewed_pr_plans.outputs.has_identity_reset_plan == 'true' && !inputs.authorization_rehearsal }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     permissions:
@@ -158,17 +162,20 @@ jobs:
         run: uv run python scripts/install_feature_id_reset.py --directory authorization --expected-sha256 "$EXPECTED_SHA256"
 
   apply-approved-pr-plans:
-    name: Apply approved PR mutation plans
+    name: Apply approved PR mutation plans (PR #${{ inputs.pr_number }})
+    outputs:
+      mutation_completed: ${{ steps.publication_receipt.outputs.mutation_completed || steps.deletion_receipt.outputs.mutation_completed }}
     needs: reviewed_pr_plans
     runs-on: ubuntu-latest
     environment: shared-datasets-production
     if: >-
       ${{
-        needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' ||
-        needs.reviewed_pr_plans.outputs.has_delete_plan == 'true'
+        !inputs.authorization_rehearsal && (needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' ||
+        needs.reviewed_pr_plans.outputs.has_delete_plan == 'true')
       }}
     concurrency:
-      group: approved-dataset-mutation-pr-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+      group: approved-dataset-mutation
+      queue: max
       cancel-in-progress: false
 
     steps:
@@ -284,6 +291,11 @@ jobs:
           set -euo pipefail
           python scripts/publish_workflow.py rebuild-release-index --plan-json publish-plan.json
 
+      - name: Record completed publication
+        id: publication_receipt
+        if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
+        run: echo "mutation_completed=true" >> "$GITHUB_OUTPUT"
+
       - name: Report release translation debt
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         continue-on-error: true
@@ -295,8 +307,8 @@ jobs:
         if: ${{ needs.reviewed_pr_plans.outputs.has_publish_plan == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_URL: https://github.com/${{ github.repository }}/pull/${{ inputs.pr_number }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
@@ -332,12 +344,17 @@ jobs:
           set -euo pipefail
           python scripts/publish_workflow.py delete-canonical-objects --plan-json delete-plan.json
 
+      - name: Record completed canonical deletion
+        id: deletion_receipt
+        if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
+        run: echo "mutation_completed=true" >> "$GITHUB_OUTPUT"
+
       - name: Send deletion breaking change alert
         if: ${{ needs.reviewed_pr_plans.outputs.has_delete_plan == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_URL: https://github.com/${{ github.repository }}/pull/${{ inputs.pr_number }}
           SHARED_DATASETS_SLACK_WEBHOOK_URL: ${{ secrets.SHARED_DATASETS_SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
@@ -345,3 +362,39 @@ jobs:
             --plan-type delete \
             --plan-json delete-plan.json \
             --summary-json delete-breaking-alert.json
+
+  authorization-rehearsal:
+    needs: reviewed_pr_plans
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.authorization_rehearsal }}
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.reviewed_pr_plans.outputs.executor_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.reviewed_pr_plans.outputs.artifact_id }}
+          path: authorization
+          merge-multiple: true
+      - name: Recheck immutable authority without production credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
+        run: python scripts/dataset_mutation_authorization.py verify --directory authorization --expected-sha256 "$EXPECTED_SHA256"
+
+  refresh-catalog:
+    needs: [reviewed_pr_plans, apply-approved-pr-plans]
+    if: ${{ always() && needs.apply-approved-pr-plans.outputs.mutation_completed == 'true' }}
+    uses: ./.github/workflows/catalog-web-deploy.yml
+    with:
+      executor_sha: ${{ needs.reviewed_pr_plans.outputs.executor_sha }}
+      authorization_artifact_id: ${{ needs.reviewed_pr_plans.outputs.artifact_id }}
+      authorization_sha256: ${{ needs.reviewed_pr_plans.outputs.envelope_sha256 }}
+      pr_number: ${{ fromJSON(format('{0}', inputs.pr_number)) }}
+      mutation_completed: true
+    secrets: inherit

@@ -28,6 +28,7 @@ from scripts import reviewed_dataset_plan as plans
 Error = plans.PlanValidationError
 REVIEWER = "jonaraphael"
 WORKFLOW = ".github/workflows/publish-dataset.yml"
+CALLER_WORKFLOW = ".github/workflows/ci.yml"
 ENVELOPE_FILE = "authorization.json"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
@@ -268,16 +269,17 @@ def require_same_execution_contract(original: dict[str, Any], attempt: dict[str,
 
 
 def workflow_run(
-    api: GitHub, repository: dict[str, Any], run_id: int, attempt: int, *, success: bool
+    api: GitHub, repository: dict[str, Any], run_id: int, attempt: int, *, success: bool, path: str = WORKFLOW
 ) -> dict[str, Any]:
     repo = repository["full_name"]
     run = api.get(f"repos/{repo}/actions/runs/{positive_int(run_id)}/attempts/{positive_int(attempt)}")
-    workflow = api.get(f"repos/{repo}/actions/workflows/publish-dataset.yml")
+    require(path in {WORKFLOW, CALLER_WORKFLOW}, "untrusted source workflow path")
+    workflow = api.get(f"repos/{repo}/actions/workflows/{Path(path).name}")
     require(
-        workflow.get("path") == WORKFLOW and run.get("workflow_id") == positive_int(workflow.get("id")),
+        workflow.get("path") == path and run.get("workflow_id") == positive_int(workflow.get("id")),
         "wrong source workflow identity",
     )
-    require(run.get("path") == WORKFLOW, "wrong source workflow path")
+    require(run.get("path") == path, "wrong source workflow path")
     require(
         repo_matches(run.get("repository"), repository) and repo_matches(run.get("head_repository"), repository),
         "wrong source run repository",
@@ -287,10 +289,10 @@ def workflow_run(
         "wrong source run/attempt",
     )
     require(
-        run.get("event") in {"pull_request", "workflow_dispatch"},
+        run.get("event") in ({"push"} if path == CALLER_WORKFLOW else {"pull_request", "workflow_dispatch"}),
         "wrong source run event",
     )
-    if run["event"] == "workflow_dispatch":
+    if run["event"] in {"workflow_dispatch", "push"}:
         require(run.get("head_branch") == "main", "dispatch source run must use main")
     sha(run.get("head_sha"))
     if success:
@@ -339,7 +341,7 @@ def validate_envelope(envelope: Any) -> None:
     require(
         set(envelope) == fields
         and type(envelope["authorization_version"]) is int
-        and envelope["authorization_version"] == 1,
+        and envelope["authorization_version"] in {1, 2},
         "invalid authorization envelope fields/version",
     )
     require(
@@ -355,7 +357,10 @@ def validate_envelope(envelope: Any) -> None:
     for key in ("id", "run_attempt", "workflow_id"):
         positive_int(source[key])
     require(
-        source["path"] == WORKFLOW and source["event"] in {"pull_request", "workflow_dispatch"},
+        (source["path"] == WORKFLOW and source["event"] in {"pull_request", "workflow_dispatch"} and envelope["authorization_version"] == 1)
+        or (envelope["authorization_version"] == 2 and
+            ((source["path"] == CALLER_WORKFLOW and source["event"] == "push")
+             or (source["path"] == WORKFLOW and source["event"] == "workflow_dispatch"))),
         "invalid source workflow identity",
     )
     sha(source["head_sha"])
@@ -366,6 +371,8 @@ def validate_envelope(envelope: Any) -> None:
         )
     for key in ("head_sha", "merge_sha", "trusted_executor_sha"):
         sha(envelope[key])
+    if envelope["authorization_version"] == 2:
+        require(source["head_sha"] == envelope["trusted_executor_sha"], "source executor mismatch")
     if envelope["outcome"] == "no_mutation":
         return
     acceptance = envelope["acceptance"]
@@ -397,91 +404,125 @@ def validate_envelope(envelope: Any) -> None:
     )
 
 
+def require_production_context(env: dict[str, str]) -> None:
+    event = env.get("GITHUB_EVENT_NAME")
+    caller = CALLER_WORKFLOW if event == "push" else WORKFLOW
+    require(env.get("GITHUB_ACTIONS") == "true" and env.get("GITHUB_REF") == "refs/heads/main"
+            and event in {"push", "workflow_dispatch"}
+            and env.get("GITHUB_WORKFLOW_REF") == f"{env.get('GITHUB_REPOSITORY')}/{caller}@refs/heads/main",
+            "mutation requires the trusted main caller")
+
+
+def require_ci_ready(api: GitHub, repository: dict[str, Any], run: dict[str, Any]) -> None:
+    """Prove validation in this exact attempt; inputs and artifacts grant no authority."""
+    jobs = api.pages(
+        f"repos/{repository['full_name']}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100",
+        field="jobs",
+    )
+    ready = [job for job in jobs if job.get("name") == "ci-ready"]
+    require(len(ready) == 1 and ready[0].get("status") == "completed"
+            and ready[0].get("conclusion") == "success", "exact executor lacks successful ci-ready")
+
+
 def capture(api: GitHub, event: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
     repository = repository_context(event)
     repo = repository["full_name"]
-    require(
-        env["GITHUB_REPOSITORY"] == repo and env["GITHUB_REF"] == "refs/heads/main",
-        "execution must run from this repository/main",
-    )
-    require(
-        env["GITHUB_WORKFLOW_REF"] == f"{repo}/{WORKFLOW}@refs/heads/main",
-        "unexpected workflow ref",
-    )
+    require(env["GITHUB_REPOSITORY"] == repo and env["GITHUB_REF"] == "refs/heads/main",
+            "execution must run from this repository/main")
     executor = sha(env["GITHUB_WORKFLOW_SHA"])
-    if env["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-        require(env["GITHUB_ACTOR"] == REVIEWER, "dispatch is restricted to jonaraphael")
-        value = event.get("inputs", {}).get("pr_number", "")
-        require(
-            isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value),
-            "dispatch requires a positive PR number",
-        )
-        number = int(value)
+    require(executor == sha(env["GITHUB_SHA"]), "workflow and tested executor differ")
+    event_name = env["GITHUB_EVENT_NAME"]
+    if event_name == "push":
+        caller = CALLER_WORKFLOW
+        require(event.get("ref") == "refs/heads/main" and event.get("after") == executor
+                and event.get("deleted") is False and event.get("forced") is False,
+                "publication requires an ordinary main push")
+        value = env.get("DATASET_PR_NUMBER", "")
     else:
-        require(
-            env["GITHUB_EVENT_NAME"] == "pull_request" and event.get("action") == "closed",
-            "unexpected publication event",
-        )
-        number = positive_int(event["pull_request"]["number"])
+        require(event_name == "workflow_dispatch" and env["GITHUB_ACTOR"] == REVIEWER,
+                "dispatch is restricted to jonaraphael; PR events cannot authorize publication")
+        caller = WORKFLOW
+        value = event.get("inputs", {}).get("pr_number", "")
+    require(env["GITHUB_WORKFLOW_REF"] == f"{repo}/{caller}@refs/heads/main", "unexpected workflow ref")
+    require(isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value), "explicit PR number required")
+    number = int(value)
     pr = api.get(f"repos/{repo}/pulls/{number}")
     validate_pr(pr, repository, number, merged=True)
-    if env["GITHUB_EVENT_NAME"] == "pull_request":
-        original = event["pull_request"]
-        require(
-            original.get("merged") is True
-            and original.get("merge_commit_sha") == pr["merge_commit_sha"]
-            and original["head"]["sha"] == pr["head"]["sha"],
-            "event head/merge mismatch",
-        )
-        require(
-            env["GITHUB_SHA"] == pr["merge_commit_sha"],
-            "event must identify the actual merge commit",
-        )
     compare = api.get(f"repos/{repo}/compare/{pr['merge_commit_sha']}...{executor}")
-    require(
-        compare.get("status") in {"ahead", "identical"}
-        and compare.get("merge_base_commit", {}).get("sha") == pr["merge_commit_sha"],
-        "merge is outside executor main lineage",
-    )
-    found = discover_document(api, pr, repo, merged=True, check_body=True)
-    run = workflow_run(
-        api,
-        repository,
-        int(env["GITHUB_RUN_ID"]),
-        int(env["GITHUB_RUN_ATTEMPT"]),
-        success=False,
-    )
-    expected_heads = (
-        {pr["head"]["sha"], pr["merge_commit_sha"]} if run["event"] == "pull_request" else {env["GITHUB_SHA"]}
-    )
-    require(run["head_sha"] in expected_heads, "source run head mismatch")
+    require(compare.get("status") in {"ahead", "identical"}
+            and compare.get("merge_base_commit", {}).get("sha") == pr["merge_commit_sha"],
+            "merge is outside executor main lineage")
+    found = discover_document(api, pr, repo, merged=True, check_body=False)
+    run = workflow_run(api, repository, int(env["GITHUB_RUN_ID"]),
+                       int(env["GITHUB_RUN_ATTEMPT"]), success=False, path=caller)
+    require(run["head_sha"] == executor and run["event"] == event_name, "source run head/event mismatch")
+    if event_name == "push":
+        require_ci_ready(api, repository, run)
+        # Never let an arbitrary PR input turn a main push into historical replay.
+        require(number in discover_push_prs(api, event, env, documents_only=False),
+                "PR is outside this main push")
+    else:
+        # Manual recovery still uses an independently tested main executor.
+        runs = api.pages(f"repos/{repo}/actions/workflows/ci.yml/runs?head_sha={executor}&event=push&per_page=100", field="workflow_runs")
+        candidates = [r for r in runs if r.get("head_sha") == executor and r.get("head_branch") == "main"
+                      and r.get("status") == "completed"]
+        require(bool(candidates), "manual executor lacks successful main CI")
+        tested = max(candidates, key=lambda r: positive_int(r.get("id")))
+        tested = workflow_run(api, repository, tested["id"], tested["run_attempt"], success=False, path=CALLER_WORKFLOW)
+        require(tested["head_sha"] == executor, "manual CI revision mismatch")
+        require_ci_ready(api, repository, tested)
     envelope = {
-        "authorization_version": 1,
-        "repository": repository,
-        "pr_number": number,
-        "head_sha": pr["head"]["sha"],
-        "merge_sha": pr["merge_commit_sha"],
+        "authorization_version": 2, "repository": repository, "pr_number": number,
+        "head_sha": pr["head"]["sha"], "merge_sha": pr["merge_commit_sha"],
         "trusted_executor_sha": executor,
         "source_run": {key: run[key] for key in ("id", "run_attempt", "workflow_id", "path", "head_sha", "event")},
         "outcome": "mutation" if found else "no_mutation",
     }
-    if found is None:
-        validate_envelope(envelope)
-        return envelope
-    document, path, blob = found
-    reviews = api.pages(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
-    envelope.update(
-        {
-            "plan_path": path,
-            "plan_blob_sha": blob,
-            "normalized_plan_sha256": plans.sha256(plans.canonical_bytes(document)),
-            "document": document,
-            "acceptance": effective_acceptance(pr, reviews, repo),
-        }
-    )
-    envelope.update(identity_digests(envelope))
+    if found is not None:
+        document, path, blob = found
+        reviews = api.pages(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
+        envelope.update({"plan_path": path, "plan_blob_sha": blob,
+                         "normalized_plan_sha256": plans.sha256(plans.canonical_bytes(document)),
+                         "document": document, "acceptance": effective_acceptance(pr, reviews, repo)})
+        envelope.update(identity_digests(envelope))
     validate_envelope(envelope)
     return envelope
+
+
+def discover_push_prs(api: GitHub, event: dict[str, Any], env: dict[str, str], *, documents_only: bool = True) -> list[int]:
+    """Enumerate Git history locally, avoiding the compare API's commit cap."""
+    repository = repository_context(event)
+    before, after = sha(event.get("before")), sha(event.get("after"))
+    require(before != "0" * 40 and env.get("GITHUB_REF") == event.get("ref") == "refs/heads/main"
+            and env.get("GITHUB_SHA") == after and env.get("GITHUB_EVENT_NAME") == "push"
+            and event.get("forced") is False and event.get("deleted") is False,
+            "cannot completely enumerate an ordinary main push")
+    subprocess.run(["git", "merge-base", "--is-ancestor", before, after], check=True)
+    commits = subprocess.check_output(["git", "rev-list", "--reverse", f"{before}..{after}"], text=True).splitlines()
+    require(bool(commits) and len(commits) == len(set(commits)), "invalid push range")
+    commit_set = set(commits)
+    candidates = {}
+    for commit in commits:
+        sha(commit)
+        for associated in api.pages(f"repos/{repository['full_name']}/commits/{commit}/pulls?per_page=100"):
+            number = positive_int(associated.get("number"))
+            if associated.get("merged_at") and associated.get("merge_commit_sha") in commit_set:
+                pr = api.get(f"repos/{repository['full_name']}/pulls/{number}")
+                require(pr["merge_commit_sha"] == associated["merge_commit_sha"], "associated PR changed")
+                # Fork code merges are ordinary repository changes, but cannot
+                # provide production mutation authority.
+                if (not repo_matches(pr.get("head", {}).get("repo"), repository)
+                    or not repo_matches(pr.get("base", {}).get("repo"), repository)
+                    or pr.get("base", {}).get("ref") != "main"):
+                    continue
+                validate_pr(pr, repository, number, merged=True)
+                candidates[number] = pr
+    result = []
+    for number, pr in sorted(candidates.items(), key=lambda item: (commits.index(item[1]["merge_commit_sha"]), item[0])):
+        if not documents_only or discover_document(api, pr, repository["full_name"], merged=True, check_body=False) is not None:
+            result.append(number)
+    require(len(result) <= 256, "too many mutation PRs for one complete Actions matrix")
+    return result
 
 
 def revalidate(api: GitHub, envelope: dict[str, Any]) -> None:
@@ -512,21 +553,33 @@ def revalidate(api: GitHub, envelope: dict[str, Any]) -> None:
         )
 
 
-def artifact_name(run_id: int, attempt: int) -> str:
-    return f"dataset-authorization-{run_id}-{attempt}"
+def artifact_name(run_id: int, attempt: int, envelope: dict[str, Any] | None = None) -> str:
+    prefix = f"dataset-authorization-{positive_int(run_id)}-{positive_int(attempt)}"
+    if envelope is None or envelope["authorization_version"] == 1:
+        return prefix
+    identity = envelope.get("normalized_plan_sha256", "no-mutation")
+    return f"{prefix}-pr-{positive_int(envelope['pr_number'])}-{identity}"
 
 
-def from_run(api: GitHub, event: dict[str, Any]) -> dict[str, Any]:
+
+def from_run(api: GitHub, event: dict[str, Any], *, pr_number: int | None = None) -> dict[str, Any]:
     repository = repository_context(event)
     source = event["workflow_run"]
-    run = workflow_run(api, repository, source["id"], source["run_attempt"], success=True)
+    run = workflow_run(api, repository, source["id"], source["run_attempt"], success=True, path=source.get("path"))
     require(
         all(source.get(k) == run[k] for k in ("id", "run_attempt", "workflow_id", "head_sha", "path", "event")),
         "upstream event/run mismatch",
     )
     repo = repository["full_name"]
     artifacts = api.pages(f"repos/{repo}/actions/runs/{run['id']}/artifacts?per_page=100", field="artifacts")
-    matches = [a for a in artifacts if a.get("name") == artifact_name(run["id"], run["run_attempt"])]
+    prefix = artifact_name(run["id"], run["run_attempt"])
+    if run["path"] == CALLER_WORKFLOW:
+        require(pr_number is not None, "CI authorization handoff requires explicit PR identity")
+        prefix += f"-pr-{positive_int(pr_number)}-"
+        matches = [a for a in artifacts if str(a.get("name", "")).startswith(prefix)]
+    else:
+        matches = [a for a in artifacts if a.get("name") == prefix or
+                   (pr_number is not None and str(a.get("name", "")).startswith(f"{prefix}-pr-{positive_int(pr_number)}-"))]
     require(len(matches) == 1, "missing/ambiguous upstream authorization artifact")
     artifact = matches[0]
     require(
@@ -556,6 +609,9 @@ def from_run(api: GitHub, event: dict[str, Any]) -> dict[str, Any]:
     envelope = plans.strict_json_loads(data)
     validate_envelope(envelope)
     require(data == plans.canonical_bytes(envelope), "noncanonical authorization envelope")
+    require(artifact["name"] == artifact_name(run["id"], run["run_attempt"], envelope), "artifact identity mismatch")
+    if pr_number is not None:
+        require(envelope["pr_number"] == pr_number, "artifact PR mismatch")
     require(
         envelope["repository"] == repository
         and envelope["source_run"]
@@ -589,7 +645,7 @@ def save_envelope(envelope: dict[str, Any], directory: Path, output: str | None)
             **plan_outputs(envelope.get("document", {})),
             "envelope_sha256": plans.sha256(raw),
             "executor_sha": envelope["trusted_executor_sha"],
-            "artifact_name": artifact_name(envelope["source_run"]["id"], envelope["source_run"]["run_attempt"]),
+            "artifact_name": artifact_name(envelope["source_run"]["id"], envelope["source_run"]["run_attempt"], envelope),
         },
         output,
     )
@@ -637,6 +693,16 @@ def verified_envelope(api: GitHub, directory: Path, expected_sha256: str, env: d
         envelope["repository"]["full_name"] == env["GITHUB_REPOSITORY"],
         "envelope repository mismatch",
     )
+    validate_envelope(envelope)
+    if envelope["authorization_version"] == 2:
+        if env.get("GITHUB_EVENT_NAME") != "workflow_run":
+            require_production_context(env)
+        source = envelope["source_run"]
+        run = workflow_run(api, envelope["repository"], source["id"], source["run_attempt"],
+                           success=env.get("GITHUB_EVENT_NAME") == "workflow_run", path=source["path"])
+        require(source == {key: run[key] for key in source}, "authorization source provenance changed")
+        if source["path"] == CALLER_WORKFLOW:
+            require_ci_ready(api, envelope["repository"], run)
     if env.get("GITHUB_EVENT_NAME") != "workflow_run":
         require(
             envelope["source_run"]["id"] == int(env["GITHUB_RUN_ID"])
@@ -649,17 +715,23 @@ def verified_envelope(api: GitHub, directory: Path, expected_sha256: str, env: d
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "verify", "from-run", "preview"))
+    parser.add_argument("command", choices=("capture", "verify", "from-run", "preview", "discover"))
     parser.add_argument("--event-path", default=os.environ.get("GITHUB_EVENT_PATH"))
     parser.add_argument("--directory", type=Path, default=Path("authorization"))
     parser.add_argument("--output-dir", type=Path, default=Path("."))
     parser.add_argument("--expected-sha256")
+    parser.add_argument("--pr-number", type=int)
     parser.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT"))
     args = parser.parse_args(argv)
     api = GitHub()
     try:
-        if args.command in {"capture", "from-run", "preview"}:
+        if args.command in {"capture", "from-run", "preview", "discover"}:
             event = plans.strict_json_loads(Path(args.event_path).read_bytes())
+            if args.command == "discover":
+                numbers = discover_push_prs(api, event, dict(os.environ))
+                write_outputs({"pr_numbers": plans.canonical_bytes(numbers).decode().strip(),
+                               "has_mutations": bool(numbers)}, args.github_output)
+                return 0
             if args.command == "preview":
                 repository = repository_context(event)
                 pr = api.get(f"repos/{repository['full_name']}/pulls/{event['pull_request']['number']}")
@@ -684,7 +756,7 @@ def main(argv: list[str] | None = None) -> int:
                 require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == os.environ["GITHUB_WORKFLOW_SHA"], "checkout does not match workflow executor")
                 envelope = capture(api, event, dict(os.environ))
             else:
-                envelope = from_run(api, event)
+                envelope = from_run(api, event, pr_number=args.pr_number)
             save_envelope(envelope, args.directory, args.github_output)
         else:
             envelope = verified_envelope(api, args.directory, args.expected_sha256, dict(os.environ))
