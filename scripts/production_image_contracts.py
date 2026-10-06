@@ -7,6 +7,7 @@ here instead of after release. CI and isolated agent preflight run this command.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import uuid
@@ -36,11 +37,22 @@ for attempt in range(20):
 '''
 
 
+def resolve_image(image):
+    """Bind every installed-code check to one local immutable image identity."""
+    image_id = subprocess.check_output(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", image], text=True
+    ).strip()
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
+        raise ValueError(f"Docker did not resolve an immutable image ID for {image}")
+    return image_id
+
+
 def verify_viewer_image(image):
     """Start the actual default CMD with no network or credentials, then check health."""
+    image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
-    subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
     try:
+        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)
@@ -49,18 +61,18 @@ def verify_viewer_image(image):
         subprocess.run(["docker", "rm", "--force", name], check=False)
 
 
-def commands(target, executor):
+def commands(target, executor, *, image_id=None):
+    image = f"shared-datasets-preflight/{target}:{executor}"
+    tested_image = image_id or image
     if target == "catalog-viewer":
-        image = f"shared-datasets-preflight/{target}:{executor}"
         return [
             ["docker", "build", "--platform", "linux/amd64", "-f", "services/catalog_viewer/Dockerfile", "-t", image, "."],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", image, "-c", "from services.catalog_viewer import run; assert callable(run.main)"],
-            [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", image],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run; assert callable(run.main)"],
+            [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image],
         ]
     package = target.replace("-", "_")
-    image = f"shared-datasets-preflight/{target}:{executor}"
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]
-    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", image]
+    run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", tested_image]
     checks = [
         run + ["python", "-c", f"import ingestion.{package}.run; import scripts.release_feature_model, scripts.vector_asset"],
         run + ["python", "-c", INTERPRETER_PROBE],
@@ -84,7 +96,10 @@ def main():
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     for target in args.target or ["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer"]:
-        for command in commands(target, executor):
+        subprocess.run(commands(target, executor)[0], check=True)
+        image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
+        print(f"[{target}] testing immutable image {image_id}", flush=True)
+        for command in commands(target, executor, image_id=image_id)[1:]:
             subprocess.run(command, check=True)
 
 

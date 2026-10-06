@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_geospatial_test_results import check_results
-from scripts.ci_runtime import local_runtime, prove_runtime
+from scripts.ci_runtime import local_runtime, prove_runtime, run_container, suite_platform
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
@@ -125,7 +125,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("npm", "test", cwd=package)
         add("npm", "run", "test:pack", cwd=package)
     elif suite == "browser":
-        add("uv", "sync", "--locked", "--all-groups")
+        add("uv", "sync", "--locked", "--no-dev", "--group", "browser")
         add("npm", "ci", "--ignore-scripts", "--prefix", "tests/browser")
         add("npm", "ci", "--ignore-scripts", "--prefix", "api/typescript")
         add("npm", "run", "build", "--prefix", "api/typescript")
@@ -272,10 +272,14 @@ def preflight(args: argparse.Namespace) -> int:
     subprocess.run(["docker", "build", "--platform", "linux/amd64", "-f", ".github/docker/preflight.Dockerfile", "-t", image, "."], cwd=root, check=True)
     prove_runtime(runtime_arguments, runtime, image)
     write_json(work / "runtime.json", runtime)
+    arm_image = f"shared-datasets-preflight-arm:{plan['contract_digest'][:16]}"
+    if any(suite_platform(suite, runtime) == "linux/arm64" for suite in plan["suites"]):
+        subprocess.run(["docker", "build", "--platform", "linux/arm64", "-f", ".github/docker/preflight.Dockerfile", "-t", arm_image, "."], cwd=root, check=True)
     native_image = f"shared-datasets-native:{plan['contract_digest'][:16]}"
     if "geospatial-integration" in plan["suites"]:
         subprocess.run(["docker", "build", "--platform", "linux/amd64", "-f", ".github/docker/geospatial-ci.Dockerfile", "-t", native_image, "."], cwd=root, check=True)
     results = []
+    runtime["suites"] = {}
     for suite in plan["suites"]:
         output = work / suite
         output.mkdir()
@@ -290,14 +294,15 @@ def preflight(args: argparse.Namespace) -> int:
             report = output / "result.json"
             if not report.exists():
                 raise ValueError(f"{suite} did not produce evidence (exit {completed.returncode})")
-            results.append(json.loads(report.read_text()))
-            continue
-        selected_image = native_image if suite == "geospatial-integration" else image
-        command = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{root}:/workspace", "-v", f"{work}:/evidence", "-w", "/workspace", "-e", "UV_PROJECT_ENVIRONMENT=/evidence/venv", "-e", "UV_CACHE_DIR=/evidence/uv-cache", "-e", "UV_LINK_MODE=copy", "-e", "SHARED_DATASETS_WORKDIR=/evidence/shared-datasets-1", *runtime_arguments, selected_image, "/usr/local/bin/python", "scripts/ci_preflight.py", "run-suite", "--plan", "/evidence/plan.json", "--suite", suite, "--output", f"/evidence/{suite}"]
-        completed = subprocess.run(command, check=False)
+            runtime["suites"][suite] = {"transport": "host-docker", "exit_code": completed.returncode}
+        else:
+            platform = suite_platform(suite, runtime)
+            selected_image = native_image if suite == "geospatial-integration" else arm_image if platform == "linux/arm64" else image
+            runtime["suites"][suite] = run_container(root, work, suite, selected_image, platform, runtime_arguments)
+        write_json(work / "runtime.json", runtime)
         report = output / "result.json"
         if not report.exists():
-            raise ValueError(f"{suite} did not produce evidence (container exit {completed.returncode})")
+            raise ValueError(f"{suite} did not produce evidence")
         result = json.loads(report.read_text())
         results.append(result)
         if result.get("status") != "success":

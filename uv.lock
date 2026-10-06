@@ -1035,6 +1035,9 @@ wdpa-native = [
 ]
 
 [package.dev-dependencies]
+browser = [
+    { name = "geopandas" },
+]
 dev = [
     { name = "geopandas" },
     { name = "pytest" },
@@ -1055,6 +1058,7 @@ requires-dist = [
 provides-extras = ["wdpa-native"]
 
 [package.metadata.requires-dev]
+browser = [{ name = "geopandas", specifier = "==1.1.1" }]
 dev = [
     { name = "geopandas", specifier = "==1.1.1" },
     { name = "pytest", specifier = ">=9.0.0" },
