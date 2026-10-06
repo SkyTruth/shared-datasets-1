@@ -108,6 +108,9 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
 
 def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_command():
     command = [args for args, _ in suite_commands("production-images", ROOT, {"base": "base", "tested_sha": "head"}, ROOT)]
-    assert command[-1] == ["uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py"]
+    assert command[-1] == ["uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(ROOT)]
     suite = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]["production-images"]
     assert "scripts/ci_preflight.py run-suite" in next(step["run"] for step in suite["steps"] if "run" in step)
+    upload = next(step for step in suite["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["with"]["compression-level"] == 0
+    assert upload["with"]["if-no-files-found"] == "error"

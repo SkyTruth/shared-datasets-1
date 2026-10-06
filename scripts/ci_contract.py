@@ -15,6 +15,7 @@ from xml.etree import ElementTree
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
 from scripts.catalog_csv import read_catalog_rows_text
+from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 
 
 TOOLCHAIN = {
@@ -54,6 +55,7 @@ CONTRACT_FILES = (
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
     "scripts/production_image_contracts.py",
+    "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
     "scripts/cdn_plan_readiness.py",
     "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
     "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
@@ -287,6 +289,13 @@ def verify_results(
             raise ValueError(f"{suite} contains a failed command")
         if result.get("tools") != expected_tools(suite):
             raise ValueError(f"{suite} used an unexpected toolchain")
+        if suite == "production-images":
+            try:
+                images = validate_manifest(result.get("production_images"), plan["tested_sha"])
+            except ImageError as exc:
+                raise ValueError(f"invalid production-image evidence: {exc}") from exc
+            if set(images) != IMAGE_TARGETS:
+                raise ValueError("complete tested production-image set is missing")
     if jobs is not None:
         expected = {suite: suite for suite in ("lint", "tests", "geospatial-integration", "production-images", "browser")}
         for suite, job in expected.items():

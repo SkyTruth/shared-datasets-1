@@ -1,6 +1,20 @@
 name: Publish TypeScript SDK
 
 on:
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision for selective recovery
+        required: true
+        type: string
+      source_run_id:
+        description: Main CI run that validated the executor
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_run:
     workflows: [CI]
     branches: [main]
@@ -15,17 +29,18 @@ permissions:
 env:
   BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
   NODE_VERSION: "24.13.1"
-  EXECUTOR_SHA: ${{ github.event.workflow_run.head_sha }}
-  SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
-  SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+  EXECUTOR_SHA: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+  SOURCE_RUN_ID: ${{ inputs.source_run_id || github.event.workflow_run.id }}
+  SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt || github.event.workflow_run.run_attempt }}
 
 jobs:
   candidate:
     if: >-
-      ${{ github.repository == 'SkyTruth/shared-datasets-1' &&
-          github.event.workflow_run.event == 'push' &&
-          github.event.workflow_run.head_branch == 'main' &&
-          github.event.workflow_run.head_repository.full_name == github.repository }}
+      ${{ github.repository == 'SkyTruth/shared-datasets-1' && github.ref == 'refs/heads/main' &&
+          ((github.event_name == 'workflow_dispatch') ||
+           (github.event.workflow_run.event == 'push' &&
+            github.event.workflow_run.head_branch == 'main' &&
+            github.event.workflow_run.head_repository.full_name == github.repository)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

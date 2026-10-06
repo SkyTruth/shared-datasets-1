@@ -182,16 +182,26 @@ jobs:
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build eamlis-monthly image
+        id: tested-image
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
         run: |
           set -euo pipefail
+          python scripts/tested_image_authorization.py --workflow eamlis-monthly-deploy.yml --target eamlis-monthly \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --output "$RUNNER_TEMP/tested-eamlis-monthly"
 
+      - name: Tag the exact tested eamlis-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
+        run: |
+          set -euo pipefail
           image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
-          docker build \
-            --platform linux/amd64 \
-            -f ingestion/eamlis_monthly/Dockerfile \
-            -t "${image_tag}" \
-            .
+          docker tag "$TESTED_IMAGE_ID" "$image_tag"
           echo "EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image
@@ -219,10 +229,14 @@ jobs:
 
       - name: Push eamlis-monthly image
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        env:
+          TESTED_IMAGE_ID: ${{ steps.tested-image.outputs.image_id }}
         run: |
           set -euo pipefail
 
           docker push "${EAMLIS_MONTHLY_IMAGE_TAG}"
+          docker buildx imagetools inspect --raw "${EAMLIS_MONTHLY_IMAGE_TAG}" > "$RUNNER_TEMP/eamlis-monthly-manifest.json"
+          python -c 'import json, os, sys; manifest=json.load(open(sys.argv[1])); expected=os.environ["TESTED_IMAGE_ID"]; actual=manifest.get("config", {}).get("digest"); assert actual == expected, f"Registry image config {actual!r} differs from tested image {expected!r}"' "$RUNNER_TEMP/eamlis-monthly-manifest.json"
           image_digest="$(docker buildx imagetools inspect "${EAMLIS_MONTHLY_IMAGE_TAG}" --format '{{.Manifest.Digest}}')"
           if [[ -z "${image_digest}" || "${image_digest}" == "<no value>" ]]; then
             image_digest="$(docker buildx imagetools inspect "${EAMLIS_MONTHLY_IMAGE_TAG}" | awk '/^Digest:/ {print $2; exit}')"

@@ -25,8 +25,14 @@ CLIs. It checks NumPy/GDAL using `gdal_calc.py`'s actual shebang interpreter,
 executes the WDPA input probe's installed CLI, and runs the small real production
 fixture. It neither publishes images nor accesses datasets. EAMLIS and sea-ice
 images use the locked Python dependencies and the pinned native versions.
-Deployment smoke checks run before pushing the same image bytes; Terraform uses
-the resulting immutable registry digest.
+The production-image CI suite retains the exact EAMLIS, sea-ice and viewer
+images after these checks. Its result binds the complete image manifest to the
+tested SHA, config IDs, archive hashes and ordered rootfs hashes. Deployment
+loads only the selected image from the successful source CI attempt; it never
+rebuilds it. Docker-save exporter formats are normalized without changing config
+or rootfs bytes. Before Terraform mutation, the pushed registry manifest must
+reference the tested config ID; Terraform uses that immutable registry digest.
+Missing, expired, incomplete or mismatched evidence fails closed.
 
 WDPA distinguishes the tested executor revision, the accepted producer image and
 fingerprint, and the retained bundle's generation/hash. Publication fixes inherit
@@ -74,7 +80,7 @@ artifact digest and changed saved-plan target scope using GitHub deployment
 records. These records prevent stale replay; approvals and mutation allowlists
 still establish authority. Under the target's serialization, an older or
 divergent revision cannot supersede a newer attempted deployment. An identical
-successful revision is detected before rebuilding an image or planning another
+successful revision is detected before loading an image or planning another
 mutation and becomes a no-op. If a candidate reaches the final guard, different
 artifact bytes from the same
 code require reconciliation, except catalog refreshes: an actual reviewed data
@@ -99,7 +105,7 @@ retention does not discard their authorization evidence. The non-mutating
 protected receipt rehearsal lands before deployment rewiring, and each leaf
 must complete an exact-current-run rehearsal before starting a record. Its
 signed claim must verify before infrastructure, SDK or catalog mutation. Image
-staging first verifies the rehearsal and replay guard, then tests and pushes the
+staging first verifies the rehearsal and replay guard, then loads and pushes the
 same immutable bytes; ingestion claims retain the resolved registry digest.
 If claim signing fails, the same protected run may sign its failed/unknown
 outcome to permit later read-only reconciliation. That failure receipt proves

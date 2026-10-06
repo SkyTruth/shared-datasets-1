@@ -28,6 +28,12 @@ fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credenti
 are not forwarded. Downloads and Terraform provider initialization require
 network access. Tool versions and the classifier are owned by
 `scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
+The production-image suite uses the host Docker client and an isolated host
+environment with the same pinned Python and locked dependencies. It builds and
+tests the actual Linux AMD64 deployment recipes without mounting the Docker
+socket into a validation container. Its evidence retains the three deployable
+images with their config and rootfs hashes; missing image evidence fails
+`ci-ready`. Deployment consumes these tested bytes without rebuilding.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local
