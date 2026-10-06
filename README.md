@@ -737,8 +737,12 @@ the packed package do not require a release. Prerelease versions are not
 supported by this stable-release workflow.
 
 Merging a versioned package change to `main` triggers `Publish TypeScript SDK`.
-It checks the merged version, repeats the tests, packs and validates the package,
-and publishes that exact tarball through npm's GitHub Actions OIDC handshake.
+The release listener verifies the exact main-push `ci-ready` result, checks the
+reviewed version and consumes the retained Node 24 tarball bytes. It publishes
+that exact tarball through npm's GitHub Actions OIDC handshake. Verified CI
+validation failures, cancellations and obsolete completion events finish release
+detection as no-ops. An unrelated deployment failure after passing validation
+keeps the tested package eligible.
 The workflow has read-only repository access: it never edits versions, commits,
 or pushes. Commit-message bump trailers have no effect.
 
@@ -747,8 +751,9 @@ A new version must be higher; retrying an existing version succeeds without
 publishing only when the packed bytes match its registry integrity. Changed
 bytes require another reviewed version. Missing or malformed registry metadata
 and network/authentication failures stop the release. A workflow-only push with
-no package/version change skips publication. Manual dispatch from `main` retries
-the checked-out version with the same integrity rules; it never invents a bump.
+no package/version change skips publication. Manual dispatch from `main` requires
+the exact tested executor SHA and successful source CI run and attempt. It retries
+that version with the same integrity rules; it never invents a bump.
 An older workflow retry cannot move the npm latest tag backwards.
 
 The release uses Node 24 and npm trusted publishing (npm 11.5.1 or later). No
