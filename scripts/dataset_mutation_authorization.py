@@ -112,6 +112,72 @@ def validate_pr(pr: dict[str, Any], repository: dict[str, Any], number: int, *, 
         require(pr.get("state") == "open", "preview requires an open PR")
 
 
+def advisory_snapshot(pr: Any, repository: dict[str, Any], number: int) -> tuple[Any, ...]:
+    """Validate advisory identity before distinguishing supersession from invalid data."""
+    require(isinstance(pr, dict), "invalid advisory PR response")
+    require(positive_int(pr.get("number")) == positive_int(number), "PR number mismatch")
+    for side in ("head", "base"):
+        require(isinstance(pr.get(side), dict), f"invalid PR {side}")
+        require(repo_matches(pr[side].get("repo"), repository), f"PR {side} repository mismatch")
+        sha(pr[side].get("sha"))
+    require(pr["base"].get("ref") == "main", "PR must target main")
+    require(isinstance(pr.get("state"), str) and pr["state"] in {"open", "closed"},
+            "invalid advisory PR state")
+    require(type(pr.get("draft")) is bool, "invalid advisory PR draft state")
+    require("body" in pr and (pr["body"] is None or isinstance(pr["body"], str)),
+            "invalid advisory PR body")
+    require(type(pr.get("changed_files")) is int and 0 <= pr["changed_files"] <= 2**53 - 1,
+            "invalid advisory PR changed_files")
+    return (pr["state"], pr["draft"], pr["head"]["sha"], pr["base"]["sha"],
+            pr.get("body"), pr["changed_files"])
+
+
+def preview_document(api: GitHub, event: dict[str, Any]) -> dict[str, Any]:
+    """Obsolete advisories are no-ops; this path never creates mutation authority."""
+    repository = repository_context(event)
+    expected = event["pull_request"]
+    expected_snapshot = advisory_snapshot(expected, repository, expected["number"])
+
+    def read_current() -> tuple[dict[str, Any], tuple[Any, ...]]:
+        pr = api.get(f"repos/{repository['full_name']}/pulls/{expected['number']}")
+        return pr, advisory_snapshot(pr, repository, expected["number"])
+
+    def obsolete(snapshot: tuple[Any, ...]) -> bool:
+        if snapshot != expected_snapshot or snapshot[:2] != ("open", False):
+            print("Advisory event is superseded or closed; skipping preview.")
+            return True
+        return False
+
+    pr, snapshot = read_current()
+    if obsolete(snapshot):
+        return {}
+    files = api.pages(f"repos/{repository['full_name']}/pulls/{pr['number']}/files?per_page=100")
+    require(isinstance(files, list) and all(isinstance(item, dict) for item in files),
+            "invalid advisory PR file response")
+    names = [item.get("filename") for item in files]
+    require(all(isinstance(name, str) and name for name in names), "invalid advisory PR filename")
+    require(len(set(names)) == len(names), "duplicate PR file")
+    require(all("previous_filename" not in item or
+                isinstance(item["previous_filename"], str) and item["previous_filename"]
+                for item in files), "invalid advisory previous filename")
+    for item in files:
+        require("status" not in item or isinstance(item["status"], str), "invalid advisory file status")
+        if "sha" in item:
+            sha(item["sha"])
+    current, snapshot = read_current()
+    # The mutable files API may describe either snapshot bordering its read.
+    # Neither a malformed nor a truncated response is proof of supersession.
+    require(len(files) < 3000 and len(files) in {pr["changed_files"], current["changed_files"]},
+            "incomplete PR files enumeration")
+    if obsolete(snapshot):
+        return {}
+    found = document_from_files(api, pr, repository["full_name"], files, merged=False, check_body=True)
+    _, snapshot = read_current()
+    if obsolete(snapshot):
+        return {}
+    return found[0] if found else {}
+
+
 def effective_acceptance(pr: dict[str, Any], reviews: list[dict[str, Any]], repository: str) -> dict[str, Any]:
     head = sha(pr["head"]["sha"])
     if pr.get("user", {}).get("login") == REVIEWER:
@@ -184,6 +250,13 @@ def discover_document(
     api: GitHub, pr: dict[str, Any], repository: str, *, merged: bool, check_body: bool
 ) -> tuple[dict[str, Any], str, str] | None:
     files = api.pages(f"repos/{repository}/pulls/{pr['number']}/files?per_page=100")
+    return document_from_files(api, pr, repository, files, merged=merged, check_body=check_body)
+
+
+def document_from_files(
+    api: GitHub, pr: dict[str, Any], repository: str, files: list[dict[str, Any]], *,
+    merged: bool, check_body: bool,
+) -> tuple[dict[str, Any], str, str] | None:
     require(
         len(files) == pr.get("changed_files") and len(files) < 3000,
         "incomplete PR files enumeration",
@@ -733,15 +806,7 @@ def main(argv: list[str] | None = None) -> int:
                                "has_mutations": bool(numbers)}, args.github_output)
                 return 0
             if args.command == "preview":
-                repository = repository_context(event)
-                pr = api.get(f"repos/{repository['full_name']}/pulls/{event['pull_request']['number']}")
-                validate_pr(pr, repository, event["pull_request"]["number"], merged=False)
-                require(
-                    pr["head"]["sha"] == event["pull_request"]["head"]["sha"],
-                    "preview head changed; rerun",
-                )
-                found = discover_document(api, pr, repository["full_name"], merged=False, check_body=True)
-                document = found[0] if found else {}
+                document = preview_document(api, event)
                 for kind in ("publish", "delete"):
                     if kind in document:
                         (args.output_dir / f"{kind}-plan.json").write_bytes(plans.canonical_bytes(document[kind]))

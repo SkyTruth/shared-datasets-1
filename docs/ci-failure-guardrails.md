@@ -12,7 +12,7 @@ below.
 | Recorded failure family | Guardrail and delivery step |
 | --- | --- |
 | Production environment rejected PR ref | PR 1: enumerate immutable reviewed plans after passing main CI; production uses the tested main SHA and original PR acceptance, including the existing restricted self-acceptance rule. |
-| Delayed PR event treated as invalid current state | PR 4: verify event identity and current state before treating closed or merged advisory events as no-ops; stale events never authorize mutation. |
+| Delayed PR event treated as invalid current state | PR 4: verify repository/PR identity and snapshot shape before treating closed, draft or superseded advisory events as no-ops, including open PR head/base drift and changes during routing or preview. Stale events never authorize mutation. |
 | PR workflow referenced a script absent from its trusted base checkout | Preserve the merged advisory helper bootstrap and trusted-base checkout contract; land trusted helpers before consumers. Production consumers separately verify an immutable main bootstrap before candidate checkout. |
 | PR validation caught content, policy, test or browser defects | PR 2: clean isolated preflight and an always-evaluated `ci-ready` cover every selected suite with pinned tools; failures, cancellations and unexpected skips cannot pass. Migrate required checks only after positive and negative gate verification. |
 | Browser teardown race after merge | PR 2: retain the merged teardown fix and execute the browser regression suite in preflight and CI, without skips or retries. |
@@ -28,6 +28,14 @@ below.
 | External service or runner failure | PR 4: retain visible external failures and selective recovery guidance; inspect mutation state before recovery and never blanket-retry production. |
 
 ## Additional guards established during implementation
+
+The audit records eight advisory routing failures under a combined identity/state
+error; it does not distinguish closure from head or base drift. Advisory routing
+and preview now recheck validated PR snapshots around file enumeration and plan
+discovery. A verified obsolete event emits false mutation/plan outputs and writes
+no plan or authorization files. Malformed API data, incomplete enumeration and
+invalid plans on an unchanged current PR still fail. These advisory no-ops do not
+relax production's exact-head approval, immutable-plan or authorization checks.
 
 Playwright's optional Git capture can fetch depth-one history in CI and leave a
 passing browser run with a shallow checkout. Disable that optional capture;

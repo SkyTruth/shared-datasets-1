@@ -214,13 +214,15 @@ class MutationIntentRoutingTests(unittest.TestCase):
 
     def test_incomplete_duplicate_malformed_and_capped_lists_refuse(self):
         cases = [None, [], [None], [{"filename": False}], [{"filename": "README.md", "previous_filename": 9}],
+                 [{"filename": "README.md", "status": False}], [{"filename": "README.md", "sha": "invalid"}],
                  [{"filename": "README.md"}, {"filename": "README.md"}]]
         for files in cases:
             with self.subTest(files=files):
                 fixture = self.fixture()
                 fixture["files"] = files
                 if isinstance(files, list) and files:
-                    fixture["pr"]["changed_files"] = fixture["current"]["changed_files"] = len(files)
+                    for pr in (fixture["pr"], fixture["current"], fixture["context"]["payload"]["pull_request"]):
+                        pr["changed_files"] = len(files)
                 self.assert_refused(fixture)
         self.assert_refused(self.fixture(files=[{"filename": f"docs/{i}.md"} for i in range(3000)]))
         fixture = self.fixture()
@@ -229,10 +231,10 @@ class MutationIntentRoutingTests(unittest.TestCase):
 
     def test_identity_changes_and_api_failures_never_output_no_mutation(self):
         for target in ("pr", "current"):
-            for path, value in (("number", 8), ("state", "unknown"), ("draft", True),
-                                ("head.sha", "c" * 40), ("head.repo.id", 101),
+            for path, value in (("number", 8), ("state", "unknown"), ("draft", "true"),
+                                ("head.sha", "invalid"), ("head.repo.id", 101),
                                 ("base.repo.full_name", "other/repository"), ("base.ref", "other"),
-                                ("base.sha", "d" * 40), ("body", {})):
+                                ("base.sha", "invalid"), ("body", {}), ("changed_files", True)):
                 with self.subTest(target=target, path=path):
                     fixture = self.fixture()
                     owner = fixture[target]
@@ -241,32 +243,68 @@ class MutationIntentRoutingTests(unittest.TestCase):
                         owner = owner[part]
                     owner[parts[-1]] = value
                     self.assert_refused(fixture)
-        for changed in ({"body": "```shared-datasets-publish-plan"}, {"changed_files": 2}):
-            fixture = self.fixture()
-            fixture["current"].update(changed)
-            self.assert_refused(fixture)
         for method in ("get1", "paginate", "get2"):
             with self.subTest(method=method):
                 fixture = self.fixture()
                 fixture["api_error"] = method
                 self.assert_refused(fixture)
 
-    def test_closed_pr_needs_no_preview_before_or_during_routing(self):
+    def test_verified_supersession_needs_no_preview_before_or_during_routing(self):
         for target in ("pr", "current"):
-            with self.subTest(target=target):
-                fixture = self.fixture(body="```shared-datasets-publish-plan")
-                fixture[target]["state"] = "closed"
-                # Merging can also advance the base SHA before this event runs.
-                fixture[target]["base"]["sha"] = "d" * 40
-                result = self.route(fixture)
-                self.assertNotIn("error", result)
-                self.assertEqual(result["outputs"], {"potential_mutation": False})
-                self.assertEqual([call[0] for call in result["calls"]],
-                                 ["get"] if target == "pr" else ["get", "paginate", "get"])
+            for field, value in (("state", "closed"), ("draft", True), ("head.sha", "c" * 40),
+                                 ("base.sha", "d" * 40), ("body", "edited body"), ("changed_files", 2)):
+                with self.subTest(target=target, field=field):
+                    fixture = self.fixture(body="```shared-datasets-publish-plan")
+                    owner = fixture[target]
+                    parts = field.split(".")
+                    for part in parts[:-1]:
+                        owner = owner[part]
+                    owner[parts[-1]] = value
+                    result = self.route(fixture)
+                    self.assertNotIn("error", result)
+                    self.assertEqual(result["outputs"], {"potential_mutation": False})
+                    self.assertEqual([call[0] for call in result["calls"]],
+                                     ["get"] if target == "pr" else ["get", "paginate", "get"])
+
+    def test_removed_plan_on_newer_head_is_not_incomplete_old_enumeration(self):
+        fixture = self.fixture(files=[{"filename": ".github/dataset-plans/old.json"}])
+        fixture["files"] = []
+        fixture["current"]["head"]["sha"] = "c" * 40
+        fixture["current"]["changed_files"] = 0
+        result = self.route(fixture)
+        self.assertNotIn("error", result)
+        self.assertEqual(result["outputs"], {"potential_mutation": False})
+        self.assertEqual([call[0] for call in result["calls"]], ["get", "paginate", "get"])
+
+    def test_supersession_cannot_hide_malformed_or_truncated_enumeration(self):
+        for files in (None, [None], [{"filename": False}],
+                      [{"filename": "README.md", "sha": "invalid"}], [],
+                      [{"filename": "README.md"}, {"filename": "README.md"}]):
+            with self.subTest(files=files):
+                fixture = self.fixture()
+                fixture["files"] = files
+                fixture["current"]["head"]["sha"] = "c" * 40
+                fixture["current"]["changed_files"] = 2
+                self.assert_refused(fixture)
+
+    def test_malformed_event_snapshot_cannot_authorize_a_noop(self):
+        for field, value in (("number", True), ("state", "invalid"), ("draft", "false"),
+                             ("head.sha", "invalid"), ("head.repo.id", 101),
+                             ("base.sha", "invalid"), ("body", {}), ("changed_files", True)):
+            with self.subTest(field=field):
+                fixture = self.fixture()
+                fixture["pr"]["state"] = "closed"
+                owner = fixture["context"]["payload"]["pull_request"]
+                parts = field.split(".")
+                for part in parts[:-1]:
+                    owner = owner[part]
+                owner[parts[-1]] = value
+                self.assert_refused(fixture)
 
     def test_closed_pr_with_wrong_identity_is_still_refused(self):
         for target in ("pr", "current"):
-            for key, value in (("number", 8), ("repo", {"id": 101, "full_name": "other/repository"})):
+            for key, value in (("number", 8), ("repo", {"id": 101, "full_name": "other/repository"}),
+                               ("body", {}), ("draft", "false"), ("changed_files", None)):
                 with self.subTest(target=target, key=key):
                     fixture = self.fixture()
                     fixture[target]["state"] = "closed"

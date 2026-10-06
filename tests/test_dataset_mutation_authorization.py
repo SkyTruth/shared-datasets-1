@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -463,6 +464,202 @@ class AuthorizationTests(unittest.TestCase):
                 self.assertIn("has_publish_plan=true", outputs.read_text())
                 with mock.patch.object(auth.subprocess, "check_output", return_value=HEAD + "\n"):
                     self.assertEqual(auth.main(argv), 2)
+
+
+class AdvisoryPreviewTests(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeGitHub()
+        self.api.pr.update(state="open", merged=False, merged_at=None)
+        self.api.pr["base"]["sha"] = MERGE
+        self.event = {"repository": deepcopy(REPO), "pull_request": deepcopy(self.api.pr)}
+
+    def run_preview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_path = root / "event.json"
+            event_path.write_bytes(plans.canonical_bytes(self.event))
+            output_dir = root / "plans"
+            output_dir.mkdir()
+            output = root / "outputs"
+            authority = root / "authorization"
+            with mock.patch.object(auth, "GitHub", return_value=self.api):
+                result = auth.main(["preview", "--event-path", str(event_path),
+                                    "--output-dir", str(output_dir), "--directory", str(authority),
+                                    "--github-output", str(output)])
+            fields = dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
+            files = {path.name: path.read_bytes() for path in output_dir.iterdir()}
+            self.assertFalse(authority.exists(), "preview must never create an authorization envelope")
+            return result, fields, files
+
+    def assert_noop(self):
+        result, fields, files = self.run_preview()
+        self.assertEqual(result, 0)
+        self.assertEqual(fields, {"has_publish_plan": "false", "has_delete_plan": "false",
+                                  "has_identity_reset_plan": "false"})
+        self.assertEqual(files, {})
+
+    def assert_refused(self):
+        result, fields, files = self.run_preview()
+        self.assertEqual(result, 2)
+        self.assertEqual(fields, {})
+        self.assertEqual(files, {})
+
+    def test_current_checked_in_plan_is_validated_and_written(self):
+        result, fields, files = self.run_preview()
+        self.assertEqual(result, 0)
+        self.assertEqual(fields, {"has_publish_plan": "true", "has_delete_plan": "false",
+                                  "has_identity_reset_plan": "false"})
+        self.assertEqual(files, {"publish-plan.json": plans.canonical_bytes(self.api.doc["publish"])})
+        self.assertEqual(sum(path.endswith("/pulls/7") for path in self.api.calls), 3)
+
+    def test_stale_route_to_preview_event_skips_before_document_discovery(self):
+        for mutate in (
+            lambda pr: pr["head"].update(sha="d" * 40),
+            lambda pr: pr["base"].update(sha="d" * 40),
+            lambda pr: pr.update(body="edited", changed_files=2),
+            lambda pr: pr.update(draft=True),
+            lambda pr: pr.update(state="closed", merged=True),
+            lambda pr: pr.update(state="closed", merged=False),
+        ):
+            with self.subTest(mutate=mutate):
+                self.setUp()
+                mutate(self.api.pr)
+                self.assert_noop()
+                self.assertEqual(self.api.calls, [f"repos/{REPO['full_name']}/pulls/7"])
+
+    def test_supersession_during_enumeration_skips_before_immutable_plan_validation(self):
+        for mutate in (
+            lambda pr: pr["head"].update(sha="d" * 40),
+            lambda pr: pr["base"].update(sha="d" * 40),
+            lambda pr: pr.update(body="edited", changed_files=2),
+            lambda pr: pr.update(draft=True),
+            lambda pr: pr.update(state="closed"),
+        ):
+            with self.subTest(mutate=mutate):
+                self.setUp()
+                original = self.api.pages
+
+                def pages(path, **kwargs):
+                    files = original(path, **kwargs)
+                    mutate(self.api.pr)
+                    return files
+
+                with mock.patch.object(self.api, "pages", side_effect=pages):
+                    self.assert_noop()
+                self.assertFalse(any("/git/" in path for path in self.api.calls))
+
+    def test_enumeration_of_newer_head_without_old_plan_is_a_noop(self):
+        def pages(path, **kwargs):
+            self.api.pr["head"]["sha"] = "d" * 40
+            self.api.pr.update(changed_files=0, body=None)
+            return []
+
+        with mock.patch.object(self.api, "pages", side_effect=pages):
+            self.assert_noop()
+        self.assertFalse(any("/git/" in path for path in self.api.calls))
+
+    def test_supersession_after_blob_discovery_writes_no_plan(self):
+        original = self.api.get
+
+        def get(path):
+            response = original(path)
+            if "/git/blobs/" in path:
+                self.api.pr["head"]["sha"] = "d" * 40
+            return response
+
+        with mock.patch.object(self.api, "get", side_effect=get):
+            self.assert_noop()
+        self.assertTrue(any("/git/blobs/" in path for path in self.api.calls))
+
+    def test_unchanged_current_invalid_plan_still_fails(self):
+        for mutate in (
+            lambda api: api.files[0].update(status="modified"),
+            lambda api: api.files[0].update(sha="d" * 40),
+            lambda api: api.pr.update(body="missing required readable plan fence"),
+        ):
+            with self.subTest(mutate=mutate):
+                self.setUp()
+                mutate(self.api)
+                self.event["pull_request"] = deepcopy(self.api.pr)
+                self.assert_refused()
+
+    def test_supersession_cannot_hide_malformed_or_truncated_enumeration(self):
+        for files in (None, [None], [{"filename": False}],
+                      [{"filename": "README.md", "previous_filename": False}],
+                      [{"filename": "README.md", "status": False}],
+                      [{"filename": "README.md", "sha": "invalid"}], [],
+                      [{"filename": "README.md"}, {"filename": "README.md"}]):
+            with self.subTest(files=files):
+                self.setUp()
+
+                def pages(path, **kwargs):
+                    self.api.pr["head"]["sha"] = "d" * 40
+                    self.api.pr["changed_files"] = 2
+                    return files
+
+                with mock.patch.object(self.api, "pages", side_effect=pages):
+                    self.assert_refused()
+
+    def test_wrong_identity_or_malformed_snapshot_cannot_be_a_noop(self):
+        for target in ("event", "first", "second", "third"):
+            for mutate in (
+                lambda pr: pr.update(number=8),
+                lambda pr: pr["head"].update(repo={**REPO, "id": 101}),
+                lambda pr: pr["base"].update(repo={**REPO, "full_name": "other/repository"}),
+                lambda pr: pr["head"].update(sha="invalid"),
+                lambda pr: pr["base"].update(sha="invalid"),
+                lambda pr: pr["base"].update(ref="other"),
+                lambda pr: pr.update(state="invalid"),
+                lambda pr: pr.update(draft="false"),
+                lambda pr: pr.update(body={}),
+                lambda pr: pr.update(changed_files=True),
+            ):
+                with self.subTest(target=target, mutate=mutate):
+                    self.setUp()
+                    if target == "event":
+                        mutate(self.event["pull_request"])
+                        self.api.pr["state"] = "closed"
+                        self.api.overrides[f"repos/{REPO['full_name']}/pulls/{self.event['pull_request']['number']}"] = deepcopy(self.api.pr)
+                        self.assert_refused()
+                        continue
+                    original = self.api.get
+                    reads = 0
+
+                    def get(path):
+                        nonlocal reads
+                        response = original(path)
+                        if path.endswith("/pulls/7"):
+                            reads += 1
+                            if reads == {"first": 1, "second": 2, "third": 3}[target]:
+                                response["state"] = "closed"
+                                mutate(response)
+                        return response
+
+                    with mock.patch.object(self.api, "get", side_effect=get):
+                        self.assert_refused()
+
+    def test_api_failure_remains_visible(self):
+        for stage in ("first", "second", "third", "pages"):
+            with self.subTest(stage=stage):
+                self.setUp()
+                if stage == "pages":
+                    with mock.patch.object(self.api, "pages",
+                                           side_effect=subprocess.CalledProcessError(1, "gh api")):
+                        self.assert_refused()
+                    continue
+                original = self.api.get
+                reads = 0
+
+                def get(path):
+                    nonlocal reads
+                    if path.endswith("/pulls/7"):
+                        reads += 1
+                        if reads == {"first": 1, "second": 2, "third": 3}[stage]:
+                            raise subprocess.CalledProcessError(1, "gh api")
+                    return original(path)
+
+                with mock.patch.object(self.api, "get", side_effect=get):
+                    self.assert_refused()
 
 
 class MainPushDiscoveryTests(unittest.TestCase):
