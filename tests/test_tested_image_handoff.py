@@ -209,6 +209,49 @@ def test_real_packing_function_produces_consumer_accepted_manifest_and_bytes(tmp
     bundle.verify_archive(tmp_path / actual["archive"], actual)
 
 
+def test_actual_ci_result_and_image_producers_feed_the_authenticated_consumer(handoff, monkeypatch):
+    from scripts import ci_preflight
+
+    output = handoff["root"] / "producer"
+    with zipfile.ZipFile(io.BytesIO(handoff["payloads"][1])) as archive:
+        plan = json.loads(archive.read("plan.json"))
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setattr(ci_preflight, "validate_checkout", lambda *_: None)
+    monkeypatch.setattr(ci_preflight, "probe_tools", lambda *_: proof.expected_tools("production-images"))
+    monkeypatch.setattr(ci_preflight, "suite_commands", lambda *_: [(["python", "scripts/production_image_contracts.py", "--output", str(output)], handoff["root"])])
+    original_output = bundle.subprocess.check_output
+
+    def inspect(args, **kwargs):
+        if args == ["git", "rev-parse", "HEAD"]:
+            return SHA
+        if args[:2] == ["docker", "version"]:
+            return "{}"
+        if args[:4] == ["docker", "image", "inspect", "--format"]:
+            target = args[-1].partition("/")[2].partition(":")[0]
+            return handoff["manifest"]["images"].get(target, {"image_id": "sha256:" + "c" * 64})["image_id"]
+        return original_output(args, **kwargs)
+
+    def run(args, **kwargs):
+        if args[:2] == ["python", "scripts/production_image_contracts.py"]:
+            with monkeypatch.context() as context:
+                context.setattr(producer.sys, "argv", args[1:])
+                producer.main()
+        elif args[:3] == ["docker", "image", "save"]:
+            target = args[-1].partition("/")[2].partition(":")[0]
+            Path(args[4]).write_bytes(handoff["files"]["images/" + target + ".docker.tar"])
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(bundle.subprocess, "check_output", inspect)
+    monkeypatch.setattr(bundle.subprocess, "run", run)
+    actual = ci_preflight.run_suite(handoff["root"], plan, "production-images", output)
+    assert actual["status"] == "success" and set(actual["production_images"]["images"]) == bundle.TARGETS
+    handoff["payloads"][2] = zipped({path.relative_to(output).as_posix(): path.read_bytes() for path in output.rglob("*") if path.is_file()})
+    handoff["artifacts"][2].update(size_in_bytes=len(handoff["payloads"][2]), digest="sha256:" + hashlib.sha256(handoff["payloads"][2]).hexdigest())
+    loaded = download(handoff)
+    assert loaded["image_id"] == actual["production_images"]["images"]["sea-ice-daily"]["image_id"]
+
+
 def test_failed_installed_checks_prevent_retaining_untested_image(tmp_path, monkeypatch):
     monkeypatch.setattr(producer.subprocess, "check_output", lambda args, **kwargs: SHA if args[0] == "git" else "sha256:" + "c" * 64)
     def failed(args, **kwargs):
