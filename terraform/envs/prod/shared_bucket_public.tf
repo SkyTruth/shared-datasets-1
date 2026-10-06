@@ -70,6 +70,40 @@ resource "google_project_iam_custom_role" "pmtiles_managed_folder_sync" {
   depends_on = [google_project_service.required]
 }
 
+# Adopt the existing role through the protected CDN bootstrap. Preserve its
+# original operations; the two new reads allow URL-map and backend-bucket
+# permission probes for the existing routing consumer. No binding or identity
+# is introduced.
+import {
+  to = google_project_iam_custom_role.pmtiles_url_map_sync
+  id = "projects/${var.project_id}/roles/sharedDatasetsPmtilesUrlMapSync"
+}
+
+resource "google_project_iam_custom_role" "pmtiles_url_map_sync" {
+  project     = var.project_id
+  role_id     = "sharedDatasetsPmtilesUrlMapSync"
+  title       = "Shared Datasets PMTiles URL Map Sync"
+  description = "Allows GitHub Actions Terraform to update the PMTiles CDN URL map for catalog routing."
+  stage       = "GA"
+  permissions = [
+    "compute.backendBuckets.get",
+    "compute.backendBuckets.list",
+    "compute.backendBuckets.use",
+    "compute.backendServices.get",
+    "compute.globalOperations.get",
+    "compute.projects.get",
+    "compute.urlMaps.get",
+    "compute.urlMaps.invalidateCache",
+    "compute.urlMaps.list",
+    "compute.urlMaps.update",
+    "compute.urlMaps.validate",
+  ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "google_storage_bucket_iam_member" "github_actions_pmtiles_managed_folder_sync" {
   bucket = var.bucket_name
   role   = google_project_iam_custom_role.pmtiles_managed_folder_sync.name

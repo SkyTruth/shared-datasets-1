@@ -74,6 +74,82 @@ class ReleaseContractTests(unittest.TestCase):
                 self.assertTrue(any(permission in error for error in contracts.iam_contract(self.root)))
                 path.write_text(original)
 
+    def test_exact_existing_cdn_role_adoption_cannot_broaden_or_drop_permissions(self):
+        path = self.root / 'terraform/envs/prod/shared_bucket_public.tf'
+        original = path.read_text()
+        for before, after in (
+            ('"compute.urlMaps.list",', ''),
+            ('"compute.backendBuckets.list",', ''),
+            ('"compute.urlMaps.list",', '"compute.urlMaps.list", "compute.urlMaps.delete",'),
+            ('"compute.urlMaps.invalidateCache",', ''),
+            ('stage       = "GA"', 'stage       = "BETA"'),
+            ('Shared Datasets PMTiles URL Map Sync', 'Different title'),
+            ('roles/sharedDatasetsPmtilesUrlMapSync"', 'roles/OtherRole"'),
+        ):
+            with self.subTest(before=before, after=after):
+                path.write_text(original.replace(before, after))
+                self.assertTrue(any('URL-map role' in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
+
+    def test_removed_disabled_late_or_foreign_plan_role_guard_is_not_ready(self):
+        path = self.root / '.github/workflows/pmtiles-cdn-sync.yml'
+        original = path.read_text()
+        for mutation in ('removed', 'disabled', 'late', 'foreign-plan', 'missing-target', 'foreign-export'):
+            with self.subTest(mutation=mutation):
+                value = yaml.safe_load(original)
+                steps = value['jobs']['sync']['steps']
+                guard = next(step for step in steps if step.get('name') == 'Enforce PMTiles managed-folder IAM bootstrap allowlist')
+                if mutation == 'removed':
+                    steps.remove(guard)
+                elif mutation == 'disabled':
+                    guard['if'] = False
+                elif mutation == 'late':
+                    steps.remove(guard)
+                    steps.append(guard)
+                elif mutation == 'foreign-plan':
+                    guard['run'] = guard['run'].replace('pmtiles-managed-folder-bootstrap', 'unrelated')
+                elif mutation == 'foreign-export':
+                    export = next(step for step in steps if step.get('name') == 'Export PMTiles managed-folder IAM bootstrap plan JSON')
+                    export['run'] = export['run'].replace('show -json "${RUNNER_TEMP}/pmtiles-managed-folder-bootstrap.tfplan"', 'show -json "${RUNNER_TEMP}/unrelated.tfplan"')
+                else:
+                    plan = next(step for step in steps if step.get('name') == 'Terraform plan PMTiles managed-folder IAM bootstrap')
+                    plan['run'] = plan['run'].replace('-target=google_project_iam_custom_role.pmtiles_url_map_sync', '')
+                path.write_text(yaml.safe_dump(value))
+                self.assertTrue(any('CDN' in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
+
+    def test_redirect_mode_or_new_backend_service_cannot_inherit_bucket_only_readiness(self):
+        for filename, before, after in (
+            ('terraform/envs/prod/production.auto.tfvars', 'pmtiles_serving_mode                   = "cdn"', 'pmtiles_serving_mode                   = "redirect"'),
+            ('.github/workflows/pmtiles-cdn-sync.yml', '-refresh=false', '-refresh=false -var="pmtiles_serving_mode=redirect"'),
+            ('terraform/envs/prod/pmtiles_cdn.tf', 'pmtiles_redirector_enabled = var.pmtiles_serving_mode == "redirect"', 'pmtiles_redirector_enabled = true'),
+            ('terraform/envs/prod/pmtiles_cdn.tf', 'service = google_compute_backend_bucket.pmtiles_cdn.self_link', 'service = google_compute_backend_service.pmtiles_redirector[0].self_link'),
+            ('terraform/envs/prod/pmtiles_cdn.tf', 'name        = "shared-datasets-pmtiles-cdn"', 'name        = "other-backend"'),
+        ):
+            with self.subTest(filename=filename, before=before):
+                path = self.root / filename
+                original = path.read_text()
+                self.assertIn(before, original)
+                path.write_text(original.replace(before, after))
+                self.assertTrue(any('CDN' in error for error in contracts.iam_contract(self.root)))
+                path.write_text(original)
+
+    def test_alternate_auto_variables_and_unmodeled_cli_overrides_are_not_ready(self):
+        prod = self.root / 'terraform/envs/prod'
+        for filename in ('z-override.auto.tfvars', 'z-override.auto.tfvars.json', 'terraform.tfvars', 'terraform.tfvars.json'):
+            with self.subTest(filename=filename):
+                path = prod / filename
+                path.write_text('{"pmtiles_serving_mode":"redirect"}' if filename.endswith('.json') else 'pmtiles_serving_mode = "redirect"')
+                self.assertTrue(any('automatic variable files' in error for error in contracts.iam_contract(self.root)))
+                path.unlink()
+        path = self.root / '.github/workflows/pmtiles-cdn-sync.yml'
+        original = path.read_text()
+        for override in ('-var-file="other.tfvars"', '-var="unknown_mode_var=redirect"', 'TF_CLI_ARGS_plan=-var-file=other.tfvars', 'TF_VAR_dynamic_mode=redirect'):
+            with self.subTest(override=override):
+                path.write_text(original.replace('-refresh=false', '-refresh=false ' + override))
+                self.assertTrue(any('unmodeled CLI or environment' in error for error in contracts.iam_contract(self.root)))
+        path.write_text(original)
+
     def test_every_automatic_saved_plan_apply_requires_its_exact_permission_probe(self):
         self.assertEqual(contracts.saved_plan_permission_contract(self.root), [])
         for filename in contracts.PLAN_PROBE_WORKFLOWS:
