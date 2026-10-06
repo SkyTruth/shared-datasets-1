@@ -607,7 +607,7 @@ jobs:
     secrets: inherit
 
   eamlis:
-    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.eamlis == 'true' }}
     permissions:
       contents: read
@@ -622,7 +622,7 @@ jobs:
     secrets: inherit
 
   wdpa:
-    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa == 'true' }}
     permissions:
       contents: read
@@ -638,7 +638,7 @@ jobs:
     secrets: inherit
 
   sea-ice:
-    needs: [ci-ready, geospatial-changes, ingestion-iam]
+    needs: [ci-ready, geospatial-changes, ingestion-iam, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.sea_ice == 'true' }}
     permissions:
       contents: read
@@ -653,7 +653,7 @@ jobs:
     secrets: inherit
 
   wdpa-processing:
-    needs: [ci-ready, geospatial-changes]
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.wdpa_processing == 'true' }}
     permissions:
       contents: read
@@ -684,7 +684,7 @@ jobs:
     secrets: inherit
 
   catalog-viewer:
-    needs: [ci-ready, geospatial-changes]
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' }}
     permissions:
       contents: read

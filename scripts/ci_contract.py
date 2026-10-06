@@ -208,6 +208,8 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update({"artifact_registry_iam", "preview_terraform_iam"})
     if selected & ingestion:
         selected.add("ingestion_iam")
+    if selected & (ingestion | {"catalog_viewer", "wdpa_processing"}):
+        selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 
 

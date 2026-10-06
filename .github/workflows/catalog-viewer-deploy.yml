@@ -126,6 +126,10 @@ jobs:
         if: steps.replay.outputs.proceed == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify Artifact Registry image permissions
+        if: steps.replay.outputs.proceed == 'true'
+        run: python scripts/deployment_permissions.py --target artifact-registry-images
+
       - name: Configure Docker for Artifact Registry
         if: steps.replay.outputs.proceed == 'true'
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet

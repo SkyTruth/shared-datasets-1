@@ -215,6 +215,37 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("gcloud run jobs executions describe", watch_run)
         self.assertEqual(steps["Watch wdpa-monthly canary"]["if"], steps["Execute wdpa-monthly canary"]["if"])
 
+    def test_canary_watch_requires_completed_exact_image_and_reports_cancellation(self):
+        script = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")["Watch wdpa-monthly canary"]["run"]
+        image = "us-central1-docker.pkg.dev/shared-datasets-1/shared-datasets-jobs/wdpa-monthly@sha256:" + "a" * 64
+        tools = """gcloud() { printf '%s\\n' "$EXECUTION_JSON"; echo call >> "$CALLS"; }
+sleep() { :; }
+"""
+        for status, actual_image, phase, exit_code, calls in (
+            ({"succeededCount": 1}, image, "verification_pending", 0, 20),
+            ({"succeededCount": 1, "completionTime": "now"}, image, "verified", 0, 1),
+            ({"cancelledCount": 1}, image, "failed", 1, 1),
+            ({"completionTime": "now"}, image, "unknown", 1, 1),
+            ({"succeededCount": 1, "completionTime": "now"}, image.replace("a" * 64, "b" * 64), None, 1, 1),
+        ):
+            with self.subTest(status=status, phase=phase), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                binary = directory / "bin"
+                binary.mkdir()
+                (binary / "python").symlink_to(sys.executable)
+                env_file, call_file = directory / "env", directory / "calls"
+                payload = {"spec": {"template": {"spec": {"containers": [{"image": actual_image}]}}}, "status": status}
+                result = subprocess.run(["bash", "-c", tools + script], cwd=REPO_ROOT, capture_output=True, text=True,
+                                        env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                                             "EXECUTION_JSON": json.dumps(payload), "CALLS": str(call_file),
+                                             "WDPA_MONTHLY_IMAGE": image, "WDPA_CANARY_EXECUTION": "wdpa-execution",
+                                             "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
+                                             "GITHUB_ENV": str(env_file)})
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                self.assertEqual(len(call_file.read_text().splitlines()), calls)
+                self.assertEqual(env_file.read_text().strip() if env_file.exists() else None,
+                                 f"DEPLOYMENT_PHASE={phase}" if phase else None)
+
     def test_producer_image_mismatch_fails_before_building_the_consumer(self):
         steps = workflow_steps_by_name(load_workflow(DEPLOY_WORKFLOW), "deploy")
         script = steps["Prepare reviewed WDPA publication image"]["run"]
