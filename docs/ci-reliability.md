@@ -3,9 +3,12 @@
 The baseline is `docs/ci-failure-baseline.json`: every unsuccessful attempt and
 job inspected between September 21 and October 5, 2026, with its failure family
 and source URL. It preserves 77 failed attempts and three cancelled attempts;
-multiple failed jobs in one attempt are not additional failed attempts. All 27
-failed main-push runs followed successful final-head PR CI. Coverage and release
-prerequisites must therefore improve alongside agents' local validation.
+multiple failed jobs in one attempt are not additional failed attempts. The 27
+main-push failures whose PR provenance was checked followed successful final-head
+PR CI. The complete inventory also includes a 28th failed main-push run,
+TypeScript SDK validation run 37368847189, which never acquired a hosted runner.
+Coverage and release prerequisites must improve alongside agents' local
+validation; external capacity failures remain separately visible.
 
 ## Reviewed dataset publication
 
@@ -68,9 +71,16 @@ with positive and negative fixtures. Add it before removing redundant required
 checks. A queued or started canary remains verification pending until terminal
 runtime evidence confirms its outcome.
 
-Seven days after rollout, compare preventable post-merge failures per deployment
-attempt, recurring signatures, first-attempt success and allocated jobs with the
-baseline. Keep legitimate PR rejections, external outages, controlled probes,
+Seven days after rollout, compare preventable post-merge failures, recurring
+signatures and first-attempt outcomes using the attempt and target-job
+definitions in [the failure-family mapping](ci-failure-guardrails.md). Workflow
+consolidation changes the number of workflows per deployment, so report both
+workflow attempts and selected target deployment attempts. The retained baseline
+contains only unsuccessful job observations. The separate
+[main-push allocation baseline](ci-job-allocation-baseline.json) supplies 755
+API-created jobs and 553 runner-allocated jobs across 67 observed main head SHAs;
+it excludes other event types and cascades. Broader allocation comparisons remain
+unavailable. Keep legitimate PR rejections, external outages, controlled probes,
 cancellations and asynchronous runtime failures separately visible.
 
 Superseded PR validation is cancelled per suite and PR number, with separate Node
