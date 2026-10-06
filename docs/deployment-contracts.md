@@ -164,7 +164,16 @@ clear them.
 
 Manual deployment recovery uses explicit `executor_sha`, `source_run_id` and
 `source_run_attempt` identifying successful main-push CI. It cannot authorize a
-PR/fork revision. After runner/network failures, first inspect whether any
+PR/fork revision. CDN sync, viewer deployment and SDK publication retain their
+manual main entrypoints with all three inputs required. A first authorized
+attempt may proceed, and an already verified identical revision becomes a
+no-op. Dispatch does not clear a failed or incomplete record, change its
+authorization or permit a blanket retry; target-specific reconciliation or a
+reviewed repair is still required. SDK manual admission checks the real current
+main workflow and exact source CI through GitHub's API; a fabricated upstream
+completion event cannot substitute for that authority.
+
+After runner/network failures, first inspect whether any
 mutation began and inspect the persisted record. Retry safe validation or reads
 selectively. Preserve partial publication ownership and original executor
 contracts; do not delete claims, reset counters or choose a new date to bypass
