@@ -4,8 +4,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -18,6 +20,7 @@ REPO = "SkyTruth/shared-datasets-1"
 SHA = "a" * 40
 IMAGE = "image@sha256:" + "b" * 64
 SIGNER = ".github/workflows/wdpa-monthly-deploy.yml"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def record():
@@ -207,6 +210,42 @@ class EmissionTests(unittest.TestCase):
         copied["id"] += 1
         with patch.object(e.subprocess, "check_output", return_value=json.dumps(signed)), self.assertRaises(d.DeploymentError):
             d.verify_record(self.api, REPO, copied)
+
+    def test_standalone_entrypoints_clear_pythonpath_and_fail_bad_crypto(self):
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        help_result = subprocess.run([sys.executable, str(ROOT / "scripts/deployment_revision.py"), "--help"], cwd=self.root, env=environment, capture_output=True, text=True)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        claim, phase = record(), status()
+        receipt_path = self.root / e.name(e.receipt(REPO, claim, phase))
+        receipt_path.write_bytes(e.canonical(e.receipt(REPO, claim, phase)))
+        routes = {
+            "repos/" + REPO: {"id": 17, "full_name": REPO},
+            f"repos/{REPO}/deployments/71": claim,
+            f"repos/{REPO}/deployments/71/statuses?per_page=100": [[phase]],
+            f"repos/{REPO}/actions/workflows/ci.yml": {"id": 12, "path": ".github/workflows/ci.yml"},
+            f"repos/{REPO}/actions/runs/13/attempts/2": run(),
+            f"repos/{REPO}/actions/runs/13/attempts/2/jobs?per_page=100": [{"total_count": 1, "jobs": [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]}],
+        }
+        binary = self.root / "bin/gh"
+        binary.parent.mkdir()
+        log = self.root / "verifier-invocations"
+        binary.write_text(
+            "#!" + sys.executable + "\nimport json, pathlib, sys\n"
+            + f"routes={routes!r}\nlog=pathlib.Path({str(log)!r})\n"
+            + "args=sys.argv[1:]\nwith log.open('a') as output: output.write(json.dumps(args)+'\\n')\n"
+            + "if args[:2] == ['attestation', 'verify']:\n print('cryptographic verification failed', file=sys.stderr)\n sys.exit(7)\n"
+            + "if args[0] != 'api': raise RuntimeError('unexpected command')\nprint(json.dumps(routes[args[-1]]))\n"
+        )
+        binary.chmod(0o755)
+        environment["PATH"] = str(binary.parent) + os.pathsep + environment["PATH"]
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/deployment_emission.py"), "verify-file", "--receipt", str(receipt_path)], cwd=self.root, env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cryptographic verification failed", result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        commands = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(commands[-1][:2], ["attestation", "verify"])
+        self.assertFalse(any("POST" in command for command in commands))
 
     def test_wrong_phase_state_missing_timestamp_and_unverified_json_fail(self):
         with self.assertRaises(e.EmissionError):
