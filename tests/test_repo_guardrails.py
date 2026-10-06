@@ -121,6 +121,7 @@ class RepoGuardrailsTests(unittest.TestCase):
                     self.assertEqual(job['concurrency'], repo_guardrails.PROD_TERRAFORM_CONCURRENCY)
         self.assertEqual(found, {
             ('prod-terraform-target-apply.yml', 'sync'),
+            ('deployment-recovery.yml', 'reconcile'),
             ('wdpa-monthly-deploy.yml', 'deploy'),
             ('wdpa-processing-validation-deploy.yml', 'deploy'),
             ('wdpa-runtime-inspection.yml', 'inspect'),

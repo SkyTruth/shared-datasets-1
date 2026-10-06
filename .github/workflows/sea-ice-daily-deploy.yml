@@ -1,28 +1,20 @@
 name: Sea ice daily deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/sea-ice-daily-deploy.yml"
-      - "catalog/feature-identity-resolutions/**"
-      - "scripts/publication_rollout_gate.py"
-      - "ingestion/common/**"
-      - "ingestion/sea_ice_daily/**"
-      - "docs/assets/ims-sea-ice-extent.md"
-      - "scripts/pmtiles_zoom.py"
-      - "scripts/release_feature_model.py"
-      - "scripts/vector_asset.py"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/sea_ice_daily.tf"
-      - "terraform/envs/prod/sea_ice_daily_variables.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
-      - "terraform/modules/cloud_run_job/**"
-      - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
       canary_run_date:
         description: "Optional NOAA filename search date (YYYY-MM-DD). The new-contract release date is its documented valid date, one day later."
         required: false
@@ -39,11 +31,29 @@ on:
         type: boolean
         default: true
 
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
 env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
   ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
@@ -75,15 +85,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/sea-ice-daily-deploy.yml@refs/heads/main" && "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
             echo "Sea ice daily deploy may only apply from main after reviewed changes have landed." >&2
             exit 1
           fi
 
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify executor before candidate checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow sea-ice-daily-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha }}
+          fetch-depth: 0
+
+      - name: Verify tested main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow sea-ice-daily-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Validate Terraform auth configuration
         run: |
@@ -98,49 +138,82 @@ jobs:
             exit 1
           fi
 
+      - name: Check prior deployment before rebuilding
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py check --target sea-ice-daily --workflow sea-ice-daily-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Authenticate to Google Cloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Set up Python
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Sync Python dependencies
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: uv sync --locked --all-groups
 
       - name: Verify feature-ID publication state
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: uv run --no-sync python scripts/publication_rollout_gate.py --job sea-ice-daily
 
+      - name: Verify live deployment permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target sea-ice-daily
+
+      - name: Check runtime verification window
+        id: window
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          python scripts/deployment_revision.py window --target sea-ice-daily \
+            --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+
       - name: Configure Docker for Artifact Registry
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build sea-ice-daily image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
-          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
           docker build \
             --platform linux/amd64 \
-            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${EXECUTOR_SHA}" \
             -f ingestion/sea_ice_daily/Dockerfile \
             -t "${image_tag}" \
             .
           echo "SEA_ICE_DAILY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -148,6 +221,7 @@ jobs:
             'gdal_calc.py --help >/tmp/gdal_calc_help.txt && gdal_polygonize.py --help >/tmp/gdal_polygonize_help.txt && ogr2ogr --version && tippecanoe --version && pmtiles version'
 
       - name: Smoke-test synthetic sea-ice build path in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -205,6 +279,7 @@ jobs:
           PY
 
       - name: Push sea-ice-daily image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -221,14 +296,17 @@ jobs:
           echo "SEA_ICE_DAILY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod init -input=false
 
       - name: Terraform plan
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -241,9 +319,11 @@ jobs:
             -var="sea_ice_daily_image=${SEA_ICE_DAILY_IMAGE}"
 
       - name: Export Terraform plan JSON
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/sea-ice-daily.tfplan" > "${RUNNER_TEMP}/sea-ice-daily.tfplan.json"
 
       - name: Enforce sea-ice-daily resource-change allowlist
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -286,10 +366,24 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Claim tested deployment revision
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py start --target sea-ice-daily --workflow sea-ice-daily-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact "${SEA_ICE_DAILY_IMAGE}" --plan-json "$RUNNER_TEMP/sea-ice-daily.tfplan.json"
+
       - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/sea-ice-daily.tfplan"
 
       - name: Confirm deployed digest
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -301,6 +395,7 @@ jobs:
           fi
 
       - name: Resolve in-flight canary
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
@@ -334,7 +429,7 @@ jobs:
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
 
       - name: Execute sea-ice-daily canary
-        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}
         env:
           CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
@@ -350,8 +445,10 @@ jobs:
             execution_env+=",RUN_DATE=${CANARY_RUN_DATE}"
           fi
           gcloud run jobs execute "${execute_args[@]}" --update-env-vars="${execution_env}"
+          echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
 
       - name: Validate latest IMS release contract
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -431,6 +528,7 @@ jobs:
           PY
 
       - name: Run IMS bucket hygiene audit
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -455,7 +553,7 @@ jobs:
           PY
 
       - name: Resume sea-ice-daily scheduler
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.resume_scheduler }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && (github.event_name != 'workflow_dispatch' || inputs.resume_scheduler) }}
         run: |
           set -euo pipefail
 
@@ -467,3 +565,16 @@ jobs:
             --location="${REGION}" \
             --project="${GOOGLE_CLOUD_PROJECT}" \
             --format='value(state,schedule,timeZone)'
+
+      - name: Record deployment outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase="${DEPLOYMENT_PHASE:-unknown}"
+          if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+          args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+          if [[ -n "${SEA_CANARY_EXECUTION:-}" ]]; then args+=(--execution "${SEA_CANARY_EXECUTION##*/}"); fi
+          python scripts/deployment_revision.py "${args[@]}"

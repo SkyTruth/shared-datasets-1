@@ -9,6 +9,23 @@ name: Prod Terraform target apply
 on:
   workflow_call:
     inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: false
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: false
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: false
+        type: string
+      readiness_target:
+        description: Read-only prerequisite probes before planning dependent mutations
+        required: false
+        type: string
+        default: ""
       sync_name:
         description: "Human-readable name used in log and refusal messages."
         required: true
@@ -52,6 +69,7 @@ on:
         default: 0
 
 env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha || github.sha }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
@@ -94,10 +112,51 @@ jobs:
             exit 1
           fi
 
+      - name: Validate executor input contract
+        env:
+          INPUT_EXECUTOR: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_WORKFLOW_REF" != "$GITHUB_REPOSITORY/.github/workflows/"*"@refs/heads/main" ]]; then exit 1; fi
+          if [[ -n "$INPUT_EXECUTOR" || -n "$SOURCE_RUN_ID" || -n "$SOURCE_RUN_ATTEMPT" ]]; then
+            if [[ ! "$INPUT_EXECUTOR" =~ ^[0-9a-f]{40}$ || ! "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ || ! "$SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then exit 1; fi
+          fi
+
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify executor before candidate checkout
+        if: ${{ inputs.source_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow scheduled-ingestion-deploy-iam-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify tested main revision
+        if: ${{ inputs.source_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow scheduled-ingestion-deploy-iam-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Validate Terraform auth configuration
         run: |
@@ -112,21 +171,48 @@ jobs:
             exit 1
           fi
 
+      - name: Check prior deployment before replanning
+        id: replay
+        if: ${{ inputs.source_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          SYNC_NAME: ${{ inputs.sync_name }}
+        run: |
+          target="terraform-$(printf '%s' "$SYNC_NAME" | sha256sum | cut -c1-16)"
+          python scripts/deployment_revision.py check --target "$target" --workflow scheduled-ingestion-deploy-iam-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Authenticate to Google Cloud
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
+      - name: Set up gcloud
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify prerequisite deployment permissions
+        if: ${{ (inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true') && (inputs.readiness_target != '') }}
+        env:
+          READINESS_TARGET: ${{ inputs.readiness_target }}
+        run: python scripts/deployment_permissions.py --target "$READINESS_TARGET"
+
       - name: Set up Terraform
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         run: terraform -chdir="${TERRAFORM_DIR}" init -input=false
 
       - name: Terraform plan
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         env:
           TARGETS: ${{ inputs.targets }}
           TF_VARS: ${{ inputs.tf_vars }}
@@ -145,9 +231,11 @@ jobs:
           bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir="${TERRAFORM_DIR}" plan "${plan_args[@]}"
 
       - name: Export Terraform plan JSON
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         run: terraform -chdir="${TERRAFORM_DIR}" show -json "${RUNNER_TEMP}/target-apply.tfplan" > "${RUNNER_TEMP}/target-apply.tfplan.json"
 
       - name: Enforce resource-change allowlist
+        if: ${{ inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true' }}
         env:
           ALLOWED_EXACT: ${{ inputs.allowed_exact }}
           ALLOWED_PATTERNS: ${{ inputs.allowed_patterns }}
@@ -167,11 +255,37 @@ jobs:
           fi
           python scripts/terraform_plan_allowlist.py "${enforce_args[@]}"
 
+      - name: Claim tested deployment revision
+        id: revision
+        if: ${{ (inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true') && (inputs.source_run_id != '') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+          SYNC_NAME: ${{ inputs.sync_name }}
+        run: |
+          target="terraform-$(printf '%s' "$SYNC_NAME" | sha256sum | cut -c1-16)"
+          artifact="terraform@sha256:$(sha256sum "$RUNNER_TEMP/target-apply.tfplan.json" | cut -d' ' -f1)"
+          python scripts/deployment_revision.py start --target "$target" --workflow scheduled-ingestion-deploy-iam-sync.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" --artifact "$artifact"
+
       - name: Terraform apply
+        if: ${{ (inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true') && (inputs.source_run_id == '' || steps.revision.outputs.proceed == 'true') }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir="${TERRAFORM_DIR}" apply -input=false "${RUNNER_TEMP}/target-apply.tfplan"
 
       - name: Wait after apply
-        if: ${{ inputs.post_apply_wait_seconds > 0 }}
+        if: ${{ (inputs.source_run_id == '' || steps.replay.outputs.proceed == 'true') && (inputs.post_apply_wait_seconds > 0) }}
         env:
           WAIT_SECONDS: ${{ inputs.post_apply_wait_seconds }}
         run: sleep "${WAIT_SECONDS}"
+
+      - name: Record deployment outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase=applied
+          if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+          python scripts/deployment_revision.py finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase"

@@ -29,7 +29,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
                                         env={**os.environ, "JOB_NAME": "sea-ice-daily", "REGION": "us-central1",
                                              "GOOGLE_CLOUD_PROJECT": "shared-datasets-1", "CANARY_RUN_DATE": date,
                                              "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
-                                             "GITHUB_RUN_ID": "123"})
+                                             "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull})
                 if date.startswith("invalid"):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout, "")
@@ -46,8 +46,11 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         step_names = list(steps)
 
         self.assertEqual(workflow["name"], "Sea ice daily deploy")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
-        self.assertIn("catalog/feature-identity-resolutions/**", set(trigger["push"]["paths"]))
+        self.assertNotIn("push", trigger)
+        self.assertIn("workflow_call", trigger)
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
+        self.assertIn("Verify feature-ID publication state", steps)
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("resume_scheduler", trigger["workflow_dispatch"]["inputs"])
         self.assertEqual(deploy["environment"], "shared-datasets-production")
@@ -55,7 +58,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
             deploy["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
         self.assertEqual(env["IMAGE_NAME"], "sea-ice-daily")
         self.assertEqual(env["JOB_NAME"], "sea-ice-daily")
 

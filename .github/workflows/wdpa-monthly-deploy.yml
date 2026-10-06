@@ -1,34 +1,20 @@
 name: WDPA monthly deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/wdpa-monthly-deploy.yml"
-      - "catalog/feature-identity-resolutions/**"
-      - "scripts/publication_rollout_gate.py"
-      - "ingestion/common/**"
-      - "ingestion/wdpa_monthly/**"
-      - "scripts/feature_metadata_localization.py"
-      - "scripts/feature_metadata_translation_reuse.py"
-      - "scripts/translation_local_io.py"
-      - "scripts/pmtiles_zoom.py"
-      - "scripts/release_feature_model.py"
-      - "scripts/slack_notify.py"
-      - "scripts/vector_asset.py"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/wdpa_monthly.tf"
-      - "terraform/envs/prod/wdpa_execution_observer.tf"
-      - "catalog/wdpa-processing-acceptance.json"
-      - "scripts/wdpa_processing_gate.py"
-      - "terraform/envs/prod/wdpa_monthly_variables.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
-      - "terraform/modules/cloud_run_job/**"
-      - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
       cancel_running_canary:
         description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
         required: false
@@ -40,12 +26,30 @@ on:
         type: string
         default: ""
 
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+
 permissions:
+  actions: read
+  deployments: write
   contents: read
   pull-requests: read
   id-token: write
 
 env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
   ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
@@ -59,12 +63,8 @@ env:
   TERRAFORM_SERVICE_ACCOUNT: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT }}
 
 jobs:
-  iam:
-    uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
-
   deploy:
     name: Prepare publication image and apply wdpa-monthly Terraform
-    needs: iam
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
@@ -78,18 +78,47 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/wdpa-monthly-deploy.yml@refs/heads/main" && "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
             echo "WDPA monthly deploy may only apply from main after reviewed changes have landed." >&2
             exit 1
           fi
 
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify executor before candidate checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow wdpa-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha }}
           # Authorization verifies that the reviewed promotion merge is an
           # ancestor of this deployment, including after subsequent merges.
           fetch-depth: 0
+
+      - name: Verify tested main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow wdpa-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Validate Terraform auth configuration
         run: |
@@ -104,44 +133,78 @@ jobs:
             exit 1
           fi
 
+      - name: Check prior deployment before rebuilding
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py check --target wdpa-monthly --workflow wdpa-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Authenticate to Google Cloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Set up Python
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Set up uv
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: astral-sh/setup-uv@v5
         with:
           version: "0.11.8"
           enable-cache: true
 
       - name: Sync dependencies
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: uv sync --locked --all-groups
 
       - name: Require WDPA processing acceptance and disk quota
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: uv run --no-sync python scripts/wdpa_processing_gate.py
 
       - name: Verify reviewed build promotion authority
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: uv run --no-sync python scripts/wdpa_build_authorization.py
 
       - name: Verify feature-ID publication state
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         run: uv run --no-sync python scripts/publication_rollout_gate.py --job wdpa-monthly
 
+      - name: Verify live deployment permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target wdpa-monthly
+
+      - name: Check runtime verification window
+        id: window
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          python scripts/deployment_revision.py window --target wdpa-monthly \
+            --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+
       - name: Configure Docker for Artifact Registry
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Verify accepted build terminal success
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
           execution="$(python -c 'import json; print(json.load(open("catalog/wdpa-processing-acceptance.json"))["build"]["cloud_execution"])')"
@@ -158,6 +221,7 @@ jobs:
           PY
 
       - name: Prepare reviewed WDPA publication image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -175,16 +239,17 @@ jobs:
             echo "Accepted WDPA image does not match the reviewed producer fingerprint." >&2
             exit 1
           fi
-          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
           docker build --platform linux/amd64 \
             --file ingestion/wdpa_monthly/Dockerfile.promotion \
             --build-arg "ACCEPTED_IMAGE=${accepted_image}" \
             --build-arg "ACCEPTED_BUILD_SOURCE_SHA256=${expected_source}" \
-            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${GITHUB_SHA}" \
+            --build-arg "SHARED_DATASETS_EXECUTOR_SHA=${EXECUTOR_SHA}" \
             --tag "${image_tag}" .
           echo "WDPA_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -192,6 +257,7 @@ jobs:
             'ogrinfo --version && ogr2ogr --version && tippecanoe --version && pmtiles version'
 
       - name: Smoke-test job import closure in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -199,6 +265,7 @@ jobs:
             'from osgeo import gdal; assert gdal.VersionInfo("RELEASE_NAME") == "3.6.2"; import ingestion.wdpa_monthly.execution_observer; import ingestion.wdpa_monthly.run; import ingestion.wdpa_monthly.publication_only; import scripts.feature_metadata_localization, scripts.translation_local_io, scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("wdpa-monthly imports ok")'
 
       - name: Push wdpa-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -215,14 +282,17 @@ jobs:
           echo "WDPA_MONTHLY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod init -input=false
 
       - name: Terraform plan
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -244,9 +314,11 @@ jobs:
             -var="sea_ice_daily_image=unused-by-wdpa-monthly-deploy"
 
       - name: Export Terraform plan JSON
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/wdpa-monthly.tfplan" > "${RUNNER_TEMP}/wdpa-monthly.tfplan.json"
 
       - name: Enforce wdpa-monthly resource-change allowlist
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -325,10 +397,24 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Claim tested deployment revision
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py start --target wdpa-monthly --workflow wdpa-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact "${WDPA_MONTHLY_IMAGE}" --plan-json "$RUNNER_TEMP/wdpa-monthly.tfplan.json"
+
       - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/wdpa-monthly.tfplan"
 
       - name: Confirm deployed digest
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -340,6 +426,7 @@ jobs:
           fi
 
       - name: Resolve in-flight canary
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
@@ -379,7 +466,7 @@ jobs:
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
 
       - name: Execute wdpa-monthly canary
-        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}
         env:
           CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
@@ -410,7 +497,7 @@ jobs:
           echo "WDPA_CANARY_EXECUTION=${execution_name}" >> "${GITHUB_ENV}"
 
       - name: Watch wdpa-monthly canary
-        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}
         run: |
           set -euo pipefail
 
@@ -429,10 +516,25 @@ jobs:
               exit 1
             fi
             if [[ -n "${succeeded}" && "${succeeded}" != "0" ]]; then
+              echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
               echo "Canary execution ${WDPA_CANARY_EXECUTION} succeeded."
               exit 0
             fi
             sleep 30
           done
+          echo "DEPLOYMENT_PHASE=verification_pending" >> "$GITHUB_ENV"
           echo "Canary execution ${WDPA_CANARY_EXECUTION} is still running after the watch window."
           echo "Monitor it with: gcloud run jobs executions describe ${WDPA_CANARY_EXECUTION} --region=${REGION} --project=${GOOGLE_CLOUD_PROJECT}"
+
+      - name: Record deployment outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase="${DEPLOYMENT_PHASE:-unknown}"
+          if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+          args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+          if [[ -n "${WDPA_CANARY_EXECUTION:-}" ]]; then args+=(--execution "${WDPA_CANARY_EXECUTION##*/}"); fi
+          python scripts/deployment_revision.py "${args[@]}"

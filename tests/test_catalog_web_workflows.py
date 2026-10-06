@@ -54,57 +54,13 @@ def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -
     trigger = workflow_triggers(workflow)
     job = workflow["jobs"]["readiness"]
     steps = workflow_steps_by_name(workflow, "readiness")
-
     testcase.assertEqual(workflow["name"], "Protected Terraform readiness")
-    testcase.assertEqual(trigger["pull_request"]["branches"], ["main"])
-    testcase.assertEqual(
-        set(trigger["pull_request"]["paths"]),
-        {
-            ".github/workflows/protected-terraform-readiness.yml",
-            ".github/workflows/prod-terraform-target-apply.yml",
-            ".github/workflows/artifact-registry-iam-sync.yml",
-            ".github/workflows/metadata-stack-retire.yml",
-            ".github/workflows/pmtiles-cdn-sync.yml",
-            ".github/workflows/preview-terraform-iam-sync.yml",
-            ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml",
-            ".github/workflows/sea-ice-daily-deploy.yml",
-            ".github/workflows/scratch-cleanup-iam-sync.yml",
-            "catalog/shared-datasets-catalog.csv",
-            "docs/assets/**",
-            "ingestion/common/**",
-            "ingestion/sea_ice_daily/**",
-            "scripts/metadata_retirement_plan.py",
-            "scripts/pmtiles_zoom.py",
-            "scripts/release_feature_model.py",
-            "scripts/vector_asset.py",
-            "terraform/envs/metadata-retirement-iam/**",
-            "terraform/envs/prod/artifact_registry_iam.tf",
-            "terraform/envs/prod/canonical_mutation_iam.tf",
-            "terraform/envs/prod/main.tf",
-            "terraform/envs/prod/metadata_service.tf",
-            "terraform/envs/prod/monitoring.tf",
-            "terraform/envs/prod/pmtiles_cdn.tf",
-            "terraform/envs/prod/preview_terraform_iam.tf",
-            "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
-            "terraform/envs/prod/scratch_cleanup_iam_sync/**",
-            "terraform/envs/prod/sea_ice_daily.tf",
-            "terraform/envs/prod/sea_ice_daily_variables.tf",
-            "terraform/envs/prod/shared_bucket_public.tf",
-            "terraform/envs/prod/variables.tf",
-            "terraform/envs/prod/versions.tf",
-        },
-    )
-    testcase.assertNotIn("workflow_dispatch", trigger)
+    testcase.assertEqual(set(trigger), {"workflow_call"})
     testcase.assertNotIn("environment", job)
     testcase.assertEqual(workflow["permissions"], {"contents": "read"})
-    testcase.assertIn(
-        "Missing repository variable: GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER",
-        steps["Validate Terraform auth configuration"]["run"],
-    )
-    testcase.assertIn(
-        "Missing repository variable: GCP_TERRAFORM_SERVICE_ACCOUNT",
-        steps["Validate Terraform auth configuration"]["run"],
-    )
+    testcase.assertEqual(steps["Validate release evidence and permission dependencies"]["run"],
+                         "uv run --no-sync python scripts/release_contracts.py --target all")
+    testcase.assertNotIn("Validate Terraform auth configuration", steps)
     return workflow
 
 

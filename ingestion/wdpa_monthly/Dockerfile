@@ -74,6 +74,7 @@ COPY scripts/local_ingestion_smoke.py ./scripts/local_ingestion_smoke.py
 COPY scripts/cloud_wdpa_validation.py ./scripts/cloud_wdpa_validation.py
 COPY scripts/download_public_wdpa_benchmark.py ./scripts/download_public_wdpa_benchmark.py
 COPY docs/wdpa-processing-public-inputs.json ./docs/wdpa-processing-public-inputs.json
+COPY scripts/wdpa_input_memory_probe.py /app/scripts/wdpa_input_memory_probe.py
 COPY scripts/wdpa_processing_gate.py ./scripts/wdpa_processing_gate.py
 
 CMD ["python", "-m", "ingestion.wdpa_monthly.run"]

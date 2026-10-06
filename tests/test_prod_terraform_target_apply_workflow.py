@@ -35,7 +35,7 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
             self.job["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(self.steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha || github.sha }}")
         self.assertIn('GITHUB_REF}" != "refs/heads/main"', self.steps["Validate main ref"]["run"])
         self.assertIn("may only apply from main", self.steps["Validate main ref"]["run"])
         self.assertIn(
@@ -80,7 +80,8 @@ class ReusableTargetApplyWorkflowTests(unittest.TestCase):
 
     def test_optional_post_apply_wait(self):
         wait_step = self.steps["Wait after apply"]
-        self.assertEqual(wait_step["if"], "${{ inputs.post_apply_wait_seconds > 0 }}")
+        self.assertIn("inputs.post_apply_wait_seconds > 0", wait_step["if"])
+        self.assertIn("steps.replay.outputs.proceed == 'true'", wait_step["if"])
         self.assertIn('sleep "${WAIT_SECONDS}"', wait_step["run"])
 
 
@@ -90,18 +91,7 @@ class TargetApplyCallerTests(unittest.TestCase):
             self,
             SCHEDULED_INGESTION,
             expected_name="Scheduled ingestion deploy IAM sync",
-            push_paths={
-                ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml",
-                REUSABLE_PATH_ENTRY,
-                "terraform/envs/prod/main.tf",
-                "terraform/envs/prod/monitoring.tf",
-                "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf",
-                "terraform/envs/prod/wdpa_observer_bootstrap_iam.tf",
-                "terraform/envs/prod/wdpa_reset_iam.tf",
-                "terraform/envs/prod/translation_notices.tf",
-                "terraform/envs/prod/variables.tf",
-                "terraform/envs/prod/versions.tf",
-            },
+            push_paths=None,
             sync_name="Scheduled ingestion deploy IAM sync",
             expected_needs="bootstrap",
             refusal_prefix="Refusing automatic scheduled ingestion deploy IAM sync",
@@ -142,9 +132,10 @@ class TargetApplyCallerTests(unittest.TestCase):
         for name in ("eamlis-monthly-deploy.yml", "wdpa-monthly-deploy.yml"):
             with self.subTest(workflow=name):
                 jobs = load_workflow(REPO_ROOT / ".github/workflows" / name)["jobs"]
-                self.assertEqual(jobs["iam"]["uses"], "./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml")
-                self.assertNotIn("concurrency", jobs["iam"])
-                self.assertEqual(jobs["deploy"]["needs"], "iam")
+                self.assertNotIn("iam", jobs)
+                steps = workflow_steps_by_name({"jobs": jobs}, "deploy")
+                self.assertIn("Verify live deployment permissions", steps)
+                self.assertIn("Verify tested main revision", steps)
 
 
     def test_preview_terraform_iam_sync_caller_blocks_deletes(self):

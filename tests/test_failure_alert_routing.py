@@ -172,7 +172,7 @@ def test_real_synchronous_canary_shell_marks_only_execution_and_propagates_failu
     env = {**os.environ, "JOB_NAME": "test-job", "REGION": "us-central1",
            "GOOGLE_CLOUD_PROJECT": "test-project", "CANARY_RUN_DATE": date,
            "GITHUB_SERVER_URL": "https://github.com", "GITHUB_REPOSITORY": alerts.REPOSITORY,
-           "GITHUB_RUN_ID": "123"}
+           "GITHUB_RUN_ID": "123", "GITHUB_ENV": os.devnull}
     result = subprocess.run(["bash", "-c", recorder + step["run"]], env=env, capture_output=True, text=True)
     if date.startswith("invalid"):
         assert result.returncode != 0

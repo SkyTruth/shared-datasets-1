@@ -225,7 +225,7 @@ class CanaryDuplicationGuardTests(unittest.TestCase):
 
                 self.assertIn("status.runningCount", guard)
                 self.assertIn("run_canary=false", guard)
-                self.assertEqual(canary["if"], "${{ steps.inflight.outputs.run_canary == 'true' }}")
+                self.assertEqual(canary["if"], "${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}")
 
     def test_cancelling_is_available_but_opt_in(self):
         for name in self.DEPLOYS:

@@ -95,7 +95,9 @@ class PublicationDeploymentTests(unittest.TestCase):
                 self.assertNotIn(gate_name, names)
                 continue
             step = steps[gate_name]
-            self.assertNotIn("if", step)
+            # An already verified revision performs no mutation. Every fresh
+            # attempt still verifies actual installed state before building.
+            self.assertEqual(step["if"], "${{ steps.replay.outputs.proceed == 'true' }}")
             self.assertNotIn("continue-on-error", step)
             self.assertEqual(step["run"], f"uv run --no-sync python scripts/publication_rollout_gate.py --job {job}")
             self.assertLess(names.index("Authenticate to Google Cloud"), names.index(gate_name))

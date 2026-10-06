@@ -1,26 +1,20 @@
 name: EAMLIS monthly deploy
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/eamlis-monthly-deploy.yml"
-      - "ingestion/common/**"
-      - "ingestion/eamlis_monthly/**"
-      - "scripts/pmtiles_zoom.py"
-      - "scripts/release_feature_model.py"
-      - "scripts/slack_notify.py"
-      - "scripts/vector_asset.py"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/eamlis_monthly.tf"
-      - "terraform/envs/prod/eamlis_monthly_variables.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
-      - "terraform/modules/cloud_run_job/**"
-      - "terraform/modules/scheduler_job/**"
   workflow_dispatch:
     inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
       cancel_running_canary:
         description: "Cancel an execution that is already running instead of skipping the canary. Use when replacing known-bad code."
         required: false
@@ -32,11 +26,29 @@ on:
         type: string
         default: ""
 
+  workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
+
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
 env:
+  EXECUTOR_SHA: ${{ inputs.executor_sha }}
   GOOGLE_CLOUD_PROJECT: shared-datasets-1
   REGION: us-central1
   ARTIFACT_REGISTRY_REPOSITORY: shared-datasets-jobs
@@ -54,12 +66,8 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  iam:
-    uses: ./.github/workflows/scheduled-ingestion-deploy-iam-sync.yml
-
   deploy:
     name: Build image and apply eamlis-monthly Terraform
-    needs: iam
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     environment: shared-datasets-production
@@ -73,15 +81,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/eamlis-monthly-deploy.yml@refs/heads/main" && "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
             echo "EAMLIS monthly deploy may only apply from main after reviewed changes have landed." >&2
             exit 1
           fi
 
+      - name: Check out trusted verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify executor before candidate checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --bootstrap --workflow eamlis-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha }}
+          fetch-depth: 0
+
+      - name: Verify tested main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py verify --workflow eamlis-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
 
       - name: Validate Terraform auth configuration
         run: |
@@ -96,23 +134,51 @@ jobs:
             exit 1
           fi
 
+      - name: Check prior deployment before rebuilding
+        id: replay
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py check --target eamlis-monthly --workflow eamlis-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT"
+
       - name: Authenticate to Google Cloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.TERRAFORM_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify live deployment permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        run: python scripts/deployment_permissions.py --target eamlis-monthly
+
+      - name: Check runtime verification window
+        id: window
+        if: ${{ steps.replay.outputs.proceed == 'true' }}
+        env:
+          CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
+          CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
+        run: |
+          python scripts/deployment_revision.py window --target eamlis-monthly \
+            --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
+
       - name: Configure Docker for Artifact Registry
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
       - name: Build eamlis-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
-          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          image_tag="${REGION}-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/${ARTIFACT_REGISTRY_REPOSITORY}/${IMAGE_NAME}:${EXECUTOR_SHA}-${GITHUB_RUN_ID}"
           docker build \
             --platform linux/amd64 \
             -f ingestion/eamlis_monthly/Dockerfile \
@@ -121,6 +187,7 @@ jobs:
           echo "EAMLIS_MONTHLY_IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Smoke-test native tools in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -128,6 +195,7 @@ jobs:
             'ogrinfo --version && ogr2ogr --version && pmtiles version && command -v tippecanoe-decode'
 
       - name: Smoke-test job import closure in image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -135,6 +203,7 @@ jobs:
             'import ingestion.eamlis_monthly.run; import scripts.pmtiles_zoom, scripts.release_feature_model, scripts.slack_notify, scripts.vector_asset; print("eamlis-monthly imports ok")'
 
       - name: Push eamlis-monthly image
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -151,14 +220,17 @@ jobs:
           echo "EAMLIS_MONTHLY_IMAGE=${image_ref}" >> "${GITHUB_ENV}"
 
       - name: Set up Terraform
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform init
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod init -input=false
 
       - name: Terraform plan
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -171,9 +243,11 @@ jobs:
             -var="sea_ice_daily_image=unused-by-eamlis-monthly-deploy"
 
       - name: Export Terraform plan JSON
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: terraform -chdir=terraform/envs/prod show -json "${RUNNER_TEMP}/eamlis-monthly.tfplan" > "${RUNNER_TEMP}/eamlis-monthly.tfplan.json"
 
       - name: Enforce eamlis-monthly resource-change allowlist
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: |
           set -euo pipefail
 
@@ -216,10 +290,24 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Claim tested deployment revision
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        id: revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ inputs.source_run_attempt }}
+        run: |
+          python scripts/deployment_revision.py start --target eamlis-monthly --workflow eamlis-monthly-deploy.yml \
+            --executor-sha "$EXECUTOR_SHA" --source-run-id "$SOURCE_RUN_ID" --source-run-attempt "$SOURCE_RUN_ATTEMPT" \
+            --artifact "${EAMLIS_MONTHLY_IMAGE}" --plan-json "$RUNNER_TEMP/eamlis-monthly.tfplan.json"
+
       - name: Terraform apply
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: bash "${GITHUB_WORKSPACE}/scripts/terraform_retry.sh" -chdir=terraform/envs/prod apply -input=false "${RUNNER_TEMP}/eamlis-monthly.tfplan"
 
       - name: Confirm deployed digest
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -231,6 +319,7 @@ jobs:
           fi
 
       - name: Resolve in-flight canary
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         id: inflight
         env:
           CANCEL_RUNNING_CANARY: ${{ inputs.cancel_running_canary }}
@@ -264,7 +353,7 @@ jobs:
           echo "::notice::Skipping canary: execution ${running} is already running for ${JOB_NAME}. Re-run with cancel_running_canary=true to replace it."
 
       - name: Execute eamlis-monthly canary
-        if: ${{ steps.inflight.outputs.run_canary == 'true' }}
+        if: ${{ steps.revision.outputs.proceed == 'true' && steps.inflight.outputs.run_canary == 'true' }}
         env:
           CANARY_RUN_DATE: ${{ inputs.canary_run_date }}
         run: |
@@ -286,22 +375,27 @@ jobs:
             execution_env+=",RUN_DATE=${CANARY_RUN_DATE}"
           fi
           gcloud run jobs execute "${execute_args[@]}" --update-env-vars="${execution_env}"
+          echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
 
       - name: Set up Python
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         uses: astral-sh/setup-uv@v5
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
 
       - name: Sync Python dependencies
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: uv sync --locked --all-groups
 
       - name: Validate latest EAMLIS release contract
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -372,6 +466,7 @@ jobs:
           PY
 
       - name: Run EAMLIS bucket hygiene audit
+        if: ${{ steps.revision.outputs.proceed == 'true' }}
         run: |
           set -euo pipefail
 
@@ -394,3 +489,16 @@ jobs:
               raise SystemExit("EAMLIS feature-metadata hygiene findings remain")
           print("No eamlis-abandoned-mine-land-inventory feature-metadata hygiene findings remain.")
           PY
+
+      - name: Record deployment outcome
+        if: ${{ always() && steps.revision.outputs.deployment_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ steps.revision.outputs.deployment_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          phase="${DEPLOYMENT_PHASE:-unknown}"
+          if [[ "$JOB_STATUS" != "success" ]]; then phase=failed; fi
+          args=(finish --deployment-id "$DEPLOYMENT_ID" --phase "$phase")
+          if [[ -n "${EAMLIS_CANARY_EXECUTION:-}" ]]; then args+=(--execution "${EAMLIS_CANARY_EXECUTION##*/}"); fi
+          python scripts/deployment_revision.py "${args[@]}"

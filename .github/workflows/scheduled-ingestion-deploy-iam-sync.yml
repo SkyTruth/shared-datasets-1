@@ -1,24 +1,38 @@
 name: Scheduled ingestion deploy IAM sync
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/scheduled-ingestion-deploy-iam-sync.yml"
-      - ".github/workflows/prod-terraform-target-apply.yml"
-      - "terraform/envs/prod/main.tf"
-      - "terraform/envs/prod/monitoring.tf"
-      - "terraform/envs/prod/scheduled_ingestion_deploy_iam.tf"
-      - "terraform/envs/prod/wdpa_observer_bootstrap_iam.tf"
-      - "terraform/envs/prod/wdpa_reset_iam.tf"
-      - "terraform/envs/prod/translation_notices.tf"
-      - "terraform/envs/prod/variables.tf"
-      - "terraform/envs/prod/versions.tf"
   workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_call:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision
+        required: true
+        type: string
+      source_run_id:
+        description: Main-push CI run that tested executor_sha
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
 
 permissions:
+  actions: read
+  deployments: write
   contents: read
   id-token: write
 
@@ -28,6 +42,10 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: iam-bootstrap
       sync_name: Translation notice secret IAM bootstrap
       refusal_prefix: Refusing automatic translation notice secret IAM bootstrap
       post_apply_wait_seconds: 30
@@ -48,6 +66,10 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/prod-terraform-target-apply.yml
     with:
+      executor_sha: ${{ inputs.executor_sha }}
+      source_run_id: ${{ inputs.source_run_id }}
+      source_run_attempt: ${{ inputs.source_run_attempt }}
+      readiness_target: translation-bootstrap
       sync_name: Scheduled ingestion deploy IAM sync
       refusal_prefix: Refusing automatic scheduled ingestion deploy IAM sync
       targets: |

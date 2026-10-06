@@ -19,6 +19,8 @@ RUN set -eux; \
 
 FROM python:3.12-slim-bookworm
 
+COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
+
 ARG SHARED_DATASETS_EXECUTOR_SHA
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -27,12 +29,12 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        gdal-bin \
-        python3-gdal \
+        gdal-bin=3.6.2+dfsg-1+b2 \
+        python3-gdal=3.6.2+dfsg-1+b2 \
     && echo "deb http://deb.debian.org/debian bookworm-backports main" > /etc/apt/sources.list.d/bookworm-backports.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends -t bookworm-backports \
-        tippecanoe \
+        tippecanoe=2.52.0-1~bpo12+1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
@@ -40,7 +42,8 @@ COPY --from=pmtiles-builder /pmtiles /usr/local/bin/pmtiles
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir google-cloud-storage
+RUN uv sync --locked --no-dev
+ENV PATH="/app/.venv/bin:${PATH}"
 
 COPY ingestion ./ingestion
 COPY scripts/pmtiles_zoom.py ./scripts/pmtiles_zoom.py

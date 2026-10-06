@@ -109,22 +109,18 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
         step_names = list(steps)
 
         self.assertEqual(workflow["name"], "WDPA monthly deploy")
-        self.assertEqual(trigger["push"]["branches"], ["main"])
+        self.assertNotIn("push", trigger)
+        self.assertIn("workflow_call", trigger)
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            self.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
         self.assertIn("workflow_dispatch", trigger)
         self.assertIn("canary_run_date", trigger["workflow_dispatch"]["inputs"])
-        push_paths = set(trigger["push"]["paths"])
-        self.assertIn(".github/workflows/wdpa-monthly-deploy.yml", push_paths)
-        self.assertIn("catalog/feature-identity-resolutions/**", push_paths)
-        self.assertIn("ingestion/common/**", push_paths)
-        self.assertIn("ingestion/wdpa_monthly/**", push_paths)
-        for script_path in REQUIRED_SCRIPT_COPIES:
-            self.assertIn(script_path, push_paths)
         self.assertEqual(deploy["environment"], "shared-datasets-production")
         self.assertEqual(
             deploy["concurrency"],
             {"group": "prod-terraform-state", "queue": "max", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "main")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ inputs.executor_sha }}")
         self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
         self.assertEqual(env["IMAGE_NAME"], "wdpa-monthly")
         self.assertEqual(env["JOB_NAME"], "wdpa-monthly")
@@ -251,7 +247,7 @@ class WdpaMonthlyDeployWorkflowTests(unittest.TestCase):
                          "TEST_DOCKER_CALLS": str(calls), "GITHUB_ENV": str(env_file),
                          "REGION": "us-central1", "GOOGLE_CLOUD_PROJECT": "shared-datasets-1",
                          "ARTIFACT_REGISTRY_REPOSITORY": "shared-datasets-jobs",
-                         "IMAGE_NAME": "wdpa-monthly", "GITHUB_SHA": "c" * 40, "GITHUB_RUN_ID": "123"},
+                         "IMAGE_NAME": "wdpa-monthly", "EXECUTOR_SHA": "c" * 40, "GITHUB_RUN_ID": "123"},
                     capture_output=True, text=True, check=False,
                 )
                 self.assertEqual(result.returncode, 0 if mismatch is None else 1, result.stderr)

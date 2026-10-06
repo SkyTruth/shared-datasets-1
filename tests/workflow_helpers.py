@@ -69,7 +69,7 @@ def assert_target_apply_caller(
     workflow_path: Path,
     *,
     expected_name: str,
-    push_paths: set[str],
+    push_paths: set[str] | None,
     job_name: str = "sync",
     expected_job_if: str | None = "${{ github.event_name != 'pull_request' }}",
     expected_needs: str | None = None,
@@ -91,11 +91,21 @@ def assert_target_apply_caller(
     inputs = job.get("with", {})
 
     testcase.assertEqual(workflow["name"], expected_name)
-    testcase.assertEqual(trigger["push"]["branches"], ["main"])
-    testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
+    if push_paths is None:
+        testcase.assertNotIn("push", trigger)
+        testcase.assertIn("workflow_call", trigger)
+        for name in ("executor_sha", "source_run_id", "source_run_attempt"):
+            testcase.assertTrue(trigger["workflow_call"]["inputs"][name]["required"])
+            testcase.assertEqual(inputs[name], "${{ inputs." + name + " }}")
+    else:
+        testcase.assertEqual(trigger["push"]["branches"], ["main"])
+        testcase.assertEqual(set(trigger["push"]["paths"]), push_paths)
     testcase.assertIn("workflow_dispatch", trigger)
     testcase.assertNotIn("pull_request", trigger)
-    testcase.assertEqual(workflow["permissions"], {"contents": "read", "id-token": "write"})
+    expected_permissions = {"contents": "read", "id-token": "write"}
+    if push_paths is None:
+        expected_permissions.update({"actions": "read", "deployments": "write"})
+    testcase.assertEqual(workflow["permissions"], expected_permissions)
     testcase.assertEqual(job["uses"], TARGET_APPLY_WORKFLOW_USES)
     if expected_job_if is None:
         testcase.assertNotIn("if", job)
