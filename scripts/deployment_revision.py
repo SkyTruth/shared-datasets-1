@@ -148,13 +148,15 @@ def verified_statuses(api, repository, record):
 def replay_decision(records, executor, ancestor, statuses, *, artifact=None, target=None):
     """A newer attempted revision bars replay even after its deployment fails."""
     same = []
+    superseded = False
     for record in records:
         record_payload(record)
         prior = record["sha"]
         if prior == executor:
             same.append(record)
-        else:
-            require(ancestor(prior, executor), "a newer or divergent deployment attempt already exists; refusing stale replay")
+        elif not ancestor(prior, executor):
+            require(ancestor(executor, prior), "a divergent deployment attempt already exists; refusing incompatible replay")
+            superseded = True
     if same:
         latest = max(same, key=lambda record: record["id"])
         terminal = statuses(latest)
@@ -163,13 +165,13 @@ def replay_decision(records, executor, ancestor, statuses, *, artifact=None, tar
         if terminal and terminal[0].get("state") == "success" and terminal[0].get("description") in accepted:
             prior_artifact = record_payload(latest)["artifact"]
             if artifact is None or prior_artifact == artifact:
-                return "noop"
+                return "superseded" if superseded else "noop"
             require(target == "catalog-web", "same revision now produces different artifact bytes; reconcile before recovery")
             # Catalog bytes depend on authorized dataset/index mutations as well
             # as executor code. A distinct current-state bundle is a new refresh.
-            return "proceed"
+            return "superseded" if superseded else "proceed"
         raise DeploymentError("this revision has an incomplete or failed attempt; reconcile actual target state before recovery")
-    return "proceed"
+    return "superseded" if superseded else "proceed"
 
 
 def git_ancestor(older, newer):
@@ -239,6 +241,16 @@ def check(args, api):
     for record in decisive:
         verify_record(api, repository, record)
     decision = replay_decision(records, args.executor_sha, git_ancestor, lambda record: verified_statuses(api, repository, record), artifact=getattr(args, "artifact", None), target=args.target)
+    if decision == "superseded":
+        newer = [record for record in decisive if record["sha"] != args.executor_sha]
+        latest = max(newer, key=lambda record: record["id"])
+        message = f"Deployment skipped: tested revision {args.executor_sha} was superseded by a newer recorded attempt at {latest['sha']}."
+        print("::notice::" + message)
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with Path(summary).open("a") as stream:
+                stream.write(message + " No deployment record or target state was changed.\n")
+        return {"proceed": "false", "outcome": "superseded", "superseded_by_sha": latest["sha"]}
     if decision == "noop":
         print("A successful deployment of this exact revision already exists.")
         return {"proceed": "false"}

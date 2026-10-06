@@ -82,6 +82,15 @@ mutation or index rebuild may produce a distinct current-state catalog bundle
 under the same executor. A failed or interrupted attempt cannot be blanket
 retried.
 
+A valid older revision that reaches the queue after a newer attempted deployment
+finishes as an explicit `superseded` no-op. The verifier proves its exact tested
+source and every blocking record's repository, workflow and source attempt first.
+It writes no claim, changes no deployment record and launches no mutation. A
+newer failed attempt still supersedes older code; it does not become successful.
+Divergent history and a failed or incomplete attempt of the same revision remain
+errors requiring reconciliation. A forged source or record cannot justify this
+no-op.
+
 Outcomes distinguish applied configuration, pending runtime verification,
 verified terminal success, failure and unknown state. Short canaries wait for
 terminal status. Before building or applying, an active execution defers the
