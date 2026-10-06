@@ -24,7 +24,7 @@ from scripts.check_geospatial_test_results import check_results
 from scripts.ci_runtime import local_runtime, prove_runtime, run_container, suite_platform
 from scripts.ci_source_proof import prove_attempts, select_plan
 from scripts.ci_contract import (
-    NATIVE_TESTS, SUITES, check_junit, contract_digest, expected_tools,
+    NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
     select_suites, verify_results, write_json,
 )
 
@@ -79,12 +79,25 @@ def validate_checkout(root: Path, plan: dict) -> None:
         raise ValueError("validation contract changed")
 
 
+def interpreter_command() -> list[str]:
+    program = (
+        "import platform\n"
+        "actual = platform.python_version()\n"
+        "print('Validation interpreter: ' + actual, flush=True)\n"
+        f"if actual != {TOOLCHAIN['python']!r}:\n"
+        f"    raise RuntimeError('Required validation interpreter {TOOLCHAIN['python']}; found ' + actual)\n"
+    )
+    return ["uv", "run", "--no-sync", "python", "-c", program]
+
+
 def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tuple[list[str], Path]]:
     base, head = plan["base"], plan["tested_sha"]
     commands: list[tuple[list[str], Path]] = []
 
     def add(*args: str, cwd: Path = root) -> None:
         commands.append((list(args), cwd))
+        if args[:2] == ("uv", "sync"):
+            commands.append((interpreter_command(), cwd))
 
     if suite == "lint":
         add("uv", "sync", "--locked", "--all-groups")
@@ -166,7 +179,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
     result.update({"schema_version": 1, "suite": suite, "status": "failure", "commands": [], "tools": {}})
     if os.environ.get("GITHUB_RUN_ID"):
         result["source"] = {"run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])}
-    environment = dict(os.environ)
+    environment = {**os.environ, "CI": "true", "UV_PYTHON": TOOLCHAIN["python"]}
     # This exact process-owned path is bind-mounted across differing host and
     # container UIDs. The setting also applies to Git invoked by SDK policy.
     environment.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": str(root)})

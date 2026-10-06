@@ -38,6 +38,15 @@ implementation because older Apple Linux VMs advertise unsupported extensions
 [upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
 The locked wheel, algorithms and test corpus remain unchanged; this setting is
 included in the recorded runtime evidence.
+Every local suite explicitly runs with `CI=true`. uv selects the pinned Python
+version, and each locked sync is followed by a check of the executing interpreter;
+its actual version is retained in the command log and a mismatch fails validation.
+Browser validation also uses a
+process-owned synthetic GitHub PR event so CI-only reporter behavior is exercised
+without forwarding tokens, real run IDs or caller event data. Playwright Git
+commit/diff capture is disabled: its CI diff collector otherwise fetches the base
+with `--depth=1` and makes a full checkout shallow. The plan owns revision evidence,
+and the full-history invariant is still checked after browser execution.
 Native lint and Node execution also avoid observed UV and subprocess faults under
 AMD64 emulation. Both Node versions execute the same SDK tests and package-byte checks
 as hosted CI; a failed suite remains a failure and is never automatically retried.
