@@ -245,6 +245,57 @@ def fake_asset_output(
 
 
 class EamlisMonthlyTests(unittest.TestCase):
+    def test_csv_reconciliation_precedes_single_materialization_of_all_required_locales(self):
+        bucket = FakeBucket()
+        blob = bucket.blob(eamlis.ASSET.latest_object(".metadata-translations.csv"))
+        blob.exists, blob.generation = True, 9
+        baseline = [
+            {"feature_id": fid, "field": "PA_NAME", "locale": locale,
+             "source_value_hash": eamlis.localization.source_value_hash(text),
+             "value": value, "review_state": "human_reviewed", "notes": "provider evidence"}
+            for fid, locale, text, value in (
+                ("1", "es", "Mine Alpha", "Mina Alfa"),
+                ("2", "es", "Old name", "Nombre anterior"),
+                ("99", "es", "Mine Beta", "Mina Beta"),
+                ("99", "fr", "Mine Beta", "Mine Bêta"),
+            )
+        ]
+        stream = io.StringIO()
+        writer = csv.DictWriter(stream, fieldnames=eamlis.translation_reuse.COLUMNS)
+        writer.writeheader()
+        writer.writerows(baseline)
+        blob.data = stream.getvalue().encode()
+        original_sha = hashlib.sha256(blob.data).hexdigest()
+        publisher = GcsPublisher(FakeClient(bucket), bucket.name)
+        materialize = eamlis.localization.materialize_locale_sidecars
+
+        def after_reconciliation(**kwargs):
+            with kwargs["translation_source"].open(newline="") as handle:
+                reconciled = list(csv.DictReader(handle))
+            self.assertEqual(reconciled[:len(baseline)], baseline)
+            self.assertEqual([r["locale"] for r in reconciled[len(baseline):]], ["es", "fr"])
+            return materialize(**kwargs)
+
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch.object(eamlis, "TRANSLATION_LOCALES", ("es", "fr")), \
+             mock.patch.object(eamlis.localization, "materialize_locale_sidecars", side_effect=after_reconciliation) as generated, \
+             mock.patch.object(eamlis.localization, "_materialize_locale_sidecar", wraps=eamlis.localization._materialize_locale_sidecar) as each_locale:
+            output = fake_asset_output(Path(tmpdir))
+            before = {path: path.read_bytes() for path in (output.metadata, output.schema, output.fgb, output.pmtiles)}
+            record = eamlis.publish_changed_asset(publisher=publisher, run_date=dt.date(2026, 5, 2), source=sample_source_state(), output=output)
+            generated.assert_called_once()
+            self.assertEqual(generated.call_args.kwargs["locales"], ("es", "fr"))
+            self.assertEqual([call.kwargs["locale"] for call in each_locale.call_args_list], ["es", "fr"])
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+        self.assertEqual(record["localization"]["translations"]["locales"]["es"]["current"], 2)
+        self.assertEqual(record["localization"]["translations"]["locales"]["fr"]["current"], 1)
+        manifest = json.loads(bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), ".manifest.json")).text)
+        self.assertEqual(manifest["source_inputs"][1]["sha256"], original_sha)
+        for locale, expected in (("es", ["Mina Alfa", "Mina Beta"]), ("fr", ["Mine Alpha", "Mine Bêta"])):
+            sidecar = bucket.blob(eamlis.ASSET.release_object(dt.date(2026, 5, 2), f".metadata.{locale}.ndjson.gz"))
+            rows = list(eamlis.feature_metadata.release_feature_model.read_metadata_sidecar_bytes(sidecar.data))
+            self.assertEqual([r["properties"]["PA_NAME"] for r in rows], expected)
+
     def test_translation_reuse_pins_input_and_publishes_partial_coverage_in_same_release(self):
         bucket = FakeBucket()
         blob = bucket.blob(eamlis.ASSET.latest_object(".metadata-translations.csv"))

@@ -82,9 +82,19 @@ then converting that archive with `pmtiles convert`. The canonical FGB remains
 the analytical source.
 
 The asset's declared Spanish `PA_NAME` translation is rebuilt within every
-changed release. The job reads the observed generation of the current CSV,
-materializes the new release's Spanish sidecar, and records coverage in its
-manifest before uploading any release artifact. A missing initial CSV starts
+changed release. The job reads the observed generation of the current CSV and
+reconciles it with the new canonical metadata before generating each maintained
+locale sidecar once. Reconciliation preserves every existing row and its
+provenance, including successful current translations and historical rows. For
+missing current keys it reuses a translation only when the exact field, locale,
+and source-value hash have one distinct successful translated value across the
+CSV history. Feature IDs do not establish matches across source refreshes.
+Conflicting values, unavailable matches, and existing failed current tasks remain
+source-text fallback; failures and excluded untranslated labels never count as
+completed. Reused rows retain donor review state and notes with a reuse reference.
+The job makes no translation-provider calls and leaves feature IDs, canonical
+metadata, geometry and tiles untouched by reconciliation. It records coverage
+in its manifest before uploading any release artifact. A missing initial CSV starts
 with a header-only source and explicit translation debt. Other download or CSV
 validation failures stop before publication. Unchanged-source/output skips do
 not create new artifacts. Gaps retain source text and do not block publication.

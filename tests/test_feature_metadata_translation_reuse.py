@@ -51,6 +51,95 @@ def rebuild(root, memory, records):
     return report, output, translations
 
 
+class TranslationReconciliationTests(unittest.TestCase):
+    def reconcile(self, root, records, rows, *, locales=("fr",)):
+        bundle = source_bundle(root / "source", records, rows)
+        canonical, source = Path(bundle["canonical_sidecar"]), Path(bundle["translation_source"])
+        before = canonical.read_bytes()
+        counts = reuse.reconcile_translation_source(
+            canonical_sidecar=canonical, translation_source=source, fields=["name"], locales=locales,
+            asset_slug="example-asset", release="2026-06-09",
+        )
+        self.assertEqual(canonical.read_bytes(), before)
+        with source.open(newline="") as handle:
+            result = list(csv.DictReader(handle))
+        self.assertEqual(result[:len(rows)], rows)
+        reports = loc.materialize_locale_sidecars(
+            canonical_sidecar=canonical, translation_source=source, output_dir=root / "localized",
+            locales=locales, translatable_fields={"name"},
+        )
+        output = {report.locale: list(model.read_metadata_sidecar(Path(report.output_sidecar))) for report in reports}
+        return counts, result, reports, output, canonical, source
+
+    def test_changed_associations_reuse_history_and_preserve_current_provenance(self):
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            rows = [row("1", "Alpha", "Alfa", notes="old provider evidence"),
+                    row("2", "Beta", "Bêta", "human_reviewed", "reviewed for this feature"),
+                    row("9", "Alpha", "Alpha humain", "human_reviewed", "orphan history"),
+                    row("8", "Beta", "Bêta", "human_reviewed")]
+            records = [record("1", "changed", "Beta"), record("2", "current", "Beta"),
+                       record("3", "new", "Alpha")]
+            rows[2]["value"] = "Alfa"
+            counts, result, reports, output, canonical, source = self.reconcile(root, records, rows)
+            self.assertEqual(counts["current_rows"], 1)
+            self.assertEqual(counts["reused_rows"], 2)
+            self.assertEqual([r["properties"]["name"] for r in output["fr"]], ["Bêta", "Bêta", "Alfa"])
+            self.assertIn("old provider evidence", result[-1]["notes"])
+            self.assertEqual(result[-1]["feature_id"], "3")
+            self.assertEqual(reports[0].current, 3)
+            before = source.read_bytes()
+            reuse.reconcile_translation_source(canonical_sidecar=canonical, translation_source=source,
+                fields=["name"], locales=["fr"], asset_slug="example-asset", release="2026-06-09")
+            self.assertEqual(source.read_bytes(), before)
+
+    def test_only_exact_field_locale_hash_and_successful_candidates_can_complete_tasks(self):
+        with publication_temp_directory() as temp:
+            rows = [row("90", "Known", "Connu"), row("91", "Wrong field", "Autre"),
+                    row("92", "Wrong locale", "Otro"), row("93", "Failed", "", "translation_failed"),
+                    row("94", "Legacy", "Legacy", "source_provided",
+                        "machine translation failed; source value retained; provider=google; target=fr"),
+                    row("95", "Excluded label", "Old label"),
+                    row("7", "Known", "", "translation_failed", "current failure"),
+                    row("96", "known", "case must match")]
+            rows[1]["field"] = "untouched"
+            rows[2]["locale"] = "es"
+            # A stale hash is never a match, even when a donor value looks usable.
+            rows[5]["source_value_hash"] = loc.source_value_hash("Older label")
+            texts = ["Known", "Wrong field", "Wrong locale", "Failed", "Legacy", "Excluded label", "Known", " known "]
+            counts, result, reports, output, _, _ = self.reconcile(Path(temp),
+                [record(str(i), str(i), text) for i, text in enumerate(texts, 1)], rows, locales=("fr", "de"))
+            self.assertEqual(counts["reused_rows"], 1)
+            self.assertEqual(counts["failed_current_rows"], 1)
+            self.assertEqual(len(result), len(rows) + 1)
+            self.assertEqual([r["properties"]["name"] for r in output["fr"]], ["Connu", *texts[1:]])
+            self.assertEqual((reports[0].current, reports[0].missing), (1, 7))
+            self.assertEqual((reports[1].current, reports[1].missing), (0, 8))
+
+    def test_conflict_stays_ambiguous_after_another_agreeing_candidate(self):
+        with publication_temp_directory() as temp:
+            counts, rows, reports, output, _, _ = self.reconcile(Path(temp),
+                [record("1", "site", "Bank"), record("8", "current", "Bank")],
+                [row("8", "Bank", "Rive"), row("9", "Bank", "Banque"), row("10", "Bank", "Rive")])
+            self.assertEqual(counts["conflicting_rows"], 1)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(reports[0].current, 1)
+            self.assertEqual(output["fr"][0]["properties"]["name"], "Bank")
+            self.assertEqual(output["fr"][1]["properties"]["name"], "Rive")
+
+    def test_duplicate_input_key_fails_without_replacing_csv(self):
+        with publication_temp_directory() as temp:
+            root = Path(temp)
+            duplicate = row("1", "Alpha", "Alfa")
+            bundle = source_bundle(root, [record("1", "site", "Alpha")], [duplicate, duplicate])
+            source = Path(bundle["translation_source"])
+            before = source.read_bytes()
+            with self.assertRaisesRegex(loc.FeatureMetadataLocalizationError, "duplicate translation key"):
+                reuse.reconcile_translation_source(canonical_sidecar=Path(bundle["canonical_sidecar"]),
+                    translation_source=source, fields=["name"], locales=["fr"], asset_slug="example-asset", release="2026-06-09")
+            self.assertEqual(source.read_bytes(), before)
+
+
 class TranslationReuseTests(unittest.TestCase):
     def test_rebuild_and_generic_materialization_agree_on_history_and_failed_current_rows(self):
         with publication_temp_directory() as temp:
