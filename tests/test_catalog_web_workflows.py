@@ -261,13 +261,14 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             job["concurrency"],
             {"group": "release-index-rebuild-${{ inputs.asset_slug }}", "cancel-in-progress": False},
         )
-        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ github.sha }}")
+        self.assertEqual(steps["Check out repository"]["with"]["ref"], "${{ github.workflow_sha }}")
+        self.assertEqual(steps["Check out repository"]["with"]["fetch-depth"], 0)
         self.assertEqual(
             env["PUBLISHER_SERVICE_ACCOUNT"],
             "shared-datasets-publisher@shared-datasets-1.iam.gserviceaccount.com",
         )
         self.assertEqual(env["SHARED_DATASETS_ALLOW_CANONICAL_MUTATION"], "1")
-        self.assertIn("Release index rebuild may only publish from main", steps["Validate main ref"]["run"])
+        self.assertIn("Execution must use this workflow from main", steps["Validate main ref"]["run"])
         self.assertEqual(steps["Validate asset slug"]["env"], {"ASSET_SLUG": "${{ inputs.asset_slug }}"})
         self.assertIn("asset_slug must be a shared-datasets slug", steps["Validate asset slug"]["run"])
         self.assertIn(
