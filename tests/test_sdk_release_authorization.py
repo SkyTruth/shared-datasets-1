@@ -34,7 +34,7 @@ def fixture(tmp_path, monkeypatch, *, sdk_attempt=1):
     identity = {'schema_version': 1, 'base': 'b' * 40, 'head': SHA, 'tested_sha': SHA, 'tree': 'tree', 'contract_digest': 'contract'}
     plan = {**identity, 'suites': ['lint', 'tests', 'sdk-node22', 'sdk-node24'], 'source': {'run_id': '123', 'run_attempt': 1}, 'changed_paths': ['api/typescript/src/index.ts'], 'selection_reason': 'complete path classification'}
     evidence = {**plan, 'status': 'success', 'source': {'run_id': '123', 'run_attempt': 2}, 'plan_artifact': 'ci-validation-plan-attempt1', 'suite_artifacts': {'sdk-node24': f'ci-result-sdk-node24-attempt{sdk_attempt}'}}
-    result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}]}
+    result = {**identity, 'source': {'run_id': '123', 'run_attempt': sdk_attempt}, 'suite': 'sdk-node24', 'status': 'success', 'tools': release.expected_tools('sdk-node24'), 'commands': [{'argv': ['npm', 'test'], 'exit_code': 0}], 'package': candidate}
     payloads = [archive({'evidence.json': evidence}), archive({'plan.json': plan}), archive({'result.json': result, 'package/candidate.json': candidate, 'package/sdk.tgz': package, 'logs/arbitrary-script.py': b'not executed or extracted'})]
     artifacts = [{'id': index, 'name': name, 'expired': False, 'workflow_run': {'id': 123}, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()} for index, (name, raw) in enumerate(zip(['ci-ready-evidence-attempt2', 'ci-validation-plan-attempt1', f'ci-result-sdk-node24-attempt{sdk_attempt}'], payloads), 1)]
     run = {'id': 123, 'workflow_id': 7, 'repository': {'id': 9, 'full_name': REPO}, 'head_repository': {'id': 9, 'full_name': REPO}, 'event': 'push', 'head_branch': 'main', 'head_sha': SHA, 'path': '.github/workflows/ci.yml', 'run_attempt': 1}
@@ -90,3 +90,15 @@ def test_archive_digest_and_safe_member_paths_are_required(tmp_path, monkeypatch
     artifacts[0]['digest'] = 'sha256:' + hashlib.sha256(raw).hexdigest()
     with pytest.raises(DeploymentError, match='unsafe'):
         release.artifact_files(api, REPO, 123, artifacts, artifacts[0]['name'])
+
+
+def test_candidate_must_match_recorded_test_result_even_with_consistent_new_hashes(tmp_path, monkeypatch):
+    api, candidate, _, artifacts, payloads = fixture(tmp_path, monkeypatch)
+    with zipfile.ZipFile(io.BytesIO(payloads[2])) as zipped:
+        result = json.loads(zipped.read('result.json'))
+    new_bytes = b'different untested package'
+    replacement = {**candidate, 'sha256': hashlib.sha256(new_bytes).hexdigest(), 'integrity': 'sha512-' + base64.b64encode(hashlib.sha512(new_bytes).digest()).decode()}
+    payloads[2] = archive({'result.json': result, 'package/candidate.json': replacement, 'package/sdk.tgz': new_bytes})
+    artifacts[2]['digest'] = 'sha256:' + hashlib.sha256(payloads[2]).hexdigest()
+    with pytest.raises(DeploymentError, match='recorded tested package'):
+        release.download(api, REPO, 123, 2, SHA, tmp_path / 'output', tmp_path)

@@ -181,7 +181,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
         self.assertIn("uv run python scripts/catalog_site.py", steps["Build catalog web bundle"]["run"])
         self.assertIn("Collect release indexes", steps)
         self.assertIn(
-            'gcloud storage cp "gs://${SHARED_DATASETS_BUCKET}/_catalog/releases/*.json"',
+            'scripts/collect_release_indexes.py --bucket "$SHARED_DATASETS_BUCKET"',
             steps["Collect release indexes"]["run"],
         )
         self.assertIn(
@@ -189,6 +189,7 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             steps["Build catalog web bundle"]["run"],
         )
         self.assertIn("--latest-from-release-index", steps["Build catalog web bundle"]["run"])
+        self.assertIn('--generated-at "$(git show -s --format=%cI HEAD)"', steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--release-index-assets-only", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--allow-release-index-only-assets", steps["Build catalog web bundle"]["run"])
         self.assertNotIn("--metadata-sidecar-autoload-max-bytes", steps["Build catalog web bundle"]["run"])

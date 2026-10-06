@@ -96,6 +96,7 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     require(result.get("tools") == expected_tools("sdk-node24") and result.get("commands") and all(command.get("exit_code") == 0 for command in result["commands"]), "SDK validation was skipped, failed or used another toolchain")
     producing_job(api, repository, run_id, suite_attempt, sha, "sdk-validation (Node 24)", run["workflow_id"], run["repository"]["id"])
     candidate = json.loads(files["package/candidate.json"])
+    require(result.get("package") == candidate, "candidate differs from the recorded tested package")
     package = files.get("package/" + str(candidate.get("tarball")))
     require(package is not None, "tested tarball is missing")
     verify_candidate(candidate, package, json.loads((root / "api/typescript/package.json").read_text()), sha)
