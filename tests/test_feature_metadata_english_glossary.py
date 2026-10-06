@@ -256,3 +256,18 @@ def test_invalid_paid_response_reports_discarded_token_usage():
         with mock.patch.object(glossary.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(invalid).encode())):
             with pytest.raises(ValueError, match="discarded response input_tokens=42"):
                 glossary.call_jev(request)
+
+
+def test_provider_extra_fields_cannot_change_candidate_identity(tmp_path):
+    original = workbook(tmp_path / "source.xlsx", ["Forest"])
+
+    def extra_fields(request):
+        result = response(request)
+        result["answers"]["q0"].update(word="forged", examples=["forged"], occurrences=100)
+        return result
+
+    with mock.patch.object(glossary, "call_jev", side_effect=extra_fields):
+        result = glossary.classify([f"es={original}"], tmp_path / "review")
+    assert result["candidates"][0]["word"] == "forest"
+    assert result["candidates"][0]["examples"] == ["Forest"]
+    assert result["candidates"][0]["occurrences"] == 1

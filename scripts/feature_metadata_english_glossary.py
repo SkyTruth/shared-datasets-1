@@ -189,7 +189,10 @@ def classify(specifications: list[str], output_dir: Path, *, max_requests: int =
                 raise ValueError(f"{error}; requests_attempted={requests_sent}, successful_input_tokens_including_cache={input_tokens}; failed-call billing may be unknown") from None
             local_io.write_json(cache_path, {"request_sha256": fingerprint, "request": request, "response": response}, protected=protected, expected=snapshots)
         input_tokens += response["usage"]["input_tokens"]
-        results.extend({**candidate, **response["answers"][f"q{i}"]} for i, candidate in enumerate(batch))
+        results.extend({
+            **candidate,
+            **{key: response["answers"][f"q{i}"][key] for key in ("choice", "probabilities", "confidence")},
+        } for i, candidate in enumerate(batch))
         if offset % 2560 == 0:
             print(json.dumps({"classified": len(results), "candidates": len(candidates), "requests_sent": requests_sent}), flush=True)
     for snapshot in snapshots:
