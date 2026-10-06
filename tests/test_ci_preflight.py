@@ -337,5 +337,34 @@ def test_local_emulator_rejects_unapproved_bytes_and_wrong_architecture(tmp_path
 
 def test_local_emulator_version_must_match_its_pin():
     from scripts import ci_runtime
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value='qemu-x86_64 version 8.0.0'), pytest.raises(ValueError, match='unexpected version'):
-        ci_runtime.prove_runtime(['--entrypoint', '/ci-runtime/buildkit-qemu-x86_64'], {'emulator': {}}, 'pinned-image')
+    arguments = ['-v', '/owned/runtime:/ci-runtime:ro', '--entrypoint', '/ci-runtime/buildkit-qemu-x86_64']
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', 'qemu-x86_64 version 8.0.0']), mock.patch.object(ci_runtime.subprocess, 'run'), pytest.raises(ValueError, match='unexpected version'):
+        ci_runtime.prove_runtime(arguments, {'emulator': {}}, 'pinned-image')
+
+
+def test_local_browser_and_python_use_native_linux_but_release_clis_require_amd64():
+    from scripts.ci_runtime import suite_platform
+    arm = {'server_architecture': 'arm64'}
+    assert suite_platform('browser', arm) == suite_platform('tests', arm) == 'linux/arm64'
+    assert suite_platform('geospatial-integration', arm) == 'linux/amd64'
+    assert suite_platform('sdk-node24', arm) == 'linux/amd64'
+    assert all(suite_platform(suite, {'server_architecture': 'amd64'}) == 'linux/amd64' for suite in SUITES)
+
+
+@pytest.mark.parametrize('exit_code', [0, 7])
+def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_path, exit_code):
+    from scripts import ci_runtime
+    state = {'Running': False, 'Status': 'exited', 'ExitCode': exit_code}
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(ci_runtime.subprocess, 'run') as run:
+        if exit_code:
+            with pytest.raises(ValueError, match='container failed'):
+                ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64', [])
+        else:
+            record = ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64', [])
+            assert record['image_id'] == 'sha256:test-image'
+            assert record['environment'] == {'OPENSSL_armcap': '0'}
+        commands = [call.args[0] for call in run.call_args_list]
+    assert ['docker', 'cp', f'{ROOT}/.', 'owned-container:/workspace'] in commands
+    assert ['docker', 'cp', 'owned-container:/evidence/browser/.', str(tmp_path / 'browser')] in commands
+    assert commands[-1] == ['docker', 'rm', '-f', 'owned-container']
+    assert not any('-v' in command or '--volume' in command for command in commands)
