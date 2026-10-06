@@ -15,9 +15,23 @@ The main-branch GitHub workflow posts fenced `repo-alert` blocks from commit mes
 
 ## Git Safety Rule
 
-NEVER STAGE, UNSTAGE, OR COMMIT changes unless the user explicitly asks for that exact Git operation.
+Treat the Git index and commit history as user-owned state. Reading status,
+diffs, logs, and commit messages is allowed. Resolve authorization using
+`AGENTS.md` before staging, unstaging, committing, or otherwise mutating the
+index or history.
 
-Treat the Git index and commit history as user-owned state. Reading status, diffs, logs, and commit messages is allowed. Mutating the index or history is not allowed without an explicit user request.
+Normally, the user must explicitly request the exact Git operation.
+`AGENTS.md` also defines a specific exception: a requested manual dataset
+add/update/upload/publish/delete workflow includes related branch creation,
+staging, committing, pushing, and PR preparation unless the user asks to stop
+earlier. Apply that exception only to files and operations within the requested
+dataset workflow.
+
+This skill adds no separate approval gate to operations already authorized
+under `AGENTS.md`. The dataset-workflow exception does not authorize unrelated
+staging, history amendments, production infrastructure changes, or local
+canonical GCS writes. Review and merge requirements remain governed by
+`AGENTS.md`; preparing a commit does not satisfy them.
 
 ## When To Use
 
@@ -25,6 +39,7 @@ Use this skill when:
 
 - The user asks you to commit staged changes.
 - The user asks you to amend or generate a commit message.
+- An authorized dataset workflow reaches its related commit step.
 - The staged change adds or may add a meaningful new repository capability.
 - The staged change updates catalog metadata for a new asset slug or meaningful
   dataset release and announcement status should be reported without blocking
