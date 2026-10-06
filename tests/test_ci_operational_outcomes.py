@@ -98,4 +98,8 @@ def test_catalog_worker_allocation_requires_actual_mutation_completion_or_index_
     catalog = load_workflow(ROOT / '.github/workflows/catalog-web-deploy.yml')
     assert workflow_triggers(catalog)['workflow_run']['workflows'] == ['Release index rebuild']
     viewer = load_workflow(ROOT / '.github/workflows/catalog-viewer-deploy.yml')
-    assert set(workflow_triggers(viewer)) == {'workflow_call'}
+    triggers = workflow_triggers(viewer)
+    assert set(triggers) == {'workflow_call', 'workflow_dispatch'}
+    inputs = triggers['workflow_dispatch']['inputs']
+    assert set(inputs) == {'executor_sha', 'source_run_id', 'source_run_attempt'}
+    assert all(field['required'] is True and field['type'] == 'string' for field in inputs.values())
