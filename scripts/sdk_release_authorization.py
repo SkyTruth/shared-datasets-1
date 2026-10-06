@@ -67,6 +67,32 @@ def admit_source(api, repository, run_id, attempt, sha, event):
     return bool(ready and ready[0].get("status") == "completed" and ready[0].get("conclusion") == "success")
 
 
+def admit_manual_source(api, repository, run_id, attempt, sha, event):
+    require(os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+            and os.environ.get("GITHUB_REF") == "refs/heads/main"
+            and os.environ.get("GITHUB_WORKFLOW_REF") == f"{repository}/.github/workflows/publish-typescript-sdk.yml@refs/heads/main",
+            "manual SDK recovery must use the trusted main workflow")
+    current_id = os.environ.get("GITHUB_RUN_ID", "")
+    current_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    require(re.fullmatch(r"[1-9][0-9]*", current_id) and re.fullmatch(r"[1-9][0-9]*", current_attempt),
+            "manual SDK recovery lacks current run identity")
+    repo = api.get(f"repos/{repository}")
+    workflow = api.get(f"repos/{repository}/actions/workflows/publish-typescript-sdk.yml")
+    current = api.get(f"repos/{repository}/actions/runs/{current_id}/attempts/{current_attempt}")
+    require(type(repo.get("id")) is int and repo["id"] > 0 and repo.get("full_name") == repository
+            and event.get("repository", {}).get("id") == repo["id"]
+            and event["repository"].get("full_name") == repository, "manual SDK repository mismatch")
+    require(type(workflow.get("id")) is int and workflow["id"] > 0
+            and workflow.get("path") == ".github/workflows/publish-typescript-sdk.yml"
+            and current.get("id") == int(current_id) and current.get("run_attempt") == int(current_attempt)
+            and current.get("workflow_id") == workflow["id"] and current.get("path") == workflow["path"]
+            and current.get("event") == "workflow_dispatch" and current.get("head_branch") == "main"
+            and all(current.get(key, {}).get("id") == repo["id"] and current.get(key, {}).get("full_name") == repository
+                    for key in ("repository", "head_repository")), "manual SDK execution identity mismatch")
+    verify_ci(api, repository, sha, run_id, attempt)
+    return True
+
+
 def artifact_files(api, repository, run_id, artifacts, name):
     found = [artifact for artifact in artifacts if artifact.get("name") == name]
     require(len(found) == 1, "missing or ambiguous tested artifact: " + name)
@@ -109,7 +135,7 @@ def verify_candidate(candidate, package, manifest, sha):
     require(candidate.get("integrity") == "sha512-" + base64.b64encode(hashlib.sha512(package).digest()).decode(), "tested package integrity mismatch")
 
 
-def download(api, repository, run_id, attempt, sha, directory, root):
+def verified_plan(api, repository, run_id, attempt, sha, root):
     run = verify_ci(api, repository, sha, run_id, attempt)
     artifacts = api.pages(f"repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100", field="artifacts")
     evidence = json.loads(artifact_files(api, repository, run_id, artifacts, f"ci-ready-evidence-attempt{attempt}")["evidence.json"])
@@ -119,6 +145,11 @@ def download(api, repository, run_id, attempt, sha, directory, root):
     require(plan.get("source") == {"run_id": str(run_id), "run_attempt": plan_attempt} and all(plan.get(key) == evidence.get(key) for key in (*IDENTITY, "suites", "changed_paths", "selection_reason")), "validation plan differs from ci-ready evidence")
     require(plan.get("schema_version") == 1 and plan.get("tree") == subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip() and plan.get("contract_digest") == contract_digest(root), "validation tree or contract changed")
     producing_job(api, repository, run_id, plan_attempt, sha, "geospatial-changes", run["workflow_id"], run["repository"]["id"])
+    return run, artifacts, evidence, plan
+
+
+def download(api, repository, run_id, attempt, sha, directory, root):
+    run, artifacts, evidence, plan = verified_plan(api, repository, run_id, attempt, sha, root)
     require(("sdk-node22" in plan["suites"]) == ("sdk-node24" in plan["suites"]), "incomplete SDK runtime coverage")
     needed = subprocess.check_output(["node", "api/typescript/scripts/release-policy.mjs", "changes", plan["base"], sha], cwd=root, text=True).strip()
     require(needed in {"release_needed=true", "release_needed=false"}, "invalid SDK version policy result")
@@ -162,7 +193,8 @@ def main():
     try:
         api = GitHub()
         event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-        eligible = admit_source(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, event)
+        admission = admit_manual_source if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else admit_source
+        eligible = admission(api, os.environ["GITHUB_REPOSITORY"], args.source_run_id, args.source_run_attempt, args.executor_sha, event)
         if not eligible:
             print("Verified CI source is obsolete, cancelled, or lacks passing ci-ready; no SDK release is authorized.")
             outputs = {"source_eligible": "false", "release_needed": "false"}
