@@ -127,6 +127,14 @@ if [[ "${GITHUB_REF}" != "refs/heads/main" ||
   echo "Execution must use this workflow or CI from main." >&2
   exit 1
 fi'''
+WORKFLOW_REHEARSAL_BOOTSTRAP_GUARD = '''set -euo pipefail
+if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+      ( "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal.yml@refs/heads/main" &&
+        "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/deployment-receipt-rehearsal-call.yml@refs/heads/main" ) ||
+      "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ]]; then
+  echo "Execution must use the exact rehearsal or its trusted main caller." >&2
+  exit 1
+fi'''
 WORKFLOW_PUBLISHER_BOOTSTRAP_GUARD = 'set -euo pipefail\ncase "$GITHUB_EVENT_NAME" in\n  push) caller=.github/workflows/ci.yml ;;\n  workflow_dispatch) caller=.github/workflows/publish-dataset.yml ;;\n  *) exit 1 ;;\nesac\nif [[ "${GITHUB_REF}" != "refs/heads/main" ||\n      "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/${caller}@refs/heads/main" ||\n      "${GITHUB_WORKFLOW_SHA}" != "${GITHUB_SHA}" ||\n      "${EXECUTOR_SHA}" != "${GITHUB_SHA}" ]]; then\n  echo "Execution must use the tested main workflow and executor." >&2\n  exit 1\nfi'
 WORKFLOW_SINGLE_OBJECT_FALLBACK_MARKERS = (
     "Single-object fallback",
@@ -495,6 +503,8 @@ def has_guarded_main_workflow_checkout(workflow: dict, relative_path: str) -> bo
     triggers = workflow.get("on", workflow.get(True, {}))
     if isinstance(triggers, dict) and "workflow_call" in triggers:
         expected_guards.add(WORKFLOW_CI_BOOTSTRAP_GUARD.replace("WORKFLOW_PATH", relative_path))
+    if relative_path == ".github/workflows/deployment-receipt-rehearsal.yml":
+        expected_guards.add(WORKFLOW_REHEARSAL_BOOTSTRAP_GUARD)
     for job in workflow["jobs"].values():
         if not isinstance(job, dict) or job.get("continue-on-error", False) is not False:
             continue
