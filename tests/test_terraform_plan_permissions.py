@@ -240,3 +240,44 @@ class SavedPlanCliTests(unittest.TestCase):
                 live.main()
         request.assert_not_called()
         self.assertEqual(subprocess.call_count, 1)  # Project identity read only; no access token yet.
+
+
+class ImageOperationPermissionTests(unittest.TestCase):
+    def test_image_probe_checks_actual_repository_and_image_operations(self):
+        [(url, required)] = live.checks("artifact-registry-images")
+        self.assertEqual(url, f"https://artifactregistry.googleapis.com/v1/projects/{PROJECT}/locations/us-central1/repositories/shared-datasets-jobs:testIamPermissions")
+        self.assertEqual(set(required), {
+            "artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts",
+            "artifactregistry.repositories.uploadArtifacts", "artifactregistry.dockerimages.get",
+            "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update",
+        })
+        self.assertTrue(set(required).isdisjoint(live.checks("artifact-registry")[0][1]))
+        self.assertFalse(any(permission.endswith(("delete", "setIamPolicy", "createOnPush")) for permission in required))
+
+    def test_one_missing_upload_or_pull_permission_cannot_be_claimed_ready(self):
+        for permission in ("artifactregistry.repositories.uploadArtifacts", "artifactregistry.repositories.downloadArtifacts", "artifactregistry.tags.create"):
+            with self.subTest(permission=permission), self.assertRaisesRegex(RuntimeError, permission):
+                live.verify("artifact-registry-images", lambda url, required: [permission], attempts=1)
+
+    def test_registry_grant_propagation_is_bounded_and_read_only(self):
+        probe = Mock(side_effect=[["artifactregistry.repositories.uploadArtifacts"], []])
+        pause = Mock()
+        live.verify("artifact-registry-images", probe, attempts=2, pause=pause)
+        self.assertEqual(probe.call_count, 2)
+        pause.assert_called_once_with(10)
+        self.assertTrue(all(call.args[0].endswith(":testIamPermissions") for call in probe.call_args_list))
+
+    def test_image_cli_cannot_replace_operational_probe_with_saved_plan(self):
+        args = ["deployment_permissions.py", "--target", "artifact-registry-images", "--plan-json", "reviewed.tfplan.json"]
+        with patch("sys.argv", args), patch.object(live.subprocess, "check_output") as subprocess, patch.object(live, "request") as request:
+            with self.assertRaises(SystemExit):
+                live.main()
+        subprocess.assert_not_called()
+        request.assert_not_called()
+
+    def test_image_cli_checks_repository_permissions_before_reporting_ready(self):
+        args = ["deployment_permissions.py", "--target", "artifact-registry-images"]
+        with patch("sys.argv", args), patch.object(live.subprocess, "check_output", return_value="token"), patch.object(live, "request", return_value=[]) as request, patch("builtins.print") as output:
+            live.main()
+        request.assert_called_once_with(*live.checks("artifact-registry-images")[0], "token")
+        output.assert_called_once_with("artifact-registry-images: deployment permission prerequisites verified.")

@@ -29,6 +29,10 @@ PLAN_PROBE_WORKFLOWS = (
     "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
+IMAGE_PROBE_WORKFLOWS = (
+    "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml",
+)
 
 
 def workflow(root, name):
@@ -77,6 +81,32 @@ def saved_plan_permission_contract(root):
                             errors.append(f"{filename}/{step.get('name')}: saved-plan permission probe must precede each apply of its exact JSON")
         if not applies:
             errors.append(f"{filename}: saved-plan apply boundary is missing or unrecognized")
+    return errors
+
+
+def image_permission_contract(root):
+    """Operational repository authority must be proven before image mutation."""
+    errors = []
+    probe = re.compile(r"^\s*(?:uv\s+run(?:\s+--no-sync)?\s+)?python(?:3)?\s+scripts/deployment_permissions\.py\s+--target\s+artifact-registry-images\s*$")
+    for filename in IMAGE_PROBE_WORKFLOWS:
+        pushes = 0
+        for job in workflow(root, filename)["jobs"].values():
+            checked = False
+            for step in job.get("steps", []):
+                enabled = str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}
+                for line in step.get("run", "").replace("\\\n", " ").splitlines():
+                    if enabled and probe.fullmatch(line):
+                        checked = True
+                    if re.search(r"\bdocker\s+push\s", line) and not line.lstrip().startswith("#"):
+                        pushes += 1
+                        if not checked:
+                            errors.append(f"{filename}/{step.get('name')}: operational image permission probe must precede every Docker push")
+                    # Pulling the accepted producer image is also a repository
+                    # operation; project-policy hints cannot establish access.
+                    if re.search(r"\bdocker\s+pull\s", line) and not line.lstrip().startswith("#") and not checked:
+                        errors.append(f"{filename}/{step.get('name')}: operational image permission probe must precede the retained image pull")
+        if not pushes:
+            errors.append(f"{filename}: Docker push boundary is missing or unrecognized")
     return errors
 
 
@@ -193,7 +223,7 @@ def retained_evidence(root):
 
 
 def check(root, targets):
-    errors = iam_contract(root) + saved_plan_permission_contract(root)
+    errors = iam_contract(root) + saved_plan_permission_contract(root) + image_permission_contract(root)
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:

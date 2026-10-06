@@ -103,6 +103,37 @@ class ReleaseContractTests(unittest.TestCase):
         path.write_text(original.replace("--target pmtiles-cdn --plan-json", "--target iam-bootstrap --plan-json"))
         self.assertTrue(any("saved-plan permission probe" in error for error in contracts.saved_plan_permission_contract(self.root)))
 
+    def test_every_image_push_requires_live_repository_operation_permissions(self):
+        self.assertEqual(contracts.image_permission_contract(self.root), [])
+        for filename in contracts.IMAGE_PROBE_WORKFLOWS:
+            path = self.root / ".github/workflows" / filename
+            original = path.read_text()
+            for replacement in ("artifact-registry", "iam-bootstrap", "artifact-registry-images || true", "artifact-registry-images --plan-json other.tfplan.json"):
+                with self.subTest(filename=filename, replacement=replacement):
+                    path.write_text(original.replace("--target artifact-registry-images", "--target " + replacement))
+                    self.assertTrue(any("operational image permission probe" in error for error in contracts.image_permission_contract(self.root)))
+            path.write_text(original)
+
+    def test_removed_disabled_and_late_image_probe_fail_before_publication(self):
+        for filename in contracts.IMAGE_PROBE_WORKFLOWS:
+            path = self.root / ".github/workflows" / filename
+            original = path.read_text()
+            for mutation in ("removed", "disabled", "late"):
+                with self.subTest(filename=filename, mutation=mutation):
+                    value = yaml.safe_load(original)
+                    for job in value["jobs"].values():
+                        steps = job.get("steps", [])
+                        selected = next(step for step in steps if "--target artifact-registry-images" in step.get("run", ""))
+                        if mutation == "disabled":
+                            selected["if"] = False
+                        else:
+                            steps.remove(selected)
+                            if mutation == "late":
+                                steps.append(selected)
+                    path.write_text(yaml.safe_dump(value))
+                    self.assertTrue(any("operational image permission probe" in error for error in contracts.check(self.root, {"iam"})))
+            path.write_text(original)
+
     def test_shallow_mutable_checkout_rejected(self):
         path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"
         path.write_text(path.read_text().replace("fetch-depth: 0", "fetch-depth: 1").replace("ref: ${{ inputs.executor_sha }}", "ref: main"))
