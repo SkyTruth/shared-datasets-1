@@ -649,6 +649,20 @@ gcloud config set project shared-datasets-1
 
 For CI, use Workload Identity Federation or a CI-provided service account. Do not commit service account JSON keys.
 
+### Branch cleanup
+
+Preview completed-branch cleanup, then explicitly apply the freshly verified plan:
+
+```bash
+bash scripts/tidy_branches.sh
+bash scripts/tidy_branches.sh --apply
+```
+
+The script requires Git, authenticated `gh`, and `jq`. It preserves unmerged work,
+open PRs, protected branches, the current branch, and dirty or locked worktrees.
+See [branch cleanup options and recovery](scripts/README.md#branch-cleanup) for
+HTTPS authentication, explicit keeps, reports, and recovery bundles.
+
 ### Local tests
 
 Before pushing, run the complete [isolated preflight](docs/ci-preflight.md) from a

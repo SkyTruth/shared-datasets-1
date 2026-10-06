@@ -2,6 +2,71 @@
 
 This directory contains small operational scripts for maintainers and AI agents.
 
+## Branch cleanup
+
+`tidy_branches.sh` is a standalone Bash command for local and GitHub branch
+cleanup. Requires Bash 3.2+, Git 2.31+, authenticated GitHub CLI (`gh`), and `jq`.
+Run it inside the checkout, without concurrent local Git writers:
+
+```bash
+bash scripts/tidy_branches.sh                       # preview
+bash scripts/tidy_branches.sh --apply               # delete verified branches
+bash scripts/tidy_branches.sh --apply --https       # use gh HTTPS credentials
+bash scripts/tidy_branches.sh --keep release/stable # repeat --keep as needed
+```
+
+`--remote NAME` selects a remote other than `origin`. The selected remote must
+have one identical fetch/push URL and resolve to a github.com repository.
+`GIT_BIN` selects an alternative Git executable if the default Git is unavailable.
+`--https` changes only this invocation's transport, leaving saved Git configuration
+unchanged. Authentication and server failures stop the run; rerun after resolving
+them. There are no automatic credential fallbacks or retries.
+
+Even preview mode fetches and prunes remote-tracking refs and writes a report.
+It never deletes branches or detaches worktrees. Apply mode creates a new plan,
+rechecks GitHub protection/open PR state and branch tips, and verifies a recovery
+bundle before deleting anything. It uses one atomic remote push with an exact
+commit lease for every deletion. Local deletion compares the expected commit
+atomically. A failure can leave remote cleanup completed before local cleanup;
+the recorded plan, logs, and bundle identify what happened. Rerunning builds a
+fresh plan rather than replaying stale authority.
+
+A candidate needs a merged PR from this repository, with its merge commit in the
+current default branch. Its PR head must be an ancestor of that branch or have
+exactly the same tree as its merge commit (a verified squash merge). A remote tip
+must match the merged PR head; a local tip may match or be an ancestor of it.
+This intentionally keeps new branches at `main`, unpublished extra commits, and
+ambiguous rebased/cherry-picked work. Open PR heads and bases, protected branches,
+`main`, the default branch, the caller's current branch, and explicit `--keep`
+names are retained. Dirty, locked, missing, or multiply attached worktrees and
+worktrees with an in-progress Git operation also retain their branch.
+
+Clean worktrees attached to deleted branches are detached at the same commit.
+Files, the main checkout, the index, per-branch Git configuration, and worktree
+directories are preserved. Stale worktree registrations are left for separate
+review; this command does not remove them or existing temporary directories.
+Do not use this command concurrently with local commits, checkouts, or worktree
+creation. Remote races are rejected by the commit leases; local Git operations
+across worktrees cannot be made transactional with remote deletion.
+
+Each run prints its retained directory under
+`${SHARED_DATASETS_WORKDIR:-${TMPDIR:-/tmp}/shared-datasets-1}/_scratch/`.
+`plan.tsv` records branch names, local/remote commits and PR evidence; `keep.tsv`
+records why other branches were kept. Apply also saves a verified
+`deleted-branches.bundle`, action logs and final ref/worktree lists. Recover a
+deleted local branch using its recorded commit, or from the full bundle:
+
+```bash
+git fetch /path/to/deleted-branches.bundle refs/heads/example:refs/heads/example
+```
+
+For a remote-only branch, the bundle ref is `refs/remotes/origin/example` (or
+the selected remote name). Review recovered work before republishing it. This
+cleanup sends only ref deletions, so the code-push CI preflight is not applicable;
+normal preflight requirements still apply when publishing code changes.
+
+## Dataset operations
+
 WDPA processing validation uses `local_ingestion_smoke.py` for the small sea-ice
 fixture, then `local_wdpa_sample.py --asset wdpa-marine` for a complete marine
 build with measured disk spill. `cloud_wdpa_validation.py` runs the complete
