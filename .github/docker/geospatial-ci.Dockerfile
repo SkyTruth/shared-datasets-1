@@ -6,7 +6,8 @@ ARG TARGETARCH
 
 RUN set -eux; \
     GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" CGO_ENABLED=0 \
-        go install github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
+        go install -ldflags "-X main.version=${PMTILES_VERSION#v}" \
+            github.com/protomaps/go-pmtiles@${PMTILES_VERSION}; \
     for candidate in \
         "/go/bin/${TARGETOS}_${TARGETARCH}/go-pmtiles" \
         "/go/bin/${TARGETOS}_${TARGETARCH}/pmtiles" \
