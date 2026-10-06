@@ -35,6 +35,7 @@ from ingestion.common.runtime import (
     sha256_file,
 )
 from scripts import catalog_csv, feature_metadata_localization as localization
+from scripts import feature_metadata_translation_reuse as translation_reuse
 
 
 LOGGER = logging.getLogger("eamlis_monthly")
@@ -681,6 +682,12 @@ def publish_changed_asset(
         blob.download_to_filename(str(translation_source), if_generation_match=generation)
         source_inputs.append({"uri": f"gs://{publisher.bucket.name}/{blob.name}", "generation": generation,
                               "sha256": sha256_file(translation_source)})
+    reconciliation = translation_reuse.reconcile_translation_source(
+        canonical_sidecar=output.metadata, translation_source=translation_source,
+        fields=TRANSLATION_FIELDS, locales=TRANSLATION_LOCALES,
+        asset_slug=ASSET.slug, release=run_date.isoformat(),
+    )
+    LOGGER.info("translation reconciliation: %s", reconciliation)
     reports = localization.materialize_locale_sidecars(
         canonical_sidecar=output.metadata, translation_source=translation_source,
         output_dir=output.metadata.parent, locales=TRANSLATION_LOCALES,

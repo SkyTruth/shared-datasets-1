@@ -143,7 +143,7 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         if path == "catalog/shared-datasets-catalog.csv":
             selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn"})
         if path == "scripts/feature_metadata_translation_reuse.py":
-            selected.add("wdpa")
+            selected.update({"eamlis", "wdpa"})
         if path.startswith("catalog/feature-identity-resolutions/"):
             selected.update({"sea_ice", "wdpa"})
         if path == "docs/assets/ims-sea-ice-extent.md":

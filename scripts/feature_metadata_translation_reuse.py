@@ -33,6 +33,90 @@ class TranslationReuseError(ValueError):
     pass
 
 
+def reconcile_translation_source(
+    *, canonical_sidecar: Path, translation_source: Path,
+    fields: Sequence[str], locales: Sequence[str], asset_slug: str, release: str,
+) -> dict[str, int]:
+    """Append exact-text reuse rows while preserving the complete CSV history.
+
+    Existing keys, including failed current tasks, remain unchanged. Only a
+    missing key with one distinct successful translated value can be filled;
+    neither feature IDs nor provider identities establish a reuse match here.
+    Locale sidecars must be materialized after this CSV has been committed.
+    """
+    fields = tuple(fields)
+    locales = tuple(localization.parse_locale_arguments(locales))
+    require(bool(fields) and len(set(fields)) == len(fields) and bool(locales),
+            "explicit unique fields and locales are required")
+    snapshots = local_io.snapshots([canonical_sidecar, translation_source])
+    validate_sidecar(canonical_sidecar, asset_slug, release)
+    counts = Counter()
+    with localization.translation_index(translation_source) as db:
+        db.execute("CREATE UNIQUE INDEX reuse_row_numbers ON rows(row_number)")
+        db.execute("""CREATE TABLE reuse_candidates (
+            field TEXT, locale TEXT, hash TEXT, row_number INTEGER,
+            PRIMARY KEY(field,locale,hash)
+        ) WITHOUT ROWID""")
+        for values in db.execute("SELECT * FROM rows ORDER BY row_number"):
+            row = localization.TranslationRow(*values)
+            counts["preserved_rows"] += 1
+            if row.field not in fields or row.locale not in locales:
+                continue
+            # The CSV hash also proves an untouched legacy source-text failure
+            # without requiring the old feature/source association to survive.
+            if localization.translation_failed(row, row.value):
+                continue
+            db.execute("""INSERT INTO reuse_candidates VALUES (?,?,?,?)
+                ON CONFLICT(field,locale,hash) DO UPDATE SET row_number=
+                CASE WHEN (SELECT value FROM rows WHERE row_number=reuse_candidates.row_number) =
+                          (SELECT value FROM rows WHERE row_number=excluded.row_number)
+                     THEN reuse_candidates.row_number ELSE NULL END""",
+                (row.field, row.locale, row.source_value_hash, row.row_number))
+
+        @lru_cache(maxsize=65536)
+        def shared(field, locale, digest):
+            match = db.execute("SELECT row_number FROM reuse_candidates WHERE field=? AND locale=? AND hash=?",
+                               (field, locale, digest)).fetchone()
+            if match is None:
+                return None, "unavailable_rows"
+            if match[0] is None:
+                return None, "conflicting_rows"
+            return localization.TranslationRow(*db.execute("SELECT * FROM rows WHERE row_number=?", match).fetchone()), "reused_rows"
+
+        with local_io.candidate_output(translation_source, protected=[canonical_sidecar], expected=snapshots) as candidate:
+            with translation_source.open(encoding="utf-8", newline="") as source, candidate.open("w", encoding="utf-8", newline="") as target:
+                reader = csv.DictReader(source)
+                writer = csv.DictWriter(target, fieldnames=reader.fieldnames, lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(reader)
+                for record in model.read_metadata_sidecar(canonical_sidecar):
+                    for field in fields:
+                        original = record["properties"].get(field)
+                        if not isinstance(original, str) or not original.strip():
+                            continue
+                        digest = localization.source_value_hash(original)
+                        for locale in locales:
+                            current = db.execute("SELECT * FROM rows WHERE locale=? AND feature_id=? AND field=? AND source_value_hash=?",
+                                                 (locale, record["feature_id"], field, digest)).fetchone()
+                            if current is not None:
+                                failed = localization.translation_failed(localization.TranslationRow(*current), original)
+                                counts["failed_current_rows" if failed else "current_rows"] += 1
+                                continue
+                            match, reason = shared(field, locale, digest)
+                            counts[reason] += 1
+                            if match is None:
+                                continue
+                            row = dict(zip(COLUMNS, (record["feature_id"], field, locale, digest,
+                                                   match.value, match.review_state, match.notes)))
+                            if "notes" in reader.fieldnames:
+                                row["notes"] = (match.notes + "; " if match.notes else "") + f"exact field/locale/source-hash reuse from feature {match.feature_id}"
+                            writer.writerow({column: row[column] for column in reader.fieldnames})
+            # Validate the final CSV, including uniqueness, before replacement.
+            with localization.translation_index(candidate):
+                pass
+    return dict(counts)
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise TranslationReuseError(message)

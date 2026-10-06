@@ -202,6 +202,16 @@ workflow directly. WDPA uses its existing publication owner for current-release
 translation edits, preserving base artifact snapshots and the feature-ID counter.
 The committed manifest supplies the next scheduled build's translation inputs.
 
+Before materializing a changed e-AMLIS release, the job reconciles its current
+CSV against the new source metadata using
+`scripts/feature_metadata_translation_reuse.py`. It preserves existing current
+and historical rows, and appends missing keys only from an unambiguous exact
+field/locale/source-value-hash match among successful historical translations.
+Conflicts and unavailable matches retain source text; existing failed current
+tasks stay unresolved. No provider calls are made. CSV reconciliation finishes
+before each maintained locale sidecar is generated once. Feature IDs and
+canonical metadata, geometry and tiles are unchanged by this step.
+
 Asset documents can declare maintained `translation_locales` and
 `translation_fields` together. The generated catalog exposes both lists; CSV
 columns use semicolon-separated values. Explicitly requesting those locales in

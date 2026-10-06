@@ -40,7 +40,7 @@ def test_shared_runtime_and_terraform_modules_select_cross_component_dependents(
     ("scripts/pmtiles_zoom.py", {"eamlis", "wdpa", "sea_ice"}),
     ("scripts/slack_notify.py", {"eamlis", "wdpa", "sea_ice"}),
     ("scripts/catalog_csv.py", {"eamlis", "wdpa"}),
-    ("scripts/feature_metadata_translation_reuse.py", {"wdpa"}),
+    ("scripts/feature_metadata_translation_reuse.py", {"eamlis", "wdpa"}),
     ("catalog/feature-identity-resolutions/wdpa.json", {"wdpa", "sea_ice"}),
     ("docs/assets/ims-sea-ice-extent.md", {"sea_ice"}),
 ])
