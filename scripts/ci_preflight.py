@@ -266,7 +266,10 @@ def preflight(args: argparse.Namespace) -> int:
         report = output / "result.json"
         if not report.exists():
             raise ValueError(f"{suite} did not produce evidence (container exit {completed.returncode})")
-        results.append(json.loads(report.read_text()))
+        result = json.loads(report.read_text())
+        results.append(result)
+        if result.get("status") != "success":
+            raise ValueError(f"{suite} failed; retained evidence: {report}")
     verify_results(plan, results)
     # Recheck the source identities after potentially lengthy validation.
     if git(source, "rev-parse", f"{args.base}^{{commit}}") != base or git(source, "rev-parse", f"{args.head}^{{commit}}") != original_head:
