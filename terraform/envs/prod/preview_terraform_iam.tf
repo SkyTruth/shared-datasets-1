@@ -16,6 +16,7 @@ resource "google_project_iam_custom_role" "preview_terraform" {
     "iam.serviceAccounts.list",
     "iam.serviceAccounts.setIamPolicy",
     "iam.serviceAccounts.update",
+    "iam.workloadIdentityPools.get",
     "iap.web.getIamPolicy",
     "iap.web.setIamPolicy",
     "iap.webServiceVersions.getIamPolicy",

@@ -307,66 +307,31 @@ def test_browser_releases_only_its_download_cache_before_installing_chromium(tmp
     assert commands[-1] == ['npm', 'test']
 
 
-def test_local_runtime_uses_native_amd64_without_installing_a_handler(tmp_path):
+@pytest.mark.parametrize('architecture', ['amd64', 'arm64'])
+def test_local_runtime_uses_the_actual_linux_server_architecture(architecture):
     from scripts import ci_runtime
-    server = {'Os': 'linux', 'Arch': 'amd64', 'Version': '20.10.22'}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)), mock.patch.object(ci_runtime.urllib.request, 'urlopen') as download:
-        arguments, record = ci_runtime.local_runtime(tmp_path)
-    assert arguments == []
-    assert record['platform'] == 'linux/amd64'
-    download.assert_not_called()
-    assert not (tmp_path / 'runtime').exists()
+    server = {'Os': 'linux', 'Arch': architecture, 'Version': '29.8.2'}
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)) as execute:
+        record = ci_runtime.local_runtime()
+    assert record == {'platform': f'linux/{architecture}', 'server_architecture': architecture, 'docker_version': '29.8.2'}
+    execute.assert_called_once_with(['docker', 'version', '--format', '{{json .Server}}'], text=True)
 
 
-def test_local_emulator_rejects_unapproved_bytes_and_wrong_architecture(tmp_path):
-    import hashlib
-    import io
-    import tarfile
+@pytest.mark.parametrize('operating_system,architecture', [('darwin', 'arm64'), ('windows', 'amd64'), ('linux', 'riscv64'), ('linux', 'ppc64le')])
+def test_unsupported_docker_runtime_fails_before_validation(operating_system, architecture):
     from scripts import ci_runtime
-
-    def archive_for(payload):
-        archive = tmp_path / 'emulator.tar.gz'
-        with tarfile.open(archive, 'w:gz') as bundle:
-            member = tarfile.TarInfo('bin/buildkit-qemu-x86_64')
-            member.size = len(payload)
-            bundle.addfile(member, io.BytesIO(payload))
-        return archive
-
-    elf = bytearray(64)
-    elf[:6] = b'\x7fELF\x02\x01'
-    elf[18:20] = b'\xb7\x00'
-    archive = archive_for(elf)
-    destination = tmp_path / 'emulator'
-    with pytest.raises(ValueError, match='checksum'):
-        ci_runtime.extract_emulator(archive, destination)
-    assert not destination.exists()
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    with mock.patch.object(ci_runtime, 'EMULATOR_ARCHIVE_SHA256', digest):
-        assert ci_runtime.extract_emulator(archive, destination) == hashlib.sha256(elf).hexdigest()
-    assert destination.read_bytes() == elf
-    destination.unlink()
-    elf[18:20] = b'\x3e\x00'
-    archive = archive_for(elf)
-    with mock.patch.object(ci_runtime, 'EMULATOR_ARCHIVE_SHA256', hashlib.sha256(archive.read_bytes()).hexdigest()), pytest.raises(ValueError, match='ARM64 ELF'):
-        ci_runtime.extract_emulator(archive, destination)
-    assert not destination.exists()
+    server = {'Os': operating_system, 'Arch': architecture, 'Version': '29.8.2'}
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=json.dumps(server)), pytest.raises(ValueError, match='Linux Docker server'):
+        ci_runtime.local_runtime()
 
 
-def test_local_emulator_version_must_match_its_pin():
+@pytest.mark.parametrize('image_platform', ['linux/amd64', 'windows/arm64'])
+def test_mismatched_image_platform_cannot_silently_enable_emulation(tmp_path, image_platform):
     from scripts import ci_runtime
-    arguments = ['-v', '/owned/runtime:/ci-runtime:ro', '--entrypoint', '/ci-runtime/buildkit-qemu-x86_64']
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', 'qemu-x86_64 version 8.0.0']), mock.patch.object(ci_runtime.subprocess, 'run'), pytest.raises(ValueError, match='unexpected version'):
-        ci_runtime.prove_runtime(arguments, {'emulator': {}}, 'pinned-image')
-
-
-def test_local_browser_and_python_use_native_linux_but_release_clis_require_amd64():
-    from scripts.ci_runtime import suite_platform
-    arm = {'server_architecture': 'arm64'}
-    assert suite_platform('browser', arm) == suite_platform('tests', arm) == 'linux/arm64'
-    assert suite_platform('geospatial-integration', arm) == 'linux/amd64'
-    assert suite_platform('sdk-node22', arm) == suite_platform('sdk-node24', arm) == 'linux/arm64'
-    assert suite_platform('lint', arm) == 'linux/arm64'
-    assert all(suite_platform(suite, {'server_architecture': 'amd64'}) == 'linux/amd64' for suite in SUITES)
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', return_value=image_platform) as execute, mock.patch.object(ci_runtime.subprocess, 'run') as run, pytest.raises(ValueError, match='differs from native runtime'):
+        ci_runtime.run_container(ROOT, tmp_path, 'geospatial-integration', 'pinned-image', 'linux/arm64')
+    execute.assert_called_once_with(['docker', 'image', 'inspect', '--format', '{{.Os}}/{{.Architecture}}', 'pinned-image'], text=True)
+    run.assert_not_called()
 
 
 @pytest.mark.parametrize('exit_code', [0, 7])
@@ -374,12 +339,12 @@ def test_copied_runtime_retains_evidence_and_obeys_actual_container_exit(tmp_pat
     from scripts import ci_runtime
     (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': exit_code}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(ci_runtime.subprocess, 'run') as run:
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']), mock.patch.object(ci_runtime.subprocess, 'run') as run:
         if exit_code:
             with pytest.raises(ValueError, match='container failed'):
-                ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64', [])
+                ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
         else:
-            record = ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64', [])
+            record = ci_runtime.run_container(ROOT, tmp_path, 'browser', 'pinned-image', 'linux/arm64')
             assert record['image_id'] == 'sha256:test-image'
             assert record['environment']['CI'] == 'true'
             assert record['environment']['OPENSSL_armcap'] == '0'
@@ -402,9 +367,11 @@ def test_every_local_suite_runs_in_ci_mode_without_forwarded_credentials(tmp_pat
     from scripts import ci_runtime
     (tmp_path / 'plan.json').write_text(json.dumps(plan()))
     state = {'Running': False, 'Status': 'exited', 'ExitCode': 0}
-    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['owned-container', json.dumps(state), 'sha256:test-image']) as execute, mock.patch.object(ci_runtime.subprocess, 'run'):
-        record = ci_runtime.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64', [])
-    create = execute.call_args_list[0].args[0]
+    with mock.patch.object(ci_runtime.subprocess, 'check_output', side_effect=['linux/arm64', 'owned-container', json.dumps(state), 'sha256:test-image']) as execute, mock.patch.object(ci_runtime.subprocess, 'run'):
+        record = ci_runtime.run_container(ROOT, tmp_path, suite, 'pinned-image', 'linux/arm64')
+    create = execute.call_args_list[1].args[0]
     assert 'CI=true' in create
+    assert create[create.index('--platform') + 1] == 'linux/arm64'
+    assert '--entrypoint' not in create
     assert record['environment']['CI'] == 'true'
     assert not any('TOKEN' in value or 'GITHUB_RUN_ID' in value for value in create)

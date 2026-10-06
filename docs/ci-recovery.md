@@ -33,8 +33,11 @@ reports success, failure or cancellation; unknown status requires investigation.
 If no mutation began, repeat the relevant protected prerequisite checks before
 selective recovery. If a mutation began, reconcile the recorded attempt with live
 state. Preserve the production-state lock and the saved-plan/allowlist sequence.
-Never reuse a stale Terraform plan, retry a non-lock apply error blindly, weaken
-permissions or regenerate an unchecked plan during recovery.
+Never reuse a stale Terraform plan, retry an apply error blindly, weaken
+permissions or regenerate an unchecked plan during recovery. The bounded wrapper
+retries only lock-acquisition failures, before any mutation could begin. A
+lock-release failure can follow partial or completed writes; it retains the
+original failure and requires reconciliation before another apply.
 
 Dataset publication recovery must preserve the original reviewed plan, captured
 inputs, exact executor contract, generations, ownership and checkpoints. A newer

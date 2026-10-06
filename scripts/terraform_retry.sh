@@ -22,8 +22,11 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
-lock_failure() {
-  grep -qiE "Error acquiring the state lock|Error releasing the state lock" "$1"
+lock_acquisition_failure() {
+  # A release failure can follow completed or partial writes. Its state must
+  # be reconciled explicitly; never run the saved apply again automatically.
+  ! grep -qi "Error releasing the state lock" "$1" &&
+    grep -qi "Error acquiring the state lock" "$1"
 }
 
 attempt=1
@@ -39,7 +42,7 @@ while true; do
     exit 0
   fi
 
-  if ! lock_failure "${output_file}"; then
+  if ! lock_acquisition_failure "${output_file}"; then
     rm -f "${output_file}"
     exit "${status}"
   fi

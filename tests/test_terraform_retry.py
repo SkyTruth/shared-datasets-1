@@ -124,6 +124,30 @@ class TerraformRetryTests(unittest.TestCase):
         self.assertEqual(counter.read_text().strip(), "1")
         self.assertIn("Saved plan is stale", result.stdout)
 
+    def test_apply_lock_acquisition_can_retry_before_any_mutation(self):
+        binary, counter = fake_terraform(
+            f'if [[ "$count" -lt 2 ]]; then cat <<\'EOF\'\n{LOCK_ERROR}EOF\n  exit 1; fi; echo "Apply complete"; exit 0'
+        )
+
+        result = run_wrapper(binary, operation="apply")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(counter.read_text().strip(), "2")
+
+    def test_lock_release_failure_after_writes_cannot_replay_an_apply(self):
+        for output in (
+            "resource: Modifications complete\nError: Error releasing the state lock",
+            LOCK_ERROR + "\nError: Error releasing the state lock",
+        ):
+            with self.subTest(output=output):
+                binary, counter = fake_terraform(f"cat <<'EOF'\n{output}\nEOF\nexit 5")
+
+                result = run_wrapper(binary, operation="apply")
+
+                self.assertEqual(result.returncode, 5)
+                self.assertEqual(counter.read_text().strip(), "1")
+                self.assertNotIn("retrying", result.stderr)
+
     def test_persistent_contention_eventually_gives_up_with_the_original_status(self):
         binary, counter = fake_terraform(f"cat <<'EOF'\n{LOCK_ERROR}EOF\nexit 2")
 
