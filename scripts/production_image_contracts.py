@@ -51,8 +51,8 @@ def verify_viewer_image(image):
     """Start the actual default CMD with no network or credentials, then check health."""
     image = resolve_image(image)
     name = "catalog-viewer-preflight-" + uuid.uuid4().hex
-    subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
     try:
+        subprocess.run(["docker", "run", "--platform", "linux/amd64", "--detach", "--network", "none", "--cpus", "4", "--memory", "512m", "--name", name, image], check=True)
         subprocess.run(["docker", "exec", name, "python", "-c", VIEWER_HEALTH_PROBE], check=True)
     except subprocess.CalledProcessError:
         subprocess.run(["docker", "logs", name], check=False)

@@ -16,11 +16,12 @@ def test_viewer_recipe_and_default_entrypoint_health_are_selected():
     assert '--network' in selected[1] and 'none' in selected[1]
 
 
-def test_missing_default_entrypoint_fails_and_cleans_up_only_created_container(monkeypatch):
+@pytest.mark.parametrize('failed_command', ['run', 'exec'])
+def test_missing_default_entrypoint_fails_and_cleans_up_only_created_container(monkeypatch, failed_command):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-        if args[:2] == ['docker', 'exec']:
+        if args[:2] == ['docker', failed_command]:
             raise subprocess.CalledProcessError(1, args)
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.run', run)
     monkeypatch.setattr('scripts.production_image_contracts.subprocess.check_output', lambda *args, **kwargs: IMAGE_ID + '\n')
@@ -33,6 +34,8 @@ def test_missing_default_entrypoint_fails_and_cleans_up_only_created_container(m
     name = calls[0][calls[0].index('--name') + 1]
     assert calls[-1] == ['docker', 'rm', '--force', name]
     assert ['docker', 'logs', name] in calls
+    if failed_command == 'run':
+        assert not any(command[:2] == ['docker', 'exec'] for command in calls)
 
 
 @pytest.mark.parametrize('target', ['sea-ice-daily', 'eamlis-monthly', 'wdpa-monthly', 'catalog-viewer'])
