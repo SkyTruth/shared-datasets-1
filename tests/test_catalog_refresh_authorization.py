@@ -16,7 +16,9 @@ def envelope():
 
 def job(**changes):
     return {"name": "publish / Apply approved PR mutation plans (PR #208)",
-            "status": "completed", "conclusion": "success", **changes}
+            "status": "completed", "conclusion": "success",
+            "steps": [{"name": "Record completed publication", "status": "completed", "conclusion": "success"}],
+            **changes}
 
 
 def verify(jobs, **changes):
@@ -31,13 +33,22 @@ def test_exact_successful_publication_can_refresh_catalog():
     verify([job(), job(name="publish / Apply approved PR mutation plans (PR #209)", conclusion="failure")])
 
 
-@pytest.mark.parametrize("jobs", [[], [job(), job()], [job(conclusion="failure")],
-    [job(conclusion="cancelled")], [job(conclusion="skipped")],
+@pytest.mark.parametrize("jobs", [[], [job(), job()], [job(conclusion="failure", steps=[])],
+    [job(conclusion="cancelled", steps=[])], [job(conclusion="skipped", steps=[])],
     [job(status="in_progress", conclusion=None)],
     [job(name="publish / Apply approved PR mutation plans (PR #209)")]])
 def test_incomplete_or_another_publication_cannot_refresh_catalog(jobs):
     with pytest.raises(Error):
         verify(jobs)
+
+
+def test_completed_mutation_refreshes_even_if_later_notification_failed():
+    verify([job(conclusion="failure")])
+
+
+def test_failed_completion_record_does_not_authorize_refresh():
+    with pytest.raises(Error):
+        verify([job(steps=[{"name": "Record completed publication", "status": "completed", "conclusion": "failure"}])])
 
 
 @pytest.mark.parametrize("changes", [{"outcome": "noop"}, {"pr_number": 209},

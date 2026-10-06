@@ -27,8 +27,11 @@ def verify_completed_mutation(api: GitHub, envelope: dict, executor_sha: str, pr
     leaf = f"Apply approved PR mutation plans (PR #{pr_number})"
     matches = [job for job in jobs if job["name"] == leaf or job["name"].endswith(" / " + leaf)]
     require(len(matches) == 1, "missing or ambiguous authorized mutation job")
-    require(matches[0]["status"] == "completed" and matches[0]["conclusion"] == "success",
-            "authorized mutation job has not completed successfully")
+    require(matches[0]["status"] == "completed", "authorized mutation job has not completed")
+    recorded = [step for step in matches[0]["steps"]
+        if step["name"] in {"Record completed publication", "Record completed canonical deletion"}
+        and step["status"] == "completed" and step["conclusion"] == "success"]
+    require(bool(recorded), "authorized mutation has no successful completion record")
 
 
 def main() -> None:
