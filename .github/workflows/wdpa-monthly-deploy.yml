@@ -199,6 +199,10 @@ jobs:
           python scripts/deployment_revision.py window --target wdpa-monthly \
             --allow-cancel "$CANCEL_RUNNING_CANARY" --canary-run-date "$CANARY_RUN_DATE"
 
+      - name: Verify Artifact Registry image permissions
+        if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
+        run: python scripts/deployment_permissions.py --target artifact-registry-images
+
       - name: Configure Docker for Artifact Registry
         if: ${{ steps.replay.outputs.proceed == 'true' && steps.window.outputs.ready == 'true' }}
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
@@ -506,24 +510,25 @@ jobs:
           set -euo pipefail
 
           # A full WDPA publish is a known multi-hour batch run, so this step
-          # only rejects fast failures. A canary still running after the watch
-          # window is reported and left to Cloud Run job failure alerting.
+          # reports exact-image terminal outcomes and leaves running executions
+          # to the protected terminal observer after the bounded watch window.
           for _ in $(seq 1 20); do
-            state="$(gcloud run jobs executions describe "${WDPA_CANARY_EXECUTION}" \
+            phase="$(gcloud run jobs executions describe "${WDPA_CANARY_EXECUTION}" \
               --region="${REGION}" \
               --project="${GOOGLE_CLOUD_PROJECT}" \
-              --format='value(status.succeededCount,status.failedCount)')"
-            succeeded="$(cut -f1 <<<"${state}")"
-            failed="$(cut -f2 <<<"${state}")"
-            if [[ -n "${failed}" && "${failed}" != "0" ]]; then
-              echo "Canary execution ${WDPA_CANARY_EXECUTION} failed." >&2
-              exit 1
-            fi
-            if [[ -n "${succeeded}" && "${succeeded}" != "0" ]]; then
-              echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
-              echo "Canary execution ${WDPA_CANARY_EXECUTION} succeeded."
-              exit 0
-            fi
+              --format=json | python -c 'import json,os,sys; from scripts.deployment_revision import terminal_execution; print(terminal_execution(json.load(sys.stdin), os.environ["WDPA_MONTHLY_IMAGE"]))')"
+            case "$phase" in
+              verified)
+                echo "DEPLOYMENT_PHASE=verified" >> "$GITHUB_ENV"
+                echo "Canary execution ${WDPA_CANARY_EXECUTION} reached verified terminal success."
+                exit 0 ;;
+              failed|unknown)
+                echo "DEPLOYMENT_PHASE=$phase" >> "$GITHUB_ENV"
+                echo "Canary execution ${WDPA_CANARY_EXECUTION}: $phase." >&2
+                exit 1 ;;
+              verification_pending) ;;
+              *) echo "Invalid canary verification phase: $phase" >&2; exit 1 ;;
+            esac
             sleep 30
           done
           echo "DEPLOYMENT_PHASE=verification_pending" >> "$GITHUB_ENV"

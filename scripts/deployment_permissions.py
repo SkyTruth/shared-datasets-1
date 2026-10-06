@@ -8,14 +8,30 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import subprocess
+import sys
 import time
 import urllib.request
 from urllib.parse import urlencode
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.terraform_plan_permissions import plan_checks
+
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
 SECRET = "shared-datasets-slack-webhook-url"
+IMAGE_REPOSITORY = f"projects/{PROJECT}/locations/{REGION}/repositories/shared-datasets-jobs"
+# Docker pushes write image versions and SHA tags; retained-image promotion
+# and digest inspection also read images. All are scoped to the existing
+# repository, with no repository creation/deletion or IAM policy authority.
+# https://docs.cloud.google.com/artifact-registry/docs/docker/pushing-and-pulling
+# https://docs.cloud.google.com/iam/docs/roles-permissions/artifactregistry#artifactregistry.writer
+IMAGE_PERMISSIONS = (
+    "artifactregistry.repositories.get", "artifactregistry.repositories.downloadArtifacts",
+    "artifactregistry.repositories.uploadArtifacts", "artifactregistry.dockerimages.get",
+    "artifactregistry.tags.get", "artifactregistry.tags.create", "artifactregistry.tags.update",
+)
 PROJECT_PERMISSIONS = (
     "run.jobs.get", "run.jobs.update", "run.jobs.run", "run.jobs.runWithOverrides",
     "run.executions.get", "run.executions.list", "run.operations.get",
@@ -49,7 +65,9 @@ def checks(target):
     if target == "iam-bootstrap":
         return [(project_url, ("iam.roles.get", "iam.roles.create", "iam.roles.update", "resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))]
     if target == "artifact-registry":
-        return [(f"https://artifactregistry.googleapis.com/v1/projects/{PROJECT}/locations/{REGION}/repositories/shared-datasets-jobs:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
+        return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", ("artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"))]
+    if target == "artifact-registry-images":
+        return [(f"https://artifactregistry.googleapis.com/v1/{IMAGE_REPOSITORY}:testIamPermissions", IMAGE_PERMISSIONS)]
     if target == "monitoring-alerts":
         return [(project_url, MONITORING_PERMISSIONS)]
     if target == "preview-service-account-iam":
@@ -72,9 +90,9 @@ def checks(target):
     return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
 
 
-def verify(target, probe, *, attempts=7, pause=time.sleep):
+def verify_checks(required, probe, *, attempts=7, pause=time.sleep):
     for attempt in range(attempts):
-        missing = [(url, probe(url, permissions)) for url, permissions in checks(target)]
+        missing = [(url, probe(url, permissions)) for url, permissions in required]
         missing = [(url, permissions) for url, permissions in missing if permissions]
         if not missing:
             return
@@ -84,15 +102,33 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
     raise RuntimeError(f"deployment identity is not ready after bounded propagation checks: {detail}")
 
 
+def verify(target, probe, *, attempts=7, pause=time.sleep):
+    verify_checks(checks(target), probe, attempts=attempts, pause=pause)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", required=True, choices=["artifact-registry", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
+    parser.add_argument("--target", choices=["artifact-registry", "artifact-registry-images", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
+    parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
+    if not (args.target or args.plan_json):
+        parser.error("--target or --plan-json is required")
+    if args.target == "artifact-registry-images" and args.plan_json:
+        parser.error("image operations require the repository permission probe, not Terraform plan permissions")
+    if args.plan_json:
+        plan = json.loads(args.plan_json.read_text())
+        project_number = subprocess.check_output(["gcloud", "projects", "describe", PROJECT, "--format=value(projectNumber)"], text=True).strip()
+        required = plan_checks(plan, project_number=project_number, target=args.target)
+    else:
+        required = checks(args.target)
     token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
     if not token:
         parser.error("authenticated deployment identity has no access token")
-    verify(args.target, lambda url, permissions: request(url, permissions, token))
-    print(f"{args.target}: deployment permission prerequisites verified.")
+    verify_checks(required, lambda url, permissions: request(url, permissions, token))
+    if args.plan_json:
+        print("Saved-plan mutation permissions and declared post-apply operations verified.")
+    else:
+        print(f"{args.target}: deployment permission prerequisites verified.")
 
 
 if __name__ == "__main__":

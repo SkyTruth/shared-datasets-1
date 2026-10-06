@@ -6,6 +6,8 @@ import shutil
 import tempfile
 import unittest
 
+import yaml
+
 from scripts import release_contracts as contracts
 from scripts.production_image_contracts import commands, INTERPRETER_PROBE
 
@@ -62,6 +64,75 @@ class ReleaseContractTests(unittest.TestCase):
         errors = contracts.iam_contract(self.root)
         self.assertTrue(any("must require source_run_id" in item for item in errors))
         self.assertTrue(any("ci-ready" in item for item in errors))
+
+    def test_owned_dependent_roles_cannot_drift_from_permission_contracts(self):
+        for filename, permission in (("artifact_registry_iam.tf", "artifactregistry.repositories.setIamPolicy"), ("preview_terraform_iam.tf", "iam.serviceAccounts.actAs"), ("shared_bucket_public.tf", "storage.managedFolders.setIamPolicy")):
+            with self.subTest(filename=filename):
+                path = self.root / "terraform/envs/prod" / filename
+                original = path.read_text()
+                path.write_text(original.replace('"' + permission + '",', ""))
+                self.assertTrue(any(permission in error for error in contracts.iam_contract(self.root)))
+                path.write_text(original)
+
+    def test_every_automatic_saved_plan_apply_requires_its_exact_permission_probe(self):
+        self.assertEqual(contracts.saved_plan_permission_contract(self.root), [])
+        for filename in contracts.PLAN_PROBE_WORKFLOWS:
+            with self.subTest(filename=filename):
+                path = self.root / ".github/workflows" / filename
+                original = path.read_text()
+                path.write_text(original.replace("deployment_permissions.py", "other_check.py"))
+                self.assertTrue(any("saved-plan permission probe" in error for error in contracts.check(self.root, {"iam"})))
+                path.write_text(original)
+
+    def test_probe_of_another_plan_cannot_satisfy_restore_apply(self):
+        path = self.root / ".github/workflows/wdpa-processing-validation-deploy.yml"
+        original = path.read_text()
+        path.write_text(original.replace('--plan-json "$RUNNER_TEMP/restore-processing-plan.json"', '--plan-json "$RUNNER_TEMP/staging-probe-plan.json"'))
+        self.assertTrue(any("Restore the processing command" in error for error in contracts.saved_plan_permission_contract(self.root)))
+
+    def test_disabled_probe_and_removed_cdn_post_apply_authority_fail(self):
+        path = self.root / ".github/workflows/pmtiles-cdn-sync.yml"
+        original = path.read_text()
+        value = contracts.workflow(self.root, path.name)
+        for job in value["jobs"].values():
+            for step in job.get("steps", []):
+                if "deployment_permissions.py" in step.get("run", "") and "--plan-json" in step["run"]:
+                    step["if"] = False
+        path.write_text(yaml.safe_dump(value))
+        self.assertTrue(contracts.saved_plan_permission_contract(self.root))
+        path.write_text(original.replace("--target pmtiles-cdn --plan-json", "--target iam-bootstrap --plan-json"))
+        self.assertTrue(any("saved-plan permission probe" in error for error in contracts.saved_plan_permission_contract(self.root)))
+
+    def test_every_image_push_requires_live_repository_operation_permissions(self):
+        self.assertEqual(contracts.image_permission_contract(self.root), [])
+        for filename in contracts.IMAGE_PROBE_WORKFLOWS:
+            path = self.root / ".github/workflows" / filename
+            original = path.read_text()
+            for replacement in ("artifact-registry", "iam-bootstrap", "artifact-registry-images || true", "artifact-registry-images --plan-json other.tfplan.json"):
+                with self.subTest(filename=filename, replacement=replacement):
+                    path.write_text(original.replace("--target artifact-registry-images", "--target " + replacement))
+                    self.assertTrue(any("operational image permission probe" in error for error in contracts.image_permission_contract(self.root)))
+            path.write_text(original)
+
+    def test_removed_disabled_and_late_image_probe_fail_before_publication(self):
+        for filename in contracts.IMAGE_PROBE_WORKFLOWS:
+            path = self.root / ".github/workflows" / filename
+            original = path.read_text()
+            for mutation in ("removed", "disabled", "late"):
+                with self.subTest(filename=filename, mutation=mutation):
+                    value = yaml.safe_load(original)
+                    for job in value["jobs"].values():
+                        steps = job.get("steps", [])
+                        selected = next(step for step in steps if "--target artifact-registry-images" in step.get("run", ""))
+                        if mutation == "disabled":
+                            selected["if"] = False
+                        else:
+                            steps.remove(selected)
+                            if mutation == "late":
+                                steps.append(selected)
+                    path.write_text(yaml.safe_dump(value))
+                    self.assertTrue(any("operational image permission probe" in error for error in contracts.check(self.root, {"iam"})))
+            path.write_text(original)
 
     def test_shallow_mutable_checkout_rejected(self):
         path = self.root / ".github/workflows/wdpa-monthly-deploy.yml"

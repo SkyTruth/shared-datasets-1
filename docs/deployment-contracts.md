@@ -51,6 +51,22 @@ account creation and bindings. Read-only probes check the actual registry or
 bucket policy resource and the declared project permissions before planning.
 These checks grant no additional authority and retain the existing allowlists.
 
+Immediately before each saved-plan apply, trusted code runs
+`python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`
+after the resource allowlist. It derives permission probes from every changed
+resource's actual action and before/after identities. An update requires update
+authority; unchanged resources do not require creation or deletion authority.
+Bucket, secret, service account, Cloud Run, registry, URL map, backend and IAP
+policy probes use the affected resource so IAM conditions remain binding. A
+resource created in the same plan uses its known production parent, with an
+explicit creation dependency required when its identity is still unknown.
+Missing parent authority, unknown identities, deferred changes and unsupported
+mutation classes stop the apply. The checked-in roles are also validated against
+their owned dependency contracts, without adding grants. For CDN sync, cache
+invalidation authority is checked even when the URL map itself is unchanged.
+These checks prove mutation authority; runtime acceptance and installed state
+remain separate prerequisites.
+
 ## Deployment records and outcomes
 
 Each target records its exact tested revision, source CI attempt, execution run,
@@ -65,6 +81,15 @@ code require reconciliation, except catalog refreshes: an actual reviewed data
 mutation or index rebuild may produce a distinct current-state catalog bundle
 under the same executor. A failed or interrupted attempt cannot be blanket
 retried.
+
+A valid older revision that reaches the queue after a newer attempted deployment
+finishes as an explicit `superseded` no-op. The verifier proves its exact tested
+source and every blocking record's repository, workflow and source attempt first.
+It writes no claim, changes no deployment record and launches no mutation. A
+newer failed attempt still supersedes older code; it does not become successful.
+Divergent history and a failed or incomplete attempt of the same revision remain
+errors requiring reconciliation. A forged source or record cannot justify this
+no-op.
 
 Outcomes distinguish applied configuration, pending runtime verification,
 verified terminal success, failure and unknown state. Short canaries wait for

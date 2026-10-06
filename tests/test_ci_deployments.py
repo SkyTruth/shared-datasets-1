@@ -17,13 +17,13 @@ def test_broad_validation_never_authorizes_unrelated_deployments(paths):
 
 def test_producer_changes_require_staged_evidence_before_launching_production_validation():
     assert select_deployments(["ingestion/wdpa_monthly/Dockerfile", "scripts/wdpa_input_memory_probe.py"]) == []
-    assert select_deployments(["catalog/wdpa-staged-validation.json"]) == ["wdpa_processing"]
+    assert select_deployments(["catalog/wdpa-staged-validation.json"]) == ["wdpa_processing", "artifact_registry_iam"]
     assert "production-images" in select_suites(["ingestion/wdpa_monthly/Dockerfile"])[0]
 
 
 @pytest.mark.parametrize("path,target", [("ingestion/eamlis_monthly/run.py", "eamlis"), ("ingestion/sea_ice_daily/run.py", "sea_ice"), ("ingestion/wdpa_monthly/Dockerfile.promotion", "wdpa")])
 def test_ingestion_release_selects_its_shared_bootstrap_dependency_once(path, target):
-    assert set(select_deployments([path])) == {target, "ingestion_iam"}
+    assert set(select_deployments([path])) == {target, "ingestion_iam", "artifact_registry_iam"}
 
 
 def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
@@ -31,9 +31,9 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 
 
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
-    assert set(select_deployments(["ingestion/common/publication.py"])) == {"eamlis", "wdpa", "sea_ice", "ingestion_iam"}
+    assert set(select_deployments(["ingestion/common/publication.py"])) == {"eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
-    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn"}
+    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam"}
 
 
 @pytest.mark.parametrize("path,targets", [
@@ -45,13 +45,31 @@ def test_shared_runtime_and_terraform_modules_select_cross_component_dependents(
     ("docs/assets/ims-sea-ice-extent.md", {"sea_ice"}),
 ])
 def test_image_copies_are_release_and_native_validation_dependencies(path, targets):
-    assert set(select_deployments([path])) == targets | {"ingestion_iam"}
+    assert set(select_deployments([path])) == targets | {"ingestion_iam", "artifact_registry_iam"}
     assert {"geospatial-integration", "production-images"} <= set(select_suites([path])[0])
 
 
 @pytest.mark.parametrize("path", ["catalog/shared-datasets-catalog.csv", "terraform/envs/prod/shared_bucket_public.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"])
 def test_cdn_catalog_and_shared_bucket_dependencies_select_route_sync(path):
     assert "pmtiles_cdn" in select_deployments([path])
+
+
+def test_catalog_metadata_updates_do_not_redeploy_consumers_but_contract_changes_do():
+    before = "asset_slug,title,canonical_path,translation_locales,translation_fields,access_tier,status,has_pmtiles,available_formats\neamlis-abandoned-mine-land-inventory,Original,gs://skytruth-shared-datasets-1/example/latest/a.fgb,es,PA_NAME,public,active,true,fgb;pmtiles\n"
+    path = ["catalog/shared-datasets-catalog.csv"]
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("Original", "Updated"))) == []
+    assert set(select_deployments(path, catalog_snapshots=(before, before.replace(",es,", ",es;fr,")))) == {"eamlis", "ingestion_iam", "artifact_registry_iam"}
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn"]
+    assert "catalog_viewer" not in select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/")))
+    assert "catalog_viewer" in select_deployments(path + ["scripts/compare_releases.py"], catalog_snapshots=(before, before))
+
+
+def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_validation():
+    path = ["catalog/shared-datasets-catalog.csv"]
+    assert set(select_deployments(path)) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam"}
+    duplicate = "asset_slug,title\nwdpa-marine,One\nwdpa-marine,Two\n"
+    with pytest.raises(ValueError, match="unique nonempty"):
+        select_deployments(path, catalog_snapshots=(duplicate, duplicate))
 
 
 def test_release_contracts_run_before_python_tests_for_selected_release_changes():
@@ -78,6 +96,8 @@ def test_all_automatic_deployment_callers_require_ci_ready_and_pass_the_exact_te
         assert {"executor_sha", "source_run_id", "source_run_attempt"} <= set(workflow_triggers(callee)["workflow_call"]["inputs"])
     for target in ("eamlis", "wdpa", "sea-ice"):
         assert "ingestion-iam" in jobs[target]["needs"]
+    for target in ("eamlis", "wdpa", "sea-ice", "wdpa-processing", "catalog-viewer"):
+        assert "artifact-registry-iam" in jobs[target]["needs"]
     publisher = jobs["publish-reviewed-dataset"]
     assert "pmtiles-cdn" in publisher["needs"]
     assert "always()" in publisher["if"]  # A legitimately unselected CDN job is skipped.

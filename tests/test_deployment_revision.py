@@ -75,10 +75,18 @@ class ReplayTests(unittest.TestCase):
         with self.assertRaises(d.DeploymentError):
             d.replay_decision([self.record(CURRENT)], CURRENT, self.ancestor, status, artifact=IMAGE.replace("d" * 64, "e" * 64), target="wdpa-monthly")
 
-    def test_newer_attempt_bars_replay_even_if_same_revision_was_successful(self):
+    def test_newer_verified_attempt_supersedes_older_revision_without_mutation(self):
         for records in [[self.record(CURRENT), self.record(NEW, 2)], [self.record(NEW, 2), self.record(CURRENT)]]:
-            with self.subTest(records=records), self.assertRaises(d.DeploymentError):
-                d.replay_decision(records, CURRENT, self.ancestor, lambda _: [{"state": "success", "description": "verified"}])
+            with self.subTest(records=records):
+                self.assertEqual(d.replay_decision(records, CURRENT, self.ancestor, lambda _: [{"state": "success", "description": "verified"}]), "superseded")
+        self.assertEqual(d.replay_decision([self.record(NEW)], CURRENT, self.ancestor, Mock()), "superseded")
+
+    def test_divergent_history_and_same_revision_failure_cannot_be_hidden_as_superseded(self):
+        with self.assertRaisesRegex(d.DeploymentError, "divergent"):
+            d.replay_decision([self.record(NEW)], CURRENT, lambda *_: False, Mock())
+        for status in ([], [{"state": "failure", "description": "failed"}], [{"state": "in_progress", "description": "started"}]):
+            with self.subTest(status=status), self.assertRaisesRegex(d.DeploymentError, "reconcile"):
+                d.replay_decision([self.record(CURRENT), self.record(NEW, 2)], CURRENT, self.ancestor, lambda _: status)
 
     def test_failed_unknown_pending_or_unrecognized_records_require_reconciliation(self):
         for status in ([], [{"state": "failure", "description": "failed"}], [{"state": "in_progress", "description": "verification_pending"}], [{"state": "success", "description": "arbitrary"}], [{"state": "success", "description": "applied"}]):
@@ -221,6 +229,66 @@ class CallerAndRecordTests(unittest.TestCase):
                        {"state": "success", "creator": {"login": "github-actions[bot]"}, "log_url": "https://github.com/attacker/repo/actions/runs/13"}]:
             with self.subTest(status=status), patch.object(self.api, "pages", return_value=[status]), self.assertRaises(d.DeploymentError):
                 d.verified_statuses(self.api, REPO, record)
+
+
+class VerifiedSupersessionTests(unittest.TestCase):
+    setUp = DeploymentProvenanceTests.setUp
+    route = DeploymentProvenanceTests.route
+
+    def exercise(self, records, *, changed_source=None, ancestor=None):
+        from types import SimpleNamespace
+        args = SimpleNamespace(workflow="wdpa-monthly-deploy.yml", target="wdpa-monthly", executor_sha=CURRENT,
+                               source_run_id=13, source_run_attempt=2, artifact=IMAGE, plan_json=None)
+        newer = {**self.run, "id": 15, "run_attempt": 1, "head_sha": NEW, **(changed_source or {})}
+        def route(path):
+            if path.endswith("/actions/runs/15/attempts/1"):
+                return newer
+            return self.route(path)
+        def pages(path, field=None):
+            if "/deployments?" in path:
+                return records
+            if path.endswith("/statuses?per_page=100"):
+                return [{"state": "failure", "description": "failed"}]
+            return [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
+        def ancestry(older, newer):
+            if newer == "origin/main":
+                return True
+            return ReplayTests.ancestor(older, newer) if ancestor is None else ancestor(older, newer)
+        env = {"GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": REPO, "GITHUB_RUN_ID": "13", "GITHUB_RUN_ATTEMPT": "2"}
+        self.api.get.side_effect = route
+        self.api.pages.side_effect = pages
+        with patch.dict(d.os.environ, env), patch.object(d.subprocess, "check_output", return_value=CURRENT), patch.object(d, "git_ancestor", side_effect=ancestry):
+            return d.start(args, self.api)
+
+    @staticmethod
+    def newer_record():
+        record = ReplayTests.record(NEW, 2)
+        record["payload"].update(ci_run_id=15, ci_run_attempt=1, execution_run_id=15, execution_run_attempt=1)
+        return record
+
+    def test_verified_newer_attempt_skips_before_claim_or_mutation_even_if_newer_failed(self):
+        result = self.exercise([self.newer_record()])
+        self.assertEqual(result, {"proceed": "false", "outcome": "superseded", "superseded_by_sha": NEW})
+        self.api.post.assert_not_called()
+        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1"), self.api.get.call_args_list)
+        self.assertIn(unittest.mock.call(f"repos/{REPO}/actions/runs/15/attempts/1/jobs?per_page=100", "jobs"), self.api.pages.call_args_list)
+
+    def test_forged_newer_source_or_untrusted_record_cannot_be_a_successful_supersession(self):
+        for change in ({"head_sha": OLD}, {"workflow_id": 99}, {"event": "pull_request"}, {"repository": {"id": 18, "full_name": REPO}}):
+            with self.subTest(change=change), self.assertRaises(d.DeploymentError):
+                self.exercise([self.newer_record()], changed_source=change)
+        record = self.newer_record()
+        record["creator"] = {"login": "human", "type": "User"}
+        with self.assertRaises(d.DeploymentError):
+            self.exercise([record])
+        self.api.post.assert_not_called()
+
+    def test_divergent_or_failed_current_attempt_remains_blocked_without_record_writes(self):
+        with self.assertRaisesRegex(d.DeploymentError, "divergent"):
+            self.exercise([self.newer_record()], ancestor=lambda *_: False)
+        with self.assertRaisesRegex(d.DeploymentError, "reconcile"):
+            self.exercise([ReplayTests.record(CURRENT), self.newer_record()])
+        self.api.post.assert_not_called()
 
 
 class ReconciliationTests(unittest.TestCase):

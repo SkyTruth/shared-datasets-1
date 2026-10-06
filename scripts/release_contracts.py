@@ -24,6 +24,15 @@ from scripts.deployment_revision import TERRAFORM_SYNCS
 
 DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-ice-daily"}
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
+PLAN_PROBE_WORKFLOWS = (
+    "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
+    "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
+    "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
+)
+IMAGE_PROBE_WORKFLOWS = (
+    "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
+    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml",
+)
 
 
 def workflow(root, name):
@@ -36,6 +45,69 @@ def role_permissions(text, name):
         return set()
     permissions = re.search(r'permissions\s*=\s*\[(.*?)\]', match[1], re.S)
     return set(re.findall(r'"([a-zA-Z0-9.]+)"', permissions[1])) if permissions else set()
+
+
+def saved_plan_permission_contract(root):
+    """Every automatic protected apply must check that saved plan's operations."""
+    errors = []
+    path = r'''["']?([^\s"']+\.%s)["']?'''
+    show = re.compile(r"show\s+-json\s+" + path % "tfplan" + r"\s*>\s*" + path % "json")
+    probe = re.compile(r"deployment_permissions\.py\s+.*--plan-json\s+" + path % "json")
+    apply = re.compile(r"(?:terraform_retry\.sh|\bterraform\b).*\sapply(?:\s|$)")
+    binary = re.compile(path % "tfplan")
+    target = re.compile(r'''--target\s+["']?([^\s"']+)["']?''')
+    for filename in PLAN_PROBE_WORKFLOWS:
+        applies = 0
+        for job in workflow(root, filename)["jobs"].values():
+            saved, checked = {}, set()
+            for step in job.get("steps", []):
+                run = re.sub(r"\$\{([A-Z_]+)\}", r"$\1", step.get("run", "").replace("\\\n", " "))
+                for line in run.splitlines():
+                    rendered = show.search(line)
+                    if rendered:
+                        saved[rendered[1]] = rendered[2]
+                        checked.discard(rendered[2])  # A newly rendered plan invalidates an earlier probe.
+                    tested = probe.search(line)
+                    if tested and target.search(line) and str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}:
+                        selected = target.search(line)[1]
+                        # Cache invalidation is a post-apply operation and must
+                        # remain in the CDN plan contract, even on no-change plans.
+                        if filename != "pmtiles-cdn-sync.yml" or not tested[1].endswith("/pmtiles-cdn-sync.tfplan.json") or selected == "pmtiles-cdn":
+                            checked.add(tested[1])
+                    if apply.search(line):
+                        applies += 1
+                        candidate = binary.search(line)
+                        if not candidate or saved.get(candidate[1]) not in checked:
+                            errors.append(f"{filename}/{step.get('name')}: saved-plan permission probe must precede each apply of its exact JSON")
+        if not applies:
+            errors.append(f"{filename}: saved-plan apply boundary is missing or unrecognized")
+    return errors
+
+
+def image_permission_contract(root):
+    """Operational repository authority must be proven before image mutation."""
+    errors = []
+    probe = re.compile(r"^\s*(?:uv\s+run(?:\s+--no-sync)?\s+)?python(?:3)?\s+scripts/deployment_permissions\.py\s+--target\s+artifact-registry-images\s*$")
+    for filename in IMAGE_PROBE_WORKFLOWS:
+        pushes = 0
+        for job in workflow(root, filename)["jobs"].values():
+            checked = False
+            for step in job.get("steps", []):
+                enabled = str(step.get("if", "")).strip().casefold() not in {"false", "${{ false }}"}
+                for line in step.get("run", "").replace("\\\n", " ").splitlines():
+                    if enabled and probe.fullmatch(line):
+                        checked = True
+                    if re.search(r"\bdocker\s+push\s", line) and not line.lstrip().startswith("#"):
+                        pushes += 1
+                        if not checked:
+                            errors.append(f"{filename}/{step.get('name')}: operational image permission probe must precede every Docker push")
+                    # Pulling the accepted producer image is also a repository
+                    # operation; project-policy hints cannot establish access.
+                    if re.search(r"\bdocker\s+pull\s", line) and not line.lstrip().startswith("#") and not checked:
+                        errors.append(f"{filename}/{step.get('name')}: operational image permission probe must precede the retained image pull")
+        if not pushes:
+            errors.append(f"{filename}: Docker push boundary is missing or unrecognized")
+    return errors
 
 
 def iam_contract(root):
@@ -57,6 +129,14 @@ def iam_contract(root):
     missing = set(MONITORING_PERMISSIONS) - role_permissions(monitoring, "monitoring_alert_policy_manager")
     if missing:
         errors.append(f"monitoring alert policy manager: missing declared permissions {sorted(missing)}")
+    for filename, role, expected in (
+        ("artifact_registry_iam.tf", "artifact_registry_iam_policy_manager", {"artifactregistry.repositories.getIamPolicy", "artifactregistry.repositories.setIamPolicy"}),
+        ("preview_terraform_iam.tf", "preview_terraform", {"iam.serviceAccounts.actAs", "iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.update", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"}),
+        ("shared_bucket_public.tf", "pmtiles_managed_folder_sync", {"storage.managedFolders.create", "storage.managedFolders.get", "storage.managedFolders.getIamPolicy", "storage.managedFolders.setIamPolicy"}),
+    ):
+        missing = expected - role_permissions((root / "terraform/envs/prod" / filename).read_text(), role)
+        if missing:
+            errors.append(f"{role}: missing declared permissions {sorted(missing)}")
     generic = workflow(root, "prod-terraform-target-apply.yml")
     required = generic.get("on", generic.get(True))["workflow_call"]["inputs"]
     for key in ("executor_sha", "source_run_id", "source_run_attempt", "caller_workflow", "readiness_target"):
@@ -143,7 +223,7 @@ def retained_evidence(root):
 
 
 def check(root, targets):
-    errors = iam_contract(root)
+    errors = iam_contract(root) + saved_plan_permission_contract(root) + image_permission_contract(root)
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:

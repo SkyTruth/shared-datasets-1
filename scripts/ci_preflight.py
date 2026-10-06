@@ -58,13 +58,20 @@ def make_plan(root: Path, base: str, head: str, *, original_head: str | None = N
         resolved_base = base
         paths = None
     suites, reason = select_suites(paths)
+    catalog_snapshots = None
+    if paths and "catalog/shared-datasets-catalog.csv" in paths:
+        try:
+            catalog_snapshots = tuple(git(root, "show", f"{revision}:catalog/shared-datasets-catalog.csv", raw=True) for revision in (resolved_base, tested_sha))
+        except subprocess.CalledProcessError:
+            # A new or unavailable snapshot conservatively selects its known consumers.
+            pass
     return {
         "schema_version": 1, "base": resolved_base,
         "head": original_head or resolved_head, "tested_sha": tested_sha,
         "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "contract_digest": contract_digest(root), "suites": suites,
         "selection_reason": reason, "changed_paths": paths,
-        "deployments": select_deployments(paths),
+        "deployments": select_deployments(paths, catalog_snapshots=catalog_snapshots),
     }
 
 
