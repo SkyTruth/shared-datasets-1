@@ -48,10 +48,10 @@ class IsSchemaTargetTests(unittest.TestCase):
         from scripts import dataset_mutation_authorization as auth
         plan = {"asset_slug": "wdpa-marine", "promotions": []}
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch("google.auth.default") as credentials:
-            with self.assertRaisesRegex(PublicationError, "protected main workflow"):
+            with self.assertRaisesRegex(auth.Error, "trusted main caller"):
                 publish_workflow.promote_owned_translations(plan)
             credentials.assert_not_called()
-        env = {"GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+        env = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_ACTIONS": "true", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
                "GITHUB_WORKFLOW_REF": "SkyTruth/shared-datasets-1/.github/workflows/publish-dataset.yml@refs/heads/main", "EXPECTED_SHA256": "a" * 64}
         envelope = {"outcome": "mutation", "document": {"publish": {**plan, "promotions": ["different reviewed bytes"]}}}
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(auth, "verified_envelope", return_value=envelope) as verify, mock.patch("google.auth.default") as credentials:

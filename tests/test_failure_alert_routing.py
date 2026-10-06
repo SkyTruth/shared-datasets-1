@@ -87,12 +87,45 @@ def test_every_scheduled_workflow_has_failure_coverage_without_self_recursion():
             assert candidate["name"] in subscriptions, path.name
     assert workflow["name"] not in subscriptions
     assert {"Catalog web deploy", "Catalog viewer deploy", "PMTiles CDN sync"} <= set(subscriptions)
-    assert "CI" not in subscriptions
-    assert workflow["permissions"] == {"contents": "read"}
+    assert "CI" in subscriptions
+    assert workflow["permissions"] == {"contents": "read", "actions": "read"}
+    worker_filter = workflow["jobs"]["notify"]["if"]
+    assert "github.event.workflow_run.status == 'completed'" in worker_filter
+    assert "contains(fromJSON(" in worker_filter
+    conclusions = json.loads(worker_filter.split("fromJSON('", 1)[1].split("')", 1)[0])
+    assert set(conclusions) == alerts.FAILED_CONCLUSIONS
+    assert "github.event.workflow_run.head_repository.full_name == github.repository" in worker_filter
     steps = workflow["jobs"]["notify"]["steps"]
     checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"] == {"ref": "main", "persist-credentials": False}
     assert all("download-artifact" not in s.get("uses", "") for s in steps)
+
+
+def test_ci_publication_failure_alerts_without_alerting_validation_only():
+    payload = event(name="CI", event="push")
+    publication = {"name": "publish (208) / Apply approved PR mutation plans (PR #208)",
+                   "status": "completed", "conclusion": "failure"}
+    validation = {"name": "tests", "status": "completed", "conclusion": "failure"}
+    assert alerts.alert_for_run(payload, jobs=[validation]) is None
+    assert alerts.alert_for_run(payload, jobs=[publication]) is not None
+    assert alerts.alert_for_run(event(name="CI", event="pull_request"), jobs=[publication]) is None
+    assert alerts.alert_for_run(payload, jobs=[{**publication, "conclusion": "skipped"}]) is None
+
+
+def test_ci_alert_checks_source_identity_and_suppresses_obsolete_attempts():
+    run = event(name="CI", event="push", head_sha="a" * 40, run_attempt=1)["workflow_run"]
+    api = mock.Mock()
+    api.get.side_effect = [{**run, "workflow_id": 9, "run_attempt": 2, "status": "in_progress", "conclusion": None},
+                           {"path": ".github/workflows/ci.yml"}]
+    assert alerts.ci_jobs_for_event(api, run) == []
+    api.pages.assert_not_called()
+    api.get.side_effect = [{**run, "workflow_id": 9}, {"path": ".github/workflows/untrusted.yml"}]
+    with pytest.raises(ValueError, match="trusted main-push"):
+        alerts.ci_jobs_for_event(api, run)
+    api.get.side_effect = [{**run, "workflow_id": 9}, {"path": ".github/workflows/ci.yml"}]
+    alerts.ci_jobs_for_event(api, run)
+    api.pages.assert_called_once_with(
+        "repos/SkyTruth/shared-datasets-1/actions/runs/123/attempts/1/jobs?per_page=100", field="jobs")
 
 
 @pytest.mark.parametrize("filename,step_name", [

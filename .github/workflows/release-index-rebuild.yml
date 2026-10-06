@@ -34,11 +34,17 @@ jobs:
       - name: Validate main ref
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Release index rebuild may only publish from main." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/release-index-rebuild.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
 
       - name: Validate asset slug
         env:
@@ -50,11 +56,6 @@ jobs:
             echo "asset_slug must be a shared-datasets slug." >&2
             exit 1
           fi
-
-      - name: Check out repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5

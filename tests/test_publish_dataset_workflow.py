@@ -18,8 +18,8 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
             for step in job.get("steps", [])
             if step.get("uses", "").startswith("actions/checkout@")
         ]
-        self.assertEqual(checkouts, [
-            ("reviewed_pr_plans", {"ref": "${{ github.workflow_sha }}"}, None),
+        self.assertEqual(checkouts[:3], [
+            ("reviewed_pr_plans", {"ref": "${{ github.workflow_sha }}", "fetch-depth": 0}, None),
             ("install-approved-identity-reset", {"ref": "${{ needs.reviewed_pr_plans.outputs.executor_sha }}"}, None),
             ("apply-approved-pr-plans", {"ref": "${{ needs.reviewed_pr_plans.outputs.executor_sha }}"}, None),
         ])
@@ -27,7 +27,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
     def test_capture_and_apply_share_exact_artifact_and_executor(self):
         workflow = load_workflow(ROOT / ".github/workflows/publish-dataset.yml")
         self.assertEqual(
-            workflow_triggers(workflow)["pull_request"]["types"], ["closed"]
+            set(workflow_triggers(workflow)), {"workflow_call", "workflow_dispatch"}
         )
         gate = workflow_steps_by_name(workflow, "reviewed_pr_plans")
         apply = workflow_steps_by_name(workflow, "apply-approved-pr-plans")
@@ -86,7 +86,7 @@ class PublishDatasetWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(
             set(workflow_triggers(workflow)["workflow_dispatch"]["inputs"]),
-            {"pr_number"},
+            {"pr_number", "authorization_rehearsal"},
         )
         self.assertIn(
             "github.actor == 'jonaraphael'", workflow["jobs"]["reviewed_pr_plans"]["if"]

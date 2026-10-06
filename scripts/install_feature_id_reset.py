@@ -20,10 +20,7 @@ from scripts import dataset_mutation_authorization as auth
 
 
 def authorized_plan(directory: Path, digest: str, *, api, env):
-    p.require(env.get("GITHUB_ACTIONS") == "true" and env.get("GITHUB_REF") == "refs/heads/main"
-              and env.get("GITHUB_EVENT_NAME") in {"pull_request", "workflow_dispatch"}
-              and env.get("GITHUB_WORKFLOW_REF") == f"{env.get('GITHUB_REPOSITORY')}/{auth.WORKFLOW}@refs/heads/main",
-              "reset installer requires the protected main workflow")
+    auth.require_production_context(env)
     envelope = auth.verified_envelope(api, directory, digest, env)
     p.require(envelope["outcome"] == "mutation" and set(envelope["document"]) == {"plan_version", "finalization_version", "publish"},
               "reset requires one immutable publish plan")

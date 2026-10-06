@@ -265,7 +265,8 @@ class ResetAuthorizationTests(unittest.TestCase):
         self.api.pr["body"] = plans.render_document(self.api.doc)
         event, self.env = context(self.api)
         self.env["GITHUB_ACTIONS"] = "true"
-        self.envelope = auth.capture(self.api, event, self.env)
+        with mock.patch.object(auth, "discover_push_prs", return_value=[7]):
+            self.envelope = auth.capture(self.api, event, self.env)
 
     def test_reset_uses_same_immutable_review_authority_and_distinct_routing(self):
         flags = auth.plan_outputs(self.api.doc)
