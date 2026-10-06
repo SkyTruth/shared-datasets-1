@@ -1,18 +1,35 @@
 name: Catalog web deploy
 
 on:
+  workflow_call:
+    inputs:
+      executor_sha:
+        required: true
+        type: string
+      authorization_artifact_id:
+        required: true
+        type: string
+      authorization_sha256:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: number
+      mutation_completed:
+        required: true
+        type: boolean
   workflow_run:
     workflows:
-      - Approved dataset mutation
       - Release index rebuild
     branches:
       - main
     types:
       - completed
-  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
   id-token: write
 
 env:
@@ -32,8 +49,14 @@ jobs:
     environment: shared-datasets-production
     if: >-
       ${{
-        github.event_name != 'workflow_run' ||
-        github.event.workflow_run.conclusion == 'success'
+        inputs.mutation_completed == true ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.event == 'workflow_dispatch'
+        )
       }}
     concurrency:
       group: catalog-web-deploy
@@ -52,7 +75,54 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.executor_sha || github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download immutable mutation authorization
+        if: ${{ inputs.mutation_completed == true }}
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ inputs.authorization_artifact_id }}
+          path: authorization
+          merge-multiple: true
+
+      - name: Verify successful mutation provenance
+        if: ${{ inputs.mutation_completed == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ inputs.authorization_sha256 }}
+          EXECUTOR_SHA: ${{ inputs.executor_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          python scripts/dataset_mutation_authorization.py verify --directory authorization --expected-sha256 "$EXPECTED_SHA256"
+          python scripts/catalog_refresh_authorization.py \
+            --authorization authorization/authorization.json \
+            --executor-sha "$EXECUTOR_SHA" --pr-number "$PR_NUMBER"
+
+      - name: Verify successful release index rebuild provenance
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          expected = event['workflow_run']
+          repository = os.environ['GITHUB_REPOSITORY']
+          run = json.loads(subprocess.check_output(['gh', 'api', f"repos/{repository}/actions/runs/{expected['id']}"], text=True))
+          workflow = json.loads(subprocess.check_output(['gh', 'api', f"repos/{repository}/actions/workflows/{run['workflow_id']}"], text=True))
+          if (run['status'] != 'completed' or run['conclusion'] != 'success'
+                  or run['event'] != 'workflow_dispatch' or run['head_branch'] != 'main'
+                  or run['head_repository']['full_name'] != repository
+                  or run['head_sha'] != expected['head_sha']
+                  or run['run_attempt'] != expected['run_attempt']
+                  or workflow['path'] != '.github/workflows/release-index-rebuild.yml'
+                  or subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != run['head_sha']):
+              raise SystemExit('Catalog refresh requires the exact successful trusted index rebuild')
+          PY
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -126,3 +196,9 @@ jobs:
             --catalog-source "catalog/shared-datasets-catalog.csv" \
             --catalog-destination "gs://${SHARED_DATASETS_BUCKET}/_catalog/shared-datasets-catalog.csv" \
             --cache-control "${CATALOG_WEB_CACHE_CONTROL}"
+
+      - name: Verify live catalog after publication
+        run: |
+          uv run python scripts/catalog_drift_guard.py \
+            --release-index-dir "${RUNNER_TEMP}/release-indexes" \
+            --latest-from-release-index

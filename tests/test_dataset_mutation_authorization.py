@@ -76,16 +76,16 @@ class FakeGitHub:
             "id": 700,
             "run_attempt": 1,
             "workflow_id": 99,
-            "path": auth.WORKFLOW,
-            "head_sha": HEAD,
-            "head_branch": "feature/demo",
-            "event": "pull_request",
+            "path": auth.CALLER_WORKFLOW,
+            "head_sha": EXECUTOR,
+            "head_branch": "main",
+            "event": "push",
             "repository": REPO,
             "head_repository": REPO,
             "status": "completed",
             "conclusion": "success",
         }
-        self.workflow = {"id": 99, "path": auth.WORKFLOW}
+        self.workflow = {"id": 99, "path": auth.CALLER_WORKFLOW}
         self.tree = {
             "truncated": False,
             "tree": [{"path": self.path, "type": "blob", "mode": "100644", "sha": self.blob}],
@@ -112,10 +112,12 @@ class FakeGitHub:
                 "size": len(self.raw),
                 "content": base64.b64encode(self.raw).decode(),
             }
+        if "/runs/701/attempts/" in path:
+            return {**deepcopy(self.run), "id": 701, "path": auth.CALLER_WORKFLOW, "event": "push"}
         if "/attempts/" in path:
             return deepcopy(self.run)
-        if path.endswith("/workflows/publish-dataset.yml"):
-            return deepcopy(self.workflow)
+        if "/workflows/" in path and path.endswith(".yml"):
+            return {**deepcopy(self.workflow), "path": auth.CALLER_WORKFLOW if path.endswith("ci.yml") else auth.WORKFLOW}
         if path.endswith("/artifacts?per_page=100"):
             return {"total_count": 1, "artifacts": [deepcopy(self.artifact)]}
         raise AssertionError(path)
@@ -124,6 +126,12 @@ class FakeGitHub:
         self.calls.append(path)
         if field == "artifacts":
             return [deepcopy(self.artifact)]
+        if field == "jobs":
+            return [{"name": "ci-ready", "status": "completed", "conclusion": "success"}]
+        if field == "workflow_runs":
+            return [{**deepcopy(self.run), "id": 701, "path": auth.CALLER_WORKFLOW, "event": "push"}]
+        if "/commits/" in path:
+            return [deepcopy(self.pr)]
         return deepcopy(self.reviews if "/reviews?" in path else self.files)
 
     def archive(self, repository, artifact_id):
@@ -139,7 +147,7 @@ class FakeGitHub:
         self.archive_bytes = data.getvalue()
         self.artifact = {
             "id": 70,
-            "name": auth.artifact_name(700, 1),
+            "name": auth.artifact_name(700, 1, envelope),
             "expired": False,
             "workflow_run": {"id": 700},
             "digest": "sha256:" + plans.sha256(self.archive_bytes),
@@ -149,19 +157,15 @@ class FakeGitHub:
 
 def context(api):
     return {
-        "repository": deepcopy(REPO),
-        "action": "closed",
-        "pull_request": deepcopy(api.pr),
+        "repository": deepcopy(REPO), "ref": "refs/heads/main",
+        "before": "d" * 40, "after": EXECUTOR, "forced": False, "deleted": False,
     }, {
-        "GITHUB_EVENT_NAME": "pull_request",
-        "GITHUB_REPOSITORY": REPO["full_name"],
+        "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push", "GITHUB_REPOSITORY": REPO["full_name"],
         "GITHUB_REF": "refs/heads/main",
-        "GITHUB_WORKFLOW_REF": f"{REPO['full_name']}/{auth.WORKFLOW}@refs/heads/main",
-        "GITHUB_WORKFLOW_SHA": EXECUTOR,
-        "GITHUB_SHA": MERGE,
-        "GITHUB_RUN_ID": "700",
-        "GITHUB_RUN_ATTEMPT": "1",
-        "GITHUB_ACTOR": "contributor",
+        "GITHUB_WORKFLOW_REF": f"{REPO['full_name']}/{auth.CALLER_WORKFLOW}@refs/heads/main",
+        "GITHUB_WORKFLOW_SHA": EXECUTOR, "GITHUB_SHA": EXECUTOR,
+        "GITHUB_RUN_ID": "700", "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_ACTOR": "contributor", "DATASET_PR_NUMBER": "7",
     }
 
 
@@ -171,11 +175,12 @@ class AuthorizationTests(unittest.TestCase):
         self.event, self.env = context(self.api)
 
     def capture(self):
-        return auth.capture(self.api, self.event, self.env)
+        with mock.patch.object(auth, "discover_push_prs", return_value=[7]):
+            return auth.capture(self.api, self.event, self.env)
 
     def test_valid_source_branch_pr_run_binds_head_merge_executor_and_bytes(self):
         envelope = self.capture()
-        self.assertEqual(envelope["source_run"]["head_sha"], HEAD)
+        self.assertEqual(envelope["source_run"]["head_sha"], EXECUTOR)
         self.assertEqual(envelope["merge_sha"], MERGE)
         self.assertEqual(envelope["trusted_executor_sha"], EXECUTOR)
         self.assertEqual(envelope["document"], self.api.doc)
@@ -246,8 +251,10 @@ class AuthorizationTests(unittest.TestCase):
             GITHUB_EVENT_NAME="workflow_dispatch",
             GITHUB_ACTOR="jonaraphael",
             GITHUB_SHA=EXECUTOR,
+            GITHUB_WORKFLOW_REF=f"{REPO['full_name']}/{auth.WORKFLOW}@refs/heads/main",
         )
-        self.api.run.update(event="workflow_dispatch", head_branch="main", head_sha=EXECUTOR)
+        self.api.run.update(event="workflow_dispatch", head_branch="main", head_sha=EXECUTOR, path=auth.WORKFLOW)
+        self.api.workflow["path"] = auth.WORKFLOW
         self.assertEqual(self.capture()["pr_number"], 7)
         self.api.pr.update(state="open", merged=False)
         with self.assertRaises(auth.Error):
@@ -307,11 +314,9 @@ class AuthorizationTests(unittest.TestCase):
         envelope = self.capture()
         self.api.pr["body"] = "```shared-datasets-publish-plan\n{}\n```"
         auth.revalidate(self.api, envelope)
-        with self.assertRaises(auth.Error):
-            self.capture()
+        self.assertEqual(self.capture()["document"], envelope["document"])
         self.api.pr["body"] = plans.render_document(self.api.doc) * 2
-        with self.assertRaisesRegex(auth.Error, "multiple"):
-            self.capture()
+        self.assertEqual(self.capture()["document"], envelope["document"])
 
     def test_review_changed_while_queued_blocks_execution(self):
         envelope = self.capture()
@@ -336,7 +341,7 @@ class AuthorizationTests(unittest.TestCase):
         envelope = self.capture()
         self.api.set_artifact(envelope)
         event = {"repository": REPO, "workflow_run": deepcopy(self.api.run)}
-        self.assertEqual(auth.from_run(self.api, event), envelope)
+        self.assertEqual(auth.from_run(self.api, event, pr_number=7), envelope)
         for mutate in (
             lambda api: api.artifact.update(expired=True),
             lambda api: api.artifact.update(name="wrong"),
@@ -354,10 +359,10 @@ class AuthorizationTests(unittest.TestCase):
                 api.set_artifact(envelope)
                 mutate(api)
                 with self.assertRaises(auth.Error):
-                    auth.from_run(api, event)
+                    auth.from_run(api, event, pr_number=7)
         self.api.set_artifact(envelope, extra=True)
         with self.assertRaisesRegex(auth.Error, "only authorization"):
-            auth.from_run(self.api, event)
+            auth.from_run(self.api, event, pr_number=7)
 
     def test_attempt_identity_is_separate_and_executor_change_refuses_resume(self):
         original = self.capture()
@@ -419,10 +424,10 @@ class AuthorizationTests(unittest.TestCase):
         self.assertEqual(envelope["outcome"], "no_mutation")
         self.api.set_artifact(envelope)
         event = {"repository": REPO, "workflow_run": deepcopy(self.api.run)}
-        self.assertEqual(auth.from_run(self.api, event), envelope)
+        self.assertEqual(auth.from_run(self.api, event, pr_number=7), envelope)
         self.api.artifact["name"] = "unrelated"
         with self.assertRaisesRegex(auth.Error, "missing/ambiguous"):
-            auth.from_run(self.api, event)
+            auth.from_run(self.api, event, pr_number=7)
 
     def test_checked_in_shared_fixture_preserves_replay_contract(self):
         fixture = plans.strict_json_loads(
@@ -451,10 +456,75 @@ class AuthorizationTests(unittest.TestCase):
             outputs = root / "outputs"
             argv = ["capture", "--event-path", str(event_path), "--directory", str(root / "artifact"), "--github-output", str(outputs)]
             with mock.patch.dict(auth.os.environ, self.env, clear=True), mock.patch.object(auth, "GitHub", return_value=self.api):
-                with mock.patch.object(auth.subprocess, "check_output", return_value=EXECUTOR + "\n"):
+                with mock.patch.object(auth.subprocess, "check_output", return_value=EXECUTOR + "\n"), mock.patch.object(auth, "discover_push_prs", return_value=[7]):
                     self.assertEqual(auth.main(argv), 0)
                 captured = plans.strict_json_loads((root / "artifact/authorization.json").read_bytes())
                 self.assertEqual(captured["document"], self.api.doc)
                 self.assertIn("has_publish_plan=true", outputs.read_text())
                 with mock.patch.object(auth.subprocess, "check_output", return_value=HEAD + "\n"):
                     self.assertEqual(auth.main(argv), 2)
+
+
+class MainPushDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeGitHub()
+        self.event, self.env = context(self.api)
+
+    def discover(self, commits=None, *, documents_only=True):
+        with mock.patch.object(auth.subprocess, "run") as ancestry, mock.patch.object(
+            auth.subprocess, "check_output", return_value="\n".join(commits or [HEAD, MERGE, EXECUTOR]) + "\n"
+        ) as history:
+            result = auth.discover_push_prs(self.api, self.event, self.env, documents_only=documents_only)
+            ancestry.assert_called_once_with(["git", "merge-base", "--is-ancestor", self.event["before"], EXECUTOR], check=True)
+            history.assert_called_once_with(["git", "rev-list", "--reverse", f"{self.event['before']}..{EXECUTOR}"], text=True)
+            return result
+
+    def test_range_enumeration_deduplicates_associations_ignores_payload_truncation(self):
+        self.event["commits"] = []
+        self.assertEqual(self.discover(), [7])
+        reads = [p for p in self.api.calls if "/commits/" in p]
+        self.assertEqual(len(reads), 3)
+
+    def test_code_only_and_fork_merges_do_not_allocate_mutation(self):
+        self.api.files = [{"filename": "README.md", "status": "modified"}]
+        self.assertEqual(self.discover(), [])
+        self.api = FakeGitHub()
+        self.api.pr["head"]["repo"] = {**REPO, "id": 200, "full_name": "fork/shared-datasets-1"}
+        self.assertEqual(self.discover(), [])
+
+    def test_feature_branch_merges_inside_push_are_ineligible(self):
+        self.api.pr["base"]["ref"] = "feature/demo"
+        self.assertEqual(self.discover(), [])
+
+    def test_historical_association_outside_range_is_not_replayed(self):
+        self.assertEqual(self.discover([HEAD, EXECUTOR]), [])
+
+    def test_initial_force_deleted_unknown_ref_and_missing_history_fail_closed(self):
+        for key, value in (("before", "0" * 40), ("forced", True), ("deleted", True), ("ref", "refs/pull/7/merge")):
+            event = {**self.event, key: value}
+            with self.subTest(key=key), self.assertRaises(auth.Error):
+                auth.discover_push_prs(self.api, event, self.env)
+        with mock.patch.object(auth.subprocess, "run", side_effect=auth.subprocess.CalledProcessError(1, "git")), self.assertRaises(auth.subprocess.CalledProcessError):
+            auth.discover_push_prs(self.api, self.event, self.env)
+
+    def test_two_prs_in_one_push_have_distinct_artifacts(self):
+        with mock.patch.object(auth, "discover_push_prs", return_value=[7]):
+            envelope = auth.capture(self.api, self.event, self.env)
+        other = {**envelope, "pr_number": 8}
+        self.assertNotEqual(auth.artifact_name(700, 1, envelope), auth.artifact_name(700, 1, other))
+        self.assertEqual(auth.artifact_name(700, 1), "dataset-authorization-700-1")
+
+    def test_ci_ready_failure_skip_missing_and_duplicate_never_authorize(self):
+        for jobs in ([], [{"name": "ci-ready", "status": "completed", "conclusion": "skipped"}],
+                     [{"name": "ci-ready", "status": "completed", "conclusion": "failure"}],
+                     [{"name": "ci-ready", "status": "in_progress", "conclusion": None}],
+                     [{"name": "ci-ready", "status": "completed", "conclusion": "success"}] * 2):
+            with mock.patch.object(self.api, "pages", return_value=jobs), self.assertRaises(auth.Error):
+                auth.require_ci_ready(self.api, REPO, self.api.run)
+
+    def test_pr_event_and_wrong_caller_cannot_capture(self):
+        for change in ({"GITHUB_EVENT_NAME": "pull_request"},
+                       {"GITHUB_WORKFLOW_REF": f"{REPO['full_name']}/{auth.WORKFLOW}@refs/heads/main"},
+                       {"GITHUB_REF": "refs/pull/7/merge"}, {"GITHUB_SHA": HEAD}):
+            with self.subTest(change=change), self.assertRaises(auth.Error):
+                auth.capture(self.api, self.event, {**self.env, **change})

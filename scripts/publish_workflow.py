@@ -100,9 +100,7 @@ def promote_owned_translations(plan):
     from ingestion.common.reset_controls import PROJECT, PUBLISHER_ACCOUNT
     from scripts import dataset_mutation_authorization as auth
 
-    require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_REF") == "refs/heads/main"
-            and os.environ.get("GITHUB_WORKFLOW_REF") == f"{repository()}/{auth.WORKFLOW}@refs/heads/main",
-            "owned translation updates require the protected main workflow")
+    auth.require_production_context(dict(os.environ))
     envelope = auth.verified_envelope(auth.GitHub(), pathlib.Path("authorization"), os.environ["EXPECTED_SHA256"], dict(os.environ))
     require(envelope["outcome"] == "mutation" and envelope["document"].get("publish") == plan and "delete" not in envelope["document"],
             "translation update must match the immutable approved publish plan")

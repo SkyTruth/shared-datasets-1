@@ -510,3 +510,45 @@ jobs:
           path: ${{ runner.temp }}/ci-ready/evidence.json
           if-no-files-found: error
           retention-days: 14
+
+  dataset-mutation-selection:
+    needs: ci-ready
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
+      has_mutations: ${{ steps.discover.outputs.has_mutations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Enumerate immutable merged mutation plans
+        id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/dataset_mutation_authorization.py discover
+
+  publish-reviewed-dataset:
+    name: Publish PR #${{ matrix.pr_number }}
+    needs: [ci-ready, dataset-mutation-selection]
+    if: ${{ needs.dataset-mutation-selection.outputs.has_mutations == 'true' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        pr_number: ${{ fromJSON(needs.dataset-mutation-selection.outputs.pr_numbers) }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+      id-token: write
+    uses: ./.github/workflows/publish-dataset.yml
+    with:
+      pr_number: ${{ matrix.pr_number }}
+      executor_sha: ${{ github.sha }}
+    secrets: inherit

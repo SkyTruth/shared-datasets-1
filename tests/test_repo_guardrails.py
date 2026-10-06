@@ -455,7 +455,9 @@ class RepoGuardrailsTests(unittest.TestCase):
                 with self.subTest(workflow=filename, ref=ref, source=source):
                     result = subprocess.run(
                         ["/bin/bash", "-c", script],
-                        env={"GITHUB_REF": ref, "GITHUB_WORKFLOW_REF": source, "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1"},
+                        env={"GITHUB_REF": ref, "GITHUB_WORKFLOW_REF": source, "GITHUB_REPOSITORY": "SkyTruth/shared-datasets-1",
+                             "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": "a" * 40,
+                             "GITHUB_WORKFLOW_SHA": "a" * 40, "EXECUTOR_SHA": "a" * 40},
                         capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, expected, result.stderr)
