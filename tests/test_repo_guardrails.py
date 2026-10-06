@@ -127,7 +127,6 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('wdpa-runtime-inspection.yml', 'inspect'),
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
-            ('metadata-stack-retire.yml', 'retire'),
             ('catalog-viewer-deploy.yml', 'deploy'),
             ('pmtiles-cdn-sync.yml', 'sync'),
         })

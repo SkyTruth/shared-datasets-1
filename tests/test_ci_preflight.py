@@ -154,19 +154,24 @@ def test_missing_tools_and_wrong_versions_fail_before_commands(tmp_path):
             preflight.probe_tools("tests", dict(os.environ))
 
 
-def test_real_command_failure_remains_failure_and_stops_later_commands(tmp_path):
+@pytest.mark.parametrize("failed_check", ["audit_shared_datasets.py", "check_identity_resolutions.py"])
+def test_local_hygiene_failure_stops_python_validation(tmp_path, failed_check):
     validation = plan(["tests"])
-    commands = [(["first"], ROOT), (["second"], ROOT)]
+
+    def execute(command, **kwargs):
+        failure = any(argument.endswith(failed_check) for argument in command)
+        return subprocess.CompletedProcess(command, 7 if failure else 0)
+
     with (
         mock.patch.object(preflight, "validate_checkout"),
         mock.patch.object(preflight, "probe_tools", return_value=expected_tools("tests")),
-        mock.patch.object(preflight, "suite_commands", return_value=commands),
-        mock.patch.object(preflight.subprocess, "run", return_value=subprocess.CompletedProcess(["first"], 7)) as run,
+        mock.patch.object(preflight.subprocess, "run", side_effect=execute) as run,
     ):
         result = preflight.run_suite(ROOT, validation, "tests", tmp_path)
     assert result["status"] == "failure"
-    assert result["commands"][0]["exit_code"] == 7
-    assert run.call_count == 1
+    assert result["commands"][-1]["exit_code"] == 7
+    assert any(argument.endswith(failed_check) for argument in result["commands"][-1]["argv"])
+    assert "pytest" not in {argument for call in run.call_args_list for argument in call.args[0]}
 
 
 def fixture_repo(tmp_path):

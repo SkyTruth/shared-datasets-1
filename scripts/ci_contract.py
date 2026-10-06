@@ -43,6 +43,8 @@ CONTRACT_FILES = (
     "pyproject.toml", "uv.lock", "api/typescript/package-lock.json",
     "tests/browser/package-lock.json", "scripts/check_geospatial_test_results.py",
     "scripts/check_workflow_syntax.py",
+    ".claude/skills/shared-datasets-compliance-audit/scripts/audit_shared_datasets.py",
+    "scripts/check_identity_resolutions.py",
     "scripts/ci_source_proof.py", "scripts/ci_runtime.py", "scripts/ci_host_runtime.py",
     ".github/actions/ci-tools/action.yml", ".github/workflows/ci.yml",
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",

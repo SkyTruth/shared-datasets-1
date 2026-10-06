@@ -25,8 +25,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_DEPLOY = REPO_ROOT / ".github/workflows/catalog-web-deploy.yml"
 RELEASE_INDEX_REBUILD = REPO_ROOT / ".github/workflows/release-index-rebuild.yml"
 PMTILES_CDN_SYNC = REPO_ROOT / ".github/workflows/pmtiles-cdn-sync.yml"
-SCRATCH_CLEANUP_IAM_SYNC = REPO_ROOT / ".github/workflows/scratch-cleanup-iam-sync.yml"
-PROTECTED_TERRAFORM_READINESS = REPO_ROOT / ".github/workflows/protected-terraform-readiness.yml"
 
 
 def run_embedded_python_allowlist(run: str, resource_changes: list[dict]) -> subprocess.CompletedProcess[str]:
@@ -60,21 +58,6 @@ def run_cdn_bootstrap_allowlist(resource_changes: list[dict]) -> subprocess.Comp
         json.dump({'format_version': '1.2', 'resource_changes': [role, *resource_changes]}, plan_file)
         plan_file.flush()
         return subprocess.run([sys.executable, str(REPO_ROOT / 'scripts/cdn_plan_readiness.py'), 'check-bootstrap', '--plan-json', plan_file.name], text=True, capture_output=True, check=False)
-
-
-def assert_protected_terraform_readiness_workflow(testcase: unittest.TestCase) -> dict:
-    workflow = load_workflow(PROTECTED_TERRAFORM_READINESS)
-    trigger = workflow_triggers(workflow)
-    job = workflow["jobs"]["readiness"]
-    steps = workflow_steps_by_name(workflow, "readiness")
-    testcase.assertEqual(workflow["name"], "Protected Terraform readiness")
-    testcase.assertEqual(set(trigger), {"workflow_call"})
-    testcase.assertNotIn("environment", job)
-    testcase.assertEqual(workflow["permissions"], {"contents": "read"})
-    testcase.assertEqual(steps["Validate release evidence and permission dependencies"]["run"],
-                         "uv run --no-sync python scripts/release_contracts.py --target all")
-    testcase.assertNotIn("Validate Terraform auth configuration", steps)
-    return workflow
 
 
 def assert_protected_terraform_sync(
@@ -151,9 +134,6 @@ def assert_protected_terraform_sync(
 
 
 class CatalogWebWorkflowTests(unittest.TestCase):
-    def test_protected_terraform_readiness_consolidates_auth_checks(self):
-        assert_protected_terraform_readiness_workflow(self)
-
     def test_catalog_web_deploy_uses_publisher_identity_and_no_cache_publish_helper(self):
         workflow = load_workflow(CATALOG_DEPLOY)
         trigger = workflow_triggers(workflow)
@@ -436,16 +416,6 @@ class CatalogWebWorkflowTests(unittest.TestCase):
             [terraform_resource_change(folder_resource, ["delete"])],
         )
         self.assertEqual(whole_resource.returncode, 1)
-
-    def test_scratch_cleanup_iam_sync_uses_constrained_apply(self):
-        # Caller wiring is asserted in detail in
-        # tests/test_prod_terraform_target_apply_workflow.py.
-        workflow = load_workflow(SCRATCH_CLEANUP_IAM_SYNC)
-        job = workflow["jobs"]["sync"]
-
-        self.assertEqual(job["uses"], "./.github/workflows/prod-terraform-target-apply.yml")
-        self.assertNotIn("terraform_dir", job["with"])
-
 
 if __name__ == "__main__":
     unittest.main()

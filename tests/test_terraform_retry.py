@@ -180,7 +180,6 @@ class WrapperIsUsedForProdMutationsTests(unittest.TestCase):
         "eamlis-monthly-deploy.yml",
         "sea-ice-daily-deploy.yml",
         "catalog-viewer-deploy.yml",
-        "metadata-stack-retire.yml",
         "pmtiles-cdn-sync.yml",
     )
 

@@ -77,8 +77,11 @@ the locked fixture environment, reducing Chromium's peak disk use without
 removing installed dependencies or changing test coverage.
 
 The shared classifier always selects lint, workflow syntax, full-history secret
-scanning, admission and diff/static guardrails, and Python tests. It adds native,
-SDK and browser suites according to component dependencies. Shared scripts,
+scanning, admission and diff/static guardrails, local catalog compliance,
+offline feature-identity decision checks, and Python tests. The two local hygiene
+checks run in the shared `tests` suite before pytest, replacing the separate
+bucket-hygiene PR workflow. A finding or invalid decision fails that suite.
+It adds native, SDK and browser suites according to component dependencies. Shared scripts,
 workflow changes, unknown paths and unavailable comparisons select all suites.
 The standard Python run permits only the five named native fixtures to skip;
 native validation requires every selected test and every required fixture to pass.
