@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import subprocess
+import sys
 import time
 import urllib.request
 from urllib.parse import urlencode
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.terraform_plan_permissions import plan_checks
 
 PROJECT = "shared-datasets-1"
 REGION = "us-central1"
@@ -72,9 +77,9 @@ def checks(target):
     return [project, secret] if target in {"wdpa-monthly", "eamlis-monthly"} else [project]
 
 
-def verify(target, probe, *, attempts=7, pause=time.sleep):
+def verify_checks(required, probe, *, attempts=7, pause=time.sleep):
     for attempt in range(attempts):
-        missing = [(url, probe(url, permissions)) for url, permissions in checks(target)]
+        missing = [(url, probe(url, permissions)) for url, permissions in required]
         missing = [(url, permissions) for url, permissions in missing if permissions]
         if not missing:
             return
@@ -84,15 +89,31 @@ def verify(target, probe, *, attempts=7, pause=time.sleep):
     raise RuntimeError(f"deployment identity is not ready after bounded propagation checks: {detail}")
 
 
+def verify(target, probe, *, attempts=7, pause=time.sleep):
+    verify_checks(checks(target), probe, attempts=attempts, pause=pause)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", required=True, choices=["artifact-registry", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
+    parser.add_argument("--target", choices=["artifact-registry", "monitoring-alerts", "preview-service-account-iam", "bucket-iam", "ingestion-iam", "pmtiles-cdn-bootstrap", "pmtiles-cdn", "catalog-viewer", "iam-bootstrap", "translation-bootstrap", "eamlis-monthly", "wdpa-monthly", "sea-ice-daily", "wdpa-processing-validation"])
+    parser.add_argument("--plan-json", type=Path, help="JSON from the exact saved, allowlisted plan to be applied")
     args = parser.parse_args()
+    if not (args.target or args.plan_json):
+        parser.error("--target or --plan-json is required")
+    if args.plan_json:
+        plan = json.loads(args.plan_json.read_text())
+        project_number = subprocess.check_output(["gcloud", "projects", "describe", PROJECT, "--format=value(projectNumber)"], text=True).strip()
+        required = plan_checks(plan, project_number=project_number, target=args.target)
+    else:
+        required = checks(args.target)
     token = subprocess.check_output(["gcloud", "auth", "print-access-token"], text=True).strip()
     if not token:
         parser.error("authenticated deployment identity has no access token")
-    verify(args.target, lambda url, permissions: request(url, permissions, token))
-    print(f"{args.target}: deployment permission prerequisites verified.")
+    verify_checks(required, lambda url, permissions: request(url, permissions, token))
+    if args.plan_json:
+        print("Saved-plan mutation permissions and declared post-apply operations verified.")
+    else:
+        print(f"{args.target}: deployment permission prerequisites verified.")
 
 
 if __name__ == "__main__":

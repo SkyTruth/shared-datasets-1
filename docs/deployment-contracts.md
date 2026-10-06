@@ -51,6 +51,22 @@ account creation and bindings. Read-only probes check the actual registry or
 bucket policy resource and the declared project permissions before planning.
 These checks grant no additional authority and retain the existing allowlists.
 
+Immediately before each saved-plan apply, trusted code runs
+`python scripts/deployment_permissions.py --target <target> --plan-json <plan.json>`
+after the resource allowlist. It derives permission probes from every changed
+resource's actual action and before/after identities. An update requires update
+authority; unchanged resources do not require creation or deletion authority.
+Bucket, secret, service account, Cloud Run, registry, URL map, backend and IAP
+policy probes use the affected resource so IAM conditions remain binding. A
+resource created in the same plan uses its known production parent, with an
+explicit creation dependency required when its identity is still unknown.
+Missing parent authority, unknown identities, deferred changes and unsupported
+mutation classes stop the apply. The checked-in roles are also validated against
+their owned dependency contracts, without adding grants. For CDN sync, cache
+invalidation authority is checked even when the URL map itself is unchanged.
+These checks prove mutation authority; runtime acceptance and installed state
+remain separate prerequisites.
+
 ## Deployment records and outcomes
 
 Each target records its exact tested revision, source CI attempt, execution run,
