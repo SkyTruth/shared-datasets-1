@@ -17,6 +17,7 @@ DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/eamlis-monthly-deploy.yml"
 DOCKERFILE = REPO_ROOT / "ingestion/eamlis_monthly/Dockerfile"
 
 REQUIRED_SCRIPT_COPIES = (
+    "scripts/feature_metadata_translation_reuse.py",
     "scripts/pmtiles_zoom.py",
     "scripts/release_feature_model.py",
     "scripts/slack_notify.py",
