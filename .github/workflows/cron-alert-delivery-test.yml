@@ -3,11 +3,22 @@ name: Cron alert delivery test
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: Start a negative control, or confirm delivery for an existing probe
+        type: choice
+        options: [start, verify-delivery]
+        default: start
       job:
         description: Deliberately fail before writes, then verify Monitoring Slack delivery
         type: choice
         options: [wdpa-monthly, wdpa-processing-validation]
         default: wdpa-monthly
+      execution_name:
+        description: Exact controlled execution to verify; required for verify-delivery
+        type: string
+      delivery_confirmation_url:
+        description: Permalink of its matching Monitoring Slack notification; required for verify-delivery
+        type: string
 
 permissions:
   contents: read
@@ -26,19 +37,34 @@ jobs:
       GOOGLE_CLOUD_PROJECT: shared-datasets-1
       REGION: us-central1
       JOB_NAME: ${{ inputs.job }}
+      PROBE_ACTION: ${{ inputs.action }}
+      PROBE_EXECUTION: ${{ inputs.execution_name }}
+      DELIVERY_CONFIRMATION_URL: ${{ inputs.delivery_confirmation_url }}
     steps:
       - name: Require trusted main workflow
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF}" != "refs/heads/main" ||
                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/cron-alert-delivery-test.yml@refs/heads/main" ]]; then
-            echo "Alert delivery tests must use the reviewed workflow from main." >&2
+            echo "Execution must use this workflow from main." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - name: Validate explicit probe action and delivery evidence
+        run: |
+          set -euo pipefail
+          if [[ "$PROBE_ACTION" == verify-delivery ]]; then
+            if [[ ! "$PROBE_EXECUTION" =~ ^${JOB_NAME}-[a-z0-9-]+$ || -z "$DELIVERY_CONFIRMATION_URL" ]]; then
+              echo "Delivery verification requires the exact probe execution and matching Slack permalink." >&2
+              exit 1
+            fi
+          elif [[ "$PROBE_ACTION" != start || -n "$PROBE_EXECUTION" || -n "$DELIVERY_CONFIRMATION_URL" ]]; then
+            echo "Start accepts no prior execution or delivery evidence." >&2
+            exit 1
+          fi
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_TERRAFORM_WORKLOAD_IDENTITY_PROVIDER }}
@@ -47,29 +73,63 @@ jobs:
       - name: Run a controlled failure without dataset writes
         run: |
           set -euo pipefail
-          case "$JOB_NAME" in
-            wdpa-monthly) override=WDPA_FAIL_BEFORE_WRITES=true ;;
-            wdpa-processing-validation) override=WDPA_FAIL_BEFORE_DATASET_WRITES=1 ;;
-            *) exit 1 ;;
-          esac
-          gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
-            --format=json > "$RUNNER_TEMP/executions.json"
-          python - "$RUNNER_TEMP/executions.json" <<'PY'
+          delivery_args=()
+          if [[ "$PROBE_ACTION" == start ]]; then
+            case "$JOB_NAME" in
+              wdpa-monthly) override=WDPA_FAIL_BEFORE_WRITES=true ;;
+              wdpa-processing-validation) override=WDPA_FAIL_BEFORE_DATASET_WRITES=1 ;;
+              *) exit 1 ;;
+            esac
+            gcloud run jobs executions list --job="$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+              --format=json > "$RUNNER_TEMP/executions.json"
+            python - "$RUNNER_TEMP/executions.json" <<'PY'
           import json, sys
           if any(not e.get('status', {}).get('completionTime') for e in json.load(open(sys.argv[1]))):
               raise SystemExit('An execution is pending or running; defer the alert test')
           PY
-          # Intentionally unmarked: this explicit test must reach Monitoring.
-          execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
-            --update-env-vars="$override" --async --format='value(metadata.name)')"
-          for _ in $(seq 1 20); do
-            failed="$(gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
-              --format='value(status.failedCount)')"
-            if [[ "$failed" == 1 ]]; then
-              echo "Controlled failure: $execution. Verify the matching Monitoring Slack notification; terminal failure alone does not prove delivery." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
+            # Intentionally unmarked: this explicit negative control reaches Monitoring.
+            execution="$(gcloud run jobs execute "$JOB_NAME" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+              --update-env-vars="$override" --async --format='value(metadata.name)')"
+            completed=""
+            for _ in $(seq 1 20); do
+              completed="$(gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+                --format='value(status.completionTime)')"
+              if [[ -n "$completed" ]]; then break; fi
+              sleep 15
+            done
+            if [[ -z "$completed" ]]; then
+              echo "Controlled probe $execution did not reach a terminal outcome within five minutes." >&2
+              exit 1
             fi
-            sleep 15
+          else
+            execution="$PROBE_EXECUTION"
+            delivery_args=(--require-delivery --delivery-confirmation-url "$DELIVERY_CONFIRMATION_URL")
+          fi
+          gcloud run jobs executions describe "$execution" --region="$REGION" --project="$GOOGLE_CLOUD_PROJECT" \
+            --format=json > "$RUNNER_TEMP/probe-execution.json"
+          # Read-only polling tolerates log ingestion lag; the execution is never retried.
+          verified=false
+          for _ in $(seq 1 5); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\" AND labels.\"run.googleapis.com/execution_name\"=\"$execution\"" \
+              --project="$GOOGLE_CLOUD_PROJECT" --freshness=14d --limit=100 --format=json > "$RUNNER_TEMP/probe-logs.json"
+            if python scripts/verify_alert_probe.py --execution "$RUNNER_TEMP/probe-execution.json" \
+                --logs "$RUNNER_TEMP/probe-logs.json" --job "$JOB_NAME" --execution-name "$execution" \
+                "${delivery_args[@]}" --output "$RUNNER_TEMP/alert-probe-report.json"; then
+              verified=true
+              break
+            fi
+            sleep 10
           done
-          echo "Controlled probe $execution did not reach terminal failure within five minutes." >&2
-          exit 1
+          if [[ "$verified" != true ]]; then exit 1; fi
+          if [[ "$PROBE_ACTION" == start ]]; then
+            echo "Negative control verified for $execution; Monitoring delivery remains pending. Dispatch verify-delivery with this execution and its matching Slack message permalink before declaring routing verified." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Negative control and explicit Monitoring delivery confirmation verified for $execution: $DELIVERY_CONFIRMATION_URL" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Retain probe verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: alert-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/alert-probe-report.json
+          if-no-files-found: error

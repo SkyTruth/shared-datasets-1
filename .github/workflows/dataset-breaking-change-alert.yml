@@ -38,45 +38,53 @@ jobs:
             const repository = context.payload.repository;
             const request = { ...context.repo, pull_number: expected.number };
             const sameRepo = repo => repo?.id === repository.id && repo?.full_name === repository.full_name;
-            const validate = pr => {
-              if (!Number.isSafeInteger(expected.number) || expected.number <= 0 ||
-                  pr.number !== expected.number || pr.state !== 'open' || pr.draft !== false ||
+            if (!Number.isSafeInteger(repository.id) || repository.id <= 0 ||
+                repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              throw new Error('Invalid advisory repository identity.');
+            }
+            const snapshot = pr => {
+              if (!pr || !Number.isSafeInteger(expected.number) || expected.number <= 0 ||
+                  pr.number !== expected.number || !['open', 'closed'].includes(pr.state) ||
+                  typeof pr.draft !== 'boolean' ||
                   !sameRepo(pr.head?.repo) || !sameRepo(pr.base?.repo) ||
-                  pr.head?.sha !== expected.head.sha || !/^[a-f0-9]{40}$/.test(pr.head.sha) ||
-                  pr.base?.ref !== 'main' || pr.base?.sha !== expected.base.sha ||
+                  typeof pr.head?.sha !== 'string' || !/^[a-f0-9]{40}$/.test(pr.head.sha) ||
+                  pr.base?.ref !== 'main' || typeof pr.base?.sha !== 'string' ||
                   !/^[a-f0-9]{40}$/.test(pr.base.sha) ||
-                  (pr.body !== null && typeof pr.body !== 'string')) {
-                throw new Error('PR identity/state changed or is invalid; rerun against the current PR.');
+                  (pr.body !== null && typeof pr.body !== 'string') ||
+                  !Number.isSafeInteger(pr.changed_files) || pr.changed_files < 0) {
+                throw new Error('Invalid advisory PR identity or snapshot.');
               }
+              return JSON.stringify([pr.state, pr.draft, pr.head.sha, pr.base.sha, pr.body, pr.changed_files]);
             };
-            const readOpenPr = async () => {
-              const { data: pr } = await github.rest.pulls.get(request);
-              // An edited/ready event can reach the runner after merge or
-              // closure. No proposed-mutation preview remains to authorize.
-              if (pr.number === expected.number && sameRepo(pr.head?.repo) &&
-                  sameRepo(pr.base?.repo) && pr.state === 'closed') {
+            const expectedSnapshot = snapshot(expected);
+            const obsolete = (pr, value) => {
+              if (value !== expectedSnapshot || pr.state !== 'open' || pr.draft) {
                 core.setOutput('potential_mutation', false);
-                return null;
+                return true;
               }
-              validate(pr);
-              return pr;
+              return false;
             };
-            const pr = await readOpenPr();
-            if (pr === null) return;
+            const readPr = async () => {
+              const { data: pr } = await github.rest.pulls.get(request);
+              return [pr, snapshot(pr)];
+            };
+            const [pr, firstSnapshot] = await readPr();
+            if (obsolete(pr, firstSnapshot)) return;
             const files = await github.paginate(github.rest.pulls.listFiles, { ...request, per_page: 100 });
-            if (!Number.isSafeInteger(pr.changed_files) || pr.changed_files < 0 || pr.changed_files >= 3000 ||
-                !Array.isArray(files) || files.length !== pr.changed_files ||
+            if (!Array.isArray(files) || files.length >= 3000 ||
                 files.some(file => !file || typeof file.filename !== 'string' || !file.filename ||
                   (file.previous_filename !== undefined &&
-                    (typeof file.previous_filename !== 'string' || !file.previous_filename))) ||
+                   (typeof file.previous_filename !== 'string' || !file.previous_filename)) ||
+                  (file.status !== undefined && typeof file.status !== 'string') ||
+                  (file.sha !== undefined && (typeof file.sha !== 'string' || !/^[a-f0-9]{40}$/.test(file.sha)))) ||
                 new Set(files.map(file => file.filename)).size !== files.length) {
               throw new Error('PR file enumeration is invalid or incomplete; mutation intent is unknown.');
             }
-            const current = await readOpenPr();
-            if (current === null) return;
-            if (current.body !== pr.body || current.changed_files !== pr.changed_files) {
-              throw new Error('PR changed during mutation routing; rerun against the current PR.');
+            const [current, currentSnapshot] = await readPr();
+            if (files.length !== pr.changed_files && files.length !== current.changed_files) {
+              throw new Error('PR file enumeration is incomplete; mutation intent is unknown.');
             }
+            if (obsolete(current, currentSnapshot)) return;
             const planPath = path => typeof path === 'string' &&
               path.startsWith('.github/dataset-plans/') && path.endsWith('.json');
             const planFile = files.some(file => planPath(file.filename) || planPath(file.previous_filename));

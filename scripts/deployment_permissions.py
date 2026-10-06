@@ -71,7 +71,17 @@ def checks(target):
     if target == "monitoring-alerts":
         return [(project_url, MONITORING_PERMISSIONS)]
     if target == "preview-service-account-iam":
-        return [(project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy"))]
+        # The preview WIF binding references the managed GitHub pool, while
+        # its signing binding references a managed custom role. Terraform
+        # refreshes both and their enabled-service dependencies before planning.
+        # Test the pool on its actual resource so conditional authority cannot
+        # pass merely because a project-wide permission hint succeeded.
+        # https://docs.cloud.google.com/iam/docs/reference/rest/v1/projects.locations.workloadIdentityPools/testIamPermissions
+        pool = f"projects/{PROJECT}/locations/global/workloadIdentityPools/github"
+        return [
+            (project_url, ("iam.serviceAccounts.create", "iam.serviceAccounts.get", "iam.serviceAccounts.getIamPolicy", "iam.serviceAccounts.setIamPolicy", "iam.roles.get", "serviceusage.services.get")),
+            (f"https://iam.googleapis.com/v1/{pool}:testIamPermissions", ("iam.workloadIdentityPools.get",)),
+        ]
     if target == "bucket-iam":
         expected = ("storage.buckets.get", "storage.buckets.getIamPolicy", "storage.buckets.setIamPolicy")
         return [("https://storage.googleapis.com/storage/v1/b/skytruth-shared-datasets-1/iam/testPermissions?" + urlencode([("permissions", value) for value in expected]), expected)]

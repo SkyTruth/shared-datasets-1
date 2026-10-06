@@ -1,0 +1,13 @@
+{
+  "run_id": 37428726936,
+  "run_attempt": 1,
+  "job_id": 112158579642,
+  "executor_sha": "993319dc0401e0252db18d1ce430a31664779d7e",
+  "workflow": "preview-terraform-iam-sync.yml",
+  "step": "Terraform plan",
+  "resource_address": "google_iam_workload_identity_pool.github",
+  "resource": "projects/shared-datasets-1/locations/global/workloadIdentityPools/github",
+  "permission": "iam.workloadIdentityPools.get",
+  "http_status": 403,
+  "reason": "IAM_PERMISSION_DENIED"
+}

@@ -15,13 +15,15 @@ retrying; selecting all suites does not make history-dependent checks optional.
 
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
-the Docker socket are never mounted. Lint, standard Python, Node 22/24 and Chromium
-run on the Docker server's native Linux architecture. Geospatial release fixtures always
-run on Linux AMD64, matching production and hosted CI; ARM Docker hosts use the
-pinned, checksum-verified BuildKit direct-exec emulator for these fixtures.
-Emulated child processes use that same emulator. No daemon settings
-or system binfmt registration change. The per-suite architecture and image ID,
-runtime release, version and hashes are recorded in `runtime.json`.
+the Docker socket are never mounted. All six container suites, including the full
+geospatial fixture corpus, run on the Docker server's native Linux architecture
+(AMD64 or ARM64), using the same pinned tool versions and commands as CI.
+Preflight rejects a validation image whose actual platform differs from that
+native runtime. It installs no emulator or system handler and records each
+suite's actual architecture, Docker version and immutable image ID in
+`runtime.json`. The required hosted geospatial suite runs the full corpus on
+AMD64. A local ARM fixture pass does not cover every AMD64-specific code path;
+the actual production-image checks and the hosted suite retain that coverage.
 Preflight installs its pinned Python, uv, Node 22/24,
 Terraform, gitleaks and actionlint binaries inside a Linux container. Native
 fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credentials
@@ -39,7 +41,7 @@ required daemon TLS files are copied separately and removed after the suite.
 Unsupported authentication transport fails before validation. The host process
 retains normal filesystem and Docker API capabilities; environment isolation is
 an operational credential boundary, not a sandbox for malicious code. It builds and
-tests the actual Linux AMD64 deployment recipes without mounting the Docker
+tests all four actual Linux AMD64 deployment recipes on every host without mounting the Docker
 socket into a validation container. Its evidence retains the three deployable
 images with their config and rootfs hashes; missing image evidence fails
 `ci-ready`. The suite also exercises the deployment loader on the actual CI
@@ -47,8 +49,8 @@ Docker daemon before admitting each retained image. Deployment consumes these
 tested bytes without rebuilding.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
-locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local
-amd64 emulation. This runtime setting does not suppress validation errors.
+locked `browser` group. Tool setup retains `GODEBUG=asyncpreemptoff=1`; this runtime
+setting does not suppress validation errors.
 Native ARM containers set `OPENSSL_armcap=0`, selecting OpenSSL's portable CPU
 implementation because older Apple Linux VMs advertise unsupported extensions
 ([OpenSSL CPU documentation](https://docs.openssl.org/master/man3/OPENSSL_armcap/),

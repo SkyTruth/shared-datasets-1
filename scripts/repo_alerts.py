@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,6 +96,40 @@ def alerts_from_github_event(event: dict) -> list[dict[str, str]]:
     for commit in commits:
         alerts.extend(alerts_from_commit_message(str(commit.get("message", ""))))
     return alerts
+
+
+def alerts_from_git_range(base: str, head: str) -> list[dict[str, str]]:
+    """Read the complete range rather than GitHub's bounded push payload."""
+    if not all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in (base, head)):
+        raise ValueError("repo-alert comparison requires full base and head commit SHAs")
+    subprocess.run(["git", "merge-base", "--is-ancestor", base, head], check=True)
+    messages = subprocess.check_output(
+        ["git", "log", "--reverse", "--format=%B%x00", f"{base}..{head}"], text=True,
+    )
+    return [alert for message in messages.split("\0") for alert in alerts_from_commit_message(message)]
+
+
+@app.command("select-from-git-range")
+def select_from_git_range(
+    base: str = typer.Option(...),
+    head: str = typer.Option(...),
+    github_output: Path = typer.Option(...),
+) -> None:
+    """Select the announcement worker only when the complete range has alerts."""
+    selected = bool(alerts_from_git_range(base, head))
+    with github_output.open("a") as output:
+        output.write(f"has_repo_alert={str(selected).lower()}\n")
+
+
+@app.command("send-from-git-range")
+def send_from_git_range(
+    base: str = typer.Option(...),
+    head: str = typer.Option(...),
+    dry_run: bool = typer.Option(False),
+) -> None:
+    """Send exactly the alerts from the already selected full commit range."""
+    for alert in alerts_from_git_range(base, head):
+        send_functionality_added_alert(**alert, dry_run=dry_run, strict=not dry_run)
 
 
 def send_functionality_added_alert(

@@ -160,6 +160,22 @@ def test_ci_covers_any_real_post_validation_deployment_failure():
     assert alerts.alert_for_run(event(name="Cron alert delivery test", event="workflow_dispatch")) is None
 
 
+@pytest.mark.parametrize("name", [
+    "geospatial-changes", "lint", "tests", "geospatial-integration", "production-images",
+    "sdk-validation (Node 22)", "sdk-validation (Node 24)", "browser", "ci-ready",
+])
+def test_all_validation_workers_remain_validation_when_routing_a_failed_ci_attempt(name):
+    failed_validation = {"name": name, "status": "completed", "conclusion": "failure"}
+    payload = event(name="CI", event="push")
+    assert alerts.alert_for_run(payload, jobs=[failed_validation]) is None
+    # Routing must still classify validation explicitly when a successful gate
+    # appears in the supplied job evidence; it cannot infer deployment by exclusion.
+    ready = {"name": "ci-ready", "status": "completed", "conclusion": "success"}
+    assert alerts.alert_for_run(payload, jobs=[ready, failed_validation]) is None
+    failed_delivery = {"name": "eamlis / Build image and apply", "status": "completed", "conclusion": "failure"}
+    assert alerts.alert_for_run(payload, jobs=[ready, failed_validation, failed_delivery]) is not None
+
+
 @pytest.mark.parametrize("filename,step_name", [
     ("sea-ice-daily-deploy.yml", "Execute sea-ice-daily canary"),
     ("eamlis-monthly-deploy.yml", "Execute eamlis-monthly canary"),
