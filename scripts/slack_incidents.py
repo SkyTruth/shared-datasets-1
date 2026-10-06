@@ -345,7 +345,7 @@ def validate_state(state):
         require(key in allowed and isinstance(post, dict) and set(post) == {"state", "ts"}
                 and post["state"] in {"claimed", "delivered"}, "invalid Slack delivery operation")
         require((post["state"] == "claimed" and post["ts"] is None)
-                or (post["state"] == "delivered" and TIMESTAMP.fullmatch(str(post["ts"]))), "invalid Slack delivery acknowledgement")
+                or (post["state"] == "delivered" and isinstance(post["ts"], str) and TIMESTAMP.fullmatch(post["ts"])), "invalid Slack delivery acknowledgement")
     link = incident["permalink"]
     require(isinstance(link, str), "invalid incident permalink")
     if link:

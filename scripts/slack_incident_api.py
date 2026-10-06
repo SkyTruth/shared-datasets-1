@@ -68,7 +68,8 @@ class Slack:
                 self.sleep(delay)
         self.last_post = self.clock()
         result = self.call("chat.postMessage", body)
-        require(result.get("channel") == self.channel and TIMESTAMP.fullmatch(str(result.get("ts", ""))), "Slack returned an invalid message identity")
+        require(result.get("channel") == self.channel and isinstance(result.get("ts"), str)
+                and TIMESTAMP.fullmatch(result["ts"]), "Slack returned an invalid message identity")
         return result["ts"]
 
     def update(self, ts, payload):

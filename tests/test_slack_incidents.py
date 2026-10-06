@@ -467,11 +467,20 @@ def test_slack_api_uses_fixed_channel_exact_parent_and_broadcast_only_for_recove
         slack.post({"text": "hello", "channel": "evil"})
 
 
-@pytest.mark.parametrize("response", [{"ok": False, "error": "internal_error"}, {"ok": True}, {"ok": True, "channel": "evil", "ts": "1791270000.000001"}])
+@pytest.mark.parametrize("response", [{"ok": False, "error": "internal_error"}, {"ok": True},
+                                     {"ok": True, "channel": "evil", "ts": "1791270000.000001"},
+                                     {"ok": True, "channel": IDENTITY["channel"], "ts": 1791270000.123456}])
 def test_slack_http_200_is_insufficient_and_bad_responses_never_acknowledge(response):
     slack, _ = client([response])
     with pytest.raises(SlackError):
         slack.post({"text": "hello"})
+
+
+def test_persisted_message_timestamp_cannot_be_a_float():
+    value = state()
+    value["incident"]["posts"]["parent"] = {"state": "delivered", "ts": 1791270000.123456}
+    with pytest.raises(incidents.IncidentError, match="acknowledgement"):
+        incidents.validate_state(value)
 
 
 def test_slack_errors_do_not_echo_tokens_and_do_not_retry():
