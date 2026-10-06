@@ -34,7 +34,19 @@ WDPA's ten-minute watch and detached validation retain Cloud Monitoring coverage
 Do not suppress them based solely on their creator, branch, or workflow trigger.
 Routine deployments no longer require deliberate failure probes. The explicit
 `cron-alert-delivery-test.yml` retains both existing fail-before-write modes and
-refuses to start while the selected job has an active execution.
+refuses to start while the selected job has an active execution. Its `start`
+action verifies the terminal failure, exact execution override and controlled
+pre-write log marker; it records Monitoring delivery as **pending**. A failed
+count alone cannot satisfy the negative control: OOM, IAM or image failures
+must still fail verification.
+
+After seeing the matching Monitoring Slack message, dispatch `verify-delivery`
+with the same job, exact execution name and message permalink. That action
+rechecks the execution and negative control, then records explicit delivery
+confirmation. The permalink is maintainer confirmation of the matching message,
+not an automated read of Slack. The two runs retain their evidence separately;
+a successful `start` run alone does not establish alert delivery. The probe
+execution is never retried automatically, and log ingestion polling is read-only.
 
 The unapproved-writer policy exempts the WDPA observer only for the exact
 `_catalog/wdpa-monthly-execution.json` object. It grants no permissions and does
@@ -60,9 +72,10 @@ Before declaring live routing verified:
    matching no historical failures is not proof of correctness.
 3. Confirm a synchronous command's failure fails its GitHub step. Check that
    scheduled executions have no supervision marker in their execution template.
-4. Dispatch the explicit delivery test when no execution is active. Confirm its
-   terminal failure and the matching Slack notification. This checks the
-   unattended path; it does not prove supervision suppression.
+4. Dispatch the explicit delivery test's `start` action when no execution is
+   active. Confirm its controlled terminal failure and matching Slack
+   notification, then run `verify-delivery` with that execution and permalink.
+   This checks the unattended path; it does not prove supervision suppression.
 5. Verify the observer's expected status write no longer matches; writes by a
    different principal or to a different canonical object must still match.
 6. Check the first scheduled maintenance and automatic follow-up failures route
@@ -78,7 +91,9 @@ announced; ordinary PR and validation-only
 failures stay in GitHub. Failed terminal deployment verification and explicit
 read-only reconciliation also remain visible in Slack. Every subscribed source
 workflow is checked against its authoritative API identity; completion events
-superseded by a newer attempt become no-ops. Dataset publication refreshes catalog data without
+superseded by a newer attempt become no-ops. Repository announcements are
+selected from every commit in the complete main-push range, using existing CI
+detection, before allocating their worker. Dataset publication refreshes catalog data without
 redeploying the catalog viewer service.
 
 Local tests exercise routing decisions, real workflow shell failure propagation,

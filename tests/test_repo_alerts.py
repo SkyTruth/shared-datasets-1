@@ -141,11 +141,59 @@ summary: A new command builds vector artifacts.
     def test_github_workflow_posts_fenced_alerts_on_main_push(self):
         workflow = (REPO_ROOT / ".github/workflows/repo-functionality-alert.yml").read_text()
 
-        self.assertIn("branches:", workflow)
-        self.assertIn("- main", workflow)
-        self.assertIn("send-from-github-event", workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("send-from-git-range", workflow)
         self.assertIn("SHARED_DATASETS_SLACK_WEBHOOK_URL", workflow)
         self.assertNotIn("github.run_attempt", workflow)
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn("refs/heads/main", workflow)
+        self.assertIn(".github/workflows/ci.yml@refs/heads/main", workflow)
+        self.assertNotIn("pip install", workflow)
+        self.assertIn("uv sync --locked --no-dev", workflow)
+
+    def test_announcement_in_earlier_commit_is_not_hidden_by_plain_head(self):
+        message = """Add reusable capability
+
+```repo-alert
+emoji: 🧰
+headline: A new capability
+summary: A reusable capability is available.
+why_excited: Projects can use it now.
+```
+"""
+        event = {"commits": [{"message": message}, {"message": "Fix a typo"}],
+                 "head_commit": {"message": "Fix a typo"}}
+        self.assertEqual(repo_alerts.alerts_from_github_event(event)[0]["headline"], "A new capability")
+
+    def test_complete_git_range_finds_an_alert_outside_bounded_push_payload(self):
+        alert_message = """Add reusable capability
+
+```repo-alert
+emoji: 🧰
+headline: Earlier capability
+summary: A reusable capability is available.
+why_excited: Projects can use it now.
+```
+"""
+        # GitHub's push payload caps its commits array; git history has no such cap.
+        messages = alert_message + "\0" + ("Fix typo\0" * 2048)
+        with mock.patch.object(repo_alerts.subprocess, "run") as ancestry, \
+                mock.patch.object(repo_alerts.subprocess, "check_output", return_value=messages):
+            alerts = repo_alerts.alerts_from_git_range("a" * 40, "b" * 40)
+        self.assertEqual([alert["headline"] for alert in alerts], ["Earlier capability"])
+        self.assertTrue(ancestry.call_args.kwargs["check"])
+
+    def test_missing_comparison_history_fails_instead_of_using_partial_event(self):
+        from subprocess import CalledProcessError
+        with mock.patch.object(repo_alerts.subprocess, "run", side_effect=CalledProcessError(1, "git")):
+            with self.assertRaises(CalledProcessError):
+                repo_alerts.alerts_from_git_range("a" * 40, "b" * 40)
+
+    def test_invalid_commit_reference_is_rejected_before_git(self):
+        with mock.patch.object(repo_alerts.subprocess, "run") as git:
+            with self.assertRaises(ValueError):
+                repo_alerts.alerts_from_git_range("HEAD", "b" * 40)
+        git.assert_not_called()
 
 
 if __name__ == "__main__":

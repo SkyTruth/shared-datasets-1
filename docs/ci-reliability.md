@@ -72,3 +72,8 @@ Seven days after rollout, compare preventable post-merge failures per deployment
 attempt, recurring signatures, first-attempt success and allocated jobs with the
 baseline. Keep legitimate PR rejections, external outages, controlled probes,
 cancellations and asynchronous runtime failures separately visible.
+
+Superseded PR validation is cancelled per suite and PR number, with separate Node
+matrix entries. Main-push validation uses a distinct group per run and cannot be
+cancelled by a later PR or push. There is no workflow-wide cancellation: callable
+production jobs retain their existing non-cancelling queues and state locks.

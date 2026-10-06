@@ -284,6 +284,9 @@ jobs:
           if [[ -n "${WDPA_SCRATCH_DEVICE:-}" ]]; then sudo losetup -d "$WDPA_SCRATCH_DEVICE"; fi
 
   geospatial-changes:
+    concurrency:
+      group: ci-validation-geospatial-changes-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: geospatial-changes
     runs-on: ubuntu-24.04
     outputs:
@@ -327,6 +330,9 @@ jobs:
           retention-days: 14
 
   lint:
+    concurrency:
+      group: ci-validation-lint-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     needs: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -351,6 +357,9 @@ jobs:
           retention-days: 14
 
   tests:
+    concurrency:
+      group: ci-validation-tests-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     needs: geospatial-changes
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -377,6 +386,9 @@ jobs:
           retention-days: 14
 
   geospatial-integration:
+    concurrency:
+      group: ci-validation-geospatial-integration-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
@@ -421,6 +433,9 @@ jobs:
           retention-days: 14
 
   production-images:
+    concurrency:
+      group: ci-validation-production-images-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.production_images == 'true'
     runs-on: ubuntu-24.04
@@ -446,6 +461,9 @@ jobs:
           retention-days: 14
 
   sdk-validation:
+    concurrency:
+      group: ci-validation-sdk-validation-${{ matrix.node }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: sdk-validation (Node ${{ matrix.node }})
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.sdk == 'true'
@@ -479,6 +497,9 @@ jobs:
           retention-days: 14
 
   browser:
+    concurrency:
+      group: ci-validation-browser-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     needs: geospatial-changes
     if: needs.geospatial-changes.outputs.browser == 'true'
     runs-on: ubuntu-24.04
@@ -506,6 +527,9 @@ jobs:
           retention-days: 14
 
   ci-ready:
+    concurrency:
+      group: ci-validation-ci-ready-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     name: ci-ready
     permissions:
       contents: read
@@ -558,6 +582,7 @@ jobs:
     outputs:
       pr_numbers: ${{ steps.discover.outputs.pr_numbers }}
       has_mutations: ${{ steps.discover.outputs.has_mutations }}
+      has_repo_alert: ${{ steps.repo_alert_selection.outputs.has_repo_alert }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -568,6 +593,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/dataset_mutation_authorization.py discover
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.12'
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.11.8'
+      - name: Sync pinned announcement parser dependencies
+        run: uv sync --locked --no-dev
+      - name: Inspect every commit for repository announcements
+        id: repo_alert_selection
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: uv run --no-sync python scripts/repo_alerts.py select-from-git-range --base "$BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+
+  announce-repo-functionality:
+    needs: [ci-ready, dataset-mutation-selection]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.dataset-mutation-selection.outputs.has_repo_alert == 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/repo-functionality-alert.yml
+    with:
+      base_sha: ${{ github.event.before }}
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+    secrets: inherit
 
   publish-reviewed-dataset:
     name: Publish PR #${{ matrix.pr_number }}
