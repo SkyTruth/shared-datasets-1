@@ -7,10 +7,15 @@ here instead of after release. CI and isolated agent preflight run this command.
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 import re
 import subprocess
 import sys
 import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.tested_image_bundle import TARGETS, pack_image
 
 INTERPRETER_PROBE = r'''
 import pathlib, shlex, shutil, subprocess
@@ -114,20 +119,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", action="append", choices=["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer"])
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
+    parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
     args = parser.parse_args()
     if args.viewer_image:
-        if args.target:
+        if args.target or args.output:
             parser.error("viewer-image cannot be combined with build targets")
         verify_viewer_image(args.viewer_image)
         return
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
+    retained = {}
     for target in args.target or ["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer"]:
         subprocess.run(commands(target, executor)[0], check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)
         for command in commands(target, executor, image_id=image_id)[1:]:
             subprocess.run(command, check=True)
+        if args.output and target in TARGETS:
+            retained[target] = pack_image(target, executor, image_id, args.output / "images")
+    if args.output and retained:
+        (args.output / "images/manifest.json").write_text(json.dumps(
+            {"schema_version": 1, "tested_sha": executor, "images": retained}, sort_keys=True
+        ) + "\n")
 
 
 if __name__ == "__main__":

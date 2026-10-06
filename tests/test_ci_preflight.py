@@ -17,6 +17,7 @@ from scripts.ci_contract import (
     verify_results,
 )
 from workflow_helpers import load_workflow, workflow_triggers
+from ci_result_fixtures import production_images
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,11 +32,15 @@ def plan(suites=SUITES):
 
 
 def results_for(validation):
-    return [{
+    results = [{
         **{field: validation[field] for field in ("base", "head", "tested_sha", "tree", "contract_digest")},
         "suite": suite, "status": "success", "tools": expected_tools(suite),
         "commands": [{"argv": ["executed-test"], "exit_code": 0}],
     } for suite in validation["suites"]]
+    for result in results:
+        if result["suite"] == "production-images":
+            result["production_images"] = production_images(validation["tested_sha"])
+    return results
 
 
 def jobs_for(validation):
@@ -359,7 +364,8 @@ def test_local_browser_and_python_use_native_linux_but_release_clis_require_amd6
     arm = {'server_architecture': 'arm64'}
     assert suite_platform('browser', arm) == suite_platform('tests', arm) == 'linux/arm64'
     assert suite_platform('geospatial-integration', arm) == 'linux/amd64'
-    assert suite_platform('sdk-node24', arm) == 'linux/amd64'
+    assert suite_platform('sdk-node22', arm) == suite_platform('sdk-node24', arm) == 'linux/arm64'
+    assert suite_platform('lint', arm) == 'linux/amd64'
     assert all(suite_platform(suite, {'server_architecture': 'amd64'}) == 'linux/amd64' for suite in SUITES)
 
 

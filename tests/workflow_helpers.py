@@ -105,7 +105,7 @@ def assert_target_apply_caller(
     testcase.assertNotIn("pull_request", trigger)
     expected_permissions = {"contents": "read", "id-token": "write"}
     if push_paths is None:
-        expected_permissions.update({"actions": "read", "deployments": "write"})
+        expected_permissions.update({"actions": "read", "deployments": "write", "attestations": "write"})
     testcase.assertEqual(workflow["permissions"], expected_permissions)
     testcase.assertEqual(job["uses"], TARGET_APPLY_WORKFLOW_USES)
     if expected_job_if is None:

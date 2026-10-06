@@ -15,11 +15,11 @@ retrying; selecting all suites does not make history-dependent checks optional.
 
 Docker must be running. Preflight copies its clean checkout into disposable
 containers and copies suite evidence back; host file sharing, credentials and
-the Docker socket are never mounted. Standard Python and Chromium run on the
-Docker server's native Linux architecture. Geospatial release fixtures always
+the Docker socket are never mounted. Standard Python, Node 22/24 and Chromium run
+on the Docker server's native Linux architecture. Geospatial release fixtures always
 run on Linux AMD64, matching production and hosted CI; ARM Docker hosts use the
 pinned, checksum-verified BuildKit direct-exec emulator for these fixtures and
-the lint/SDK suites. Child processes use that same emulator. No daemon settings
+the lint suite. Emulated child processes use that same emulator. No daemon settings
 or system binfmt registration change. The per-suite architecture and image ID,
 runtime release, version and hashes are recorded in `runtime.json`.
 Preflight installs its pinned Python, uv, Node 22/24,
@@ -28,6 +28,12 @@ fixtures use the repository's GDAL/Tippecanoe/PMTiles image. Production credenti
 are not forwarded. Downloads and Terraform provider initialization require
 network access. Tool versions and the classifier are owned by
 `scripts/ci_contract.py`; CI setup and image pins are checked against that contract.
+The production-image suite uses the host Docker client and an isolated host
+environment with the same pinned Python and locked dependencies. It builds and
+tests the actual Linux AMD64 deployment recipes without mounting the Docker
+socket into a validation container. Its evidence retains the three deployable
+images with their config and rootfs hashes; missing image evidence fails
+`ci-ready`. Deployment consumes these tested bytes without rebuilding.
 The general Linux image includes pinned GDAL headers so the locked Rasterio
 dependency can build on ARM. Browser fixture dependencies have an explicit
 locked `browser` group. Both boundaries disable Go asynchronous preemption for compatibility with local
@@ -38,6 +44,9 @@ implementation because older Apple Linux VMs advertise unsupported extensions
 [upstream cryptography report](https://github.com/pyca/cryptography/issues/14764)).
 The locked wheel, algorithms and test corpus remain unchanged; this setting is
 included in the recorded runtime evidence.
+Native Node execution also avoids observed subprocess faults under AMD64
+emulation. Both Node versions execute the same SDK tests and package-byte checks
+as hosted CI; a failed suite remains a failure and is never automatically retried.
 Browser validation removes its process-owned uv download cache after installing
 the locked fixture environment, reducing Chromium's peak disk use without
 removing installed dependencies or changing test coverage.
@@ -86,8 +95,10 @@ production workflow files and concurrency behavior are unchanged.
 The receipt bootstrap lands before dependent deployments adopt signed deployment
 records. After this workflow is on main, `jonaraphael` dispatches
 `Deployment receipt rehearsal` through the existing protected production
-environment. It signs a synthetic receipt and verifies its exact bytes, main
-revision, workflow identity and producing run with the pinned official verifier.
+environment, then dispatches `Reusable deployment receipt rehearsal`. The same
+protected leaf signs a synthetic receipt and verifies its exact bytes, main
+revision, distinct caller and signer identities and producing run with the pinned
+official verifier. Both direct and reusable invocation must pass.
 It has no GCP authentication or deployment-write permission. A successful
 protected rehearsal is required before enabling dependent production mutations;
 an unsigned fixture or a locally passing test cannot replace this live proof.

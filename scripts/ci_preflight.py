@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_geospatial_test_results import check_results
 from scripts.ci_runtime import local_runtime, prove_runtime, run_container, suite_platform
 from scripts.ci_source_proof import prove_attempts, select_plan
+from scripts.tested_image_bundle import ImageError, TARGETS as IMAGE_TARGETS, validate_manifest
 from scripts.ci_contract import (
     DEPLOYMENTS, NATIVE_TESTS, SUITES, TOOLCHAIN, check_junit, contract_digest, expected_tools,
     select_deployments, select_suites, verify_results, write_json,
@@ -144,7 +145,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         add("uv", "run", "--no-sync", "pytest", *NATIVE_TESTS, "-o", "xfail_strict=true", f"--junitxml={output / 'pytest.xml'}")
     elif suite == "production-images":
         add("uv", "sync", "--locked", "--all-groups")
-        add("uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py")
+        add("uv", "run", "--no-sync", "python", "scripts/production_image_contracts.py", "--output", str(output))
     else:
         raise ValueError(f"unknown suite: {suite}")
     return commands
@@ -220,6 +221,11 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             check_junit(output / "pytest.xml", native=suite == "geospatial-integration")
             if suite == "geospatial-integration":
                 check_results(output / "pytest.xml")
+        if suite == "production-images":
+            manifest = json.loads((output / "images/manifest.json").read_text())
+            if set(validate_manifest(manifest, plan["tested_sha"])) != IMAGE_TARGETS:
+                raise ValueError("complete tested production-image set is missing")
+            result["production_images"] = manifest
         if suite in {"sdk-node22", "sdk-node24"}:
             candidates = list((output / "work/_scratch").glob("sdk-package-smoke-*/candidate.json"))
             if len(candidates) != 1:
@@ -236,7 +242,7 @@ def run_suite(root: Path, plan: dict, suite: str, output: Path) -> dict:
             result["package"] = candidate
         validate_checkout(root, plan)
         result["status"] = "success"
-    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+    except (ImageError, ValueError, OSError, subprocess.SubprocessError) as exc:
         result["error"] = str(exc)
         print(f"{suite}: {exc}", file=sys.stderr)
     finally:

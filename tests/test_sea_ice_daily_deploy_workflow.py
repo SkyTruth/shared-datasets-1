@@ -63,9 +63,13 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertEqual(env["JOB_NAME"], "sea-ice-daily")
 
         build_run = steps["Build sea-ice-daily image"]["run"]
-        self.assertIn("-f ingestion/sea_ice_daily/Dockerfile", build_run)
-        self.assertIn("--platform linux/amd64", build_run)
-        self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", build_run)
+        self.assertIn("tested_image_authorization.py --workflow sea-ice-daily-deploy.yml --target sea-ice-daily", build_run)
+        self.assertNotIn("docker build", build_run)
+        self.assertEqual(steps["Build sea-ice-daily image"]["id"], "tested-image")
+        tag = steps["Tag the exact tested sea-ice-daily image"]
+        self.assertEqual(tag["env"]["TESTED_IMAGE_ID"], "${{ steps.tested-image.outputs.image_id }}")
+        self.assertIn('docker tag "$TESTED_IMAGE_ID"', tag["run"])
+        self.assertIn("SEA_ICE_DAILY_IMAGE_TAG=${image_tag}", tag["run"])
 
         self.assertIn("gdal_calc.py --help", steps["Smoke-test native tools in image"]["run"])
         synthetic_run = steps["Smoke-test synthetic sea-ice build path in image"]["run"]
@@ -76,6 +80,7 @@ class SeaIceDailyDeployWorkflowTests(unittest.TestCase):
         self.assertIn("docker push", push_run)
         self.assertIn("docker buildx imagetools inspect", push_run)
         self.assertIn("SEA_ICE_DAILY_IMAGE=${image_ref}", push_run)
+        self.assertIn("assert actual == expected", push_run)
 
         plan_run = steps["Terraform plan"]["run"]
         self.assertEqual(

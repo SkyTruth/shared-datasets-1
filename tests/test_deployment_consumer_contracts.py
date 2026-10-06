@@ -53,8 +53,13 @@ def test_first_mutation_requires_record_under_noncancelling_serialization(filena
     assert workflow['jobs'][job]['concurrency']['queue'] == 'max'
     assert not workflow['jobs'][job]['concurrency']['cancel-in-progress']
     names = list(steps)
-    assert names.index(record) < names.index(mutation)
-    assert steps[mutation]['if'] == "steps.deployment.outputs.proceed == 'true'"
+    receipt = 'Attest serialized deployment claim before mutation'
+    assert names.index(record) < names.index(receipt) < names.index(mutation)
+    assert steps[receipt]['id'] == 'claim-receipt'
+    assert steps[receipt]['uses'] == './.github/actions/deployment-receipt'
+    assert steps[receipt]['if'] == "${{ steps.deployment.outputs.proceed == 'true' }}"
+    assert steps[receipt]['with'] == {'mode': 'receipt', 'receipt-path': '${{ steps.deployment.outputs.receipt_path }}'}
+    assert steps[mutation]['if'] == "steps.deployment.outputs.proceed == 'true' && steps.claim-receipt.outcome == 'success'"
 
 
 def test_missing_required_evidence_cannot_be_omitted_from_fingerprint(tmp_path):
@@ -74,5 +79,9 @@ def test_actual_saved_plan_permissions_are_verified_before_mutation(filename, jo
     steps = workflow_steps_by_name(load_workflow(ROOT / '.github/workflows' / filename), job)
     names = list(steps)
     assert names.index(allowlist) < names.index(check) < names.index(mutation)
-    assert steps[check]['if'] == f"steps.{guard}.outputs.proceed == 'true'"
+    expected_guard = f"steps.{guard}.outputs.proceed == 'true'"
+    if guard == 'deployment':
+        expected_guard += " && steps.claim-receipt.outcome == 'success'"
+        assert names.index('Attest serialized deployment claim before mutation') < names.index(check)
+    assert steps[check]['if'] == expected_guard
     assert f'scripts/deployment_permissions.py --target {target} --plan-json "${{RUNNER_TEMP}}/{plan}"' in steps[check]['run']

@@ -1,0 +1,15 @@
+name: Reusable deployment receipt rehearsal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+  attestations: write
+
+jobs:
+  rehearsal:
+    if: github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' && github.triggering_actor == 'jonaraphael'
+    uses: ./.github/workflows/deployment-receipt-rehearsal.yml

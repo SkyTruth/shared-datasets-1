@@ -1,6 +1,20 @@
 name: PMTiles CDN sync
 
 on:
+  workflow_dispatch:
+    inputs:
+      executor_sha:
+        description: Exact tested main revision for selective recovery
+        required: true
+        type: string
+      source_run_id:
+        description: Main CI run that validated the executor
+        required: true
+        type: string
+      source_run_attempt:
+        description: Exact successful ci-ready attempt
+        required: true
+        type: string
   workflow_call:
     inputs:
       executor_sha:
@@ -46,20 +60,12 @@ jobs:
       - name: Validate main ref
         run: |
           set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "PMTiles CDN sync may only apply from main after reviewed changes have landed." >&2
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                ("${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main" &&
+                 "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main") ]]; then
+            echo "Execution must use this workflow or CI from main." >&2
             exit 1
           fi
-
-      - name: Require trusted main workflow
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/heads/main ]]; then echo "Production requires main" >&2; exit 1; fi
-          case "$GITHUB_WORKFLOW_REF" in
-            "${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" | "${GITHUB_REPOSITORY}/.github/workflows/pmtiles-cdn-sync.yml@refs/heads/main") ;;
-            *) echo "Untrusted production caller" >&2; exit 1 ;;
-          esac
 
       - name: Check out trusted deployment verifier
         uses: actions/checkout@v4

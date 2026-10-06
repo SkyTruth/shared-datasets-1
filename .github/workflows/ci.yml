@@ -456,6 +456,7 @@ jobs:
         if: always()
         with:
           name: ci-result-production-images-attempt${{ github.run_attempt }}
+          compression-level: 0
           path: ${{ runner.temp }}/ci-results/production-images
           if-no-files-found: error
           retention-days: 14
