@@ -54,6 +54,24 @@ def test_cdn_catalog_and_shared_bucket_dependencies_select_route_sync(path):
     assert "pmtiles_cdn" in select_deployments([path])
 
 
+def test_catalog_metadata_updates_do_not_redeploy_consumers_but_contract_changes_do():
+    before = "asset_slug,title,canonical_path,translation_locales,translation_fields,access_tier,status,has_pmtiles,available_formats\neamlis-abandoned-mine-land-inventory,Original,gs://skytruth-shared-datasets-1/example/latest/a.fgb,es,PA_NAME,public,active,true,fgb;pmtiles\n"
+    path = ["catalog/shared-datasets-catalog.csv"]
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("Original", "Updated"))) == []
+    assert set(select_deployments(path, catalog_snapshots=(before, before.replace(",es,", ",es;fr,")))) == {"eamlis", "ingestion_iam"}
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn"]
+    assert "catalog_viewer" not in select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/")))
+    assert "catalog_viewer" in select_deployments(path + ["scripts/compare_releases.py"], catalog_snapshots=(before, before))
+
+
+def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_validation():
+    path = ["catalog/shared-datasets-catalog.csv"]
+    assert set(select_deployments(path)) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn"}
+    duplicate = "asset_slug,title\nwdpa-marine,One\nwdpa-marine,Two\n"
+    with pytest.raises(ValueError, match="unique nonempty"):
+        select_deployments(path, catalog_snapshots=(duplicate, duplicate))
+
+
 def test_release_contracts_run_before_python_tests_for_selected_release_changes():
     plan = {"base": "base", "tested_sha": "head", "deployments": ["wdpa", "ingestion_iam"]}
     commands = [args for args, _ in suite_commands("tests", ROOT, plan, ROOT)]

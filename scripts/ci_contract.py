@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 
 from scripts.check_geospatial_test_results import REQUIRED_TESTS
 from scripts.ci_source_proof import job_name
+from scripts.catalog_csv import read_catalog_rows_text
 
 
 TOOLCHAIN = {
@@ -54,6 +55,7 @@ CONTRACT_FILES = (
     "scripts/release_contracts.py", "scripts/deployment_permissions.py",
     "scripts/production_image_contracts.py",
     "scripts/cdn_plan_readiness.py",
+    "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
 )
 
 
@@ -96,7 +98,34 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
     return [suite for suite in SUITES if suite in selected], "complete path classification"
 
 
-def select_deployments(paths: list[str] | None) -> list[str]:
+def catalog_deployment_targets(before: str, after: str) -> set[str]:
+    """Compare the catalog fields actually compiled into release consumers."""
+    def contracts(raw):
+        rows = read_catalog_rows_text(raw)
+        by_slug = {}
+        for row in rows:
+            slug = row.get("asset_slug")
+            if not slug or slug in by_slug:
+                raise ValueError("catalog release comparison requires unique nonempty asset slugs")
+            by_slug[slug] = row
+        def translation(slug):
+            row = by_slug.get(slug)
+            if row is None:
+                return None
+            return tuple(tuple(filter(None, row.get(field, "").split(";"))) for field in ("translation_locales", "translation_fields"))
+        routes_and_folders = frozenset(tuple(row.get(field, "") for field in (
+            "asset_slug", "canonical_path", "access_tier", "status", "has_pmtiles", "available_formats",
+        )) for row in rows)
+        return {
+            "eamlis": translation("eamlis-abandoned-mine-land-inventory"),
+            "wdpa": (translation("wdpa-marine"), translation("wdpa-terrestrial")),
+            "pmtiles_cdn": routes_and_folders,
+        }
+    previous, current = contracts(before), contracts(after)
+    return {target for target in previous if previous[target] != current[target]}
+
+
+def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str, str] | None = None) -> list[str]:
     """Explicit release dependencies; unknown changes broaden tests, not mutations."""
     selected = set()
     iam = {"artifact_registry_iam", "preview_terraform_iam", "scratch_cleanup_iam", "cron_alert_policy", "ingestion_iam"}
@@ -112,8 +141,10 @@ def select_deployments(paths: list[str] | None) -> list[str]:
             "scripts/pmtiles_zoom.py", "scripts/slack_notify.py",
         }:
             selected.update(ingestion)
-        if path in {"scripts/catalog_csv.py", "catalog/shared-datasets-catalog.csv"}:
+        if path == "scripts/catalog_csv.py":
             selected.update({"eamlis", "wdpa"})
+        if path == "catalog/shared-datasets-catalog.csv":
+            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn"})
         if path == "scripts/feature_metadata_translation_reuse.py":
             selected.add("wdpa")
         if path.startswith("catalog/feature-identity-resolutions/"):
@@ -141,12 +172,16 @@ def select_deployments(paths: list[str] | None) -> list[str]:
         if path.startswith("api/python/src/") or path.startswith("services/catalog_viewer/") or path in {
             ".github/workflows/catalog-viewer-deploy.yml", "terraform/envs/prod/catalog_viewer.tf",
             "terraform/envs/prod/catalog_viewer_variables.tf",
+            "scripts/compare_releases.py", "scripts/release_feature_model.py",
+            "terraform/envs/prod/main.tf", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
+            "terraform/envs/prod/pmtiles_cdn.tf", "terraform/envs/prod/pmtiles_cdn_variables.tf",
+            "terraform/envs/prod/canonical_mutation_iam.tf", "catalog/categories.yaml",
         }:
             selected.add("catalog_viewer")
         if path.startswith("terraform/modules/pmtiles-cdn/") or path in {
             ".github/workflows/pmtiles-cdn-sync.yml", "terraform/envs/prod/pmtiles_cdn.tf",
             "terraform/envs/prod/pmtiles_cdn_variables.tf", "scripts/pmtiles_cdn_sync.py",
-            "catalog/shared-datasets-catalog.csv", "terraform/envs/prod/shared_bucket_public.tf",
+            "terraform/envs/prod/shared_bucket_public.tf",
             "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf",
         }:
             selected.add("pmtiles_cdn")
@@ -165,6 +200,8 @@ def select_deployments(paths: list[str] | None) -> list[str]:
             "terraform/envs/prod/monitoring_variables.tf", "terraform/envs/prod/wdpa_execution_observer.tf",
         }:
             selected.add("cron_alert_policy")
+        if path == "catalog/categories.yaml":
+            selected.update({"scratch_cleanup_iam", "cron_alert_policy"})
         if path in {".github/workflows/prod-terraform-target-apply.yml", "terraform/envs/prod/variables.tf", "terraform/envs/prod/versions.tf"}:
             selected.update(iam)
         if path == "terraform/envs/prod/main.tf":
