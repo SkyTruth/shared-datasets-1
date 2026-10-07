@@ -2,9 +2,10 @@
 
 Operational failures have one searchable incident ID (`SD-` plus twelve hex
 characters). The first failure creates an **Open** parent message. Additional
-failed attempts go in its thread. Verified recovery changes the parent to
-**Resolved** while retaining the original failure, then posts one threaded
-recovery reply with channel broadcast enabled. Healthy runs stay quiet.
+failed attempts go in its thread, with **Also send to channel** always disabled.
+Verified recovery edits the original parent to green **Resolved**, retaining the
+original failure and recovery evidence. It creates no reply or new channel
+message. Healthy runs stay quiet. There is no live synthetic notification test.
 
 ## Recovery contract
 
@@ -52,7 +53,14 @@ subjects; production receipt verification keeps its single-subject default.
 Unsigned/forged snapshots cannot choose a parent timestamp or suppress alerts.
 Signed state retains the workspace, bot, channel, parent timestamp/permalink,
 failed attempts, original recovery evidence, latest healthy evidence, deferred
-events and delivery claims/acknowledgements.
+events and delivery claims/acknowledgements. Version 2 also records the hash of
+the last acknowledged parent view. A changed view remains pending until Slack
+acknowledges its update; an interrupted update safely retries the same parent.
+Version 1 snapshots are signature-verified before migration. Existing timestamps
+and historical recovery replies remain audit evidence and are never sent again.
+Newer observations cannot replace a resolved incident until its original
+parent's green update is acknowledged. They remain in the signed deferred queue
+and replay on a later reconciliation, preserving both incident parents.
 
 The serialized worker uses `queue: max` and never cancels an active send.
 GitHub's queue is bounded and completion order can vary. Completions of the
@@ -82,7 +90,9 @@ Known blocked scopes retain new observations for later replay; they do not
 prevent unrelated scopes from posting. The first failed send remains failed in
 GitHub. Subsequent read-only observations report **Action required** in their
 summaries without attempting that send again. Operational recovery and Slack
-delivery completion are separate states.
+delivery completion are separate states. If a signed episode already has verified
+recovery and a known parent, that parent can still turn green while an older
+uncertain retry remains blocked; the retry is never resent automatically.
 
 ## Configure and activate
 
@@ -106,43 +116,29 @@ a command argument. The incoming webhook secret remains in place for disabled
 mode and other existing notifications. Enabled mode fails visibly on missing or
 invalid configuration rather than silently choosing another transport.
 
-Validate the first authorized failure/recovery sequence against actual Slack
-delivery: one parent, retry thread, resolved parent, one broadcast recovery,
-matching SHA/artifact, and incident permalink in the notification run summary.
-This repository's default tests are network-free and do not prove live Slack
-app installation or delivery. Avoid deliberate deployment failure just to test
-the channel; use the controlled rehearsal below or a real incident.
+Observe the next real failure/recovery sequence: one parent, thread-only retry
+if another attempt fails, that same parent edited green, matching SHA/artifact,
+and incident permalink in the notification run summary. Tests exercise the
+actual HTTP request construction offline, including negative controls for
+broadcasts, duplicate posts and false recovery. Do not create synthetic channel
+messages or deliberately fail a deployment to validate notification delivery.
 
 Disabling incident mode returns future failures to the existing webhook. Existing
 incident messages and checkpoints remain available; changing bot/channel/workspace
 identity while retaining a registry requires an explicit migration.
 
-## Controlled synthetic lifecycle rehearsal
-
-After the reviewed implementation is merged, the repository owner may dispatch
-**Synthetic Slack incident lifecycle rehearsal** from `main`. Both actor and
-triggering actor must be the owner. The job uses the existing protected
-`shared-datasets-production` environment and exact workflow revision, with only
-`contents: read` GitHub permission. It does not request a cloud identity or
-deployment/signing permissions.
-It shares the real notification worker's serialized queue so the same bot and
-channel cannot receive simultaneous posts from these two workflows.
-
-The rehearsal uses the configured bot and channel to create an unmistakably
-**SYNTHETIC REHEARSAL** parent tied to its run and attempt, retrieve its permalink,
-post a synthetic repeat thread, update the parent to **Resolved**, and send one
-synthetic broadcast recovery reply. Every message states that no real workflow
-or deployment failure/recovery occurred. It never reads or writes the production
-incident ledger and cannot resolve actual incidents.
-
-The workflow retains `result.json` in an attempt-specific artifact, including
-the exact revision, Slack identity, acknowledged message timestamps, permalink
-and terminal stage/status. A later operation failure leaves earlier
-acknowledgements intact. There are no automatic retries; inspect retained
-evidence and the synthetic thread before deciding to dispatch another rehearsal.
-Each new dispatch creates a new labeled rehearsal. The run summary links the
-completed lifecycle. Successful synthetic delivery proves the configured Slack
-API methods, not production recovery evidence or deployment readiness.
+For the v1-to-v2 rollout, pause admission by disabling
+`unattended-workflow-alert.yml` immediately before the approved merge. Completely
+enumerate its existing nonterminal runs and let them finish without cancelling
+an active send. Merge only after they have drained, verify the new main revision,
+then re-enable the workflow. Already-created workers check out their original
+workflow revision; a newer merge cannot upgrade them. Keep the pause within
+24 hours so the next hourly terminal-verification completion reconciles missed
+main events. A longer pause requires the reviewed missing-interval replay
+described above. Changing the incident-mode variable alone does not prevent
+old workflow admissions and is insufficient for this schema transition.
+Do not rerun old v1 notification workers after v2 checkpoints have been written;
+use the current main worker's owner reconciliation for uncertain delivery.
 
 ## Reconcile an uncertain send
 
@@ -151,17 +147,22 @@ Inspect the incident in Slack before confirming its delivery. No history-reading
 permission is added just to automate this exceptional decision.
 
 1. Read the latest signed notification checkpoint for the exact incident ID.
-2. Choose its first `claimed` operation: `parent`, `attempt:...` or `resolved:...`.
+2. Choose its first active `claimed` operation: `parent` or `attempt:...`.
+   Historical recovery claims are audit-only and cannot send a message.
 3. If the message exists and matches the incident/operation, choose `delivered`
    and supply its exact string timestamp. A parent timestamp can be obtained
    from its permalink's `p` value by inserting the decimal before its final six
    digits. Do not use a float or another incident's message.
 4. If inspection confirms the message was not posted, choose `not-delivered`
-   with an empty timestamp. This explicitly authorizes the pending send.
+   with an empty timestamp. This explicitly authorizes the pending failure send.
+   If verified recovery already covers an undelivered parent, it is retired
+   quietly rather than posted as a new green message.
 
-The workflow acknowledges only that exact first uncertain operation before
-continuing later unsent operations. New events retained during the pause replay
-on a subsequent reconciliation. Real recovery never retries a production mutation.
+The workflow confirms only that exact first uncertain operation. Other uncertain
+operations still require separate inspection. Once they are cleared, it rechecks
+terminal evidence and replays retained observations before preparing any new
+failure send. Events waiting for a green parent update replay after that update
+is acknowledged. Real recovery never retries a production mutation.
 
 If a runner stopped after a checkpoint write but before attestation, the latest
 checkpoint fails signature verification. Do not skip it and resend. Inspect the
@@ -191,18 +192,19 @@ healthy deployment does not invalidate the original recovery history.
   deferred events, owner reconciliation, production-registry separation,
   method-specific HTTP request contracts and permalink-only resumption after
   acknowledged delivery.
-- `slack-incident-rehearsal.yml` and `scripts/slack_incident_rehearsal.py` own
-  the separately labeled manual Slack lifecycle check. Its tests execute the
-  workflow's main/owner guards and retain failed-operation acknowledgements.
+- `tests/test_slack_incident_api.py` exercises a complete real-client request
+  sequence offline: parent, permalink, thread-only failure and green parent
+  update. No production channel test is needed.
 
-Invariant enforced: only evidence covering the exact affected scope changes an
-incident to resolved; non-idempotent posts have signed claims before sending.
-Boundaries changed: source-attempt identity, signed registry state and Slack API
-acknowledgement. Code removed: duplicate CI delivery-failure classification is
-replaced by one shared helper. Internal handling removed: no inferred success
-from skips or generic green CI. Fallbacks added: none for enabled-mode delivery.
-Fallbacks rejected: webhook resend, guessed targets, unsigned registry rows and
-blanket production retries. Deletion candidates retained: the existing webhook
-path supports disabled mode and established ingestion notifications. Remaining
-uncertainty: bot installation, channel membership and live delivery require the
-configured Slack workspace.
+Invariant enforced: real open incidents may create messages; verified recovery
+only updates their original parent. Exact scope/revision evidence and signed
+claims remain required. Boundary changed: fixed thread routing and a versioned,
+signed acknowledgement of the parent view. Code removed: the live synthetic
+workflow, script and tests, recovery reply generation and broadcast option.
+Internal handling removed: recovery posts no longer participate in the active
+outbox. Fallbacks added: none. Fallbacks rejected: broadcast replies, new green
+messages, blind reposts and inferred recovery. Deletion candidates left in place:
+historical v1 snapshots and recovery posts retain persisted audit evidence; the
+existing webhook supports disabled mode and established ingestion notifications.
+Remaining uncertainty: actual delivery depends on Slack availability and bot
+configuration; ambiguous non-idempotent sends still require owner inspection.

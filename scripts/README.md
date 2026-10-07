@@ -601,10 +601,10 @@ image entrypoint. Production-image validation runs it without network access to
 prove that disabled logging is a valid startup state and that persisted run
 records remain internally consistent.
 
-`slack_incident_rehearsal.py` exercises a clearly labeled synthetic failure,
-retry and recovery through the protected `Synthetic Slack incident lifecycle rehearsal`
-workflow. See [Slack incidents](../docs/slack-incidents.md) for its main-only
-dispatch and retained acknowledgment evidence.
+`slack_incidents.py` posts one parent for a real incident, keeps subsequent
+failures inside its thread, and edits that parent green after verified recovery.
+Recovery and healthy runs create no messages. See [Slack incidents](../docs/slack-incidents.md)
+for signed state, delivery reconciliation and offline request validation.
 
 `catalog_csv.py` is the single owner of `catalog/shared-datasets-catalog.csv`
 parsing; script code should load catalog rows through it rather than reading

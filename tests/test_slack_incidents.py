@@ -49,6 +49,7 @@ class MemoryLedger:
         self.states = copy.deepcopy(states or {})
         self.writes = []
         self.api = mock.Mock()
+        self.api.pages.return_value = []
         self.run = {"event": "workflow_dispatch", "actor": {"login": "jonaraphael"}}
 
     def load(self):
@@ -66,14 +67,16 @@ class MemoryLedger:
 
 
 class FakeSlack:
-    def __init__(self, *, crash=None):
+    def __init__(self, *, crash=None, update_crash=False):
         self.calls = []
         self.crash = crash
+        self.update_crash = update_crash
 
     def identity(self):
         return IDENTITY
 
-    def post(self, payload, **routing):
+    def post(self, payload, *, thread_ts=None):
+        routing = {} if thread_ts is None else {"thread_ts": thread_ts}
         self.calls.append(("post", payload, routing))
         if len([item for item in self.calls if item[0] == "post"]) == self.crash:
             raise SlackError("delivery is unconfirmed")
@@ -81,6 +84,9 @@ class FakeSlack:
 
     def update(self, ts, payload):
         self.calls.append(("update", payload, {"ts": ts}))
+        if self.update_crash:
+            self.update_crash = False
+            raise SlackError("update interrupted")
 
     def permalink(self, ts):
         return "https://example.slack.com/archives/" + IDENTITY["channel"] + "/p" + ts.replace(".", "")
@@ -158,7 +164,7 @@ def test_unrelated_healthy_runs_do_not_create_messages_or_close_open_target():
     assert incidents.prepare(MemoryLedger(), IDENTITY, observations, success=lambda *_: None) == []
 
 
-def test_one_parent_retries_in_thread_and_one_broadcast_recovery_with_id_in_summary(tmp_path, monkeypatch):
+def test_one_parent_failed_attempts_thread_and_recovery_only_updates_original(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "summary.md"))
     ledger, slack = MemoryLedger(), FakeSlack()
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
@@ -170,11 +176,10 @@ def test_one_parent_retries_in_thread_and_one_broadcast_recovery_with_id_in_summ
     records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
     incidents.deliver(ledger, records, slack)
     posts = [item for item in slack.calls if item[0] == "post"]
-    assert len(posts) == 3
+    assert len(posts) == 2
     assert not posts[0][2]
-    assert posts[1][2]["broadcast"] is False
-    assert posts[2][2]["broadcast"] is True
-    assert posts[1][2]["thread_ts"] == posts[2][2]["thread_ts"]
+    assert posts[1][2] == {"thread_ts": ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]}
+    assert not any(key.startswith("resolved:") for key in ledger.states[SCOPE]["incident"]["posts"])
     assert "Original failure" in slack.calls[-1][1]["text"]
     assert "Resolved" in slack.calls[-1][1]["text"]
     assert incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: success()) == []
@@ -204,12 +209,12 @@ def test_permalink_failure_retains_acknowledgement_and_resumes_without_another_p
 
 
 @pytest.mark.parametrize("crash", [1, 2])
-def test_unconfirmed_parent_or_recovery_reply_is_never_automatically_repeated(crash):
+def test_unconfirmed_parent_or_failed_attempt_is_never_automatically_repeated(crash):
     ledger, slack = MemoryLedger(), FakeSlack(crash=crash)
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
     if crash == 2:
         incidents.deliver(ledger, records, slack)
-        records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
+        records = incidents.prepare(ledger, IDENTITY, [observation(run_id=102, time="2026-10-06T09:00:00Z")], success=lambda *_: None)
     with pytest.raises(SlackError, match="unconfirmed"):
         incidents.deliver(ledger, records, slack)
     call_count = len(slack.calls)
@@ -229,21 +234,244 @@ def test_uncertain_target_does_not_block_other_alerts_and_retains_new_events():
     assert ledger.states[SCOPE]["deferred"] == [newer]
 
 
-def test_uncertain_resolution_is_preserved_until_reconciled_before_new_episode():
+@pytest.mark.parametrize("failure", ["update", "checkpoint"])
+def test_recovery_update_interruption_retries_same_parent_without_post(failure):
     ledger, slack = MemoryLedger(), FakeSlack()
     records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
     incidents.deliver(ledger, records, slack)
+    parent = ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]
+    old_view = ledger.states[SCOPE]["incident"]["parent_view_sha256"]
+    slack.calls.clear()
     records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
-    old_id = ledger.states[SCOPE]["incident"]["id"]
-    new_failure = observation(sha="b" * 40, run_id=103, time="2026-10-06T11:00:00Z")
-    assert incidents.prepare(ledger, IDENTITY, [new_failure], success=lambda *_: None) == []
-    assert ledger.states[SCOPE]["incident"]["id"] == old_id
-    operation = next(key for key in ledger.states[SCOPE]["incident"]["posts"] if key.startswith("resolved:"))
-    records = incidents.reconcile(ledger, IDENTITY, old_id, operation, "delivered", "1791270000.000099")
+    if failure == "update":
+        slack.update_crash = True
+        with pytest.raises(SlackError, match="interrupted"):
+            incidents.deliver(ledger, records, slack)
+    else:
+        with mock.patch.object(ledger, "save", side_effect=incidents.IncidentError("checkpoint interrupted")):
+            with pytest.raises(incidents.IncidentError, match="checkpoint interrupted"):
+                incidents.deliver(ledger, records, slack)
+    assert ledger.states[SCOPE]["incident"]["parent_view_sha256"] == old_view
+    assert not any(item[0] == "post" for item in slack.calls)
+    records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
+    assert len(records) == 1
     incidents.deliver(ledger, records, slack)
+    assert all(item[0] == "update" and item[2]["ts"] == parent for item in slack.calls)
+    assert all("Resolved" in item[1]["text"] for item in slack.calls)
+    assert ledger.states[SCOPE]["incident"]["parent_view_sha256"] == incidents.parent_view_sha256(ledger.states[SCOPE])
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: success()) == []
+
+
+def test_failure_and_verified_recovery_discovered_together_never_post_green_parent():
+    ledger, slack = MemoryLedger(), FakeSlack()
+    assert incidents.prepare(ledger, IDENTITY, [observation(), success()], ancestor=lambda *_: True, success=lambda *_: success()) == []
+    assert ledger.states[SCOPE]["incident"]["resolution"] == success()
+    assert ledger.states[SCOPE]["incident"]["posts"] == {}
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: success()) == []
+    assert slack.calls == []
+
+
+def test_existing_parent_recovery_discovers_retry_without_posting_old_failure():
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None), slack)
+    slack.calls.clear()
+    retry = observation(run_id=102, time="2026-10-06T09:00:00Z")
+    records = incidents.prepare(ledger, IDENTITY, [retry, success()], ancestor=lambda *_: True, success=lambda *_: None)
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["update"]
+    assert "Resolved" in slack.calls[0][1]["text"]
+    assert len(ledger.states[SCOPE]["incident"]["failures"]) == 2
+
+
+@pytest.mark.parametrize("delivery", ["claimed", "delivered"])
+def test_verified_legacy_recovery_operations_remain_audit_only(delivery, tmp_path):
+    record = signed_record()
+    record["payload"]["schema"] = incidents.LEGACY_SCHEMA
+    legacy = incidents.fold(record["payload"]["state"], success(), IDENTITY, ancestor=lambda *_: True)
+    del legacy["incident"]["parent_view_sha256"]
+    parent = "1791270000.000001"
+    legacy["incident"]["posts"]["parent"] = {"state": "delivered", "ts": parent}
+    legacy["incident"]["permalink"] = "https://example.slack.com/archives/" + IDENTITY["channel"] + "/p" + parent.replace(".", "")
+    operation = "resolved:" + incidents.observation_key(success())
+    historical = {"state": delivery, "ts": "1791270000.000002" if delivery == "delivered" else None}
+    legacy["incident"]["posts"][operation] = historical
+    record["payload"]["state"] = legacy
+    api = mock.Mock()
+    api.pages.return_value = [{"id": 12, "state": "success", "description": "applied"}]
+    def verified(*args, **kwargs):
+        assert "parent_view_sha256" not in record["payload"]["state"]["incident"]
+    with mock.patch.object(emissions, "verify", side_effect=verified) as verify:
+        migrated = incidents.Ledger(api, {}, tmp_path).verify(record)
+    verify.assert_called_once()
+    assert migrated["incident"]["parent_view_sha256"] is None
+    assert migrated["identity"] == legacy["identity"]
+    assert migrated["incident"]["posts"] == legacy["incident"]["posts"]
+    ledger, slack = MemoryLedger({SCOPE: migrated}), FakeSlack()
     records = incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None)
+    assert len(records) == 1
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["update"]
+    assert slack.calls[0][2]["ts"] == parent
+    assert ledger.states[SCOPE]["incident"]["posts"][operation] == historical
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
+    with pytest.raises(incidents.IncidentError, match="active delivery"):
+        incidents.reconcile(ledger, IDENTITY, migrated["incident"]["id"], operation, "not-delivered", "")
+
+
+def test_legacy_migration_never_precedes_signature_verification(tmp_path):
+    record = signed_record()
+    record["payload"]["schema"] = incidents.LEGACY_SCHEMA
+    del record["payload"]["state"]["incident"]["parent_view_sha256"]
+    original = copy.deepcopy(record)
+    api = mock.Mock()
+    api.pages.return_value = [{"id": 12, "state": "success", "description": "applied"}]
+    with mock.patch.object(emissions, "verify", side_effect=emissions.EmissionError("forged")), mock.patch.object(incidents, "migrate_verified_state") as migrate:
+        with pytest.raises(emissions.EmissionError, match="forged"):
+            incidents.Ledger(api, {}, tmp_path).verify(record)
+    migrate.assert_not_called()
+    assert record == original
+
+
+@pytest.mark.parametrize("result,ts", [("delivered", "1791270000.000001"), ("not-delivered", "")])
+def test_legacy_uncertain_parent_stays_blocked_and_owner_does_not_create_green_message(result, ts):
+    value = incidents.fold(state(), success(), IDENTITY, ancestor=lambda *_: True)
+    value["incident"]["posts"]["parent"] = {"state": "claimed", "ts": None}
+    ledger, slack = MemoryLedger({SCOPE: value}), FakeSlack()
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
+    assert ledger.states[SCOPE] == value
+    records = incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], "parent", result, ts)
+    incidents.deliver(ledger, records, slack)
+    assert not any(item[0] == "post" for item in slack.calls)
+    if ts:
+        assert [item[0] for item in slack.calls] == ["update"]
+        assert slack.calls[0][2]["ts"] == ts
+    else:
+        assert records == [] and slack.calls == []
+        assert ledger.states[SCOPE]["incident"]["posts"] == {}
+
+
+def test_owner_reconciliation_uses_lifecycle_order_after_sorted_json_persistence():
+    ledger = MemoryLedger()
+    retry = observation(run_id=102, time="2026-10-06T09:00:00Z")
+    incidents.prepare(ledger, IDENTITY, [observation(), retry], success=lambda *_: None)
+    ledger.states = json.loads(json.dumps(ledger.states, sort_keys=True))
+    value = ledger.states[SCOPE]
+    operation = "attempt:" + incidents.observation_key(retry)
+    assert next(iter(value["incident"]["posts"])) == operation  # JSON lexical order differs from delivery order.
+    with pytest.raises(incidents.IncidentError, match="first uncertain operation"):
+        incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], operation, "not-delivered", "")
+    assert incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], "parent", "delivered", "1791270000.000001") == []
+    assert ledger.states[SCOPE]["incident"]["posts"][operation]["state"] == "claimed"
+
+
+@pytest.mark.parametrize("recovery_source", ["deferred", "terminal"])
+def test_owner_absent_parent_confirmation_rechecks_recovery_before_any_send(recovery_source):
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
+    original_id = ledger.states[SCOPE]["incident"]["id"]
+    if recovery_source == "deferred":
+        assert incidents.prepare(ledger, IDENTITY, [success()], success=lambda *_: None) == []
+        assert ledger.states[SCOPE]["deferred"] == [success()]
+    check = mock.Mock(return_value=success() if recovery_source == "terminal" else None)
+    records = incidents.reconcile(ledger, IDENTITY, original_id, "parent", "not-delivered", "",
+                                  ancestor=lambda *_: True, success=check)
+    check.assert_called_once_with(ledger.api, SCOPE)
+    incidents.deliver(ledger, records, slack)
+    assert records == [] and slack.calls == []
+    assert ledger.states[SCOPE]["incident"]["id"] == original_id
+    assert ledger.states[SCOPE]["incident"]["resolution"] == success()
+    assert ledger.states[SCOPE]["incident"]["posts"] == {}
+    assert ledger.states[SCOPE]["deferred"] == []
+
+
+def test_owner_confirmed_absent_old_retry_after_recovery_updates_parent_only():
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None), slack)
+    parent = ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]
+    retry = observation(run_id=102, time="2026-10-06T09:00:00Z")
+    incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: None)
+    value = incidents.fold(ledger.states[SCOPE], success(), IDENTITY, ancestor=lambda *_: True)
+    ledger.states[SCOPE] = value  # A verified old receipt can retain the uncertain retry.
+    operation = "attempt:" + incidents.observation_key(retry)
+    slack.calls.clear()
+    records = incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None)
+    assert len(records) == 1
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["update"]
+    slack.calls.clear()
+    records = incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], operation, "not-delivered", "")
+    incidents.deliver(ledger, records, slack)
+    assert records == [] and slack.calls == []
+    assert ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"] == parent
+    assert operation not in ledger.states[SCOPE]["incident"]["posts"]
+
+
+def test_confirming_one_old_retry_never_authorizes_other_uncertain_retries_after_recovery():
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None), slack)
+    parent = ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]
+    retries = [observation(run_id=102 + index, time=f"2026-10-06T09:0{index}:00Z") for index in range(2)]
+    incidents.prepare(ledger, IDENTITY, retries, success=lambda *_: None)
+    value = incidents.fold(ledger.states[SCOPE], success(), IDENTITY, ancestor=lambda *_: True)
+    ledger.states[SCOPE] = json.loads(json.dumps(value, sort_keys=True))
+    first, second = ["attempt:" + incidents.observation_key(item) for item in retries]
+    slack.calls.clear()
+    records = incidents.reconcile(ledger, IDENTITY, value["incident"]["id"], first, "delivered", "1791270000.000099")
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["update"]
+    assert slack.calls[0][2]["ts"] == parent
+    assert ledger.states[SCOPE]["incident"]["posts"][second] == {"state": "claimed", "ts": None}
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
+
+
+@pytest.mark.parametrize("same_batch", [False, True])
+def test_new_failure_waits_for_prior_parent_green_update_acknowledgement(same_batch):
+    ledger, slack = MemoryLedger(), FakeSlack()
+    incidents.deliver(ledger, incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None), slack)
+    old_id = ledger.states[SCOPE]["incident"]["id"]
+    parent = ledger.states[SCOPE]["incident"]["posts"]["parent"]["ts"]
+    newer_failure = observation(run_id=102, sha="b" * 40, time="2026-10-06T11:00:00Z")
+    if same_batch:
+        records = incidents.prepare(ledger, IDENTITY, [success(), newer_failure], ancestor=lambda *_: True, success=lambda *_: None)
+    else:
+        records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: success())
+        slack.update_crash = True
+        with pytest.raises(SlackError, match="interrupted"):
+            incidents.deliver(ledger, records, slack)
+        records = incidents.prepare(ledger, IDENTITY, [newer_failure], ancestor=lambda *_: True, success=lambda *_: None)
+    assert ledger.states[SCOPE]["incident"]["id"] == old_id
+    assert ledger.states[SCOPE]["deferred"] == [newer_failure]
+    slack.calls.clear()
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["update"]
+    assert slack.calls[0][2]["ts"] == parent and "Resolved" in slack.calls[0][1]["text"]
+    assert ledger.states[SCOPE]["incident"]["parent_view_sha256"] == incidents.parent_view_sha256(ledger.states[SCOPE])
+    records = incidents.prepare(ledger, IDENTITY, [], ancestor=lambda *_: True, success=lambda *_: None)
     assert records[0]["payload"]["state"]["incident"]["id"] != old_id
-    assert records[0]["payload"]["state"]["incident"]["failures"] == [new_failure]
+    assert records[0]["payload"]["state"]["incident"]["failures"] == [newer_failure]
+    assert ledger.states[SCOPE]["deferred"] == []
+    slack.calls.clear()
+    incidents.deliver(ledger, records, slack)
+    assert [item[0] for item in slack.calls] == ["post"]
+    assert "Open" in slack.calls[0][1]["text"]
+
+
+@pytest.mark.parametrize("change", [
+    lambda value: value["incident"].update(parent_view_sha256="bad"),
+    lambda value: value["incident"].update(parent_view_sha256="f" * 64),
+    lambda value: value["incident"]["posts"].update({"resolved:wrong": {"state": "claimed", "ts": None}}),
+])
+def test_malformed_parent_acknowledgement_and_retired_operation_identity_fail(change):
+    value = state()
+    change(value)
+    with pytest.raises(incidents.IncidentError):
+        incidents.validate_state(value)
+
+
+def test_recovery_payload_cannot_be_rendered_as_a_thread_reply():
+    value = incidents.fold(state(), success(), IDENTITY, ancestor=lambda *_: True)
+    with pytest.raises(incidents.IncidentError, match="only failures"):
+        incidents.render(value, reply=success())
 
 
 def test_signed_healthy_watermark_advances_without_another_recovery_post():
@@ -482,10 +710,12 @@ def client(responses):
     return Slack("xoxb-test-secret", IDENTITY["channel"], opener=opener), calls
 
 
-def test_slack_api_uses_fixed_channel_exact_parent_and_broadcast_only_for_recovery():
+def test_slack_api_uses_fixed_channel_exact_thread_without_broadcast():
     slack, calls = client([{"ok": True, "channel": IDENTITY["channel"], "ts": "1791270000.000001"}])
-    assert slack.post({"text": "Recovered"}, thread_ts="1791260000.000001", broadcast=True) == "1791270000.000001"
-    assert calls[0][1]["reply_broadcast"] is True and calls[0][1]["channel"] == IDENTITY["channel"]
+    assert slack.post({"text": "Another failure"}, thread_ts="1791260000.000001") == "1791270000.000001"
+    assert calls[0][1]["reply_broadcast"] is False and calls[0][1]["channel"] == IDENTITY["channel"]
+    with pytest.raises(TypeError):
+        slack.post({"text": "hello"}, thread_ts="1791260000.000001", broadcast=True)
     with pytest.raises(SlackError, match="override routing"):
         slack.post({"text": "hello", "channel": "evil"})
 
