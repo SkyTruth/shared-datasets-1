@@ -24,7 +24,7 @@ SUITES = (
 )
 DEPLOYMENTS = (
     "eamlis", "wdpa", "sea_ice", "wdpa_processing", "ingestion_iam",
-    "pmtiles_cdn", "catalog_viewer", "artifact_registry_iam", "preview_terraform_iam",
+    "pmtiles_cdn", "catalog_viewer", "dataset_usage", "artifact_registry_iam", "preview_terraform_iam",
     "scratch_cleanup_iam", "cron_alert_policy",
 )
 ALWAYS = {"lint", "tests"}
@@ -51,6 +51,7 @@ CONTRACT_FILES = (
     "scripts/wdpa_staged_image_readiness.py", "scripts/wdpa_processing_gate.py",
     "scripts/production_image_contracts.py",
     "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
+    "scripts/dataset_usage_deploy.py",
     "scripts/cdn_plan_readiness.py",
     "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
     "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",
@@ -72,7 +73,7 @@ def select_suites(paths: list[str] | None) -> tuple[list[str], str]:
             if path.startswith("api/python/"):
                 selected.add("production-images")
         elif path.startswith("services/catalog_viewer/"):
-            selected.add("production-images")
+            selected.update({"production-images", "browser"})
         elif path.startswith(("web/", "tests/browser/", "catalog/", "templates/", "docs/assets/")):
             selected.update({"sdk-node22", "sdk-node24", "browser"})
             if path.startswith("catalog/") or path == "docs/assets/ims-sea-ice-extent.md":
@@ -119,6 +120,7 @@ def catalog_deployment_targets(before: str, after: str) -> set[str]:
             "eamlis": translation("eamlis-abandoned-mine-land-inventory"),
             "wdpa": (translation("wdpa-marine"), translation("wdpa-terrestrial")),
             "pmtiles_cdn": routes_and_folders,
+            "dataset_usage": routes_and_folders,
         }
     previous, current = contracts(before), contracts(after)
     return {target for target in previous if previous[target] != current[target]}
@@ -131,9 +133,9 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
     ingestion = {"eamlis", "sea_ice", "wdpa"}
     for path in paths or []:
         if path.startswith(("terraform/modules/cloud_run_job/", "terraform/modules/scheduler_job/", "terraform/modules/service_account/")):
-            selected.update(ingestion | {"catalog_viewer"})
+            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path in {"pyproject.toml", "uv.lock"}:
-            selected.update(ingestion | {"catalog_viewer"})
+            selected.update(ingestion | {"catalog_viewer", "dataset_usage"})
         if path.startswith("ingestion/common/") or path in {
             "scripts/release_feature_model.py", "scripts/vector_asset.py", "scripts/raster_asset.py",
             "scripts/feature_metadata_localization.py", "scripts/translation_local_io.py",
@@ -141,9 +143,9 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
         }:
             selected.update(ingestion)
         if path == "scripts/catalog_csv.py":
-            selected.update({"eamlis", "wdpa"})
+            selected.update({"eamlis", "wdpa", "dataset_usage"})
         if path == "catalog/shared-datasets-catalog.csv":
-            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn"})
+            selected.update(catalog_deployment_targets(*catalog_snapshots) if catalog_snapshots is not None else {"eamlis", "wdpa", "pmtiles_cdn", "dataset_usage"})
         if path == "scripts/feature_metadata_translation_reuse.py":
             selected.update({"eamlis", "wdpa"})
         if path.startswith("catalog/feature-identity-resolutions/"):
@@ -205,9 +207,18 @@ def select_deployments(paths: list[str] | None, *, catalog_snapshots: tuple[str,
             selected.update(iam)
         if path == "terraform/envs/prod/main.tf":
             selected.update({"artifact_registry_iam", "preview_terraform_iam"})
+        if path.startswith("ingestion/dataset_usage/") or path in {
+            ".github/workflows/dataset-usage-deploy.yml", "terraform/envs/prod/dataset_usage.tf", "terraform/envs/prod/shared_bucket_public.tf",
+            "catalog/dataset-usage.json", "catalog/dataset-usage-activation.json", "scripts/dataset_usage_deploy.py",
+        }:
+            selected.add("dataset_usage")
+    # Viewer infrastructure reads the usage state bucket. Deploy usage first;
+    # this also gives the worker the current catalog baked into its tested image.
+    if "catalog_viewer" in selected:
+        selected.add("dataset_usage")
     if selected & ingestion:
         selected.add("ingestion_iam")
-    if selected & (ingestion | {"catalog_viewer", "wdpa_processing"}):
+    if selected & (ingestion | {"catalog_viewer", "wdpa_processing", "dataset_usage"}):
         selected.add("artifact_registry_iam")
     return [target for target in DEPLOYMENTS if target in selected]
 

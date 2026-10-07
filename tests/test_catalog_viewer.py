@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import io
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -320,6 +323,23 @@ def feature_lookup_request(body, headers=None, resolver=None, index=None, featur
 
 
 class CatalogViewerTests(unittest.TestCase):
+    def test_usage_events_include_cached_successful_sidecar_lookups_only(self):
+        index = feature_preview_run.GcsSidecarFeatureIndex(bucket_name="skytruth-shared-datasets-1-preview")
+        output = io.StringIO()
+        with mock.patch.object(index, "_load_sidecar_records", return_value=FakeFeatureIndex().documents) as loader, contextlib.redirect_stdout(output):
+            for _ in range(2):
+                response, _, _ = feature_lookup_request(
+                    {"ids": ["48943"]},
+                    {"X-Goog-Authenticated-User-Email": "accounts.google.com:viewer@skytruth.org"},
+                    index=index,
+                )
+                self.assertEqual(response.status, 200)
+            response, _, _ = feature_lookup_request({"ids": ["48943"]}, index=index)
+            self.assertEqual(response.status, 401)
+        self.assertEqual(loader.call_count, 1)
+        self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()],
+                         [{"event": "dataset_usage", "asset_slug": "wdpa-marine", "operation": "lookup"}] * 2)
+
     def test_unknown_slug_returns_404(self):
         response, _signer = signed_url_request("missing")
 

@@ -102,6 +102,12 @@ def commands(target, executor, *, image_id=None):
             ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from services.catalog_viewer import run; assert callable(run.main)"],
             [sys.executable, "scripts/production_image_contracts.py", "--viewer-image", tested_image],
         ]
+    if target == "dataset-usage":
+        return [
+            ["docker", "build", "--platform", "linux/amd64", "-f", "ingestion/dataset_usage/Dockerfile", "-t", image, "."],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", tested_image, "--print-policy-hash"],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from ingestion.dataset_usage import run, health; from google.cloud import storage; assert callable(run.collect)"],
+        ]
     package = target.replace("-", "_")
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]
     run = ["docker", "run", "--platform", "linux/amd64", "--rm", "--cpus", "4", "--memory", "8g", tested_image]
@@ -117,7 +123,7 @@ def commands(target, executor, *, image_id=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer"])
+    parser.add_argument("--target", action="append", choices=["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"])
     parser.add_argument("--viewer-image", help="Smoke an already built viewer image without rebuilding or pushing")
     parser.add_argument("--output", type=Path, help="Retain exact tested deployment images in this suite evidence directory")
     args = parser.parse_args()
@@ -129,7 +135,7 @@ def main():
     executor = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     subprocess.run(["docker", "info"], check=True, stdout=subprocess.DEVNULL)
     retained = {}
-    for target in args.target or ["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer"]:
+    for target in args.target or ["wdpa-monthly", "eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"]:
         subprocess.run(commands(target, executor)[0], check=True)
         image_id = resolve_image(f"shared-datasets-preflight/{target}:{executor}")
         print(f"[{target}] testing immutable image {image_id}", flush=True)

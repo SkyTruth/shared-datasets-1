@@ -50,6 +50,7 @@ Do **not** use this repo for large data files. Large assets belong in Cloud Stor
 | Tiered PMTiles browser access | `docs/pmtiles-cdn.md` |
 | Infrastructure | `terraform/` |
 | Ingestion jobs | `ingestion/` or `scripts/` |
+| Passive dataset usage and retirement review | `ingestion/dataset_usage/README.md`, `catalog/dataset-usage.json` |
 | Access protocols / APIs | `api/python/`, `api/typescript/`, and `docs/` |
 
 When instructions conflict, follow the **Authority Order** defined in
@@ -462,6 +463,15 @@ dates.
 4. Prefer folder/prefix-level roles only when broad bucket access is inappropriate.
 
 ### Configure cron failure Slack alerts
+
+Passive dataset usage monitoring is implemented in [`ingestion/dataset_usage/`](ingestion/dataset_usage/README.md).
+It collects existing GCS/CDN access and repo-owned catalog activity without consumer
+changes, and serves a private IAP-protected `/usage` report with application groups,
+metadata interest, source health and qualified retirement-review candidates.
+Collection starts disabled; measured project-wide cost at or below $25/month and
+reviewed traffic evidence gate activation. Candidates need 365 observed days with
+no known gaps; logs cannot prove non-use of downloaded copies. No automatic
+retirement or retirement notifications are added.
 
 Production Terraform defines log-based Cloud Monitoring alerts for scheduled
 ingestion failures. The alerts cover two cases:

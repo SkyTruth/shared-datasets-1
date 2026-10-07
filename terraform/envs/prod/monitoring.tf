@@ -88,6 +88,11 @@ resource "google_project_iam_audit_config" "storage_data_write" {
   project = var.project_id
   service = "storage.googleapis.com"
 
+  dynamic "audit_log_config" {
+    for_each = local.dataset_usage_collect ? [1] : []
+    content { log_type = "DATA_READ" }
+  }
+
   audit_log_config {
     log_type = "DATA_WRITE"
   }

@@ -113,3 +113,8 @@ The fixture builder copies compiled browser SDK modules into the disposable
 site solely for integration-code execution. The production catalog shell and
 modules remain unchanged. Tests preserve synthetic captured artifact storage
 independently from mutable index pointers to exercise replacement/retention.
+
+The three `usage.spec.mjs` scenarios also exercise the private usage endpoint's
+authentication/missing-summary behavior, report sorting/filters and safe DOM
+rendering, and independent stale-worker detection. The complete browser contract
+requires all eighteen scenarios, with no skips or retries.
