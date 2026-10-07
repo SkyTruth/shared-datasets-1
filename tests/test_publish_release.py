@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import csv
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -500,6 +501,13 @@ class PublishReleaseTests(unittest.TestCase):
         self.assertEqual(schema_updates, [("example-asset", "example-asset.fgb")])
         self.assertEqual(notifications, [("example-asset", 3)])
         self.assertEqual(result.warnings, ())
+        stored_hashes = {entry["path"]: entry["sha256"] for entry in payload["release_paths"]}
+        for artifact in payload["artifacts"]:
+            self.assertEqual(artifact["sha256"], stored_hashes[artifact["release_uri"]])
+        self.assertEqual(
+            stored_hashes[f"{plan.release_path}example-asset.manifest.json"],
+            hashlib.sha256(release_manifest.text.encode()).hexdigest(),
+        )
         manifest_payload = json.loads(release_manifest.text)
         manifest_entry = next(item for item in manifest_payload["artifacts"] if item["role"] == "manifest")
         self.assertNotIn("generation", manifest_entry)

@@ -481,7 +481,7 @@ def _execute_frozen_publish_plan(
         except PreconditionFailed as exc:
             raise PublishReleaseError(f"refusing to overwrite release object: {artifact.release_uri}") from exc
         blob.reload()
-        release_objects.append(blob_info(artifact.release_uri, blob))
+        release_objects.append({**blob_info(artifact.release_uri, blob), "sha256": artifact.sha256})
 
     for artifact in non_manifest_artifacts:
         blob = bucket.blob(object_name_from_uri(artifact.latest_uri))
@@ -496,7 +496,7 @@ def _execute_frozen_publish_plan(
         except PreconditionFailed as exc:
             raise PublishReleaseError(f"latest object generation changed before upload: {artifact.latest_uri}") from exc
         blob.reload()
-        latest_objects.append(blob_info(artifact.latest_uri, blob))
+        latest_objects.append({**blob_info(artifact.latest_uri, blob), "sha256": artifact.sha256})
 
     if manifest_artifact is not None:
         manifest_payload = final_manifest_payload(
@@ -609,6 +609,7 @@ def build_run_record_payload(
     row_count: int | None,
     notes: str,
 ) -> dict[str, Any]:
+    release_info_by_path = {entry["path"]: entry for entry in release_objects}
     payload = {
         "schema_version": 1,
         "record_version": RUN_RECORD_VERSION,
@@ -629,8 +630,8 @@ def build_run_record_payload(
                 "local_path": artifact.local_path,
                 "release_uri": artifact.release_uri,
                 "latest_uri": artifact.latest_uri,
-                "size": artifact.size,
-                "sha256": artifact.sha256,
+                "size": release_info_by_path[artifact.release_uri]["size"],
+                "sha256": release_info_by_path[artifact.release_uri]["sha256"],
                 "content_type": artifact.content_type,
             }
             for artifact in plan.artifacts

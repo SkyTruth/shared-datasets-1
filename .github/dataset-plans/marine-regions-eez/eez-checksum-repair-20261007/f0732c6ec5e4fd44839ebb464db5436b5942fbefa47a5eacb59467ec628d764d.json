@@ -1,0 +1,39 @@
+{
+  "finalization_version": "finalize-promoted-release-v1",
+  "plan_version": 1,
+  "publish": {
+    "asset_slug": "marine-regions-eez",
+    "breaking_changes": [],
+    "promotions": [
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1780802288451843",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/runs/2026-06-06.json",
+        "source_generation": "1791381167322097",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/eez-checksum-repair-20261007/run-2026-06-06.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1791241865276204",
+        "destination_uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/120-marine-boundaries/marine-regions-eez/runs/2026-06-09.json",
+        "source_generation": "1791381169539073",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/eez-checksum-repair-20261007/run-2026-06-09.json"
+      },
+      {
+        "cache_control": "no-cache, max-age=0, must-revalidate",
+        "compatibility_waiver": null,
+        "content_type": "application/json",
+        "destination_generation": "1791241867361223",
+        "destination_uri": "gs://skytruth-shared-datasets-1/_catalog/releases/marine-regions-eez.json",
+        "source_generation": "1791381171516471",
+        "source_uri": "gs://skytruth-shared-datasets-1/_scratch/pending-publishes/marine-regions-eez/eez-checksum-repair-20261007/marine-regions-eez.json"
+      }
+    ],
+    "proposal_id": "eez-checksum-repair-20261007",
+    "release_index_asset_slugs": []
+  }
+}
