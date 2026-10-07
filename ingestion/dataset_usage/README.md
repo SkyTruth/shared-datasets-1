@@ -109,6 +109,12 @@ than an empty report.
 ## Reviewed rollout and cost gate
 
 Initial settings deliberately leave collection disabled and the schedule paused.
+Absent bucket access logging is an expected disabled configuration: the worker
+publishes unverified coverage gaps and untrusted probe receipts without enabling
+collection. Malformed configuration, denied reads and incompatible saved state
+still fail. The production-image check runs a small cold-start fixture through
+the installed entrypoint code, Health checks, SQLite collector and Storage
+publication boundary with in-memory transport, no credentials and no network.
 All infrastructure changes use `Dataset usage deploy`, through reviewed `main`,
 exact passing CI and retained tested-image evidence, the production environment,
 durable deployment receipts, and the existing production-state queue. Its plan

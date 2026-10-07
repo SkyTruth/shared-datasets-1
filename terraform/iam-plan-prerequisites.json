@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "retired_targets": {
+    "scheduled-ingestion-deploy-iam-sync.yml/sync": [
+      "google_project_iam_member.github_actions_wdpa_observer_bootstrap"
+    ]
+  },
+  "jobs": {
+    "artifact-registry-iam-sync.yml/bootstrap": [],
+    "artifact-registry-iam-sync.yml/writer": [
+      "google_artifact_registry_repository.jobs",
+      "google_project_service.required"
+    ],
+    "cron-alert-policy-sync.yml/bootstrap": [
+      "google_project_service.required"
+    ],
+    "cron-alert-policy-sync.yml/sync": [
+      "google_monitoring_notification_channel.cron_alert_slack",
+      "google_project_iam_audit_config.storage_data_write",
+      "google_project_service.required",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.sea_ice_job_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.wdpa_job_service_account.google_service_account.this",
+      "module.wdpa_observer_service_account.google_service_account.this",
+      "terraform_data.cron_alert_channel_configured"
+    ],
+    "dataset-usage-deploy.yml/bootstrap": [],
+    "preview-terraform-iam-sync.yml/bootstrap": [],
+    "preview-terraform-iam-sync.yml/sync": [
+      "google_iam_workload_identity_pool.github",
+      "google_project_iam_custom_role.catalog_viewer_sign_blob",
+      "google_project_service.required"
+    ],
+    "scheduled-ingestion-deploy-iam-sync.yml/bootstrap": [],
+    "scheduled-ingestion-deploy-iam-sync.yml/sync": [
+      "google_project_service.required",
+      "google_secret_manager_secret.slack_webhook_url",
+      "google_storage_bucket.shared_bucket",
+      "module.eamlis_job_service_account.google_service_account.this",
+      "module.shared_datasets_publisher_service_account.google_service_account.this",
+      "module.wdpa_job_service_account.google_service_account.this"
+    ],
+    "scratch-cleanup-iam-sync.yml/sync": [
+      "google_project_service.required",
+      "google_storage_bucket.shared_bucket",
+      "module.shared_datasets_publisher_service_account.google_service_account.this"
+    ]
+  }
+}

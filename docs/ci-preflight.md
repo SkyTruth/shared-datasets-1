@@ -72,6 +72,19 @@ as hosted CI; a failed suite remains a failure and is never automatically retrie
 Terraform retains read-only initialization. Linux ARM and AMD64 provider package
 hashes cover the same pinned version and are verified against the reviewed archive
 checksums before inclusion in the locks.
+The lint suite also runs `scripts/terraform_target_contracts.py` with pinned
+Terraform against a disposable source copy and an empty local backend. It reuses
+only lock-verified provider binaries, excludes caller credentials and does not
+read production state. The actual dependency graph must keep every narrow IAM
+target within its exact workflow mutation scope and the prerequisite identities
+in `terraform/iam-plan-prerequisites.json`. Existing ordered bootstrap jobs remain
+valid prerequisites; that policy does not add any resource to an apply allowlist.
+New managed ancestors fail before pushing, including references inside disabled
+dynamic blocks. Retained evidence includes the graph, each target closure and
+negative controls from failed main revision `ffe2dd53`: the telemetry bucket
+dependency must be rejected with collection both disabled and enabled. The usage
+owner provisions its private raw bucket with collection disabled before a later
+reviewed activation may enable shared-bucket logging.
 Browser validation removes its process-owned uv download cache after installing
 the locked fixture environment, reducing Chromium's peak disk use without
 removing installed dependencies or changing test coverage.

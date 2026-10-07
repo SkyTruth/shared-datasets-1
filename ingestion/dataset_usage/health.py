@@ -25,7 +25,13 @@ class Health:
 
     def configuration_healthy(self):
         bucket = self.client.get_bucket(self.classifier.bucket, timeout=30)
-        if bucket.get_logging().get("logBucket") != self.raw_bucket or bucket.get_logging().get("logObjectPrefix") != "storage-usage":
+        logging = bucket.get_logging()
+        # The Storage SDK returns None when access logging is not configured.
+        if logging is None:
+            return False
+        if not isinstance(logging, dict):
+            raise TypeError("Bucket logging must be a mapping or None")
+        if logging.get("logBucket") != self.raw_bucket or logging.get("logObjectPrefix") != "storage-usage":
             return False
         url = f"https://logging.googleapis.com/v2/projects/{self.project}/sinks/dataset-usage"
         response = self.session.get(url, timeout=30)

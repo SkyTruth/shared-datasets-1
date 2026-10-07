@@ -654,8 +654,8 @@ jobs:
     secrets: inherit
 
   ingestion-iam:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' }}
+    needs: [ci-ready, geospatial-changes, dataset-usage]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.ingestion_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
     permissions:
       contents: read
       actions: read
@@ -816,8 +816,8 @@ jobs:
     secrets: inherit
 
   scratch-cleanup-iam:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' }}
+    needs: [ci-ready, geospatial-changes, dataset-usage]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.scratch_cleanup_iam == 'true' && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') }}
     permissions:
       contents: read
       actions: read

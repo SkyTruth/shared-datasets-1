@@ -556,9 +556,10 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
         for key in desired_posts(state):
             if key not in incident["posts"]:
                 incident["posts"][key] = {"state": "claimed", "ts": None}
-        if state != existing:
+        needs_permalink = not incident["permalink"]
+        if state != existing or needs_permalink:
             record = ledger.save(state, "claims")
-            if any(item["state"] == "claimed" for item in incident["posts"].values()):
+            if needs_permalink or any(item["state"] == "claimed" for item in incident["posts"].values()):
                 prepared.append(record)
                 on_saved(record)
     return prepared

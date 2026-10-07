@@ -1,7 +1,10 @@
 locals {
-  dataset_usage_config     = jsondecode(file("${path.module}/../../../catalog/dataset-usage.json"))
-  dataset_usage_activation = jsondecode(file("${path.module}/../../../catalog/dataset-usage-activation.json"))
-  dataset_usage_collect    = local.dataset_usage_config.collection_enabled
+  # Name is an input contract, not a provisioning dependency of the shared
+  # bucket. The usage deployment owns creating it before logging is enabled.
+  dataset_usage_raw_bucket_name = "${var.bucket_name}-usage-raw"
+  dataset_usage_config          = jsondecode(file("${path.module}/../../../catalog/dataset-usage.json"))
+  dataset_usage_activation      = jsondecode(file("${path.module}/../../../catalog/dataset-usage-activation.json"))
+  dataset_usage_collect         = local.dataset_usage_config.collection_enabled
   dataset_usage_verified = try(
     local.dataset_usage_collect &&
     local.dataset_usage_activation.configuration_sha256 == sha256(jsonencode({
@@ -25,7 +28,7 @@ locals {
 
 resource "google_storage_bucket" "dataset_usage_raw" {
   project                     = var.project_id
-  name                        = "${var.bucket_name}-usage-raw"
+  name                        = local.dataset_usage_raw_bucket_name
   location                    = "US"
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"

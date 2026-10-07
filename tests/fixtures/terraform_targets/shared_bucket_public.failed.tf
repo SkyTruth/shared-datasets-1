@@ -15,7 +15,7 @@ resource "google_storage_bucket" "shared_bucket" {
   dynamic "logging" {
     for_each = local.dataset_usage_collect ? [1] : []
     content {
-      log_bucket        = local.dataset_usage_raw_bucket_name
+      log_bucket        = google_storage_bucket.dataset_usage_raw.name
       log_object_prefix = "storage-usage"
     }
   }

@@ -67,6 +67,14 @@ valid channel and message timestamp, it persists an acknowledgement; confirmed
 delivery checkpoints are attested even if a later send fails. Posting is paced
 to the channel limit. Updating an acknowledged parent can repeat safely.
 
+Permalink lookup uses Slack's documented `chat.getPermalink` GET request with
+the exact string timestamp and fixed channel in query parameters. Posting and
+updating retain JSON POST requests. A rejected permalink lookup fails the worker
+after preserving acknowledged posts. A later worker signs a metadata-only
+prepared record and resumes the lookup without posting the parent or acknowledged
+thread replies again. Permalinks always identify the top-level incident parent;
+this client does not request links to threaded replies.
+
 An HTTP 200 without Slack `ok:true`, missing message identity, timeout or other
 unconfirmed delivery cannot acknowledge a post. A claimed post is never blindly
 resent, and the worker never falls back to a webhook after an uncertain bot send.
@@ -103,11 +111,38 @@ delivery: one parent, retry thread, resolved parent, one broadcast recovery,
 matching SHA/artifact, and incident permalink in the notification run summary.
 This repository's default tests are network-free and do not prove live Slack
 app installation or delivery. Avoid deliberate deployment failure just to test
-the channel; use an approved fixture or a real incident.
+the channel; use the controlled rehearsal below or a real incident.
 
 Disabling incident mode returns future failures to the existing webhook. Existing
 incident messages and checkpoints remain available; changing bot/channel/workspace
 identity while retaining a registry requires an explicit migration.
+
+## Controlled synthetic lifecycle rehearsal
+
+After the reviewed implementation is merged, the repository owner may dispatch
+**Synthetic Slack incident lifecycle rehearsal** from `main`. Both actor and
+triggering actor must be the owner. The job uses the existing protected
+`shared-datasets-production` environment and exact workflow revision, with only
+`contents: read` GitHub permission. It does not request a cloud identity or
+deployment/signing permissions.
+It shares the real notification worker's serialized queue so the same bot and
+channel cannot receive simultaneous posts from these two workflows.
+
+The rehearsal uses the configured bot and channel to create an unmistakably
+**SYNTHETIC REHEARSAL** parent tied to its run and attempt, retrieve its permalink,
+post a synthetic repeat thread, update the parent to **Resolved**, and send one
+synthetic broadcast recovery reply. Every message states that no real workflow
+or deployment failure/recovery occurred. It never reads or writes the production
+incident ledger and cannot resolve actual incidents.
+
+The workflow retains `result.json` in an attempt-specific artifact, including
+the exact revision, Slack identity, acknowledged message timestamps, permalink
+and terminal stage/status. A later operation failure leaves earlier
+acknowledgements intact. There are no automatic retries; inspect retained
+evidence and the synthetic thread before deciding to dispatch another rehearsal.
+Each new dispatch creates a new labeled rehearsal. The run summary links the
+completed lifecycle. Successful synthetic delivery proves the configured Slack
+API methods, not production recovery evidence or deployment readiness.
 
 ## Reconcile an uncertain send
 
@@ -153,7 +188,12 @@ healthy deployment does not invalidate the original recovery history.
   controls retain the rejection of PR-capable or production mutation writers.
 - `tests/test_slack_incidents.py` covers the actual preview/CDN job identities,
   wrong targets/revisions, stale events, skips, forged state, uncertain delivery,
-  deferred events, owner reconciliation and production-registry separation.
+  deferred events, owner reconciliation, production-registry separation,
+  method-specific HTTP request contracts and permalink-only resumption after
+  acknowledged delivery.
+- `slack-incident-rehearsal.yml` and `scripts/slack_incident_rehearsal.py` own
+  the separately labeled manual Slack lifecycle check. Its tests execute the
+  workflow's main/owner guards and retain failed-operation acknowledgements.
 
 Invariant enforced: only evidence covering the exact affected scope changes an
 incident to resolved; non-idempotent posts have signed claims before sending.

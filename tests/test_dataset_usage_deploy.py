@@ -22,7 +22,8 @@ def resource(address, after, before=None, actions=None):
 def test_shared_bucket_logging_update_cannot_change_iam_retention_cors_or_security():
     before = {'name': 'skytruth-shared-datasets-1', 'project': 'shared-datasets-1', 'uniform_bucket_level_access': True, 'public_access_prevention': 'inherited', 'retention_policy': [], 'cors': [{'origin': ['example']}], 'lifecycle_rule': [], 'logging': []}
     after = {**before, 'logging': [{'log_bucket': 'skytruth-shared-datasets-1-usage-raw', 'log_object_prefix': 'storage-usage'}]}
-    plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', after, before)]}
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'project': 'shared-datasets-1'}
+    plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', after, before), resource('google_storage_bucket.dataset_usage_raw', raw, raw, ['no-op'])]}
     validate_plan(plan, IMAGE, verified=False)
     for field, value in [('uniform_bucket_level_access', False), ('public_access_prevention', 'enforced'), ('retention_policy', [{}]), ('cors', []), ('lifecycle_rule', [{}])]:
         changed = copy.deepcopy(plan)
@@ -33,6 +34,55 @@ def test_shared_bucket_logging_update_cannot_change_iam_retention_cors_or_securi
     changed['resource_changes'][0]['change']['after_unknown']['cors'] = True
     with pytest.raises(ValueError, match='Unknown shared bucket'):
         validate_plan(changed, IMAGE, verified=False)
+
+
+def test_logging_activation_requires_already_provisioned_exact_raw_bucket():
+    shared = {'name': 'skytruth-shared-datasets-1', 'logging': [{'log_bucket': 'skytruth-shared-datasets-1-usage-raw', 'log_object_prefix': 'storage-usage'}]}
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'public_access_prevention': 'enforced', 'uniform_bucket_level_access': True, 'force_destroy': False}
+    plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', shared, shared, ['no-op']), resource('google_storage_bucket.dataset_usage_raw', raw, actions=['create'])]}
+    with pytest.raises(ValueError, match='collection disabled'):
+        validate_plan(plan, IMAGE, verified=False)
+    plan['resource_changes'][1]['change']['actions'] = ['no-op']
+    validate_plan(plan, IMAGE, verified=False)
+    for mutation in ('foreign-name', 'missing-raw', 'foreign-logging', 'wrong-prefix'):
+        changed = copy.deepcopy(plan)
+        if mutation == 'missing-raw':
+            changed['resource_changes'].pop()
+        elif mutation == 'foreign-name':
+            changed['resource_changes'][1]['change']['after']['name'] = 'unreviewed-bucket'
+        else:
+            changed['resource_changes'][0]['change']['after']['logging'][0]['log_bucket' if mutation == 'foreign-logging' else 'log_object_prefix'] = 'unreviewed'
+        with pytest.raises(ValueError, match='exact reviewed usage bucket'):
+            validate_plan(changed, IMAGE, verified=False)
+    # Initial bootstrap can create its private bucket while logging is disabled.
+    plan['resource_changes'][0]['change']['after']['logging'] = []
+    plan['resource_changes'][1]['change']['actions'] = ['create']
+    validate_plan(plan, IMAGE, verified=False)
+
+
+@pytest.mark.parametrize('logging,unknown', [
+    (None, True),
+    ([], True),
+    ([{'log_bucket': None, 'log_object_prefix': 'storage-usage'}], [{'log_bucket': True}]),
+    ([{'log_bucket': 'skytruth-shared-datasets-1-usage-raw', 'log_object_prefix': None}], [{'log_object_prefix': True}]),
+])
+def test_unknown_logging_cannot_bypass_bucket_activation_guard(logging, unknown):
+    shared = {'name': 'skytruth-shared-datasets-1', 'logging': logging}
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw', 'public_access_prevention': 'enforced', 'uniform_bucket_level_access': True, 'force_destroy': False}
+    plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', shared, shared), resource('google_storage_bucket.dataset_usage_raw', raw, actions=['create'])]}
+    plan['resource_changes'][0]['change']['after_unknown']['logging'] = unknown
+    with pytest.raises(ValueError, match='Unknown shared bucket logging'):
+        validate_plan(plan, IMAGE, verified=False)
+
+
+@pytest.mark.parametrize('address', ['google_storage_bucket.shared_bucket', 'google_storage_bucket.dataset_usage_raw'])
+def test_logging_activation_rejects_unknown_bucket_identity(address):
+    shared = {'name': 'skytruth-shared-datasets-1', 'logging': [{'log_bucket': 'skytruth-shared-datasets-1-usage-raw', 'log_object_prefix': 'storage-usage'}]}
+    raw = {'name': 'skytruth-shared-datasets-1-usage-raw'}
+    plan = {'resource_changes': [resource('google_storage_bucket.shared_bucket', shared, shared, ['no-op']), resource('google_storage_bucket.dataset_usage_raw', raw, raw, ['no-op'])]}
+    next(row for row in plan['resource_changes'] if row['address'] == address)['change']['after_unknown']['name'] = True
+    with pytest.raises(ValueError, match='Unknown usage bucket logging identity'):
+        validate_plan(plan, IMAGE, verified=False)
 
 
 @pytest.mark.parametrize('actions', [['delete'], ['delete', 'create'], ['create', 'delete']])

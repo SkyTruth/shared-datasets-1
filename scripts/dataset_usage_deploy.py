@@ -48,6 +48,30 @@ def validate_rollout(root):
 def validate_plan(plan, image, *, verified):
     if not re.fullmatch(r'[a-z0-9./_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('An immutable tested image is required')
+    rows = {row['address']: row for row in plan.get('resource_changes', [])}
+    shared = rows.get('google_storage_bucket.shared_bucket', {}).get('change', {})
+    def unknown(value):
+        if isinstance(value, dict):
+            return any(unknown(item) for item in value.values())
+        if isinstance(value, list):
+            return any(unknown(item) for item in value)
+        return bool(value)
+    if unknown(shared.get('after_unknown', {}).get('logging', False)):
+        raise ValueError('Unknown shared bucket logging configuration')
+    logging = (shared.get('after') or {}).get('logging', [])
+    if logging:
+        # Logging consumes an existing bucket by its reviewed name. It must not
+        # introduce a provisioning edge into every shared-bucket IAM target, nor
+        # race a first bucket creation in this owner's saved plan.
+        raw = rows.get('google_storage_bucket.dataset_usage_raw', {}).get('change', {})
+        raw_name = (raw.get('after') or {}).get('name')
+        expected = (shared.get('after') or {}).get('name', '') + '-usage-raw'
+        if unknown(raw.get('after_unknown', {}).get('name', False)) or unknown(shared.get('after_unknown', {}).get('name', False)):
+            raise ValueError('Unknown usage bucket logging identity')
+        if len(logging) != 1 or raw_name != expected or logging[0].get('log_bucket') != raw_name or logging[0].get('log_object_prefix') != 'storage-usage':
+            raise ValueError('Logging must use the exact reviewed usage bucket name')
+        if 'create' in raw.get('actions', []):
+            raise ValueError('Provision the usage bucket with collection disabled before enabling logging')
     for row in plan.get('resource_changes', []):
         change = row['change']
         actions = change['actions']
