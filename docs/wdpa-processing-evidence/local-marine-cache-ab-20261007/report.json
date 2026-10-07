@@ -1,0 +1,217 @@
+{
+  "status": "passed",
+  "scope": "local indexed FGB re-export of the published marine FGB",
+  "date_utc": "2026-10-07",
+  "baseline_commit": "0ca5d7379846e32f5cf32afadd22a2621cca1cc7",
+  "implementations": {
+    "baseline": "0ed4a4d9a6bb49e02cda785e7e30a74ac38da565c07f9adb58255d87607a37ed",
+    "candidate": "9c053352aaefde0078e7b90fa66d70e8b420051b7ed920b9203bc63ea858e225"
+  },
+  "input": {
+    "uri": "gs://skytruth-shared-datasets-1/100-geographic-reference/130-protected-areas/wdpa-marine/releases/2026-10-01/wdpa-marine.fgb",
+    "generation": 1790866695066557,
+    "size_bytes": 1296594176,
+    "sha256": "a4204a1613d44c9825f7589d048f9163aca0fbc4c5614ccc14a1f203a8a5c096",
+    "host_and_container_checksums_match_publication": true
+  },
+  "environment": {
+    "python": "3.12.12",
+    "kernel": "5.15.49-linuxkit",
+    "architecture": "aarch64",
+    "gdal": "GDAL 3.6.2, released 2023/01/02",
+    "cgroup_limits": [
+      4.0,
+      6442450944
+    ],
+    "image": "sha256:a5e276defe891bffa45f8b44d9b0dc197562fbd58531defc92ef9a034a2a6d2c"
+  },
+  "protocol": {
+    "production_pressure_trigger_bytes": 4294967296,
+    "controlled_test_pressure_trigger_bytes": 1073741824,
+    "cleanup_interval_seconds": 0.5,
+    "independent_memory_sample_interval_seconds": 0.02,
+    "input_cache_advice_before_every_trial": "POSIX_FADV_DONTNEED on the frozen input only",
+    "observer_handles_closed_during_cleanup": true,
+    "final_trial_order": [
+      "baseline-5",
+      "candidate-5",
+      "candidate-6",
+      "baseline-6",
+      "baseline-7",
+      "candidate-7"
+    ],
+    "excluded_preliminary_pairs": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "exclusion_reason": "Inspection descriptors remained open during cleanup and could duplicate advice; pair 1 also overlapped input checksum activity.",
+    "final_harness_sha256": "266aff412552cd1cc912c60c5e8c76b2b1f85d33218f70920457871bc91b35ed"
+  },
+  "production_trigger_trials": {
+    "baseline": {
+      "label": "baseline-production",
+      "elapsed_seconds": 6.275,
+      "sampled_peak_bytes": 3213852672,
+      "memory_breakdown_at_sampled_peak": {
+        "anon": 196534272,
+        "file": 2953211904,
+        "shmem": 0,
+        "file_mapped": 229376,
+        "file_dirty": 587042816
+      },
+      "kernel_lifetime_peak_bytes": null,
+      "cache_cleanup_cycles": 0,
+      "largest_observed_unlinked_residency_drop_bytes": 0
+    },
+    "candidate": {
+      "label": "candidate-production",
+      "elapsed_seconds": 3.746,
+      "sampled_peak_bytes": 3150520320,
+      "memory_breakdown_at_sampled_peak": {
+        "anon": 193466368,
+        "file": 2890244096,
+        "shmem": 0,
+        "file_mapped": 2068480,
+        "file_dirty": 627322880
+      },
+      "kernel_lifetime_peak_bytes": null,
+      "cache_cleanup_cycles": 0,
+      "largest_observed_unlinked_residency_drop_bytes": 0
+    }
+  },
+  "controlled_pressure_trials": {
+    "baseline": [
+      {
+        "label": "baseline-pressure-5",
+        "elapsed_seconds": 3.983,
+        "sampled_peak_bytes": 2410119168,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 199389184,
+          "file": 2145107968,
+          "shmem": 0,
+          "file_mapped": 2072576,
+          "file_dirty": 2535424
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 4,
+        "largest_observed_unlinked_residency_drop_bytes": 0
+      },
+      {
+        "label": "baseline-pressure-6",
+        "elapsed_seconds": 3.552,
+        "sampled_peak_bytes": 2385178624,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 199372800,
+          "file": 2120892416,
+          "shmem": 0,
+          "file_mapped": 2072576,
+          "file_dirty": 59539456
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 4,
+        "largest_observed_unlinked_residency_drop_bytes": 0
+      },
+      {
+        "label": "baseline-pressure-7",
+        "elapsed_seconds": 2.839,
+        "sampled_peak_bytes": 2476072960,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 199319552,
+          "file": 2208980992,
+          "shmem": 0,
+          "file_mapped": 2068480,
+          "file_dirty": 79253504
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 3,
+        "largest_observed_unlinked_residency_drop_bytes": 24272896
+      }
+    ],
+    "candidate": [
+      {
+        "label": "candidate-pressure-5",
+        "elapsed_seconds": 4.261,
+        "sampled_peak_bytes": 2196791296,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 199098368,
+          "file": 1962438656,
+          "shmem": 0,
+          "file_mapped": 2072576,
+          "file_dirty": 0
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 3,
+        "largest_observed_unlinked_residency_drop_bytes": 1013567488
+      },
+      {
+        "label": "candidate-pressure-6",
+        "elapsed_seconds": 3.164,
+        "sampled_peak_bytes": 1755557888,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 104599552,
+          "file": 1622863872,
+          "shmem": 0,
+          "file_mapped": 2072576,
+          "file_dirty": 21020672
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 3,
+        "largest_observed_unlinked_residency_drop_bytes": 668381184
+      },
+      {
+        "label": "candidate-pressure-7",
+        "elapsed_seconds": 3.092,
+        "sampled_peak_bytes": 1847148544,
+        "memory_breakdown_at_sampled_peak": {
+          "anon": 104603648,
+          "file": 1712865280,
+          "shmem": 0,
+          "file_mapped": 2068480,
+          "file_dirty": 47239168
+        },
+        "kernel_lifetime_peak_bytes": null,
+        "cache_cleanup_cycles": 3,
+        "largest_observed_unlinked_residency_drop_bytes": 750202880
+      }
+    ]
+  },
+  "controlled_pressure_medians": {
+    "baseline": {
+      "sampled_peak_bytes": 2410119168,
+      "elapsed_seconds": 3.552,
+      "elapsed_seconds_range": [
+        2.839,
+        3.983
+      ]
+    },
+    "candidate": {
+      "sampled_peak_bytes": 1847148544,
+      "elapsed_seconds": 3.164,
+      "elapsed_seconds_range": [
+        3.092,
+        4.261
+      ]
+    }
+  },
+  "controlled_sampled_peak_reduction_percent": 23.358621908607635,
+  "output_validation": {
+    "feature_count": 17938,
+    "property_field_count": 36,
+    "every_geometry_and_property_matches_source": true,
+    "semantic_sha256": "355fa6ce94673913c5199f4e68b4f8fc7aa0c65c059e996a45580344a53a4ebf",
+    "all_baseline_and_candidate_outputs_byte_identical": true,
+    "output_size_bytes": 1296594616,
+    "output_sha256": "0a18d45a2a8db4b5c9eae063cd22fcd97f13eaa26c9f4ba92fe479003c87374e"
+  },
+  "limitations": [
+    "No kernel lifetime memory peak is exposed on this local Linux kernel; peaks are sampled.",
+    "Standalone export from a published FGB omits GPKG normalization, translations, metadata, and PMTiles work.",
+    "The production 4 GiB trigger did not fire in either isolated export.",
+    "The controlled 1 GiB trigger is test-only and does not change production code.",
+    "Three local trials per mode, with observer overhead and overlapping runtime ranges, do not establish throughput improvement.",
+    "This is mechanism validation, not full-WDPA producer acceptance or full-pipeline memory savings."
+  ],
+  "remote_paths_changed": []
+}

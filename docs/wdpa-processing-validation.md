@@ -201,6 +201,63 @@ cleanup, commit the root descriptor, then review and promote those exact bytes.
 This is required to retain the artifacts, not to improve its memory margin. No
 retained complete artifact bundle is rebuilt merely because it exceeds 6.4 GiB.
 
+## Open, unlinked temporary-file cache
+
+GDAL 3.6.2's indexed FlatGeobuf writer keeps an open temporary file after
+unlinking its directory entry. Directory scans cannot find that file. Cache
+pressure control now also scans the current process and its descendants on
+Linux for deleted regular files under the explicitly tracked scratch/input
+directories. It pins and rechecks each descriptor before advising cache release.
+Normal thread/process/file disappearance is allowed; access and advice errors
+remain failures. Artifact bytes and total kernel lifetime peak accounting remain
+unchanged.
+
+The small local Linux proof used the existing pinned Python 3.12.12 toolchain
+and GDAL 3.6.2, one CPU and a 512 MiB container limit, with no WDPA inputs or
+network access. Across three trials, the old directory scan left all 64 MiB of
+a synthetic grandchild writer's unlinked file resident; descriptor-based advice
+reduced that residency to zero. The outside-root control remained cached
+and all file hashes stayed unchanged. Descriptor reuse, closed files, exited
+threads/descendants and visible advice failures have synthetic regression tests
+in `tests/test_wdpa_resource_cache.py`.
+
+A real FlatGeobuf fixture with 4,096 generated points and a 4 KiB text property
+per point held 17,104,896 bytes in its unlinked native temporary file. The old
+scan left those pages resident; the new advice released them, including in a
+trial without an explicit disk flush. Final FGB files were byte-for-byte
+identical and all generated features were read back and checked. These checks
+prove the local cache mechanism, not full-WDPA memory savings or new producer
+acceptance. Existing accepted retained bytes and the advisory 6.4 GiB policy
+remain valid; a future changed producer needs its own matching validation.
+
+A larger local check on 2026-10-07 re-exported the published October marine FGB
+(1,296,594,176 bytes, 17,938 features) with the same GDAL indexed writer. The
+input was downloaded read-only at generation `1790866695066557` and its SHA-256
+matched publication metadata on both host and container. Both implementations
+produced identical output bytes; every geometry and all 36 property fields
+matched the input. This re-export isolates the writer and omits the GPKG,
+translation, metadata and PMTiles stages of the production pipeline.
+
+Neither isolated export reached the unchanged production 4 GiB pressure
+trigger. A separate test-only 1 GiB trigger exercised cleanup in three paired
+exports, reversing the order of one pair. Median sampled memory peaks were
+2.24 GiB for the directory scan and 1.72 GiB for the new cleanup, a 23% reduction.
+Median export times were 3.55 and 3.16 seconds respectively, with overlapping
+ranges of 2.84–3.98 and 3.09–4.26 seconds; this does not establish a throughput
+improvement. The largest observed single-call reductions of the hidden file's
+resident cache ranged from 637 to 967 MiB across the three new-code trials.
+Inspection descriptors were closed before
+calling the unchanged cleanup implementations; preliminary trials with those
+descriptors still open were excluded from these comparisons.
+
+The local container used four CPU and a 6 GiB limit. Its kernel did not expose
+`memory.peak`, so the comparison uses 20 ms samples rather than a kernel
+lifetime peak. These results validate the mechanism on real marine geometry,
+not full-pipeline memory savings or producer acceptance. The input generation,
+toolchain, code hashes, per-trial measurements and limitations are retained in
+[the local marine comparison report](wdpa-processing-evidence/local-marine-cache-ab-20261007/report.json).
+No remote objects were changed.
+
 ## Completed checks
 
 - After integrating catalog PRs #169 and #170 and the staged-validation workflow,

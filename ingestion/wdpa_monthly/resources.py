@@ -166,6 +166,60 @@ def release_file_cache(path):
                     os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_DONTNEED)
             finally:
                 os.close(descriptor)
+    _release_deleted_file_cache(path)
+
+
+def _release_deleted_file_cache(path):
+    """Include unlinked native temporary files held by this process tree."""
+    if sys.platform != "linux":
+        return
+    root = Path(path).resolve()
+    pending, visited = [os.getpid()], set()
+    while pending:
+        pid = pending.pop()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        process = Path("/proc") / str(pid)
+        try:
+            for task in (process / "task").iterdir():
+                try:
+                    pending.extend(map(int, (task / "children").read_text().split()))
+                except (FileNotFoundError, ProcessLookupError):
+                    # A thread can exit while its child list is being sampled.
+                    continue
+            descriptors = list((process / "fd").iterdir())
+        except (FileNotFoundError, ProcessLookupError):
+            # A descendant can exit between samples; /proc itself is required.
+            if pid == os.getpid():
+                raise
+            continue
+        for entry in descriptors:
+            try:
+                target = os.readlink(entry)
+                if not target.endswith(" (deleted)") or not Path(
+                    target.removesuffix(" (deleted)")
+                ).is_relative_to(root):
+                    continue
+                descriptor = os.open(
+                    entry, os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
+                )
+            except (FileNotFoundError, ProcessLookupError):
+                # The child can close a temporary file while it is sampled.
+                continue
+            try:
+                # Pin the inode, then recheck scope against descriptor reuse.
+                target = os.readlink(f"/proc/self/fd/{descriptor}")
+                info = os.fstat(descriptor)
+                if (
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_nlink == 0
+                    and target.endswith(" (deleted)")
+                    and Path(target.removesuffix(" (deleted)")).is_relative_to(root)
+                ):
+                    os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(descriptor)
 
 
 class PhaseProfiler:
