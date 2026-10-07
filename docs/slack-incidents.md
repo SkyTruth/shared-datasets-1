@@ -75,6 +75,12 @@ valid channel and message timestamp, it persists an acknowledgement; confirmed
 delivery checkpoints are attested even if a later send fails. Posting is paced
 to the channel limit. Updating an acknowledged parent can repeat safely.
 
+Delivery rereads each prepared deployment claim and requires the same worker
+invocation and exact record fields except GitHub's `updated_at`, which can
+advance when its checkpoint status is posted. The current record still needs
+full ledger identity and signed-receipt verification before any Slack write.
+Payload, timestamps within incident state and all other API fields must match.
+
 Permalink lookup uses Slack's documented `chat.getPermalink` GET request with
 the exact string timestamp and fixed channel in query parameters. Posting and
 updating retain JSON POST requests. A rejected permalink lookup fails the worker

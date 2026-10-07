@@ -749,11 +749,17 @@ def main():
     else:
         records = json.loads(plan_path.read_text())
         # Only exact signed claims from this worker invocation may be delivered.
+        current_records = []
         for record in records:
             payload = record["payload"]
             require(payload["execution_run_id"] == run["id"] and payload["execution_run_attempt"] == run["run_attempt"], "prepared claim belongs to another worker")
-            require(api.get(f"repos/{REPOSITORY}/deployments/{record['id']}") == record, "prepared claim changed")
-        deliver(ledger, records, slack)
+            current = api.get(f"repos/{REPOSITORY}/deployments/{record['id']}")
+            # Posting the checkpoint's status advances GitHub's updated_at.
+            # Every other field must still match; delivery verifies its signature.
+            require({key: value for key, value in current.items() if key != "updated_at"}
+                    == {key: value for key, value in record.items() if key != "updated_at"}, "prepared claim changed")
+            current_records.append(current)
+        deliver(ledger, current_records, slack)
 
 
 if __name__ == "__main__":

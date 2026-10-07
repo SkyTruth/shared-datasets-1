@@ -42,6 +42,15 @@ exposed three missing contracts:
 | The usage worker called `.get()` on the SDK's valid absent-logging `None` value | Real SDK representations and the actual collection-disabled entrypoint run in Python tests and the immutable production image. Disabled collection remains unverified; malformed configuration, failed reads and incompatible persisted state remain errors. |
 | Slack permalink lookup used JSON POST instead of GET parameters | Offline HTTP-boundary tests verify posting, lookup, thread routing and parent updates. An acknowledged message survives permalink failure and resumes without reposting. Recovery edits the original parent; thread replies cannot broadcast into the channel. |
 
+After main CI [37692734702](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37692734702)
+passed all seven selected suites, notification run
+[37693399887](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37693399887)
+rejected an unchanged signed claim because posting its status advanced GitHub's
+deployment `updated_at` by one second. CLI delivery tests now exercise that
+prepare/status/read boundary: only `updated_at` may differ, every other claim
+field remains exact, and signed status verification still precedes Slack writes.
+State-machine tests alone did not cover this CLI comparison.
+
 Passing a fake service response or reconciling zero incidents does not prove the
 corresponding live boundary. Preserve the observed failure states in fixtures,
 exercise startup with deliberately incomplete operational configuration, and
