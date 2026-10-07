@@ -27,7 +27,8 @@ from scripts import workflow_failure_alert as alerts
 from scripts.slack_incident_api import CHANNEL, TIMESTAMP, Slack
 from scripts.slack_notify import build_slack_payload
 
-SCHEMA = "shared-datasets-slack-incident-v1"
+SCHEMA = "shared-datasets-slack-incident-v2"
+LEGACY_SCHEMA = "shared-datasets-slack-incident-v1"
 ENVIRONMENT = "slack-incidents"
 WORKFLOW = ".github/workflows/unattended-workflow-alert.yml"
 REPOSITORY = alerts.REPOSITORY
@@ -303,14 +304,14 @@ def fold(state, observation, identity, *, ancestor=deployments.git_ancestor):
             return state  # A superseded execution can finish after recovery.
     if incident is None or incident["resolution"] is not None:
         digest = hashlib.sha256((state["scope"] + ":" + observation_key(observation)).encode()).hexdigest()[:12].upper()
-        state["incident"] = {"id": "SD-" + digest, "failures": [observation], "resolution": None, "posts": {}, "permalink": ""}
+        state["incident"] = {"id": "SD-" + digest, "failures": [observation], "resolution": None, "posts": {}, "permalink": "", "parent_view_sha256": None}
     elif observation_key(observation) not in {observation_key(item) for item in incident["failures"]}:
         incident["failures"].append(observation)
         incident["failures"].sort(key=lambda item: (instant(item["time"]), observation_key(item)))
     return state
 
 
-def validate_state(state):
+def validate_state(state, *, legacy=False):
     require(isinstance(state, dict) and set(state) == {"scope", "kind", "label", "identity", "healthy", "incident", "deferred"}, "invalid incident state schema")
     identity = state["identity"]
     require(isinstance(identity, dict) and set(identity) == {"channel", "team", "user"}
@@ -326,7 +327,8 @@ def validate_state(state):
         require(item["scope"] == state["scope"] and observation_key(item) not in deferred_events, "incompatible/duplicate deferred observation")
         deferred_events.add(observation_key(item))
     incident = state["incident"]
-    require(isinstance(incident, dict) and set(incident) == {"id", "failures", "resolution", "posts", "permalink"}, "invalid incident episode")
+    fields = {"id", "failures", "resolution", "posts", "permalink"}
+    require(isinstance(incident, dict) and set(incident) == (fields if legacy else fields | {"parent_view_sha256"}), "invalid incident episode")
     require(re.fullmatch(r"SD-[0-9A-F]{12}", incident["id"]), "invalid incident ID")
     require(isinstance(incident["failures"], list) and incident["failures"], "incident must retain original failures")
     seen = set()
@@ -340,7 +342,11 @@ def validate_state(state):
         require(incident["resolution"]["scope"] == state["scope"] and incident["resolution"]["conclusion"] == "success"
                 and state["healthy"] is not None and instant(state["healthy"]["time"]) >= instant(incident["resolution"]["time"]), "invalid incident recovery")
     require(isinstance(incident["posts"], dict), "invalid Slack outbox")
-    allowed = desired_posts(state)
+    allowed = set(failure_posts(state))
+    if incident["resolution"] is not None:
+        # Historical recovery sends remain signed audit evidence. They are
+        # never part of the active outbox, including unconfirmed old claims.
+        allowed.add("resolved:" + observation_key(incident["resolution"]))
     for key, post in incident["posts"].items():
         require(key in allowed and isinstance(post, dict) and set(post) == {"state", "ts"}
                 and post["state"] in {"claimed", "delivered"}, "invalid Slack delivery operation")
@@ -352,19 +358,43 @@ def validate_state(state):
         parent = incident["posts"].get("parent")
         require(parent and parent["state"] == "delivered" and re.fullmatch(
             r"https://[a-z0-9-]+\.slack\.com/archives/" + identity["channel"] + "/p" + parent["ts"].replace(".", ""), link), "permalink does not identify the parent")
+    if not legacy:
+        view = incident["parent_view_sha256"]
+        require(view is None or (isinstance(view, str) and re.fullmatch(r"[0-9a-f]{64}", view)), "invalid parent view acknowledgement")
+        if view is not None:
+            parent = incident["posts"].get("parent")
+            require(parent and parent["state"] == "delivered", "parent view requires an acknowledged original message")
     return state
+
+
+def migrate_verified_state(state, schema):
+    """Upgrade only verified historical bytes; never assume an update succeeded."""
+    state = copy.deepcopy(state)
+    if schema == LEGACY_SCHEMA:
+        state["incident"]["parent_view_sha256"] = None
+    return validate_state(state)
+
+
+def failure_posts(state):
+    """Lifecycle order is independent of canonical JSON object-key sorting."""
+    return {"parent": None, **{"attempt:" + observation_key(item): item for item in state["incident"]["failures"][1:]}}
 
 
 def desired_posts(state):
     incident = state["incident"]
-    posts = {"parent": None}
-    # The initial failure is already recorded in the parent. Subsequent attempts
-    # remain threaded, including attempts discovered by reconciliation.
-    for failure in incident["failures"][1:]:
-        posts["attempt:" + observation_key(failure)] = failure
+    parent = incident["posts"].get("parent")
     if incident["resolution"] is not None:
-        posts["resolved:" + observation_key(incident["resolution"])] = incident["resolution"]
-    return posts
+        # Existing failed-attempt claims still need owner reconciliation, but
+        # corrected failures cannot authorize any new message or retry reply.
+        return {"parent": None} if parent and parent["state"] == "delivered" else {}
+    # The initial failure is already recorded in the parent. Subsequent attempts
+    # remain threaded. Already-corrected failures are not newly announced.
+    return failure_posts(state)
+
+
+def pending_posts(state):
+    posts = state["incident"]["posts"]
+    return {key: posts[key] for key in failure_posts(state) if key in posts and posts[key]["state"] == "claimed"}
 
 
 def run_link(observation):
@@ -375,7 +405,8 @@ def render(state, *, reply=None):
     incident = state["incident"]
     first, latest = incident["failures"][0], incident["failures"][-1]
     resolution = incident["resolution"]
-    if reply and reply["conclusion"] != "success":
+    if reply:
+        require(reply["conclusion"] in alerts.FAILED_CONCLUSIONS, "only failures may create incident replies")
         title = f"Another failed attempt · {incident['id']}"
         body = f"{escape(reply['job_name'])}: {reply['conclusion']}.\n<{run_link(reply)}|Attempt {reply['attempt']}> · `{reply['sha'][:12]}` · {reply['time']}"
         status = "error"
@@ -389,14 +420,36 @@ def render(state, *, reply=None):
             body += f"\n*Recovery verified:* {resolution['time']}\n<{run_link(resolution)}|Recovery evidence> · `{resolution['sha'][:12]}`"
             if resolution["proof"]:
                 body += f"\nDeployment record {resolution['proof']['record_id']} · `{resolution['proof']['artifact']}`"
-        if reply:
-            title = f"Recovered · {state['label']} · {incident['id']}"
-            body = f"Recovery verified at {resolution['time']}.\n<{run_link(resolution)}|Successful recovery> · `{resolution['sha'][:12]}`\n{len(incident['failures'])} failed attempt(s); original evidence remains in this thread."
     payload = build_slack_payload(title=title, body=body, status=status, emoji="✅" if status == "success" else "🔴")
     # Labels may originate in job names; escape the notification fallback too.
     payload["text"] = escape(title) + "\n" + body
     payload["metadata"] = {"event_type": "shared_datasets_incident", "event_payload": {"incident_id": incident["id"], "scope": state["scope"]}}
     return payload
+
+
+def parent_view_sha256(state):
+    return hashlib.sha256(emissions.canonical(render(state))).hexdigest()
+
+
+def pending_recovery_update(state):
+    incident = state["incident"]
+    parent = incident["posts"].get("parent")
+    return (incident["resolution"] is not None and parent and parent["state"] == "delivered"
+            and incident["parent_view_sha256"] != parent_view_sha256(state))
+
+
+def needs_parent_delivery(state):
+    incident = state["incident"]
+    parent = incident["posts"].get("parent")
+    return parent and parent["state"] == "delivered" and (not incident["permalink"]
+            or incident["parent_view_sha256"] != parent_view_sha256(state))
+
+
+def admits_blocked_observations(state):
+    """A known open parent can recover without replaying its uncertain replies."""
+    incident = state["incident"]
+    parent = incident["posts"].get("parent")
+    return incident["resolution"] is None and parent and parent["state"] == "delivered"
 
 
 def worker_context(api, environment=os.environ):
@@ -423,17 +476,17 @@ class Ledger:
         if isinstance(payload, str):
             payload = json.loads(payload)
         require(isinstance(payload, dict) and set(payload) == {"schema", "state", "execution_run_id", "execution_run_attempt"}
-                and payload["schema"] == SCHEMA and record.get("task") == "slack-incident"
+                and payload["schema"] in {SCHEMA, LEGACY_SCHEMA} and record.get("task") == "slack-incident"
                 and record.get("environment") == ENVIRONMENT and record.get("production_environment") is False
                 and record.get("ref") == record.get("sha") and deployments.SHA.fullmatch(str(record.get("sha", "")))
                 and record.get("creator", {}).get("login") == "github-actions[bot]", "invalid notification ledger identity")
-        state = validate_state(payload["state"])
+        state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
         statuses = self.api.pages(f"repos/{REPOSITORY}/deployments/{record['id']}/statuses?per_page=100")
         require(len(statuses) == 1 and statuses[0].get("description") == "applied" and statuses[0].get("state") == "success", "notification checkpoint is incomplete; reconcile before delivery")
         # The signed bytes bind the channel, parent timestamp, outbox claims and
         # observation history. A forged Actions-bot row cannot suppress alerts.
         emissions.verify(self.api, REPOSITORY, record, statuses[0], original_signer=WORKFLOW, batch=True)
-        return state
+        return migrate_verified_state(state, payload["schema"])
 
     def load(self):
         records = self.api.pages(f"repos/{REPOSITORY}/deployments?environment={ENVIRONMENT}&task=slack-incident&per_page=100")
@@ -442,7 +495,7 @@ class Ledger:
             payload = record["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            require(isinstance(payload, dict) and payload.get("schema") == SCHEMA, "unknown notification ledger schema")
+            require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}, "unknown notification ledger schema")
             scope = payload["state"]["scope"]
             if scope not in latest or record["id"] > latest[scope]["id"]:
                 latest[scope] = record
@@ -487,9 +540,9 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
     payload = record["payload"]
     if isinstance(payload, str):
         payload = json.loads(payload)
-    require(isinstance(payload, dict) and payload.get("schema") == SCHEMA
+    require(isinstance(payload, dict) and payload.get("schema") in {SCHEMA, LEGACY_SCHEMA}
             and hashlib.sha256(emissions.canonical(payload)).hexdigest() == match[2], "checkpoint differs from the owner's reviewed payload")
-    state = validate_state(payload["state"])
+    state = validate_state(payload["state"], legacy=payload["schema"] == LEGACY_SCHEMA)
     require(state["incident"]["id"] == incident_id and state["identity"] == identity
             and record.get("task") == "slack-incident" and record.get("environment") == ENVIRONMENT
             and record.get("production_environment") is False, "checkpoint belongs to another incident or Slack identity")
@@ -506,24 +559,25 @@ def seal_checkpoint(ledger, identity, incident_id, operation):
             verify_saved_success(ledger.api, healthy)
         require(all(deployments.git_ancestor(item["sha"], resolution["sha"]) for item in state["incident"]["failures"])
                 and deployments.git_ancestor(resolution["sha"], healthy["sha"]), "checkpoint recovery has incompatible revision ancestry")
-    ledger.save(state, "claims")
+    ledger.save(migrate_verified_state(state, payload["schema"]), "claims")
     return []
 
 
 def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor, success=terminal_success, on_saved=lambda _: None):
     states = ledger.load()
     original = copy.deepcopy(states)
-    blocked = {scope for scope, state in states.items() if any(item["state"] == "claimed" for item in state["incident"]["posts"].values())}
+    blocked = {scope for scope, state in states.items() if pending_posts(state)}
     replay = list(observations)
     for scope, state in states.items():
         require(state["identity"] == identity, "configured Slack identity differs from the incident registry")
-        if scope not in blocked:
+        if scope not in blocked or admits_blocked_observations(state):
             replay.extend(state["deferred"])
             state["deferred"] = []
     for observation in sorted(replay, key=lambda item: (instant(item["time"]), observation_key(item))):
         validate_observation(observation)
         scope = observation["scope"]
-        if scope in blocked:
+        if ((scope in blocked and not admits_blocked_observations(states[scope]))
+                or (scope in states and pending_recovery_update(states[scope]))):
             state = states[scope]
             known = state["incident"]["failures"] + state["deferred"]
             if state["incident"]["resolution"]:
@@ -535,7 +589,7 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             continue
         states[observation["scope"]] = fold(states.get(observation["scope"]), observation, identity, ancestor=ancestor)
     for scope, state in list(states.items()):
-        if scope not in blocked and state["kind"] == "deployment":
+        if (scope not in blocked or admits_blocked_observations(state)) and state["kind"] == "deployment":
             evidence = success(ledger.api, scope)
             if evidence:
                 states[scope] = fold(state, evidence, identity, ancestor=ancestor)
@@ -550,16 +604,20 @@ def prepare(ledger, identity, observations, *, ancestor=deployments.git_ancestor
             if os.environ.get("GITHUB_STEP_SUMMARY"):
                 with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
                     stream.write(f"- **Action required:** {message}\n")
-            if state != existing:
-                ledger.save(state, "claims")  # Sign retained events; never resend uncertain posts.
+            update_only = incident["resolution"] is not None and needs_parent_delivery(state)
+            if state != existing or update_only:
+                record = ledger.save(state, "claims")  # Never resend uncertain posts.
+                if update_only:
+                    prepared.append(record)
+                    on_saved(record)
             continue
         for key in desired_posts(state):
             if key not in incident["posts"]:
                 incident["posts"][key] = {"state": "claimed", "ts": None}
-        needs_permalink = not incident["permalink"]
-        if state != existing or needs_permalink:
+        needs_delivery = needs_parent_delivery(state)
+        if state != existing or needs_delivery:
             record = ledger.save(state, "claims")
-            if needs_permalink or any(item["state"] == "claimed" for item in incident["posts"].values()):
+            if needs_delivery or pending_posts(state):
                 prepared.append(record)
                 on_saved(record)
     return prepared
@@ -578,17 +636,21 @@ def deliver(ledger, records, slack):
                 continue
             if key == "parent":
                 ts = slack.post(render(state))
+                incident["parent_view_sha256"] = parent_view_sha256(state)
             else:
                 parent = incident["posts"]["parent"]
                 require(parent["state"] == "delivered", "thread requires an acknowledged parent")
-                # Repeating an update to a known message is safe. The broadcast
-                # post is claimed separately and must not be blindly repeated.
-                slack.update(parent["ts"], render(state))
-                ts = slack.post(render(state, reply=observation), thread_ts=parent["ts"], broadcast=observation["conclusion"] == "success")
+                ts = slack.post(render(state, reply=observation), thread_ts=parent["ts"])
             post.update(state="delivered", ts=ts)
             ledger.save(state, "outcomes")
-        parent = incident["posts"]["parent"]
-        slack.update(parent["ts"], render(state))
+        parent = incident["posts"].get("parent")
+        if not parent or parent["state"] != "delivered":
+            continue
+        view = parent_view_sha256(state)
+        if incident["parent_view_sha256"] != view:
+            slack.update(parent["ts"], render(state))
+            incident["parent_view_sha256"] = view
+            ledger.save(state, "outcomes")
         if not incident["permalink"]:
             incident["permalink"] = slack.permalink(parent["ts"])
             ledger.save(state, "outcomes")
@@ -598,7 +660,7 @@ def deliver(ledger, records, slack):
                 stream.write(f"- [{incident['id']}]({incident['permalink']}): {'resolved' if incident['resolution'] else 'open'}; {len(incident['failures'])} failed attempt(s).\n")
 
 
-def reconcile(ledger, identity, incident_id, operation, result, ts):
+def reconcile(ledger, identity, incident_id, operation, result, ts, *, ancestor=deployments.git_ancestor, success=terminal_success):
     require(ledger.run["event"] == "workflow_dispatch" and ledger.run.get("actor", {}).get("login") == "jonaraphael", "delivery reconciliation requires the repository owner on trusted main")
     states = ledger.load()
     matches = [state for state in states.values() if state["incident"]["id"] == incident_id]
@@ -606,15 +668,41 @@ def reconcile(ledger, identity, incident_id, operation, result, ts):
     state = matches[0]
     require(state["identity"] == identity, "Slack identity changed")
     post = state["incident"]["posts"].get(operation)
-    require(post and post["state"] == "claimed", "operation does not have uncertain delivery")
-    earliest = next(key for key in desired_posts(state) if state["incident"]["posts"][key]["state"] == "claimed")
+    require(post and operation in pending_posts(state), "operation does not have uncertain active delivery")
+    earliest = next(iter(pending_posts(state)))
     require(operation == earliest, "reconcile the first uncertain operation before later posts")
     if result == "delivered":
         require(TIMESTAMP.fullmatch(ts), "confirm-delivered requires the exact message timestamp")
+        if operation != "parent":
+            parent = state["incident"]["posts"].get("parent")
+            require(parent and parent["state"] == "delivered", "confirmed thread delivery requires an acknowledged parent")
         post.update(state="delivered", ts=ts)
     else:
         require(result == "not-delivered" and not ts, "confirm-not-delivered must have no message timestamp")
-    return [ledger.save(state, "claims")]
+        del state["incident"]["posts"][operation]
+    if pending_posts(state):
+        record = ledger.save(state, "claims")
+        # A known original may turn green; other uncertain posts stay blocked.
+        return [record] if state["incident"]["resolution"] is not None and needs_parent_delivery(state) else []
+    replay = state["deferred"]
+    state["deferred"] = []
+    for item in sorted(replay, key=lambda value: (instant(value["time"]), observation_key(value))):
+        if pending_recovery_update(state):
+            state["deferred"].append(item)
+        else:
+            state = fold(state, item, identity, ancestor=ancestor)
+    if state["kind"] == "deployment":
+        evidence = success(ledger.api, state["scope"])
+        if evidence:
+            state = fold(state, evidence, identity, ancestor=ancestor)
+    incident = state["incident"]
+    for key in desired_posts(state):
+        if key not in incident["posts"]:
+            incident["posts"][key] = {"state": "claimed", "ts": None}
+    record = ledger.save(state, "claims")
+    if pending_posts(state) or needs_parent_delivery(state):
+        return [record]
+    return []
 
 
 def main():

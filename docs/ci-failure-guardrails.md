@@ -40,7 +40,7 @@ exposed three missing contracts:
 | --- | --- |
 | A disabled logging block introduced a telemetry bucket into a narrow ingestion IAM plan | Pinned Terraform's actual dependency graph must keep every narrow target inside its reviewed ownership/prerequisite closure. Both disabled and enabled historical configurations must reject the leaked edge. The apply allowlist remains narrow; selected logging-owner deployment completes before shared-bucket IAM consumers. |
 | The usage worker called `.get()` on the SDK's valid absent-logging `None` value | Real SDK representations and the actual collection-disabled entrypoint run in Python tests and the immutable production image. Disabled collection remains unverified; malformed configuration, failed reads and incompatible persisted state remain errors. |
-| Slack permalink lookup used JSON POST instead of GET parameters | HTTP-boundary tests verify each lifecycle operation's actual request. An acknowledged message survives permalink failure and resumes without reposting. The protected synthetic lifecycle rehearsal exercises posting, lookup, threads and resolved updates separately from production incidents. |
+| Slack permalink lookup used JSON POST instead of GET parameters | Offline HTTP-boundary tests verify posting, lookup, thread routing and parent updates. An acknowledged message survives permalink failure and resumes without reposting. Recovery edits the original parent; thread replies cannot broadcast into the channel. |
 
 Passing a fake service response or reconciling zero incidents does not prove the
 corresponding live boundary. Preserve the observed failure states in fixtures,

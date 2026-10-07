@@ -62,14 +62,12 @@ class Slack:
         require(re.fullmatch(r"T[A-Z0-9]+", str(result.get("team_id", ""))), "Slack workspace identity unavailable")
         return {"team": result["team_id"], "user": result["user_id"], "channel": self.channel}
 
-    def post(self, payload, *, thread_ts=None, broadcast=False):
+    def post(self, payload, *, thread_ts=None):
         require(not ({"channel", "thread_ts", "reply_broadcast"} & payload.keys()), "message cannot override routing")
         body = {**payload, "channel": self.channel, "unfurl_links": False, "unfurl_media": False}
         if thread_ts is not None:
             require(TIMESTAMP.fullmatch(thread_ts), "invalid parent message timestamp")
-            body.update(thread_ts=thread_ts, reply_broadcast=broadcast)
-        else:
-            require(not broadcast, "broadcast requires a parent message")
+            body.update(thread_ts=thread_ts, reply_broadcast=False)
         if self.last_post is not None:
             delay = 1.1 - (self.clock() - self.last_post)
             if delay > 0:
@@ -82,7 +80,7 @@ class Slack:
 
     def update(self, ts, payload):
         require(TIMESTAMP.fullmatch(ts), "invalid message timestamp")
-        require(not ({"channel", "ts"} & payload.keys()), "message cannot override update identity")
+        require(not ({"channel", "ts", "thread_ts", "reply_broadcast"} & payload.keys()), "message cannot override update identity or routing")
         result = self.call("chat.update", {**payload, "channel": self.channel, "ts": ts})
         require(result.get("channel") == self.channel and result.get("ts") == ts, "Slack updated a different message")
 
