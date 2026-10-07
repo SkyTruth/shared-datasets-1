@@ -12,7 +12,7 @@ import subprocess
 import tarfile
 import tempfile
 
-TARGETS = frozenset({"eamlis-monthly", "sea-ice-daily", "catalog-viewer"})
+TARGETS = frozenset({"eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage"})
 MAX_IMAGE = 2 * 1024 ** 3
 MAX_JSON = 1024 ** 2
 SHA = re.compile(r"[0-9a-f]{40}")

@@ -307,6 +307,7 @@ jobs:
       ingestion_iam: ${{ steps.plan.outputs.ingestion_iam }}
       pmtiles_cdn: ${{ steps.plan.outputs.pmtiles_cdn }}
       catalog_viewer: ${{ steps.plan.outputs.catalog_viewer }}
+      dataset_usage: ${{ steps.plan.outputs.dataset_usage }}
       artifact_registry_iam: ${{ steps.plan.outputs.artifact_registry_iam }}
       preview_terraform_iam: ${{ steps.plan.outputs.preview_terraform_iam }}
       scratch_cleanup_iam: ${{ steps.plan.outputs.scratch_cleanup_iam }}
@@ -735,8 +736,8 @@ jobs:
     secrets: inherit
 
   pmtiles-cdn:
-    needs: [ci-ready, geospatial-changes]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
+    needs: [ci-ready, geospatial-changes, dataset-usage]
+    if: ${{ always() && (needs.geospatial-changes.outputs.dataset_usage != 'true' || needs.dataset-usage.result == 'success') && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.pmtiles_cdn == 'true' }}
     permissions:
       contents: read
       actions: read
@@ -750,8 +751,24 @@ jobs:
       source_run_attempt: ${{ format('{0}', github.run_attempt) }}
     secrets: inherit
 
-  catalog-viewer:
+  dataset-usage:
     needs: [ci-ready, geospatial-changes, artifact-registry-iam]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.dataset_usage == 'true' }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/dataset-usage-deploy.yml
+    with:
+      executor_sha: ${{ needs.ci-ready.outputs.tested_sha }}
+      source_run_id: ${{ format('{0}', github.run_id) }}
+      source_run_attempt: ${{ format('{0}', github.run_attempt) }}
+    secrets: inherit
+
+  catalog-viewer:
+    needs: [ci-ready, geospatial-changes, artifact-registry-iam, dataset-usage]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-ready.result == 'success' && needs.geospatial-changes.outputs.catalog_viewer == 'true' }}
     permissions:
       contents: read

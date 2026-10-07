@@ -33,13 +33,13 @@ def test_iam_only_bootstrap_cannot_launch_unready_ingestion_dependents():
 def test_shared_runtime_and_terraform_modules_select_cross_component_dependents():
     assert set(select_deployments(["ingestion/common/publication.py"])) == {"eamlis", "wdpa", "sea_ice", "ingestion_iam", "artifact_registry_iam"}
     assert "catalog_viewer" in select_deployments(["terraform/modules/cloud_run_job/main.tf"])
-    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam"}
+    assert set(select_deployments(["catalog/shared-datasets-catalog.csv"])) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam", "dataset_usage"}
 
 
 @pytest.mark.parametrize("path,targets", [
     ("scripts/pmtiles_zoom.py", {"eamlis", "wdpa", "sea_ice"}),
     ("scripts/slack_notify.py", {"eamlis", "wdpa", "sea_ice"}),
-    ("scripts/catalog_csv.py", {"eamlis", "wdpa"}),
+    ("scripts/catalog_csv.py", {"eamlis", "wdpa", "dataset_usage"}),
     ("scripts/feature_metadata_translation_reuse.py", {"eamlis", "wdpa"}),
     ("catalog/feature-identity-resolutions/wdpa.json", {"wdpa", "sea_ice"}),
     ("docs/assets/ims-sea-ice-extent.md", {"sea_ice"}),
@@ -59,14 +59,14 @@ def test_catalog_metadata_updates_do_not_redeploy_consumers_but_contract_changes
     path = ["catalog/shared-datasets-catalog.csv"]
     assert select_deployments(path, catalog_snapshots=(before, before.replace("Original", "Updated"))) == []
     assert set(select_deployments(path, catalog_snapshots=(before, before.replace(",es,", ",es;fr,")))) == {"eamlis", "ingestion_iam", "artifact_registry_iam"}
-    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn"]
+    assert select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/"))) == ["pmtiles_cdn", "dataset_usage", "artifact_registry_iam"]
     assert "catalog_viewer" not in select_deployments(path, catalog_snapshots=(before, before.replace("/example/", "/new-prefix/")))
     assert "catalog_viewer" in select_deployments(path + ["scripts/compare_releases.py"], catalog_snapshots=(before, before))
 
 
 def test_catalog_snapshot_uncertainty_and_duplicate_slugs_cannot_suppress_validation():
     path = ["catalog/shared-datasets-catalog.csv"]
-    assert set(select_deployments(path)) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam"}
+    assert set(select_deployments(path)) == {"eamlis", "wdpa", "ingestion_iam", "pmtiles_cdn", "artifact_registry_iam", "dataset_usage"}
     duplicate = "asset_slug,title\nwdpa-marine,One\nwdpa-marine,Two\n"
     with pytest.raises(ValueError, match="unique nonempty"):
         select_deployments(path, catalog_snapshots=(duplicate, duplicate))

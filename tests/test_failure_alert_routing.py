@@ -220,7 +220,7 @@ def test_marker_is_never_persistent_or_attached_to_detached_work():
                     assert "gcloud run jobs execute" in run
                     assert "set -euo pipefail" in run
                     assert not step.get("continue-on-error", False)
-    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Verify a real upload before processing"}
+    assert set(marked_steps) == {"Execute sea-ice-daily canary", "Execute eamlis-monthly canary", "Execute bounded usage canary", "Verify a real upload before processing"}
     for path in (ROOT / "terraform").rglob("*.tf"):
         if path.name != "monitoring.tf":
             assert MARKER not in path.read_text(), path

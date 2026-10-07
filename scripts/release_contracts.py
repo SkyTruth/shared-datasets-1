@@ -20,7 +20,7 @@ import yaml
 from scripts import reviewed_dataset_plan as plans
 from scripts import wdpa_processing_gate as wdpa
 from scripts.deployment_permissions import MONITORING_PERMISSIONS, PROJECT_PERMISSIONS, SECRET_PERMISSIONS
-from scripts.deployment_revision import TERRAFORM_SYNCS
+from scripts.deployment_revision import TERRAFORM_SYNCS, TARGET_WORKFLOWS
 from scripts import deployment_receipt_contracts as receipts
 from scripts import cdn_plan_readiness as cdn
 
@@ -28,12 +28,12 @@ DEPLOYS = {"wdpa": "wdpa-monthly", "eamlis": "eamlis-monthly", "sea-ice": "sea-i
 RESET_ASSETS = {"wdpa": ("wdpa-marine", "wdpa-terrestrial"), "sea-ice": ("ims-sea-ice-extent",)}
 PLAN_PROBE_WORKFLOWS = (
     "prod-terraform-target-apply.yml", "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml",
-    "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
+    "dataset-usage-deploy.yml", "sea-ice-daily-deploy.yml", "wdpa-processing-validation-deploy.yml",
     "pmtiles-cdn-sync.yml", "catalog-viewer-deploy.yml",
 )
 IMAGE_PROBE_WORKFLOWS = (
     "wdpa-monthly-deploy.yml", "eamlis-monthly-deploy.yml", "sea-ice-daily-deploy.yml",
-    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml",
+    "wdpa-processing-validation-deploy.yml", "catalog-viewer-deploy.yml", "dataset-usage-deploy.yml",
 )
 
 
@@ -178,6 +178,10 @@ def iam_contract(root):
         if set(triggers) != {"workflow_call", "workflow_dispatch"}:
             errors.append(f"{filename}: automatic mutation must be called after ci-ready")
         for name, job in caller["jobs"].items():
+            if job.get("uses") != "./.github/workflows/prod-terraform-target-apply.yml":
+                if filename not in TARGET_WORKFLOWS.values():
+                    errors.append(f"{filename}/{name}: unregistered inline deployment")
+                continue
             inputs = job["with"]
             if inputs.get("caller_workflow") != filename or TERRAFORM_SYNCS.get(inputs["sync_name"]) != filename:
                 errors.append(f"{filename}/{name}: target does not belong to its trusted caller")
@@ -254,6 +258,12 @@ def retained_evidence(root):
 
 def check(root, targets):
     errors = iam_contract(root) + saved_plan_permission_contract(root) + image_permission_contract(root) + receipts.boundaries(root) + receipts.permissions(root)
+    if "dataset-usage" in targets:
+        from scripts.dataset_usage_deploy import validate_rollout
+        try:
+            validate_rollout(root)
+        except ValueError as exc:
+            errors.append("dataset-usage: " + str(exc))
     for target in sorted(targets & set(DEPLOYS)):
         errors += deployment_contract(root, target)
     if "wdpa" in targets:
@@ -270,11 +280,11 @@ def check(root, targets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam"], required=True)
+    parser.add_argument("--target", action="append", choices=["all", "wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"], required=True)
     args = parser.parse_args()
     targets = set(args.target)
     if "all" in targets:
-        targets = {"wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam"}
+        targets = {"wdpa", "eamlis", "sea-ice", "wdpa-processing", "iam", "dataset-usage"}
     errors = check(ROOT, targets)
     if errors:
         parser.exit(1, "RELEASE_CONTRACT_NOT_READY:\n" + "\n".join(errors) + "\n")

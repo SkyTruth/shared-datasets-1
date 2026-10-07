@@ -1,6 +1,9 @@
 # ingestion/
 
-This directory contains production scheduled ingestion jobs and shared helpers.
+This directory contains production scheduled ingestion jobs, the
+[passive dataset usage collector](dataset_usage/README.md), and shared helpers.
+The usage collector writes private telemetry only; the publishing semantics below
+apply to jobs that produce dataset releases.
 
 ## Layout
 

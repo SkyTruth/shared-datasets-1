@@ -198,6 +198,8 @@ class ReleaseContractTests(unittest.TestCase):
                 with self.subTest(filename=filename, mutation=mutation):
                     value = yaml.safe_load(original)
                     for job in value["jobs"].values():
+                        if "uses" in job:
+                            continue  # Reusable IAM bootstrap has no image publication.
                         steps = job.get("steps", [])
                         selected = next(step for step in steps if "--target artifact-registry-images" in step.get("run", ""))
                         if mutation == "disabled":

@@ -23,6 +23,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 TARGET = re.compile(r"[a-z][a-z0-9-]{0,80}")
 SCHEMA = "shared-datasets-deployment-v1"
 TARGET_WORKFLOWS = {
+    "dataset-usage": "dataset-usage-deploy.yml",
     "wdpa-monthly": "wdpa-monthly-deploy.yml",
     "wdpa-processing-validation": "wdpa-processing-validation-deploy.yml",
     "eamlis-monthly": "eamlis-monthly-deploy.yml",
@@ -33,6 +34,7 @@ TARGET_WORKFLOWS = {
     "catalog-viewer": "catalog-viewer-deploy.yml",
 }
 TERRAFORM_SYNCS = {
+    "Dataset usage deploy IAM bootstrap": "dataset-usage-deploy.yml",
     "Translation notice secret IAM bootstrap": "scheduled-ingestion-deploy-iam-sync.yml",
     "Scheduled ingestion deploy IAM sync": "scheduled-ingestion-deploy-iam-sync.yml",
     "Artifact Registry IAM sync": "artifact-registry-iam-sync.yml",

@@ -15,7 +15,7 @@ from ci_result_fixtures import production_images
 from workflow_helpers import load_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = ("eamlis-monthly", "sea-ice-daily", "catalog-viewer")
+TARGETS = ("eamlis-monthly", "sea-ice-daily", "catalog-viewer", "dataset-usage")
 
 
 def deployment_steps(target):

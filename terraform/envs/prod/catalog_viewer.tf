@@ -89,6 +89,11 @@ resource "google_cloud_run_v2_service" "catalog_viewer" {
       }
 
       env {
+        name  = "DATASET_USAGE_STATE_BUCKET"
+        value = google_storage_bucket.dataset_usage_state.name
+      }
+
+      env {
         name  = "SHARED_DATASETS_BUCKET"
         value = var.bucket_name
       }

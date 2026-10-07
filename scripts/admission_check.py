@@ -14,6 +14,8 @@ from typing import Any, Callable, Sequence
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.scheduled_job_contracts import NON_PUBLISHING_JOBS
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 ASSET_DOC_RE = re.compile(r"^docs/assets/([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
@@ -229,6 +231,8 @@ def new_ingestion_jobs(
         if not match:
             continue
         job = match.group(1)
+        if job in NON_PUBLISHING_JOBS:
+            continue
         if not exists(f"ingestion/{job}"):
             jobs.add(job)
     return sorted(jobs)
