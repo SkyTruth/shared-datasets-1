@@ -270,7 +270,12 @@ time, cgroup memory peak, process RSS peak, sampled scratch peak, artifact sizes
 and native tool versions, plus the memory breakdown at the sampled peak.
 At 4 GiB cgroup usage, the sampler
 uses Linux `POSIX_FADV_DONTNEED` on regular scratch files to release unused file
-cache. It skips symlinks and special files, never changes file bytes and never
+cache, including open temporary files that native tools have unlinked. The
+sampler follows the current process's descendants through `/proc`, pins each
+eligible descriptor, and rechecks its deletion state, file type and tracked
+directory before advising it. Thread/process/file disappearance is an expected
+sampling race; permission and cache-advice errors fail measurement.
+It skips symlinks and special files, never changes file bytes and never
 resets or excludes cache from the measured cgroup peak. Frozen local replays also
 release cache from their read-only input directory. Cache advice failures fail
 measurement. The preferred 6.4 GiB headroom target produces an advisory warning;
