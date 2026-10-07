@@ -785,6 +785,87 @@ class GcsPublisherTests(unittest.TestCase):
         self.assertEqual(index["latest_run"]["status"], "success")
         self.assertNotIn("run_record_path", index["latest_run"])
 
+    def test_rebuild_rejects_stale_path_checksum_despite_correct_artifact_checksum(self):
+        bucket = FakeBucket()
+        path = "gs://test-bucket/asset/releases/2026-05-01/asset.fgb"
+        fgb = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        fgb.exists = True
+        fgb.generation = 8
+        record = bucket.blob("asset/runs/2026-05-01.json")
+        record.exists = True
+        for artifact_path_key in ("path", "release_uri"):
+            with self.subTest(artifact_path_key=artifact_path_key):
+                record.text = json.dumps({
+                    "schema_version": 1,
+                    "release_date": "2026-05-01",
+                    "status": "success",
+                    "row_count": 286,
+                    "release_paths": [{"path": path, "generation": 8, "sha256": "0" * 64}],
+                    "sha256": {"fgb": "a" * 64},
+                    "artifacts": [{artifact_path_key: path, "format": "fgb", "sha256": "a" * 64}],
+                })
+                with self.assertRaisesRegex(release_index.ReleaseIndexError, "conflicting SHA-256.*asset.fgb"):
+                    release_index.rebuild_index_from_bucket(bucket, {
+                        "asset_slug": "test-asset",
+                        "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+                    })
+        self.assertEqual(bucket.blob("_catalog/releases/test-asset.json").uploads, [])
+
+    def test_release_checksums_are_scoped_to_each_artifact_path(self):
+        root = "gs://test-bucket/asset/releases/2026-05-01/asset"
+        hashes = {
+            f"{root}.metadata.ndjson.gz": "a" * 64,
+            f"{root}.metadata.es.ndjson.gz": "b" * 64,
+            f"{root}.metadata-translations.csv": "c" * 64,
+        }
+        record = {
+            "release_paths": [{"path": path, "sha256": sha} for path, sha in hashes.items()],
+            "sha256": {"metadata": "a" * 64, "metadata_es": "b" * 64, "metadata-translations": "c" * 64},
+            "artifacts": [
+                {"release_uri": path, "format": "metadata", "sha256": sha}
+                for path, sha in hashes.items()
+            ],
+        }
+        files = release_index.files_from_run_record(record)
+        self.assertEqual({entry["path"]: entry["sha256"] for entry in files}, hashes)
+
+    def test_localized_sidecar_never_borrows_canonical_metadata_checksum(self):
+        files = release_index.files_from_run_record({
+            "release_paths": ["gs://test-bucket/asset/releases/2026-05-01/asset.metadata.es.ndjson.gz"],
+            "sha256": {"metadata": "a" * 64},
+        })
+        self.assertNotIn("sha256", files[0])
+
+    def test_release_checksum_declarations_cannot_silently_overwrite_each_other(self):
+        path = "gs://test-bucket/asset/releases/2026-05-01/asset.fgb"
+        for artifacts in (
+            [{"format": "fgb", "sha256": "b" * 64}],
+            [{"path": path, "sha256": "a" * 64}, {"release_uri": path, "sha256": "b" * 64}],
+        ):
+            with self.subTest(artifacts=artifacts):
+                with self.assertRaisesRegex(release_index.ReleaseIndexError, "conflicting SHA-256"):
+                    release_index.files_from_run_record({
+                        "release_paths": [path],
+                        "sha256": {"fgb": "a" * 64},
+                        "artifacts": artifacts,
+                    })
+
+    def test_rebuild_rejects_checksum_conflict_with_gcs_metadata(self):
+        bucket = FakeBucket()
+        record = valid_metadata_contract_record(FakeAsset(), "2026-05-01")
+        fgb = bucket.blob("asset/releases/2026-05-01/asset.fgb")
+        fgb.exists = True
+        fgb.generation = 2
+        fgb.metadata = {"sha256": "f" * 64}
+        run = bucket.blob("asset/runs/2026-05-01.json")
+        run.exists = True
+        run.text = json.dumps(record)
+        with self.assertRaisesRegex(release_index.ReleaseIndexError, "conflicting SHA-256.*asset.fgb"):
+            release_index.rebuild_index_from_bucket(bucket, {
+                "asset_slug": "test-asset",
+                "canonical_path": "gs://test-bucket/asset/latest/asset.fgb",
+            })
+
     def test_rebuild_index_marks_localized_metadata_sidecars_with_locale(self):
         bucket = FakeBucket()
         canonical = bucket.blob("asset/releases/2026-05-01/asset.fgb")

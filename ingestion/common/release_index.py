@@ -164,7 +164,7 @@ def blob_file_entry(
     *,
     sha256_by_format: dict[str, str] | None = None,
     sha256_by_path: dict[str, str] | None = None,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     if isinstance(value, str):
         value = {"path": value}
     if not isinstance(value, dict):
@@ -184,13 +184,20 @@ def blob_file_entry(
     for key in ("generation", "size", "content_type", "sha256"):
         if value.get(key) is not None:
             entry[key] = value[key]
-    sha = (sha256_by_path or {}).get(path)
-    if not sha and locale:
-        sha = (sha256_by_format or {}).get(f"metadata_{locale}")
-    if not sha:
-        sha = (sha256_by_format or {}).get(format_name)
-    if sha and "sha256" not in entry:
-        entry["sha256"] = sha
+    checksum_key = f"metadata_{locale}" if locale else format_name
+    checksums = {
+        str(sha)
+        for sha in (
+            entry.get("sha256"),
+            (sha256_by_path or {}).get(path),
+            (sha256_by_format or {}).get(checksum_key),
+        )
+        if sha
+    }
+    if len(checksums) > 1:
+        raise ReleaseIndexError(f"conflicting SHA-256 declarations for {path}")
+    if checksums:
+        entry["sha256"] = checksums.pop()
     return entry
 
 
@@ -202,9 +209,15 @@ def sha256_by_format(record: dict[str, Any]) -> dict[str, str]:
     for artifact in record.get("artifacts") or []:
         if not isinstance(artifact, dict):
             continue
+        if artifact.get("path") or artifact.get("release_uri"):
+            # Path-scoped artifacts belong in sha256_by_path: localized sidecars
+            # and translation sources can share their canonical file's format.
+            continue
         format_name = str(artifact.get("format") or "")
         sha = artifact.get("sha256")
         if format_name and sha:
+            if mapping.get(format_name) and mapping[format_name] != str(sha):
+                raise ReleaseIndexError(f"conflicting SHA-256 declarations for format {format_name}")
             mapping[format_name] = str(sha)
     return mapping
 
@@ -214,9 +227,11 @@ def sha256_by_path(record: dict[str, Any]) -> dict[str, str]:
     for artifact in record.get("artifacts") or []:
         if not isinstance(artifact, dict):
             continue
-        path = str(artifact.get("path") or "")
+        path = str(artifact.get("path") or artifact.get("release_uri") or "")
         sha = artifact.get("sha256")
         if path and sha:
+            if mapping.get(path) and mapping[path] != str(sha):
+                raise ReleaseIndexError(f"conflicting SHA-256 declarations for {path}")
             mapping[path] = str(sha)
     return mapping
 
@@ -229,9 +244,7 @@ def files_from_run_record(record: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(release_paths, list):
         raise ReleaseIndexError("successful run record is missing release_paths")
     for value in release_paths:
-        entry = blob_file_entry(value, sha256_by_format=by_format, sha256_by_path=by_path)
-        if entry:
-            files.append(entry)
+        files.append(blob_file_entry(value, sha256_by_format=by_format, sha256_by_path=by_path))
     if not files:
         raise ReleaseIndexError("successful run record release_paths must not be empty")
     return sorted(files, key=lambda item: (item.get("format", ""), item.get("path", "")))
@@ -568,10 +581,16 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
                 merged_release_paths = []
                 seen_release_paths = set()
                 for file_entry in files_from_run_record(record):
-                    path = file_entry.get("path")
-                    if not path:
-                        continue
-                    merged_release_paths.append({**file_entry, **release_entry_by_path.get(path, {})})
+                    path = file_entry["path"]
+                    blob_entry = release_entry_by_path.get(path, {})
+                    if (
+                        file_entry.get("generation") == blob_entry.get("generation")
+                        and file_entry.get("sha256")
+                        and blob_entry.get("sha256")
+                        and file_entry["sha256"] != blob_entry["sha256"]
+                    ):
+                        raise ReleaseIndexError(f"conflicting SHA-256 declarations for {path}")
+                    merged_release_paths.append({**file_entry, **blob_entry})
                     seen_release_paths.add(path)
                 merged_release_paths.extend(
                     entry for entry in release_entries if entry.get("path") not in seen_release_paths
@@ -579,6 +598,10 @@ def rebuild_index_from_bucket(bucket: Any, row: dict[str, str]) -> dict[str, Any
                 record["release_paths"] = merged_release_paths
             else:
                 record["release_paths"] = release_entries
+            # Checksums were reconciled before any live generation updates.
+            # The resolved path entries now own the indexed object identities.
+            record.pop("sha256", None)
+            record.pop("artifacts", None)
         records.append(
             (
                 record,
