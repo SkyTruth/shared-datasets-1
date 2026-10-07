@@ -185,8 +185,6 @@ def blob_file_entry(
         if value.get(key) is not None:
             entry[key] = value[key]
     checksum_key = f"metadata_{locale}" if locale else format_name
-    if path.endswith(".metadata-translations.csv"):
-        checksum_key = "metadata-translations"
     checksums = {
         str(sha)
         for sha in (
