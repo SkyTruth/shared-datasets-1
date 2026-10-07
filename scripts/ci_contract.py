@@ -52,6 +52,7 @@ CONTRACT_FILES = (
     "scripts/production_image_contracts.py",
     "scripts/tested_image_bundle.py", "scripts/tested_image_authorization.py",
     "scripts/dataset_usage_deploy.py",
+    "scripts/scheduled_job_contracts.py",
     "scripts/cdn_plan_readiness.py",
     "scripts/terraform_plan_permissions.py", "scripts/catalog_csv.py",
     "scripts/deployment_emission.py", "scripts/install_deployment_verifier.py",

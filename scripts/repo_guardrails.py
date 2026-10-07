@@ -15,6 +15,8 @@ from typing import Iterable, Sequence
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.scheduled_job_contracts import NON_PUBLISHING_JOBS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PATH = "catalog/shared-datasets-catalog.csv"
@@ -387,7 +389,7 @@ def check_ingestion_no_gcs_deletes(repo_root: Path) -> list[str]:
 def check_ingestion_skip_tests(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for job in production_ingestion_jobs(repo_root):
-        if job == "dataset_usage":
+        if job in NON_PUBLISHING_JOBS:
             # This observational worker publishes health/report snapshots every
             # day and cannot follow unchanged dataset-release skip semantics.
             continue
