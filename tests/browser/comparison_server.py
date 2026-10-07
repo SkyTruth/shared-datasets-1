@@ -92,6 +92,7 @@ handler = viewer.make_handler(
     signed_url_ttl_seconds=900,
     allowed_email_domains=("skytruth.org",),
     comparison_jobs=jobs,
+    usage_reader=None,
 )
 ThreadingHTTPServer(
     ("127.0.0.1", int(os.environ.get("CATALOG_BROWSER_PORT", "4179"))), handler

@@ -45,6 +45,18 @@ variable "service_account_email" {
   type        = string
 }
 
+variable "paused" {
+  description = "Keep the schedule paused until rollout verification completes."
+  type        = bool
+  default     = false
+}
+
+variable "retry_count" {
+  description = "Scheduler dispatch retry count."
+  type        = number
+  default     = 3
+}
+
 resource "google_cloud_scheduler_job" "this" {
   project     = var.project_id
   region      = var.region
@@ -52,11 +64,12 @@ resource "google_cloud_scheduler_job" "this" {
   description = var.description
   schedule    = var.schedule
   time_zone   = var.time_zone
+  paused      = var.paused
 
   attempt_deadline = "320s"
 
   retry_config {
-    retry_count = 3
+    retry_count = var.retry_count
   }
 
   http_target {

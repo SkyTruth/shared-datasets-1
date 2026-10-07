@@ -61,6 +61,18 @@ def check(root: Path, changes, exists_at_base=None):
 
 
 class AdmissionCheckTests(unittest.TestCase):
+    def test_non_publishing_telemetry_does_not_waive_new_publisher_admission(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            changes = [admission_check.ChangedFile("A", "ingestion/dataset_usage/run.py")]
+            result = check(root, changes)
+            self.assertEqual(result.errors, ())
+            self.assertEqual(result.new_ingestion_jobs, ())
+            changes.append(admission_check.ChangedFile("A", "ingestion/new_publisher/run.py"))
+            result = check(root, changes)
+            self.assertEqual(result.new_ingestion_jobs, ("new_publisher",))
+            self.assertIn("new_publisher", "\n".join(result.errors))
+
     def test_asset_doc_only_changes_do_not_read_admission_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

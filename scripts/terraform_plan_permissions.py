@@ -240,6 +240,12 @@ def plan_checks(plan, *, project_number, target=None):
                 project(current)
                 text(current.get("role_id"), "role_id")
                 add(PROJECT_URL, ("iam.roles." + action, "iam.roles.get"))
+            elif kind == "google_project_iam_audit_config":
+                project(current)
+                add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))
+            elif kind == "google_logging_project_sink":
+                project(current)
+                add(PROJECT_URL, ("logging.sinks.get", "logging.sinks." + action))
             elif kind == "google_project_iam_member":
                 project(current)
                 add(PROJECT_URL, ("resourcemanager.projects.getIamPolicy", "resourcemanager.projects.setIamPolicy"))

@@ -128,6 +128,7 @@ class RepoGuardrailsTests(unittest.TestCase):
             ('sea-ice-daily-deploy.yml', 'deploy'),
             ('eamlis-monthly-deploy.yml', 'deploy'),
             ('catalog-viewer-deploy.yml', 'deploy'),
+            ('dataset-usage-deploy.yml', 'deploy'),
             ('pmtiles-cdn-sync.yml', 'sync'),
         })
 
@@ -274,6 +275,29 @@ class RepoGuardrailsTests(unittest.TestCase):
             errors = repo_guardrails.check_ingestion_skip_tests(root)
 
         self.assertEqual(errors, [])
+
+    def test_observational_usage_reports_do_not_require_dataset_release_skips(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("dataset_usage", "new_publisher"):
+                job = root/"ingestion"/name
+                job.mkdir(parents=True)
+                (job/"README.md").write_text("# Scheduled job\n")
+                (job/"run.py").write_text("def run(): pass\n")
+            errors = repo_guardrails.check_ingestion_skip_tests(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("new_publisher", errors[0])
+
+    def test_usage_workflow_requires_its_saved_plan_resource_guard(self):
+        source = repo_guardrails.REPO_ROOT/".github/workflows/dataset-usage-deploy.yml"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root/".github/workflows/dataset-usage-deploy.yml"
+            path.parent.mkdir(parents=True)
+            path.write_text(source.read_text())
+            self.assertEqual(repo_guardrails.check_workflow_boundaries(root), [])
+            path.write_text(source.read_text().replace("scripts/dataset_usage_deploy.py --plan-json", "scripts/dataset_usage_deploy.py --targets"))
+            self.assertTrue(any("missing resource-change allowlist" in error for error in repo_guardrails.check_workflow_boundaries(root)))
 
     def test_secret_scanner_flags_tracked_private_key_content(self):
         with tempfile.TemporaryDirectory() as tmp:

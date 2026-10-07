@@ -7,7 +7,7 @@ export default defineConfig({
   // a depth-one fetch, which must never truncate the validated checkout.
   captureGitInfo: { commit: false, diff: false },
   testDir: '.',
-  testMatch: 'catalog.spec.mjs',
+  testMatch: ['catalog.spec.mjs', 'usage.spec.mjs'],
   timeout: 30000,
   expect: { timeout: 10000 },
   workers: 1,

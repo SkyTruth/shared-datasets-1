@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.feature_preview_service import run as feature_preview_run
-from services.catalog_viewer import comparisons
+from services.catalog_viewer import comparisons, usage
 from services.http_base import (
     NO_STORE,
     Response,
@@ -324,10 +324,13 @@ def handle_request(
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
+    usage_reader=None,
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.UTC),
 ) -> Response:
     method = method.upper()
     request_path = urlsplit(path).path
+    if request_path == "/api/usage" or request_path == "/usage" or request_path.startswith("/usage/"):
+        return usage.handle(method, request_path, headers, reader=usage_reader, domains=allowed_email_domains, now=now())
     if request_path == "/healthz":
         return text_response(HTTPStatus.OK, "ok", {"Cache-Control": NO_STORE}, include_body=method != "HEAD")
     if request_path == "/api/comparisons" or request_path.startswith("/api/comparisons/"):
@@ -403,7 +406,7 @@ def handle_feature_lookup(
             return json_response(HTTPStatus.FORBIDDEN, {"error": "SkyTruth IAP identity required"})
     resolver = feature_release_resolver or feature_preview_run.CatalogReleaseResolver(bucket_name=bucket_name)
     index = feature_index or feature_preview_run.GcsSidecarFeatureIndex(bucket_name=bucket_name)
-    return feature_preview_run.handle_request(
+    response = feature_preview_run.handle_request(
         method,
         path,
         headers,
@@ -416,6 +419,9 @@ def handle_feature_lookup(
         max_fields=feature_max_fields,
         max_response_bytes=feature_max_response_bytes,
     )
+    if response.status in {200, 304}:
+        usage.emit(feature_preview_run.LOOKUP_RE.fullmatch(urlsplit(path).path).group("asset_slug"), "lookup")
+    return response
 
 
 @dataclass(frozen=True)
@@ -607,6 +613,7 @@ def handle_artifact_url(method, path, headers, *, catalog_cache, object_store, s
         payload["filename"] = basename(selected.uri)
     if format_name == "metadata":
         payload.update(metadata_locale_payload(requested_locale=locale, resolved_uri=selected.uri))
+    usage.emit(slug, "url_intent")
     return json_response(HTTPStatus.OK, payload, include_body=method != "HEAD")
 
 
@@ -886,6 +893,7 @@ def make_handler(
     feature_max_response_bytes: int = feature_preview_run.DEFAULT_MAX_RESPONSE_BYTES,
     feature_require_iap: bool = True,
     comparison_jobs: comparisons.ComparisonJobs | None = None,
+    usage_reader=None,
 ):
     comparison_jobs = comparison_jobs or comparisons.ComparisonJobs()
 
@@ -954,6 +962,7 @@ def make_handler(
             feature_max_response_bytes=feature_max_response_bytes,
             feature_require_iap=feature_require_iap,
             comparison_jobs=comparison_jobs,
+            usage_reader=usage_reader,
         )
 
     return Handler
@@ -1012,6 +1021,7 @@ def main() -> None:
         ),
         feature_require_iap=bool_env("CATALOG_VIEWER_FEATURE_LOOKUP_REQUIRE_IAP", True),
         comparison_jobs=comparison_jobs_from_env(),
+        usage_reader=usage.ReportReader(os.environ["DATASET_USAGE_STATE_BUCKET"]) if os.environ.get("DATASET_USAGE_STATE_BUCKET") else None,
     )
     port = int(os.environ.get("PORT", "8080"))
     ThreadingHTTPServer(("0.0.0.0", port), handler).serve_forever()

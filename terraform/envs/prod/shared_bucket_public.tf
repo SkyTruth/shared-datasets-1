@@ -12,6 +12,14 @@ resource "google_storage_bucket" "shared_bucket" {
   public_access_prevention    = "inherited"
   force_destroy               = false
 
+  dynamic "logging" {
+    for_each = local.dataset_usage_collect ? [1] : []
+    content {
+      log_bucket        = google_storage_bucket.dataset_usage_raw.name
+      log_object_prefix = "storage-usage"
+    }
+  }
+
   cors {
     origin          = local.pmtiles_browser_allowed_origins
     method          = ["GET", "HEAD", "OPTIONS"]
