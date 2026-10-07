@@ -106,7 +106,7 @@ def commands(target, executor, *, image_id=None):
         return [
             ["docker", "build", "--platform", "linux/amd64", "-f", "ingestion/dataset_usage/Dockerfile", "-t", image, "."],
             ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", tested_image, "--print-policy-hash"],
-            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--entrypoint", "python", tested_image, "-c", "from ingestion.dataset_usage import run, health; from google.cloud import storage; assert callable(run.collect)"],
+            ["docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none", "--cpus", "1", "--memory", "1g", "--entrypoint", "python", tested_image, "-c", Path(__file__).with_name("dataset_usage_cold_start.py").read_text()],
         ]
     package = target.replace("-", "_")
     build = ["docker", "build", "--platform", "linux/amd64", "--build-arg", f"SHARED_DATASETS_EXECUTOR_SHA={executor}", "-f", f"ingestion/{package}/Dockerfile", "-t", image, "."]

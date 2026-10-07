@@ -1,0 +1,67 @@
+name: Synthetic Slack incident lifecycle rehearsal
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearsal:
+    name: Rehearse synthetic Slack lifecycle
+    if: github.ref == 'refs/heads/main' && github.actor == 'jonaraphael' && github.triggering_actor == 'jonaraphael'
+    runs-on: ubuntu-latest
+    environment: shared-datasets-production
+    timeout-minutes: 10
+    concurrency:
+      group: slack-incidents-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Require trusted main workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ||
+                "${GITHUB_WORKFLOW_REF}" != "${GITHUB_REPOSITORY}/.github/workflows/slack-incident-rehearsal.yml@refs/heads/main" ]]; then
+            echo "Execution must use this workflow from main." >&2
+            exit 1
+          fi
+      - name: Check out trusted workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require owner dispatch and exact checkout
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ||
+                "$ACTOR" != jonaraphael || "$TRIGGERING_ACTOR" != jonaraphael ||
+                "$WORKFLOW_SHA" != "$GITHUB_SHA" ||
+                "$(git rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "Only the repository owner may rehearse this exact trusted main revision." >&2
+            exit 1
+          fi
+      - name: Set up pinned Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.12"
+      - name: Execute clearly labeled synthetic Slack lifecycle
+        env:
+          SHARED_DATASETS_SLACK_BOT_TOKEN: ${{ secrets.SHARED_DATASETS_SLACK_BOT_TOKEN }}
+          SHARED_DATASETS_SLACK_CHANNEL_ID: ${{ vars.SHARED_DATASETS_SLACK_CHANNEL_ID }}
+        run: python scripts/slack_incident_rehearsal.py --work-dir "$RUNNER_TEMP/slack-incident-rehearsal"
+      - name: Retain acknowledged synthetic message identities
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: slack-incident-rehearsal-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/slack-incident-rehearsal/result.json
+          if-no-files-found: ignore
+          retention-days: 14

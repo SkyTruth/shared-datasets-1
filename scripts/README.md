@@ -590,6 +590,22 @@ outside an explicit allowlist; the reusable
 `.github/workflows/prod-terraform-target-apply.yml` workflow runs it between
 plan and apply for every constrained prod IAM sync.
 
+`terraform_target_contracts.py` complements that saved-plan check during the
+shared lint suite. It builds a credential-free Terraform dependency graph and
+rejects new managed prerequisites outside each narrow caller's reviewed scope.
+`terraform/iam-plan-prerequisites.json` records the permitted existing
+prerequisites; it never expands the apply allowlist.
+
+`dataset_usage_cold_start.py` is an offline fixture for the actual usage-worker
+image entrypoint. Production-image validation runs it without network access to
+prove that disabled logging is a valid startup state and that persisted run
+records remain internally consistent.
+
+`slack_incident_rehearsal.py` exercises a clearly labeled synthetic failure,
+retry and recovery through the protected `Synthetic Slack incident lifecycle rehearsal`
+workflow. See [Slack incidents](../docs/slack-incidents.md) for its main-only
+dispatch and retained acknowledgment evidence.
+
 `catalog_csv.py` is the single owner of `catalog/shared-datasets-catalog.csv`
 parsing; script code should load catalog rows through it rather than reading
 the CSV directly. `concierge_profiling.py` owns the field profiling and curator

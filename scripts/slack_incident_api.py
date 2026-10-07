@@ -5,6 +5,7 @@ import json
 import re
 import time
 import urllib.error
+from urllib.parse import urlencode
 import urllib.request
 
 CHANNEL = re.compile(r"[CG][A-Z0-9]{8,}")
@@ -29,11 +30,18 @@ class Slack:
 
     def call(self, method, payload):
         require(method in {"auth.test", "chat.postMessage", "chat.update", "chat.getPermalink"}, "unsupported Slack method")
+        url = "https://slack.com/api/" + method
+        headers = {"Authorization": "Bearer " + self.token}
+        if method == "chat.getPermalink":
+            # This read method uses GET parameters in Slack's documented
+            # contract and official SDK; message timestamps stay strings.
+            url += "?" + urlencode(payload)
+            data, verb = None, "GET"
+        else:
+            headers["Content-Type"] = "application/json; charset=utf-8"
+            data, verb = json.dumps(payload).encode(), "POST"
         request = urllib.request.Request(
-            "https://slack.com/api/" + method,
-            data=json.dumps(payload).encode(),
-            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json; charset=utf-8"},
-            method="POST",
+            url, data=data, headers=headers, method=verb,
         )
         try:
             with self.opener(request, timeout=30) as response:
@@ -82,5 +90,5 @@ class Slack:
         require(TIMESTAMP.fullmatch(ts), "invalid message timestamp")
         result = self.call("chat.getPermalink", {"channel": self.channel, "message_ts": ts})
         link = result.get("permalink", "")
-        require(re.fullmatch(r"https://[a-z0-9-]+\.slack\.com/archives/" + self.channel + r"/p" + ts.replace(".", ""), link), "invalid Slack message permalink")
+        require(isinstance(link, str) and re.fullmatch(r"https://[a-z0-9-]+\.slack\.com/archives/" + self.channel + r"/p" + ts.replace(".", ""), link), "invalid Slack message permalink")
         return link

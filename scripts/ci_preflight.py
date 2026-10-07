@@ -117,6 +117,7 @@ def suite_commands(suite: str, root: Path, plan: dict, output: Path) -> list[tup
         for environment in ("prod", "preview", "metadata-retirement-iam"):
             add("terraform", f"-chdir=terraform/envs/{environment}", "init", "-backend=false", "-input=false", "-lockfile=readonly")
             add("terraform", f"-chdir=terraform/envs/{environment}", "validate")
+        add("uv", "run", "--no-sync", "python", "scripts/terraform_target_contracts.py", "--output", str(output / 'terraform-targets'))
         add("terraform", "-chdir=terraform/envs/metadata-retirement-iam", "test")
     elif suite == "tests":
         add("gitleaks", "git", "--redact", "--log-opts=HEAD", ".")

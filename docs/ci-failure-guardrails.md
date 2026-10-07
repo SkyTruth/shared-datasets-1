@@ -27,6 +27,26 @@ below.
 | Controlled alert probe deliberately stopped for human verification | PR 4: separate the negative control from ordinary deployment; prove the expected terminal failure and require explicit delivery evidence. |
 | External service or runner failure | PR 4: retain visible external failures and selective recovery guidance; inspect mutation state before recovery and never blanket-retry production. |
 
+## October 7 boundary regressions
+
+The original audit baseline remains unchanged. The tested revision passed all
+selected validation suites before main CI run
+[37647645882](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37647645882)
+and its alert run
+[37651180028](https://github.com/SkyTruth/shared-datasets-1/actions/runs/37651180028)
+exposed three missing contracts:
+
+| Failure | Required regression boundary |
+| --- | --- |
+| A disabled logging block introduced a telemetry bucket into a narrow ingestion IAM plan | Pinned Terraform's actual dependency graph must keep every narrow target inside its reviewed ownership/prerequisite closure. Both disabled and enabled historical configurations must reject the leaked edge. The apply allowlist remains narrow; selected logging-owner deployment completes before shared-bucket IAM consumers. |
+| The usage worker called `.get()` on the SDK's valid absent-logging `None` value | Real SDK representations and the actual collection-disabled entrypoint run in Python tests and the immutable production image. Disabled collection remains unverified; malformed configuration, failed reads and incompatible persisted state remain errors. |
+| Slack permalink lookup used JSON POST instead of GET parameters | HTTP-boundary tests verify each lifecycle operation's actual request. An acknowledged message survives permalink failure and resumes without reposting. The protected synthetic lifecycle rehearsal exercises posting, lookup, threads and resolved updates separately from production incidents. |
+
+Passing a fake service response or reconciling zero incidents does not prove the
+corresponding live boundary. Preserve the observed failure states in fixtures,
+exercise startup with deliberately incomplete operational configuration, and
+keep expected negative controls separate from ordinary deployment outcomes.
+
 ## Additional guards established during implementation
 
 The audit records eight advisory routing failures under a combined identity/state

@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 import pytest
@@ -114,3 +115,35 @@ def test_actual_production_images_are_part_of_the_gate_and_use_the_shared_comman
     upload = next(step for step in suite["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert upload["with"]["compression-level"] == 0
     assert upload["with"]["if-no-files-found"] == "error"
+
+
+@pytest.mark.parametrize("target", ["ingestion-iam", "scratch-cleanup-iam"])
+@pytest.mark.parametrize("owner_selected,owner_result,expected", [
+    (False, "skipped", True),
+    (True, "success", True),
+    (True, "failure", False),
+    (True, "cancelled", False),
+    (True, "skipped", False),
+])
+def test_shared_bucket_iam_waits_for_selected_logging_owner(target, owner_selected, owner_result, expected):
+    jobs = load_workflow(ROOT / ".github/workflows/ci.yml")["jobs"]
+    job = jobs[target]
+    assert "dataset-usage" in job["needs"]
+    assert "always()" in job["if"]  # An unselected owner is legitimately skipped.
+    assert target not in jobs["dataset-usage"]["needs"]  # No dependency cycle.
+    expression = job["if"].removeprefix("${{").removesuffix("}}").strip()
+    values = {
+        "always()": "True",
+        "github.event_name": repr("push"),
+        "github.ref": repr("refs/heads/main"),
+        "needs.ci-ready.result": repr("success"),
+        f"needs.geospatial-changes.outputs.{target.replace('-', '_')}": repr("true"),
+        "needs.geospatial-changes.outputs.dataset_usage": repr("true" if owner_selected else "false"),
+        "needs.dataset-usage.result": repr(owner_result),
+    }
+    for name, value in values.items():
+        expression = expression.replace(name, value)
+    tree = ast.parse(expression.replace("&&", " and ").replace("||", " or "), mode="eval")
+    assert all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Compare,
+                                 ast.Eq, ast.NotEq, ast.Constant)) for node in ast.walk(tree))
+    assert eval(compile(tree, "actual-ci-condition", "eval"), {"__builtins__": {}}) is expected

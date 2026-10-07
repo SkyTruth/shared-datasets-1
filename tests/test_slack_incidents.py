@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from unittest import mock
 import urllib.error
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -178,6 +179,28 @@ def test_one_parent_retries_in_thread_and_one_broadcast_recovery_with_id_in_summ
     assert "Resolved" in slack.calls[-1][1]["text"]
     assert incidents.prepare(ledger, IDENTITY, [retry], success=lambda *_: success()) == []
     assert "SD-" in (tmp_path / "summary.md").read_text()
+
+
+def test_permalink_failure_retains_acknowledgement_and_resumes_without_another_post():
+    ledger, slack = MemoryLedger(), FakeSlack()
+    records = incidents.prepare(ledger, IDENTITY, [observation()], success=lambda *_: None)
+    with mock.patch.object(slack, "permalink", side_effect=SlackError("permalink rejected")):
+        with pytest.raises(SlackError, match="permalink rejected"):
+            incidents.deliver(ledger, records, slack)
+    acknowledged = copy.deepcopy(ledger.states[SCOPE]["incident"]["posts"])
+    assert acknowledged["parent"]["state"] == "delivered"
+    assert ledger.writes[-1][0] == "outcomes"
+    assert ledger.states[SCOPE]["incident"]["permalink"] == ""
+
+    # A fresh worker loads the acknowledged state, not the original post claim.
+    records = incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None)
+    assert len(records) == 1
+    assert records[0]["payload"]["state"]["incident"]["posts"] == acknowledged
+    incidents.deliver(ledger, records, slack)
+    assert len([item for item in slack.calls if item[0] == "post"]) == 1
+    assert ledger.states[SCOPE]["incident"]["posts"] == acknowledged
+    assert ledger.states[SCOPE]["incident"]["permalink"]
+    assert incidents.prepare(ledger, IDENTITY, [], success=lambda *_: None) == []
 
 
 @pytest.mark.parametrize("crash", [1, 2])
@@ -465,6 +488,57 @@ def test_slack_api_uses_fixed_channel_exact_parent_and_broadcast_only_for_recove
     assert calls[0][1]["reply_broadcast"] is True and calls[0][1]["channel"] == IDENTITY["channel"]
     with pytest.raises(SlackError, match="override routing"):
         slack.post({"text": "hello", "channel": "evil"})
+
+
+def test_permalink_uses_documented_get_query_contract_without_timestamp_conversion():
+    ts = "1791270000.000001"
+    link = "https://example.slack.com/archives/" + IDENTITY["channel"] + "/p" + ts.replace(".", "")
+    calls = []
+    def opener(request, timeout):
+        calls.append(request)
+        assert request.get_method() == "GET"
+        assert request.data is None
+        parsed = urlsplit(request.full_url)
+        assert parsed.scheme == "https" and parsed.netloc == "slack.com"
+        assert parsed.path == "/api/chat.getPermalink"
+        assert parse_qs(parsed.query) == {"channel": [IDENTITY["channel"]], "message_ts": [ts]}
+        assert request.get_header("Authorization") == "Bearer xoxb-test-secret"
+        assert request.get_header("Content-type") is None
+        assert timeout == 30
+        return Response(json.dumps({"ok": True, "permalink": link}).encode())
+    slack = Slack("xoxb-test-secret", IDENTITY["channel"], opener=opener)
+    assert slack.permalink(ts) == link
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("response", [
+    {"ok": False, "error": "invalid_arguments"}, {"ok": True}, {"ok": True, "permalink": None},
+    {"ok": True, "permalink": "https://evil.example/archives/C123456789/p1791270000000001"},
+    {"ok": True, "permalink": "https://example.slack.com/archives/C987654321/p1791270000000001"},
+    {"ok": True, "permalink": "https://example.slack.com/archives/C123456789/p1791270000000002"},
+    {"ok": True, "permalink": "https://example.slack.com/archives/C123456789/p1791270000000001?redirect=https://evil.example"},
+])
+def test_permalink_requires_acknowledged_success_and_exact_parent_without_retries(response):
+    calls = []
+    def opener(request, timeout):
+        calls.append(request)
+        return Response(json.dumps(response).encode())
+    slack = Slack("xoxb-test-secret", IDENTITY["channel"], opener=opener)
+    with pytest.raises(SlackError):
+        slack.permalink("1791270000.000001")
+    assert len(calls) == 1
+    assert calls[0].get_method() == "GET"
+
+
+@pytest.mark.parametrize("method", ["auth.test", "chat.postMessage", "chat.update"])
+def test_other_slack_methods_keep_json_post_transport(method):
+    def opener(request, timeout):
+        assert request.get_method() == "POST"
+        assert request.full_url == "https://slack.com/api/" + method
+        assert request.get_header("Content-type") == "application/json; charset=utf-8"
+        assert json.loads(request.data) == {"channel": IDENTITY["channel"]}
+        return Response(b'{"ok":true}')
+    Slack("xoxb-test-secret", IDENTITY["channel"], opener=opener).call(method, {"channel": IDENTITY["channel"]})
 
 
 @pytest.mark.parametrize("response", [{"ok": False, "error": "internal_error"}, {"ok": True},

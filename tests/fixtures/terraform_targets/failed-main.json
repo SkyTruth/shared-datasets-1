@@ -1,0 +1,8 @@
+{
+  "revision": "ffe2dd53b9dd9c57e46c8a593234a39f966836e4",
+  "path": "terraform/envs/prod/shared_bucket_public.tf",
+  "fixture": "shared_bucket_public.failed.tf",
+  "sha256": "f7f00f0518c76574bd984e01631960894f817ab89e14e0c0fe7bf7729887a98d",
+  "run_id": 37647645882,
+  "forbidden_resource": "google_storage_bucket.dataset_usage_raw"
+}
